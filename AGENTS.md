@@ -9,9 +9,10 @@ house standard; the "What this is" section is written for this project and the r
 An Android media player: Kotlin, Jetpack Compose, Gradle (wrapper 9.6.0). It plays movies and shows
 straight from local storage, reading the Kodi-convention `.nfo` sidecars for titles, plots and art and
 `folder.jpg` / `poster.jpg` for covers — no server, no account, no re-scraping, no re-encoding. The
-Gradle modules are `:app` (the Compose app) and three plain-JVM cores: `:core:nfo` (NFO XML parsing,
-the `SxxExx` / `NxNN` name convention, Kodi art discovery), `:core:library` (domain models plus
-search / filter / group-by-decade) and `:core:player` (the binge queue). The cores carry no Android
+Gradle modules are `:app` (the Compose app: onboarding, browse wall, details, search, filters,
+player with resume and binge) and three plain-JVM cores: `:core:nfo` (NFO XML parsing,
+the `SxxExx` / `NxNN` name convention, Kodi art discovery), `:core:library` (the folder scanner
+plus domain models, search / filter / group-by-decade) and `:core:player` (the binge queue). The cores carry no Android
 dependency on purpose: the parsing, search and binge logic are pure and unit-tested without a device,
 and the screens sit on top of them. The bar is a household where nobody has to be taught the app —
 usable by a six-year-old and a grandparent, instant even on cheap hardware.

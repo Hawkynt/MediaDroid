@@ -23,7 +23,7 @@
 
 ## 🧭 Vision
 
-Media libraries on Android are usually either a raw file browser or a client of someone else's server. MediaDroid claims the middle ground that home media collectors actually live in: the folders are the library, and the `.nfo` sidecars and `folder.jpg` covers you already scraped are the metadata — no database of ours in between. The bar for success is a household where nobody has to be taught the app: a kid finds a film by its picture, a grandparent resumes a show where they left off, and everything answers instantly even on cheap hardware. The parser, the search, and the binge logic are pure and tested; the screens sit on top of them and must never get slower than the hardware allows. Status: early skeleton — the cores are built and tested, the UI is next.
+Media libraries on Android are usually either a raw file browser or a client of someone else's server. MediaDroid claims the middle ground that home media collectors actually live in: the folders are the library, and the `.nfo` sidecars and `folder.jpg` covers you already scraped are the metadata — no database of ours in between. The bar for success is a household where nobody has to be taught the app: a kid finds a film by its picture, a grandparent resumes a show where they left off, and everything answers instantly even on cheap hardware. The parser, the scanner, the search and the binge logic are pure and tested; the screens sit on top of them and must never get slower than the hardware allows. The first working build scans a library, shows the wall, plays with resume and binge auto-advance — polish and per-device codec tuning come next.
 
 ## ✨ Features
 
@@ -59,11 +59,12 @@ Android 8.0 (API 26) or newer, phone, tablet, or TV box. Not on the Play Store (
 adb install app-debug.apk
 ```
 
-Open MediaDroid, point it at the root of your media folders, and the library builds itself from the `.nfo` files and covers already sitting there. (The current build is the skeleton — the parser cores run, the browse wall is next.)
+Open MediaDroid, grant file access, point it at the root of your media folders and hit Scan: the wall fills with covers, and plots, seasons and episode thumbs come from the `.nfo` files already sitting there. Tapping a show offers Play next — episodes run in order and mark themselves watched.
 
 ## 🖼️ Screenshots
 
-Placeholders until the app renders real screens; from then on these are generated documentation — the app carries a demo mode with deterministic sample data, and CI regenerates the shots.
+Captured from the running app on an API 36 emulator against a sample library. Once the demo
+mode lands these become generated documentation that CI regenerates.
 
 ![Details screen](screenshots/detail.png)
 ![Player with binge queue](screenshots/player.png)
