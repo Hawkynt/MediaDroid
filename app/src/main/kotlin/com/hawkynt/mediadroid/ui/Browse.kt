@@ -51,10 +51,11 @@ fun BrowseScreen(
     library: Library,
     store: StateStore,
     filter: FilterState,
+    showsOnly: Boolean,
     onOpen: (MediaItem) -> Unit,
     onPlay: (MediaItem) -> Unit,
 ) {
-    var items = library.items
+    var items = if (showsOnly) library.shows.toList() else library.movies.toList()
     if (filter.genres.isNotEmpty()) items = LibraryQuery.filterByGenres(items, filter.genres)
     if (filter.decade != null) items = LibraryQuery.filterByYear(items, filter.decade, filter.decade + 9)
     items = when (filter.sort) {

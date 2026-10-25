@@ -18,7 +18,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -64,7 +65,8 @@ data class Playable(
 )
 
 sealed interface Screen {
-    data object Browse : Screen
+    data object Movies : Screen
+    data object Shows : Screen
     data object Search : Screen
     data object Filters : Screen
     data class Details(val item: MediaItem) : Screen
@@ -99,7 +101,8 @@ fun MediaDroidApp(store: StateStore) {
     var library by remember { mutableStateOf<Library?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
-    var screen by remember { mutableStateOf<Screen>(Screen.Browse) }
+    var screen by remember { mutableStateOf<Screen>(Screen.Movies) }
+    var lastBrowse by remember { mutableStateOf<Screen>(Screen.Movies) }
     var filter by remember { mutableStateOf(FilterState()) }
 
     if (!hasAccess || library == null) {
@@ -130,7 +133,7 @@ fun MediaDroidApp(store: StateStore) {
                     store.save()
                     result.onSuccess {
                         library = it
-                        screen = Screen.Browse
+                        screen = Screen.Movies
                     }.onFailure { scanError = "Could not scan $rootPath — ${it.message}" }
                     scanning = false
                 }
@@ -152,16 +155,27 @@ fun MediaDroidApp(store: StateStore) {
         screen = Screen.Player(queue, index)
     }
 
-    val showBar = screen is Screen.Browse || screen is Screen.Search || screen is Screen.Filters
+    fun browseTo(s: Screen) {
+        screen = s
+        if (s is Screen.Movies || s is Screen.Shows) lastBrowse = s
+    }
+
+    val showBar = screen is Screen.Movies || screen is Screen.Shows || screen is Screen.Search || screen is Screen.Filters
     Scaffold(
         bottomBar = {
             if (showBar) {
                 NavigationBar {
                     NavigationBarItem(
-                        selected = screen is Screen.Browse,
-                        onClick = { screen = Screen.Browse },
-                        icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-                        label = { Text("Browse", fontSize = 16.sp) },
+                        selected = screen is Screen.Movies,
+                        onClick = { browseTo(Screen.Movies) },
+                        icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null) },
+                        label = { Text("Movies", fontSize = 16.sp) },
+                    )
+                    NavigationBarItem(
+                        selected = screen is Screen.Shows,
+                        onClick = { browseTo(Screen.Shows) },
+                        icon = { Icon(Icons.Filled.List, contentDescription = null) },
+                        label = { Text("Shows", fontSize = 16.sp) },
                     )
                     NavigationBarItem(
                         selected = screen is Screen.Search,
@@ -181,18 +195,25 @@ fun MediaDroidApp(store: StateStore) {
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when (val s = screen) {
-                Screen.Browse -> BrowseScreen(lib, store, filter, onOpen = ::openDetails, onPlay = { item ->
-                    when (item) {
-                        is Movie -> playMovie(item)
-                        is Show -> playShow(item)
-                    }
-                })
+                Screen.Movies, Screen.Shows -> BrowseScreen(
+                    library = lib,
+                    store = store,
+                    filter = filter,
+                    showsOnly = s is Screen.Shows,
+                    onOpen = ::openDetails,
+                    onPlay = { item ->
+                        when (item) {
+                            is Movie -> playMovie(item)
+                            is Show -> playShow(item)
+                        }
+                    },
+                )
                 Screen.Search -> SearchScreen(lib, store, onOpen = ::openDetails)
                 Screen.Filters -> FiltersScreen(lib, filter, onFilterChange = { filter = it })
                 is Screen.Details -> DetailsScreen(
                     item = s.item,
                     store = store,
-                    onBack = { screen = Screen.Browse },
+                    onBack = { screen = lastBrowse },
                     onPlayMovie = ::playMovie,
                     onPlayShow = { show, episode -> playShow(show, episode) },
                 )
@@ -200,7 +221,7 @@ fun MediaDroidApp(store: StateStore) {
                     queue = s.queue,
                     startIndex = s.startIndex,
                     store = store,
-                    onExit = { screen = Screen.Browse },
+                    onExit = { screen = lastBrowse },
                 )
             }
         }
