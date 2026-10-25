@@ -28,6 +28,20 @@ class LibraryQueryTest {
     }
 
     @Test
+    fun ageFilterHidesOnlyItemsCertifiedAboveTheCap() {
+        val rated = listOf(
+            Movie(title = "Kids Film", minAge = 6, path = "/m/kids", videoPath = "/m/kids/k.mkv"),
+            Movie(title = "Teen Film", minAge = 16, path = "/m/teen", videoPath = "/m/teen/t.mkv"),
+            Movie(title = "Unrated Film", minAge = null, path = "/m/unrated", videoPath = "/m/unrated/u.mkv"),
+        )
+        assertEquals(
+            listOf("Kids Film", "Unrated Film"),
+            LibraryQuery.filterByAge(rated, 12).map { it.title },
+        )
+        assertEquals(rated, LibraryQuery.filterByAge(rated, 0))
+    }
+
+    @Test
     fun yearFilterKeepsOnlyDatedItemsInBounds() {
         assertEquals(
             listOf("Blade Runner 2049", "Breaking Bad"),

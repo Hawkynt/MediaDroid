@@ -57,6 +57,22 @@ class LibraryScannerTest {
     }
 
     @Test
+    fun certificationsFromNfosBecomeMinimumAges() {
+        file("Movies/Die Hard (1988)/movie.nfo", """
+            <movie><title>Die Hard</title><year>1988</year><mpaa>FSK 16</mpaa></movie>
+        """.trimIndent())
+        file("Movies/Die Hard (1988)/die hard.mkv", "a".repeat(100))
+        file("TV Shows/Breaking Bad (2008)/tvshow.nfo", """
+            <tvshow><title>Breaking Bad</title><mpaa>TV-MA</mpaa></tvshow>
+        """.trimIndent())
+        file("TV Shows/Breaking Bad (2008)/Season 01/s01e01.mkv", "a".repeat(100))
+
+        val library = LibraryScanner.scan(folder.root)
+        assertEquals(16, library.movies[0].minAge)
+        assertEquals(18, library.shows[0].minAge)
+    }
+
+    @Test
     fun recognizesMovieFolderWithNfoAndCover() {
         file("Movies/Coco (2017)/movie.nfo", """
             <movie><title>Coco - Lebendiger als das Leben!</title><year>2017</year>

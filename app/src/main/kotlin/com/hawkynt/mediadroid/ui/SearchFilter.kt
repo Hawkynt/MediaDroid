@@ -30,7 +30,8 @@ import com.hawkynt.mediadroid.library.MediaItem
 @Composable
 fun SearchScreen(library: Library, store: com.hawkynt.mediadroid.data.StateStore, onOpen: (MediaItem) -> Unit) {
     var query by remember { mutableStateOf("") }
-    val results = LibraryQuery.search(library.items, query)
+    val allowed = LibraryQuery.filterByAge(library.items, store.data.settings.maxAgeYears)
+    val results = LibraryQuery.search(allowed, query)
 
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(

@@ -56,6 +56,7 @@ fun BrowseScreen(
     onPlay: (MediaItem) -> Unit,
 ) {
     var items = if (showsOnly) library.shows.toList() else library.movies.toList()
+    items = LibraryQuery.filterByAge(items, store.data.settings.maxAgeYears)
     if (filter.genres.isNotEmpty()) items = LibraryQuery.filterByGenres(items, filter.genres)
     if (filter.decade != null) items = LibraryQuery.filterByYear(items, filter.decade, filter.decade + 9)
     items = when (filter.sort) {
@@ -100,6 +101,7 @@ data class ContinueEntry(val item: MediaItem, val playable: Playable, val progre
 @Composable
 private fun rememberContinueItems(library: Library, store: StateStore): List<ContinueEntry> {
     val resume = store.data.resume
+    val maxAge = store.data.settings.maxAgeYears
     return resume.entries.mapNotNull { (path, info) ->
         val movie = library.movies.firstOrNull { it.videoPath == path }
         if (movie != null) {
@@ -116,6 +118,11 @@ private fun rememberContinueItems(library: Library, store: StateStore): List<Con
             } else null
         }
     }
+        .filter { entry ->
+            // The max-age mode hides over-cap titles even from the resume row.
+            val age = entry.item.minAge
+            maxAge <= 0 || age == null || age <= maxAge
+        }
 }
 
 private fun progressOf(positionMs: Long, durationMs: Long): Float =

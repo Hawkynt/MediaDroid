@@ -19,6 +19,19 @@ object LibraryQuery {
         return items.filter { item -> genres.all { genre -> item.genres.any { it.equals(genre, ignoreCase = true) } } }
     }
 
+    /**
+     * Items a viewer of [maxAgeYears] may see: anything certified at or below the
+     * age, and anything with no certification at all (unknown is not forbidden).
+     * [maxAgeYears] of 0 means the max-age mode is off.
+     */
+    fun filterByAge(items: List<MediaItem>, maxAgeYears: Int): List<MediaItem> {
+        if (maxAgeYears <= 0) return items
+        return items.filter { item ->
+            val age = item.minAge
+            age == null || age <= maxAgeYears
+        }
+    }
+
     /** Items whose year falls in [from]..=[to]; null bounds are open. */
     fun filterByYear(items: List<MediaItem>, from: Int?, to: Int?): List<MediaItem> =
         items.filter { item ->

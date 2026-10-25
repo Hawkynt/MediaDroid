@@ -4,6 +4,7 @@ import com.hawkynt.mediadroid.nfo.ArtKind
 import com.hawkynt.mediadroid.nfo.EpisodeRef
 import com.hawkynt.mediadroid.nfo.episodeRefFromName
 import com.hawkynt.mediadroid.nfo.findArt
+import com.hawkynt.mediadroid.nfo.minAgeOf
 import com.hawkynt.mediadroid.nfo.parseEpisodeNfo
 import com.hawkynt.mediadroid.nfo.parseMovieNfo
 import com.hawkynt.mediadroid.nfo.parseShowNfo
@@ -64,6 +65,7 @@ object LibraryScanner {
             genres = group.firstNotNullOfOrNull { it.genres.ifEmpty { null } } ?: emptyList(),
             path = primary.path,
             posterPath = group.firstNotNullOfOrNull { it.posterPath },
+            minAge = group.firstNotNullOfOrNull { it.minAge },
             fanartPath = group.firstNotNullOfOrNull { it.fanartPath },
             plot = group.firstNotNullOfOrNull { it.plot },
             seasons = seasons,
@@ -218,6 +220,7 @@ object LibraryScanner {
             genres = info?.genres ?: emptyList(),
             path = dir.absolutePath,
             posterPath = art[ArtKind.Poster]?.let { File(dir, it).absolutePath },
+            minAge = minAgeOf(info?.mpaa),
             fanartPath = art[ArtKind.Fanart]?.let { File(dir, it).absolutePath },
             plot = info?.plot,
             seasons = seasons,
@@ -276,6 +279,7 @@ object LibraryScanner {
             genres = info?.genres ?: emptyList(),
             path = dir.absolutePath,
             posterPath = poster?.let { File(dir, it).absolutePath },
+            minAge = minAgeOf(info?.mpaa),
             fanartPath = fanart?.let { File(dir, it).absolutePath },
             videoPath = video.absolutePath,
             plot = info?.plot,
@@ -303,6 +307,7 @@ object LibraryScanner {
             genres = info?.genres ?: emptyList(),
             path = video.parentFile.absolutePath,
             posterPath = poster?.let { File(video.parentFile, it).absolutePath },
+            minAge = minAgeOf(info?.mpaa),
             fanartPath = fanart?.let { File(video.parentFile, it).absolutePath },
             videoPath = video.absolutePath,
             plot = info?.plot,

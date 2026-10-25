@@ -7,6 +7,9 @@ sealed interface MediaItem {
     val genres: List<String>
     val path: String
     val posterPath: String?
+
+    /** Minimum viewer age derived from the NFO certification; null when unknown. */
+    val minAge: Int?
 }
 
 data class Movie(
@@ -15,6 +18,7 @@ data class Movie(
     override val genres: List<String> = emptyList(),
     override val path: String,
     override val posterPath: String? = null,
+    override val minAge: Int? = null,
     val fanartPath: String? = null,
     val videoPath: String,
     val plot: String? = null,
@@ -29,6 +33,7 @@ data class Show(
     override val genres: List<String> = emptyList(),
     override val path: String,
     override val posterPath: String? = null,
+    override val minAge: Int? = null,
     val fanartPath: String? = null,
     val plot: String? = null,
     val seasons: List<Season> = emptyList(),
