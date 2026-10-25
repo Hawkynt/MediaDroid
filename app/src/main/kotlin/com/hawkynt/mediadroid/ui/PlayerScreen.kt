@@ -109,6 +109,11 @@ fun PlayerScreen(
     // Once the household picks a track by hand, the settings language steps back.
     var manualTrackPick by remember { mutableStateOf(false) }
 
+    // Intro/credits skip targets for the current item: Matroska chapters first,
+    // NFO sidecar spans as fallback (see SkipRules).
+    var introEndMs by remember { mutableStateOf<Long?>(null) }
+    var creditsStartMs by remember { mutableStateOf<Long?>(null) }
+
     // Preferred languages steer automatic selection for each new item. The
     // global preferred language covers audio; the subtitle language is applied
     // as an override once the item's tracks are known (see the listener).
@@ -118,10 +123,17 @@ fun PlayerScreen(
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguage(settings.audioLanguage.ifEmpty { null })
             .build()
-        player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(playable.videoPath))))
-        store.resumeFor(playable.videoPath)?.let { resume ->
-            if (resume.positionMs > 0) player.seekTo(resume.positionMs)
+        val chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.hawkynt.mediadroid.library.MatroskaChapters.parse(File(playable.videoPath))
         }
+        introEndMs = com.hawkynt.mediadroid.library.SkipRules.introEndMs(chapters, playable.intro)
+        creditsStartMs = com.hawkynt.mediadroid.library.SkipRules.creditsStartMs(chapters, playable.credits)
+        player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(playable.videoPath))))
+        val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
+        val intro = introEndMs
+        // Resume where you left off — but never back into a known intro.
+        val startPos = if (intro != null && resumePos in 1 until intro) intro else resumePos
+        if (startPos > 0) player.seekTo(startPos)
         player.prepare()
         player.playWhenReady = true
     }
@@ -133,13 +145,15 @@ fun PlayerScreen(
             .build()
     }
 
+    fun finishCurrent() {
+        store.markWatched(queue[index].videoPath)
+        if (index + 1 < queue.size) index++ else finished = true
+    }
+
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) {
-                    store.markWatched(queue[index].videoPath)
-                    if (index + 1 < queue.size) index++ else finished = true
-                }
+                if (playbackState == Player.STATE_ENDED) finishCurrent()
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -172,9 +186,14 @@ fun PlayerScreen(
     LaunchedEffect(player) {
         while (true) {
             delay(3_000)
-            if (player.isPlaying) {
-                store.saveResume(queue[index].videoPath, player.currentPosition, player.duration)
+            if (!player.isPlaying) continue
+            val credits = creditsStartMs
+            if (credits != null && player.currentPosition >= credits) {
+                // The credits have begun: binge straight to the next episode.
+                player.seekTo(player.duration)
+                continue
             }
+            store.saveResume(queue[index].videoPath, player.currentPosition, player.duration)
         }
     }
 

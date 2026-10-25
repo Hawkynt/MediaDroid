@@ -57,12 +57,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** One thing the player can play, with enough context to label itself. */
+/** One thing the player can play, with enough context to label itself and skip its intro. */
 data class Playable(
     val title: String,
     val subtitle: String?,
     val videoPath: String,
     val posterPath: String?,
+    val intro: com.hawkynt.mediadroid.nfo.TimeRange? = null,
+    val credits: com.hawkynt.mediadroid.nfo.TimeRange? = null,
 )
 
 sealed interface Screen {
@@ -238,7 +240,7 @@ fun MediaDroidApp(store: StateStore) {
     }
 }
 
-fun Movie.playable() = Playable(title, year?.toString(), videoPath, posterPath)
+fun Movie.playable() = Playable(title, year?.toString(), videoPath, posterPath, intro, credits)
 
 /** All episodes in binge order, labelled `S04 · E09 · Title`. */
 fun Show.playQueue(): List<Playable> =
@@ -249,6 +251,8 @@ fun Show.playQueue(): List<Playable> =
                 subtitle = "S%02d · E%02d".format(season.number, episode.number),
                 videoPath = episode.videoPath,
                 posterPath = episode.thumbPath ?: posterPath,
+                intro = episode.intro,
+                credits = episode.credits,
             )
         }
     }

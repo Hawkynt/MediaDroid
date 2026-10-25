@@ -1,5 +1,7 @@
 package com.hawkynt.mediadroid.library
 
+import com.hawkynt.mediadroid.nfo.TimeRange
+
 /** One playable entry in the library — the folder-level view of a movie or a show. */
 sealed interface MediaItem {
     val title: String
@@ -25,6 +27,8 @@ data class Movie(
     val runtimeMinutes: Int? = null,
     val cast: List<String> = emptyList(),
     val playcount: Int = 0,
+    val intro: TimeRange? = null,
+    val credits: TimeRange? = null,
 ) : MediaItem
 
 data class Show(
@@ -51,6 +55,8 @@ data class Episode(
     val watched: Boolean = false,
     val videoPath: String = "",
     val thumbPath: String? = null,
+    val intro: TimeRange? = null,
+    val credits: TimeRange? = null,
 )
 
 /** Everything one scan of one library root produced. */

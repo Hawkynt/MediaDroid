@@ -244,6 +244,8 @@ object LibraryScanner {
             watched = (nfo?.playcount ?: 0) > 0,
             videoPath = video.absolutePath,
             thumbPath = thumb?.let { File(video.parentFile, it).absolutePath },
+            intro = nfo?.intro,
+            credits = nfo?.credits,
         )
     }
 
@@ -286,6 +288,8 @@ object LibraryScanner {
             runtimeMinutes = info?.runtimeMinutes,
             cast = info?.cast?.map { it.name } ?: emptyList(),
             playcount = info?.playcount ?: 0,
+            intro = info?.intro,
+            credits = info?.credits,
         )
     }
 
@@ -314,6 +318,8 @@ object LibraryScanner {
             runtimeMinutes = info?.runtimeMinutes,
             cast = info?.cast?.map { it.name } ?: emptyList(),
             playcount = info?.playcount ?: 0,
+            intro = info?.intro,
+            credits = info?.credits,
         )
     }
 
