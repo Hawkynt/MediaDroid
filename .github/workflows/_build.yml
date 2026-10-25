@@ -1,0 +1,65 @@
+name: Build artifacts
+
+# Shared build block. Called by release.yml (manual dispatch) and nightly.yml (auto, on merge
+# to main). Single place that turns a commit into shippable artifacts so release and nightly
+# never diverge. Versions are stamped by Gradle from the build date (see app/build.gradle.kts),
+# matching the repo's vYYYYMMDD markers — no git tag feeds the version.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref/SHA to build (defaults to caller ref)
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
+# the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - name: Assemble debug APK, release APK, release AAB
+        run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk              dist/MediaDroid-debug.apk
+          cp app/build/outputs/apk/release/app-release-unsigned.apk dist/MediaDroid-release-unsigned.apk
+          cp app/build/outputs/bundle/release/app-release.aab       dist/MediaDroid-release.aab
+      # ----- SIGNING (uncomment once an upload keystore lives in the repo secrets) --------------
+      # The debug APK is installable as-is; the unsigned release APK is not. To ship signed
+      # releases, store the keystore base64-encoded in repo secrets and sign here:
+      # - name: Sign release APK with the upload key
+      #   env:
+      #     KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      #     KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      #     KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      #     KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      #   run: |
+      #     echo "$KEYSTORE_BASE64" | base64 -d > upload-keystore.jks
+      #     build-tools/*/apksigner sign --ks upload-keystore.jks \
+      #       --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD \
+      #       --out dist/MediaDroid.apk dist/MediaDroid-release-unsigned.apk
+      #     rm upload-keystore.jks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-artifacts
+          path: dist/*
+          if-no-files-found: error

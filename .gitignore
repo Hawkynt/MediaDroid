@@ -1,0 +1,30 @@
+# Build results
+.gradle/
+build/
+.cxx/
+stage/
+dist/
+[Ll]og/
+[Ll]ogs/
+
+# Android / Gradle user / IDE files
+.idea/
+*.iml
+.kotlin/
+local.properties
+captures/
+.externalNativeBuild/
+
+# Signing material — never commit
+*.jks
+*.keystore
+*.keystore.jks
+
+# Local secrets — never commit
+*.env
+secrets.json
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini

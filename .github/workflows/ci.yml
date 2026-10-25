@@ -1,0 +1,43 @@
+name: CI
+
+# The gate a pull request has to pass.
+#
+# It does NOT run on a push to main. A pull request must be green to merge, so re-running the
+# same build on the merge commit proves nothing and costs a machine — the nightly builds main
+# after the merge instead. `workflow_call` stays, because release.yml runs this as its own
+# first gate.
+#
+# Android gets no OS matrix: the SDK and the Gradle build are portable, and a Windows runner
+# would only prove the toolchain works twice. The full gate here is unit tests plus every
+# shipping artifact assembled — debug APK, release APK, release AAB.
+on:
+  pull_request:
+    branches: [main]
+  workflow_call: {}
+  workflow_dispatch: {}
+
+# Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
+# the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - name: Unit tests
+        run: ./gradlew test --no-daemon
+      - name: Assemble every shipping artifact
+        run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon
+      - name: Check the repository README
+        uses: Hawkynt/RepositoryTemplate/repo-readme@v1
+        with:
+          gui: true

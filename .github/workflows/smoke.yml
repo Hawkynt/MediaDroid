@@ -1,0 +1,40 @@
+name: Smoke
+
+# The fast tier, on every push to a working branch.
+#
+# It answers one question — "is what I just pushed broken?" — and answers it in minutes: unit
+# tests and a debug assemble on one OS, no release build, no bundle, no metrics. The pull
+# request is where the full gate lives.
+#
+# Never on main: that branch takes changes through pull requests, which already ran the gate.
+on:
+  push:
+    branches-ignore: [main, master]
+  workflow_dispatch: {}
+
+# Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
+# the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - name: Unit tests (parser, library, binge logic)
+        run: ./gradlew test --no-daemon
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug --no-daemon
+      # Cheap enough for the fast tier: the README check reads nothing but text.
+      - name: Check the repository README
+        uses: Hawkynt/RepositoryTemplate/repo-readme@v1
+        with:
+          gui: true

@@ -1,0 +1,78 @@
+name: Release
+
+# Stable release — MANUAL dispatch only. Runs CI, builds the APKs and the AAB, publishes, then
+# cuts a dated GitHub Release. Versions never come from a git tag; the repo-level marker is the
+# date, so the Release/tag is `vYYYYMMDD` — the same date Gradle stamps into versionName.
+# Nightlies happen automatically (nightly.yml).
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why are you cutting this release? (optional, for the audit log)'
+        required: false
+
+permissions:
+  contents: write
+
+# Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
+# the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    timeout-minutes: 30
+
+  build:
+    needs: ci
+    uses: ./.github/workflows/_build.yml
+    timeout-minutes: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute release marker
+        run: echo "REL=v$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-artifacts
+          path: dist
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Update changelog + generate release notes (bucketed by + - * # !)
+        uses: Hawkynt/RepositoryTemplate/release-notes@v1
+        with:
+          mode: release
+          marker: ${{ env.REL }}
+          notes: RELEASE_NOTES.md
+
+      # The changelog commit happens BEFORE the release is cut, and the tag is placed ON that
+      # commit (target_commitish below) so the bookkeeping commit stays inside the tag.
+      - name: Commit changelog (if it changed)
+        run: |
+          if ! git diff --quiet -- CHANGELOG.md; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add CHANGELOG.md
+            git commit -m "* update changelog for $REL [skip ci]"
+            git push
+          fi
+          echo "REL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release (dated marker; tags vYYYYMMDD at the changelog commit)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.REL }}
+          name: ${{ env.REL }}
+          target_commitish: ${{ env.REL_SHA }}
+          files: dist/*
+          body_path: RELEASE_NOTES.md            # commit-message changelog, not GitHub's PR notes
