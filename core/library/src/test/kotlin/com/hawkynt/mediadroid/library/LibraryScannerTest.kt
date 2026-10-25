@@ -161,6 +161,50 @@ class LibraryScannerTest {
     }
 
     @Test
+    fun groupsJunkNamedLooseEpisodesByTheirSharedShowName() {
+        file("Incoming/Firefly.S01E01.720p.WEB-DL.x264-GRP.mkv", "a".repeat(100))
+        file("Incoming/Firefly.S01E02.720p.WEB-DL.mkv", "a".repeat(100))
+        file("Incoming/Firefly.S02E01.1080p.BluRay.x265.mkv", "a".repeat(100))
+        file("Incoming/Coco (2017).mp4", "a".repeat(100))
+        file("Incoming/Coco (2017).nfo", "<movie><title>Coco</title><year>2017</year></movie>")
+
+        val library = LibraryScanner.scan(folder.root)
+        assertEquals(1, library.shows.size)
+        val show = library.shows[0]
+        assertEquals("Firefly", show.title)
+        assertEquals(listOf(1, 2), show.seasons.map { it.number })
+        assertEquals(listOf(1, 2), show.seasons[0].episodes.map { it.number })
+        assertEquals(listOf("Coco"), library.movies.map { it.title })
+    }
+
+    @Test
+    fun looseEpisodesJoinTheShowFolderLivingElsewhere() {
+        file("TV Shows/Firefly (2005)/tvshow.nfo", """
+            <tvshow><title>Firefly</title><premiered>2005-09-20</premiered></tvshow>
+        """.trimIndent())
+        file("TV Shows/Firefly (2005)/Season 01/s01e01.mkv", "a".repeat(100))
+        file("Incoming/Firefly.S02E01.1080p.WEB-DL.mkv", "a".repeat(100))
+
+        val library = LibraryScanner.scan(folder.root)
+        assertEquals(1, library.shows.size)
+        val show = library.shows[0]
+        assertEquals("Firefly", show.title)
+        assertEquals(2005, show.year)
+        assertEquals(listOf(1, 2), show.seasons.map { it.number })
+        assertEquals(emptyList<Movie>(), library.movies)
+    }
+
+    @Test
+    fun episodeTitleStopsAtTheFirstReleaseToken() {
+        file("TV Shows/The Expanse (2015)/tvshow.nfo", "<tvshow><title>The Expanse</title><year>2015</year></tvshow>")
+        file("TV Shows/The Expanse (2015)/The.Expanse.S01E02.Salvage.1080p.ATMOS.WEB-DL.DDP5.1.x264-GRP.mkv", "a".repeat(100))
+
+        val library = LibraryScanner.scan(folder.root)
+        val episode = library.shows[0].seasons[0].episodes[0]
+        assertEquals("Salvage", episode.title)
+    }
+
+    @Test
     fun showFoldersAreNotWalkedTwice() {
         file("TV Shows/Buru doragon (2007)/tvshow.nfo", "<tvshow><title>Blue Dragon</title><year>2007</year></tvshow>")
         file("TV Shows/Buru doragon (2007)/Season 01/s01e01.mkv", "a".repeat(100))
