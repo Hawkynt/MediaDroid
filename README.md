@@ -32,8 +32,12 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - No art? The app pulls a still out of the video itself — episode thumbs and poster fallbacks, generated once and cached on device.
 - Shows without `Season NN` folders are grouped into virtual seasons from `SxxExx` / `NxNN` file names; titles fall back to the folder and file names.
 - AC3, E-AC3, DTS, TrueHD and other exotic audio tracks play through a bundled FFmpeg decoder, even on hardware without them.
-- Binge mode: when an episode ends, the next unwatched one starts — season by season, in order.
+- Binge mode: when an episode ends, the next unwatched one starts — season by season, in order. Intros and credits are skipped when the file's Matroska chapters or the NFO sidecar attribute them.
 - Resume: every item remembers where you stopped.
+- Movies and Shows are separate main-menu tabs.
+- Subtitles on/off with a preferred language, and a picker for every audio and subtitle track a file carries.
+- Playback speed from 0.2× to 5×, right on the player screen.
+- Parent-guarded settings behind a four-digit PIN shown on screen as words — a child who cannot read cannot get in. There: default speed, loudness boost for unnormalized audio, brightness/gamma/contrast/color for dark videos, subtitle and stream languages, and a maximum-age mode that hides content whose NFO certification is too old (FSK, MPAA and TV ratings understood).
 - Instant search across the whole library.
 - Filter by genre and year, group by decade, facet counts as you browse.
 - Big touch targets and high contrast — usable by kids and older users without glasses-or-guessing.
