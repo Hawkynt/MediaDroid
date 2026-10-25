@@ -45,9 +45,11 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.ui.PlayerView
 import com.hawkynt.mediadroid.R
 import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
 import java.io.File
 import kotlinx.coroutines.delay
 
@@ -74,7 +76,25 @@ fun PlayerScreen(
     val player = remember {
         ExoPlayer.Builder(context)
             .setRenderersFactory(
-                DefaultRenderersFactory(context)
+                object : DefaultRenderersFactory(context) {
+                    // Real loudness fix for unnormalized streams: the settings dB
+                    // is applied to the decoded PCM and re-read per buffer, so the
+                    // slider takes effect mid-playback without rebuilding anything.
+                    override fun buildAudioSink(
+                        context: android.content.Context,
+                        enableFloatOutput: Boolean,
+                        enableAudioOutputPlaybackParams: Boolean,
+                    ): androidx.media3.exoplayer.audio.AudioSink =
+                        DefaultAudioSink.Builder(context)
+                            .setEnableFloatOutput(enableFloatOutput)
+                            .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
+                            .setAudioProcessorChain(
+                                DefaultAudioSink.DefaultAudioProcessorChain(
+                                    LoudnessAudioProcessor { settings.loudness },
+                                ),
+                            )
+                            .build()
+                }
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
             )
             .build()
@@ -165,12 +185,13 @@ fun PlayerScreen(
     // color matrix on the layer (gamma approximated via the matrix).
     val picture = Modifier.graphicsLayer {
         // One composed matrix: saturation around gray, then contrast around mid
-        // gray, with gamma approximated as an extra lift (a matrix cannot do a
-        // true power curve). Row sums of the saturation part are 1, so the
-        // contrast offset passes through untouched.
+        // gray. Brightness and an approximated gamma (a matrix cannot do a true
+        // power curve) both land in the offset — a dark video gets lifted at the
+        // matrix level instead of washed under a white scrim. Row sums of the
+        // saturation part are 1, so the offset passes through untouched.
         val c = settings.contrast
         val s = settings.saturation
-        val o = (c - 1f) * -127.5f + (settings.gamma - 1f) * -40f
+        val o = (c - 1f) * -127.5f + (settings.gamma - 1f) * -40f + settings.brightness * 80f
         colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(
             ColorMatrix(
                 floatArrayOf(
@@ -197,11 +218,6 @@ fun PlayerScreen(
             },
             modifier = picture.fillMaxSize(),
         )
-        if (settings.brightness < 0f) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = -settings.brightness)))
-        } else if (settings.brightness > 0f) {
-            Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = settings.brightness * 0.5f)))
-        }
         Row(
             modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
