@@ -22,12 +22,10 @@ env:
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
-    timeout-minutes: 30
 
   build:
     needs: ci
     uses: ./.github/workflows/_build.yml
-    timeout-minutes: 30
 
   release:
     needs: build

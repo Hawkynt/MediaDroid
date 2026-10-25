@@ -27,7 +27,6 @@ env:
 jobs:
   build:
     uses: ./.github/workflows/_build.yml
-    timeout-minutes: 30
     with:
       ref: ${{ github.sha }}
 
