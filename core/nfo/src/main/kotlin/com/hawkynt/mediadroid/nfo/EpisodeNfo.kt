@@ -15,6 +15,8 @@ data class EpisodeInfo(
     val imdbId: String? = null,
     val showImdbId: String? = null,
     val playcount: Int = 0,
+    val intro: TimeRange? = null,
+    val credits: TimeRange? = null,
 )
 
 /**
@@ -44,5 +46,7 @@ fun parseEpisodeNfo(xml: String): EpisodeInfo {
         imdbId = root.childText("imdbid") ?: root.uniqueIds()["imdb"],
         showImdbId = root.childText("showid"),
         playcount = root.childInt("playcount") ?: 0,
+        intro = parseTimeRange(root.childText("intro")),
+        credits = parseTimeRange(root.childText("credits")),
     )
 }

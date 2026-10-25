@@ -75,4 +75,17 @@ class MovieNfoTest {
     fun titlelessNfoIsRejected() {
         parseMovieNfo("<movie><plot>no title here</plot></movie>")
     }
+
+    @Test
+    fun introAndCreditsSpansAreRead() {
+        val movie = parseMovieNfo("<movie><title>X</title><intro>70,130</intro><credits>1230,1400</credits></movie>")
+        assertEquals(TimeRange(70, 130), movie.intro)
+        assertEquals(TimeRange(1230, 1400), movie.credits)
+    }
+
+    @Test
+    fun malformedIntroSpanIsIgnored() {
+        val movie = parseMovieNfo("<movie><title>X</title><intro>130,70</intro></movie>")
+        assertNull(movie.intro)
+    }
 }

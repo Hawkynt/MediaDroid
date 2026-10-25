@@ -32,4 +32,13 @@ class EpisodeNfoTest {
         assertEquals("tt1797054", episode.imdbId)
         assertEquals("tt0903747", episode.showImdbId)
     }
+
+    @Test
+    fun introAndCreditsSpansAreRead() {
+        val episode = parseEpisodeNfo(
+            "<episodedetails><title>X</title><intro>20,90</intro><credits>1180,1260</credits></episodedetails>",
+        )
+        assertEquals(TimeRange(20, 90), episode.intro)
+        assertEquals(TimeRange(1180, 1260), episode.credits)
+    }
 }

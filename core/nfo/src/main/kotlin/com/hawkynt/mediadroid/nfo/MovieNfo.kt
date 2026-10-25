@@ -22,6 +22,8 @@ data class MovieInfo(
     val tmdbId: String? = null,
     val trailer: String? = null,
     val playcount: Int = 0,
+    val intro: TimeRange? = null,
+    val credits: TimeRange? = null,
 )
 
 data class SetInfo(val name: String)
@@ -66,5 +68,7 @@ fun parseMovieNfo(xml: String): MovieInfo {
         tmdbId = root.childText("tmdbid") ?: uniqueIds["tmdb"],
         trailer = root.childText("trailer"),
         playcount = root.childInt("playcount") ?: 0,
+        intro = parseTimeRange(root.childText("intro")),
+        credits = parseTimeRange(root.childText("credits")),
     )
 }
