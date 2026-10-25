@@ -35,3 +35,20 @@ FFMPEG_MODULE_PATH=.../libraries/decoder_ffmpeg \
 
 `build_ffmpeg_extension.sh` is the upstream `build_ffmpeg.sh` from androidx/media
 trimmed to the two ABIs we ship; its Apache-2.0 header is kept intact.
+
+## Optional: the non-LGPL switch
+
+If you want decoders that live in FFmpeg's GPL or nonfree sections, set the
+compile switch before step 2:
+
+```bash
+EXTRA_CONFIGURE_FLAGS="--enable-gpl --enable-nonfree" \
+  ./build_ffmpeg_extension.sh ... # plus any extra --enable-decoder=... you need
+```
+
+Understand what that costs: a binary configured with `--enable-gpl` (and even
+more with `--enable-nonfree`) cannot be distributed under this repository's
+LGPL-3.0-or-later — the GPL components would relicense the whole work. Such a
+build is for your own device only; never commit its AAR over
+`app/libs/lib-decoder-ffmpeg-release.aar`, and never ship it in a release. The
+committed AAR stays the LGPL-only configuration above.

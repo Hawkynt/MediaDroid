@@ -26,6 +26,15 @@ ANDROID_ABI="$4"
 echo "ANDROID_ABI is ${ANDROID_ABI}"
 ENABLED_DECODERS=("${@:5}")
 echo "Enabled decoders are ${ENABLED_DECODERS[@]}"
+# Optional compile switch for non-LGPL components, e.g.
+#   EXTRA_CONFIGURE_FLAGS="--enable-gpl --enable-nonfree"
+# A build configured this way is NOT distributable under this repository's LGPL —
+# keep it local. The committed AAR is always the LGPL-only configuration.
+EXTRA_CONFIGURE_FLAGS="${EXTRA_CONFIGURE_FLAGS:-}"
+if [[ -n "$EXTRA_CONFIGURE_FLAGS" ]]
+then
+    echo "Extra configure flags: $EXTRA_CONFIGURE_FLAGS"
+fi
 JOBS="$(nproc 2> /dev/null || sysctl -n hw.ncpu 2> /dev/null || echo 4)"
 echo "Using $JOBS jobs for make"
 COMMON_OPTIONS="
@@ -83,7 +92,7 @@ cd "${FFMPEG_MODULE_PATH}/jni/ffmpeg"
     --ar="${TOOLCHAIN_PREFIX}/llvm-ar" \
     --ranlib="${TOOLCHAIN_PREFIX}/llvm-ranlib" \
     --strip="${TOOLCHAIN_PREFIX}/llvm-strip" \
-    ${COMMON_OPTIONS}
+    ${COMMON_OPTIONS} ${EXTRA_CONFIGURE_FLAGS}
 make -j$JOBS
 make install-libs
 make clean
@@ -97,7 +106,7 @@ make clean
     --ranlib="${TOOLCHAIN_PREFIX}/llvm-ranlib" \
     --strip="${TOOLCHAIN_PREFIX}/llvm-strip" \
     --disable-asm \
-    ${COMMON_OPTIONS}
+    ${COMMON_OPTIONS} ${EXTRA_CONFIGURE_FLAGS}
 make -j$JOBS
 make install-libs
 make clean
