@@ -23,12 +23,15 @@
 
 ## 🧭 Vision
 
-Media libraries on Android are usually either a raw file browser or a client of someone else's server. MediaDroid claims the middle ground that home media collectors actually live in: the folders are the library, and the `.nfo` sidecars and `folder.jpg` covers you already scraped are the metadata — no database of ours in between. The bar for success is a household where nobody has to be taught the app: a kid finds a film by its picture, a grandparent resumes a show where they left off, and everything answers instantly even on cheap hardware. The parser, the scanner, the search and the binge logic are pure and tested; the screens sit on top of them and must never get slower than the hardware allows. The first working build scans a library, shows the wall, plays with resume and binge auto-advance — polish and per-device codec tuning come next.
+Media libraries on Android are usually either a raw file browser or a client of someone else's server. MediaDroid claims the middle ground that home media collectors actually live in: the folders are the library, and the `.nfo` sidecars and `folder.jpg` covers you already scraped are the metadata — no database of ours in between. The bar for success is a household where nobody has to be taught the app: a kid finds a film by its picture, a grandparent resumes a show where they left off, and everything answers instantly even on cheap hardware. The parser, the scanner, the search and the binge logic are pure and tested; the screens sit on top of them and must never get slower than the hardware allows. The app scans a library, shows the wall, plays with resume and binge auto-advance, decodes exotic audio through a bundled FFmpeg extension, and paints missing art from the video files themselves.
 
 ## ✨ Features
 
 - Reads `movie.nfo`, `tvshow.nfo`, and per-episode NFOs: plot, cast, runtime, rating, sets, trailer links.
 - Covers from `folder.jpg` / `poster.jpg`, backdrops from `fanart.jpg`, logos and banners where present.
+- No art? The app pulls a still out of the video itself — episode thumbs and poster fallbacks, generated once and cached on device.
+- Shows without `Season NN` folders are grouped into virtual seasons from `SxxExx` / `NxNN` file names; titles fall back to the folder and file names.
+- AC3, E-AC3, DTS, TrueHD and other exotic audio tracks play through a bundled FFmpeg decoder, even on hardware without them.
 - Binge mode: when an episode ends, the next unwatched one starts — season by season, in order.
 - Resume: every item remembers where you stopped.
 - Instant search across the whole library.
@@ -45,7 +48,7 @@ Media libraries on Android are usually either a raw file browser or a client of 
 | Episode NFO | ✅ | — | Named after its video file; season/episode may also come from the name | [Kodi NFO docs](https://kodi.wiki/view/NFO_files) |
 | `SxxExx` / `NxNN` file names | ✅ | — | The prevailing rip and scraper naming | — |
 | Art: `folder.jpg`, `poster.jpg`, `fanart.jpg`, banner, clearlogo, discart | ✅ | — | Numbered variants (`poster-1.jpg`) count | [Kodi art conventions](https://kodi.wiki/view/Artwork) |
-| Containers & codecs | ⚠️ | — | Whatever the Android decoder on the device offers (typically MP4, MKV, most H.264/AAC; HEVC/AV1 per device) | [Android media formats](https://developer.android.com/guide/topics/media/media-formats) |
+| Containers & codecs | ✅ | — | Video on the device's own decoders (MP4/MKV, H.264, HEVC/AV1 per device); audio falls back to a bundled FFmpeg decoder for AC3, E-AC3, DTS, TrueHD, MLP, ALAC, Vorbis and more | [Media3 FFmpeg extension](https://github.com/androidx/media/tree/release_v1.11.1/libraries/decoder_ffmpeg), [Android formats](https://developer.android.com/guide/topics/media/media-formats) |
 
 `✅` full · `⚠️` partial, explained in the row · `—` unsupported.
 

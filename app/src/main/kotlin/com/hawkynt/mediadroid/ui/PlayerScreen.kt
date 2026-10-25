@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.hawkynt.mediadroid.data.StateStore
@@ -51,9 +52,19 @@ fun PlayerScreen(
     onExit: () -> Unit,
 ) {
     val context = LocalContext.current
-    val player = remember { ExoPlayer.Builder(context).build() }
+    // PREFER lets the bundled FFmpeg decoder win over the device's own audio
+    // decoders, so AC3/DTS/TrueHD tracks play on hardware that lacks them.
+    val player = remember {
+        ExoPlayer.Builder(context)
+            .setRenderersFactory(
+                DefaultRenderersFactory(context)
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
+            )
+            .build()
+    }
     var index by remember { mutableStateOf(startIndex) }
     var finished by remember { mutableStateOf(false) }
+    var playError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(index) {
         val playable = queue[index]
@@ -72,6 +83,10 @@ fun PlayerScreen(
                     store.markWatched(queue[index].videoPath)
                     if (index + 1 < queue.size) index++ else finished = true
                 }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                playError = error.errorCodeName
             }
         }
         player.addListener(listener)
@@ -127,6 +142,13 @@ fun PlayerScreen(
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Button(onClick = onExit) {
                     Text("All done — back to the library", fontSize = 22.sp)
+                }
+            }
+        }
+        playError?.let { code ->
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Button(onClick = onExit) {
+                    Text("Cannot play this file ($code) — back to the library", fontSize = 22.sp)
                 }
             }
         }

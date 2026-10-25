@@ -12,7 +12,10 @@ straight from local storage, reading the Kodi-convention `.nfo` sidecars for tit
 Gradle modules are `:app` (the Compose app: onboarding, browse wall, details, search, filters,
 player with resume and binge) and three plain-JVM cores: `:core:nfo` (NFO XML parsing,
 the `SxxExx` / `NxNN` name convention, Kodi art discovery), `:core:library` (the folder scanner
-plus domain models, search / filter / group-by-decade) and `:core:player` (the binge queue). The cores carry no Android
+plus domain models, search / filter / group-by-decade) and `:core:player` (the binge queue). `:app` also ships
+`app/libs/lib-decoder-ffmpeg-release.aar` — the Media3 FFmpeg audio decoder extension (AC3/E-AC3/DTS/TrueHD on
+devices without them), built from androidx/media 1.11.1 with an LGPL-only FFmpeg; the recipe is in
+`tools/ffmpeg/README.md` and the attribution in `app/THIRD-PARTY-NOTICE.ffmpeg.txt`. The cores carry no Android
 dependency on purpose: the parsing, search and binge logic are pure and unit-tested without a device,
 and the screens sit on top of them. The bar is a household where nobody has to be taught the app —
 usable by a six-year-old and a grandparent, instant even on cheap hardware.

@@ -1,0 +1,12 @@
+libs/lib-decoder-ffmpeg-release.aar
+
+Built from the FFmpeg decoder extension module of androidx/media release 1.11.1
+(https://github.com/androidx/media, Apache License 2.0), statically linking
+FFmpeg 6.0 (https://ffmpeg.org, GNU LGPL version 3 or later) configured with
+only the following decoders enabled:
+
+  h264 hevc mpeg2video vp8 vp9 av1 ac3 eac3 dts truehd mlp alac vorbis opus flac
+
+No GPL-licensed FFmpeg component is configured or linked. The LGPL conditions
+(linked as a library, replaceable, source obtainable from upstream) are met;
+the exact build recipe lives in tools/ffmpeg/README.md.
