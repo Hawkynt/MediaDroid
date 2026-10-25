@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -69,6 +70,7 @@ sealed interface Screen {
     data object Shows : Screen
     data object Search : Screen
     data object Filters : Screen
+    data object Settings : Screen
     data class Details(val item: MediaItem) : Screen
     data class Player(val queue: List<Playable>, val startIndex: Int) : Screen
 }
@@ -160,7 +162,8 @@ fun MediaDroidApp(store: StateStore) {
         if (s is Screen.Movies || s is Screen.Shows) lastBrowse = s
     }
 
-    val showBar = screen is Screen.Movies || screen is Screen.Shows || screen is Screen.Search || screen is Screen.Filters
+    val showBar = screen is Screen.Movies || screen is Screen.Shows || screen is Screen.Search ||
+        screen is Screen.Filters || screen is Screen.Settings
     Scaffold(
         bottomBar = {
             if (showBar) {
@@ -189,6 +192,12 @@ fun MediaDroidApp(store: StateStore) {
                         icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
                         label = { Text("Filters", fontSize = 16.sp) },
                     )
+                    NavigationBarItem(
+                        selected = screen is Screen.Settings,
+                        onClick = { screen = Screen.Settings },
+                        icon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                        label = { Text("Settings", fontSize = 16.sp) },
+                    )
                 }
             }
         },
@@ -210,6 +219,7 @@ fun MediaDroidApp(store: StateStore) {
                 )
                 Screen.Search -> SearchScreen(lib, store, onOpen = ::openDetails)
                 Screen.Filters -> FiltersScreen(lib, filter, onFilterChange = { filter = it })
+                Screen.Settings -> SettingsScreen(store)
                 is Screen.Details -> DetailsScreen(
                     item = s.item,
                     store = store,
