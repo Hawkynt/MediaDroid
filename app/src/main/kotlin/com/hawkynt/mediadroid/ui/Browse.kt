@@ -21,17 +21,24 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.data.ThumbnailStore
 import com.hawkynt.mediadroid.library.Library
 import com.hawkynt.mediadroid.library.LibraryQuery
 import com.hawkynt.mediadroid.library.MediaItem
@@ -128,7 +135,7 @@ private fun ContinueCard(entry: ContinueEntry, onClick: () -> Unit) {
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
-            PosterImage(entry.playable.posterPath, contentScale = ContentScale.Crop)
+            PosterImage(entry.playable.posterPath, videoFallback = entry.playable.videoPath, contentScale = ContentScale.Crop)
             Column(modifier = Modifier.align(Alignment.BottomCenter)) {
                 LinearProgressIndicator(
                     progress = { entry.progress },
@@ -153,7 +160,15 @@ fun PosterCard(item: MediaItem, onClick: () -> Unit) {
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
-            PosterImage(item.posterPath, fallbackLetter = item.title.take(1))
+            PosterImage(
+                item.posterPath,
+                fallbackLetter = item.title.take(1),
+                videoFallback = when (item) {
+                    is Movie -> item.videoPath
+                    is Show -> item.seasons.firstOrNull()?.episodes?.firstOrNull()?.videoPath
+                    else -> null
+                },
+            )
         }
         Text(
             item.title,
@@ -169,7 +184,12 @@ fun PosterCard(item: MediaItem, onClick: () -> Unit) {
 }
 
 @Composable
-fun PosterImage(path: String?, fallbackLetter: String? = null, contentScale: ContentScale = ContentScale.Fit) {
+fun PosterImage(
+    path: String?,
+    fallbackLetter: String? = null,
+    videoFallback: String? = null,
+    contentScale: ContentScale = ContentScale.Fit,
+) {
     if (path != null && File(path).exists()) {
         AsyncImage(
             model = File(path),
@@ -177,14 +197,44 @@ fun PosterImage(path: String?, fallbackLetter: String? = null, contentScale: Con
             contentScale = contentScale,
             modifier = Modifier.fillMaxSize(),
         )
+    } else if (videoFallback != null) {
+        VideoFrameImage(videoFallback, fallbackLetter = fallbackLetter, contentScale = contentScale)
     } else {
-        Box(
-            modifier = Modifier.fillMaxSize().background(Color.DarkGray),
-            contentAlignment = Alignment.Center,
-        ) {
-            fallbackLetter?.let {
-                Text(it, fontSize = 48.sp, color = Color.White, fontWeight = FontWeight.Bold)
-            }
+        LetterBox(fallbackLetter)
+    }
+}
+
+/**
+ * A still from the video itself, loaded as a promise through [ThumbnailStore]
+ * and cached on disk — the picture a poster would have been.
+ */
+@Composable
+fun VideoFrameImage(videoPath: String, fallbackLetter: String? = null, contentScale: ContentScale = ContentScale.Crop) {
+    val context = LocalContext.current
+    var frame by remember(videoPath) { mutableStateOf<File?>(null) }
+    LaunchedEffect(videoPath) {
+        frame = ThumbnailStore.of(context).thumbnailFor(videoPath)
+    }
+    if (frame != null) {
+        AsyncImage(
+            model = frame,
+            contentDescription = null,
+            contentScale = contentScale,
+            modifier = Modifier.fillMaxSize(),
+        )
+    } else {
+        LetterBox(fallbackLetter)
+    }
+}
+
+@Composable
+private fun LetterBox(fallbackLetter: String?) {
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color.DarkGray),
+        contentAlignment = Alignment.Center,
+    ) {
+        fallbackLetter?.let {
+            Text(it, fontSize = 48.sp, color = Color.White, fontWeight = FontWeight.Bold)
         }
     }
 }

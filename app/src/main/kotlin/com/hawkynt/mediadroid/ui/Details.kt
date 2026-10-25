@@ -205,6 +205,9 @@ private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick
         ) {
             if (episode.thumbPath != null && File(episode.thumbPath).exists()) {
                 PosterImage(episode.thumbPath, contentScale = ContentScale.Crop)
+            } else {
+                // No scraped `-thumb.jpg`: pull a still out of the video itself.
+                VideoFrameImage(episode.videoPath)
             }
         }
         Spacer(Modifier.width(12.dp))
