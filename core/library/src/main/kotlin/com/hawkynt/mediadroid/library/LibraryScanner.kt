@@ -23,6 +23,7 @@ object LibraryScanner {
     private val videoExtensions = setOf("mkv", "mp4", "avi", "mov", "m4v", "webm", "ts")
     private val seasonDirName = Regex("(?i)^season[ ._-]*(\\d+)$")
     private val titleYear = Regex("^(.*)\\s*\\((\\d{4})\\)$")
+    private val episodeToken = Regex("(?i)\\b(?:s\\d{1,2}[ ._-]?e\\d{1,3}|\\d{1,2}x\\d{1,3})\\b")
 
     fun scan(root: File): Library {
         val movies = ArrayList<Movie>()
@@ -97,16 +98,28 @@ object LibraryScanner {
         val title = info?.title ?: folderMatch?.groupValues?.get(1)?.trim() ?: dir.name
         val year = info?.firstAiredYear ?: folderMatch?.groupValues?.get(2)?.toIntOrNull()
 
-        val seasons = subDirs.mapNotNull { sub ->
+        // Seasons from `Season NN` subfolders…
+        val fromDirs = subDirs.mapNotNull { sub ->
             val number = seasonDirName.find(sub.name)?.groupValues?.get(1)?.toIntOrNull()
                 ?: sub.name.filter { it.isDigit() }.toIntOrNull()
                 ?: return@mapNotNull null
             val siblings = sub.listFiles()?.map { it.name } ?: return@mapNotNull null
             val episodes = sub.listFiles()!!.filter { isVideo(it) }
-                .mapNotNull { video -> parseEpisode(video, siblings) }
+                .mapNotNull { video -> parseEpisode(video, siblings, title) }
                 .sortedBy { it.number }
             if (episodes.isEmpty()) null else Season(number, episodes)
-        }.sortedBy { it.number }
+        }
+        // …and virtual seasons from episode-named files sitting loose in the show
+        // folder itself: `s02e01.mkv` belongs to season 2 whether or not a folder says so.
+        val fromLoose = files.filter { isVideo(it) }
+            .mapNotNull { video -> parseEpisode(video, files.map { f -> f.name }, title)?.let { refSeason(video) to it } }
+            .groupBy({ it.first }, { it.second })
+            .mapNotNull { (number, episodes) -> if (number == null) null else Season(number, episodes.sortedBy { it.number }) }
+
+        val seasons = (fromDirs + fromLoose)
+            .groupBy { it.number }
+            .map { (number, list) -> Season(number, list.flatMap { it.episodes }.sortedBy { it.number }) }
+            .sortedBy { it.number }
 
         val art = findArt(files.map { it.name })
         return Show(
@@ -121,7 +134,7 @@ object LibraryScanner {
         )
     }
 
-    private fun parseEpisode(video: File, siblingNames: List<String>): Episode? {
+    private fun parseEpisode(video: File, siblingNames: List<String>, showTitle: String? = null): Episode? {
         val nfo = sidecarNfo(video, siblingNames)?.readTextSafe()
             ?.let { runCatching { parseEpisodeNfo(it) }.getOrNull() }
         val ref: EpisodeRef? = episodeRefFromName(video.name)
@@ -133,7 +146,7 @@ object LibraryScanner {
 
         return Episode(
             number = nfo?.episode ?: ref!!.episode,
-            title = nfo?.title,
+            title = nfo?.title ?: titleFromName(stem, showTitle),
             firstAired = nfo?.firstAired,
             watched = (nfo?.playcount ?: 0) > 0,
             videoPath = video.absolutePath,
@@ -207,6 +220,25 @@ object LibraryScanner {
             cast = info?.cast?.map { it.name } ?: emptyList(),
             playcount = info?.playcount ?: 0,
         )
+    }
+
+    private fun refSeason(video: File): Int? = episodeRefFromName(video.name)?.season
+
+    /**
+     * `Some.Show.S01E01.Some.Title.720p.mkv` without an NFO: drop the episode
+     * token and the junk, and drop the show's own name too — the rest is the
+     * episode title.
+     */
+    private fun titleFromName(stem: String, showTitle: String? = null): String? {
+        var cleaned = stem
+            .replace(episodeToken, " ")
+            .replace(Regex("[._\\-]+"), " ")
+            .replace(Regex("\\s{2,}"), " ")
+            .trim()
+        if (showTitle != null && cleaned.startsWith(showTitle, ignoreCase = true)) {
+            cleaned = cleaned.substring(showTitle.length).trim()
+        }
+        return cleaned.ifEmpty { null }
     }
 
     private fun File.readTextSafe(): String? = runCatching { readText() }.getOrNull()

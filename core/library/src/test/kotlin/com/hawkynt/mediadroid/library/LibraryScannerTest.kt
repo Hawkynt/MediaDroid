@@ -129,6 +129,38 @@ class LibraryScannerTest {
     }
 
     @Test
+    fun groupsLooseEpisodeNamedFilesIntoVirtualSeasons() {
+        file("TV Shows/Firefly (2002)/s01e01.mkv", "a".repeat(100))
+        file("TV Shows/Firefly (2002)/s01e02.mkv", "a".repeat(100))
+        file("TV Shows/Firefly (2002)/2x03.mkv", "a".repeat(100))
+
+        val library = LibraryScanner.scan(folder.root)
+        assertEquals(1, library.shows.size)
+        val show = library.shows[0]
+        assertEquals("Firefly", show.title)
+        assertEquals(2002, show.year)
+        assertEquals(listOf(1, 2), show.seasons.map { it.number })
+        assertEquals(listOf(1, 2), show.seasons[0].episodes.map { it.number })
+        assertEquals(3, show.seasons[1].episodes[0].number)
+        assertEquals(emptyList<Movie>(), library.movies)
+    }
+
+    @Test
+    fun mergesLooseEpisodesIntoSeasonFoldersAndDerivesTitlesFromNames() {
+        file("TV Shows/The Expanse (2015)/tvshow.nfo", "<tvshow><title>The Expanse</title><year>2015</year></tvshow>")
+        file("TV Shows/The Expanse (2015)/Season 01/s01e01.mkv", "a".repeat(100))
+        file("TV Shows/The Expanse (2015)/The.Expanse.S01E02.Salvage.mkv", "a".repeat(100))
+        file("TV Shows/The Expanse (2015)/The.Expanse.S02E01.Safe.mkv", "a".repeat(100))
+
+        val library = LibraryScanner.scan(folder.root)
+        val seasons = library.shows[0].seasons
+        assertEquals(listOf(1, 2), seasons.map { it.number })
+        assertEquals(listOf(1, 2), seasons[0].episodes.map { it.number })
+        assertEquals("Salvage", seasons[0].episodes[1].title)
+        assertEquals("Safe", seasons[1].episodes[0].title)
+    }
+
+    @Test
     fun showFoldersAreNotWalkedTwice() {
         file("TV Shows/Buru doragon (2007)/tvshow.nfo", "<tvshow><title>Blue Dragon</title><year>2007</year></tvshow>")
         file("TV Shows/Buru doragon (2007)/Season 01/s01e01.mkv", "a".repeat(100))
