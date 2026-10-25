@@ -34,7 +34,7 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
           cache: gradle
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - name: Assemble debug APK, release APK, release AAB
         run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon
       - name: Stage artifacts

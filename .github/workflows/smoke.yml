@@ -28,7 +28,7 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
           cache: gradle
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - name: Unit tests (parser, library, binge logic)
         run: ./gradlew test --no-daemon
       - name: Assemble debug APK
