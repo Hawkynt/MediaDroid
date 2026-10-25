@@ -27,12 +27,26 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                        # the signature check walks base..head
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
           cache: gradle
       - uses: android-actions/setup-android@v4
+      # GitHub's branch-API signed-commit rule is not available on this account, so the
+      # gate itself refuses unsigned commits: only signed work can become green, and
+      # only green work can merge.
+      - name: Every commit must carry a good signature
+        if: github.event_name == 'pull_request'
+        run: |
+          bad=$(git log --format="%h %G?" "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" | grep -vE ' [GU]$' || true)
+          if [ -n "$bad" ]; then
+            echo "These commits are not signed with a verifiable key (%G? not G/U):"
+            echo "$bad"
+            exit 1
+          fi
       - name: Unit tests
         run: ./gradlew test --no-daemon
       - name: Assemble every shipping artifact
