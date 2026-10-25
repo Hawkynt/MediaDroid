@@ -9,7 +9,7 @@ private val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "bmp")
 // browser, so it is the fallback every media folder is likely to have.
 private val baseNamePreferences = mapOf(
     ArtKind.Poster to listOf("poster", "folder", "tvshow-poster", "movie-poster", "cover"),
-    ArtKind.Fanart to listOf("fanart", "background", "tvshow-fanart", "movie-backdrop"),
+    ArtKind.Fanart to listOf("fanart", "backdrop", "background", "tvshow-fanart", "movie-backdrop"),
     ArtKind.Banner to listOf("banner", "tvshow-banner"),
     ArtKind.ClearLogo to listOf("clearlogo", "tvshow-clearlogo"),
     ArtKind.DiscArt to listOf("discart", "cdart", "diskart"),

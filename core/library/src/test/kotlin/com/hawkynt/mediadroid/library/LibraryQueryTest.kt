@@ -6,10 +6,10 @@ import org.junit.Test
 class LibraryQueryTest {
 
     private val items: List<MediaItem> = listOf(
-        Movie(title = "Blade Runner 2049", year = 2017, genres = listOf("Action", "Science Fiction"), path = "/m/br2049"),
-        Movie(title = "Blade Runner", year = 1982, genres = listOf("Science Fiction"), path = "/m/br"),
+        Movie(title = "Blade Runner 2049", year = 2017, genres = listOf("Action", "Science Fiction"), path = "/m/br2049", videoPath = "/m/br2049/br2049.mkv"),
+        Movie(title = "Blade Runner", year = 1982, genres = listOf("Science Fiction"), path = "/m/br", videoPath = "/m/br/br.mkv"),
         Show(title = "Breaking Bad", year = 2008, genres = listOf("Crime", "Drama"), path = "/s/bb"),
-        Movie(title = "Undated Short", genres = listOf("Drama"), path = "/m/short"),
+        Movie(title = "Undated Short", genres = listOf("Drama"), path = "/m/short", videoPath = "/m/short/short.mkv"),
     )
 
     @Test

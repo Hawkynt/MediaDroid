@@ -6,6 +6,7 @@ sealed interface MediaItem {
     val year: Int?
     val genres: List<String>
     val path: String
+    val posterPath: String?
 }
 
 data class Movie(
@@ -13,9 +14,13 @@ data class Movie(
     override val year: Int? = null,
     override val genres: List<String> = emptyList(),
     override val path: String,
+    override val posterPath: String? = null,
+    val fanartPath: String? = null,
+    val videoPath: String,
     val plot: String? = null,
-    val posterPath: String? = null,
     val runtimeMinutes: Int? = null,
+    val cast: List<String> = emptyList(),
+    val playcount: Int = 0,
 ) : MediaItem
 
 data class Show(
@@ -23,8 +28,9 @@ data class Show(
     override val year: Int? = null,
     override val genres: List<String> = emptyList(),
     override val path: String,
+    override val posterPath: String? = null,
+    val fanartPath: String? = null,
     val plot: String? = null,
-    val posterPath: String? = null,
     val seasons: List<Season> = emptyList(),
 ) : MediaItem
 
@@ -38,4 +44,11 @@ data class Episode(
     val title: String? = null,
     val firstAired: String? = null,
     val watched: Boolean = false,
+    val videoPath: String = "",
+    val thumbPath: String? = null,
 )
+
+/** Everything one scan of one library root produced. */
+data class Library(val movies: List<Movie>, val shows: List<Show>) {
+    val items: List<MediaItem> get() = movies + shows
+}

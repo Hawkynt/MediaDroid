@@ -54,4 +54,18 @@ internal fun Element.childElements(name: String): List<Element> {
 internal fun Element.childInt(name: String): Int? =
     childText(name)?.let { Regex("\\d+").find(it)?.value?.toIntOrNull() }
 
+/**
+ * The `uniqueid` elements modern scrapers (jellyfin, tinyMediaManager) write, as
+ * `type` to value pairs — `imdb` to `tt0460681`, `tmdb` to `1622`.
+ */
+internal fun Element.uniqueIds(): Map<String, String> {
+    val result = HashMap<String, String>()
+    for (element in childElements("uniqueid")) {
+        val type = element.getAttribute("type").lowercase()
+        val value = element.textContent?.trim()
+        if (type.isNotEmpty() && !value.isNullOrEmpty()) result[type] = value
+    }
+    return result
+}
+
 class NfoFormatException(message: String) : IllegalArgumentException(message)

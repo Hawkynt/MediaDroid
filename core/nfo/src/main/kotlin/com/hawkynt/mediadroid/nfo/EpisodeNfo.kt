@@ -14,6 +14,7 @@ data class EpisodeInfo(
     val guests: List<CastMember> = emptyList(),
     val imdbId: String? = null,
     val showImdbId: String? = null,
+    val playcount: Int = 0,
 )
 
 /**
@@ -40,7 +41,8 @@ fun parseEpisodeNfo(xml: String): EpisodeInfo {
                 CastMember(name = actor.childText("name") ?: "", role = actor.childText("role"))
             }
         }.filter { it.name.isNotEmpty() },
-        imdbId = root.childText("imdbid"),
+        imdbId = root.childText("imdbid") ?: root.uniqueIds()["imdb"],
         showImdbId = root.childText("showid"),
+        playcount = root.childInt("playcount") ?: 0,
     )
 }

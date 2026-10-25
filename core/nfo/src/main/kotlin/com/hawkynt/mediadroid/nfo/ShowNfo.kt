@@ -22,6 +22,7 @@ fun parseShowNfo(xml: String): ShowInfo {
     val root = parseNfoXml(xml).rootElement()
 
     val title = root.childText("title") ?: throw NfoFormatException("tvshow NFO has no <title>.")
+    val uniqueIds = root.uniqueIds()
 
     return ShowInfo(
         title = title,
@@ -31,11 +32,11 @@ fun parseShowNfo(xml: String): ShowInfo {
         outline = root.childText("outline"),
         mpaa = root.childText("mpaa"),
         status = root.childText("status"),
-        firstAiredYear = root.childInt("premiered") ?: root.childInt("firstaired"),
+        firstAiredYear = root.childInt("premiered") ?: root.childInt("year") ?: root.childInt("firstaired"),
         studios = root.childElements("studio").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
         genres = root.childElements("genre").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
         tags = root.childElements("tag").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
-        imdbId = root.childText("imdbid") ?: root.childText("id"),
-        tmdbId = root.childText("tmdbid"),
+        imdbId = root.childText("imdbid") ?: uniqueIds["imdb"],
+        tmdbId = root.childText("tmdbid") ?: uniqueIds["tmdb"],
     )
 }

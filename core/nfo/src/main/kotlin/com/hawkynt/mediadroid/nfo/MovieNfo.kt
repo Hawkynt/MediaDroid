@@ -21,6 +21,7 @@ data class MovieInfo(
     val imdbId: String? = null,
     val tmdbId: String? = null,
     val trailer: String? = null,
+    val playcount: Int = 0,
 )
 
 data class SetInfo(val name: String)
@@ -37,6 +38,8 @@ fun parseMovieNfo(xml: String): MovieInfo {
 
     val title = root.childText("title") ?: throw NfoFormatException("movie NFO has no <title>.")
     val setElement = root.childElements("set").firstOrNull()
+    val uniqueIds = root.uniqueIds()
+    val bareId = root.childText("id")
 
     return MovieInfo(
         title = title,
@@ -59,8 +62,9 @@ fun parseMovieNfo(xml: String): MovieInfo {
                 CastMember(name = actor.childText("name") ?: "", role = actor.childText("role"))
             }
         }.filter { it.name.isNotEmpty() },
-        imdbId = root.childText("imdbid") ?: root.childText("id"),
-        tmdbId = root.childText("tmdbid"),
+        imdbId = root.childText("imdbid") ?: uniqueIds["imdb"] ?: bareId?.takeIf { it.startsWith("tt") },
+        tmdbId = root.childText("tmdbid") ?: uniqueIds["tmdb"],
         trailer = root.childText("trailer"),
+        playcount = root.childInt("playcount") ?: 0,
     )
 }

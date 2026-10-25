@@ -1,0 +1,144 @@
+package com.hawkynt.mediadroid.library
+
+import java.io.File
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+
+class LibraryScannerTest {
+
+    @get:Rule
+    val folder = TemporaryFolder()
+
+    private fun file(path: String, content: String = "x"): File =
+        File(folder.root, path).apply {
+            parentFile.mkdirs()
+            writeText(content)
+        }
+
+    @Test
+    fun recognizesShowWithSeasonFoldersAndSidecarNfos() {
+        file("TV Shows/Supernatural (2005)/tvshow.nfo", """
+            <tvshow><title>Supernatural</title><premiered>2005-09-13</premiered>
+            <genre>Drama</genre><uniqueid type="imdb">tt0460681</uniqueid></tvshow>
+        """.trimIndent())
+        file("TV Shows/Supernatural (2005)/folder.jpg")
+        file("TV Shows/Supernatural (2005)/Season 04/s04e09.mkv", "a".repeat(100))
+        file("TV Shows/Supernatural (2005)/Season 04/s04e09.nfo", """
+            <episodedetails><title>I Know What You Did Last Summer</title><season>4</season>
+            <episode>9</episode><aired>2008-11-13</aired><playcount>1</playcount></episodedetails>
+        """.trimIndent())
+        file("TV Shows/Supernatural (2005)/Season 04/s04e09-thumb.jpg")
+        file("TV Shows/Supernatural (2005)/Season 04/s04e10.mkv", "a".repeat(50))
+        file("TV Shows/Supernatural (2005)/Season 04/s04e10.nfo", """
+            <episodedetails><title>In the Beginning</title><season>4</season><episode>10</episode></episodedetails>
+        """.trimIndent())
+
+        val library = LibraryScanner.scan(folder.root)
+        assertEquals(1, library.shows.size)
+        val show = library.shows[0]
+        assertEquals("Supernatural", show.title)
+        assertEquals(2005, show.year)
+        assertEquals(listOf("Drama"), show.genres)
+        assertNotNull(show.posterPath)
+        assertEquals(1, show.seasons.size)
+        assertEquals(4, show.seasons[0].number)
+        val episodes = show.seasons[0].episodes
+        assertEquals(listOf(9, 10), episodes.map { it.number })
+        assertEquals("I Know What You Did Last Summer", episodes[0].title)
+        assertTrue(episodes[0].watched)
+        assertNotNull(episodes[0].thumbPath)
+        assertEquals(emptyList<Movie>(), library.movies)
+    }
+
+    @Test
+    fun recognizesMovieFolderWithNfoAndCover() {
+        file("Movies/Coco (2017)/movie.nfo", """
+            <movie><title>Coco - Lebendiger als das Leben!</title><year>2017</year>
+            <genre>Familie</genre><runtime>109</runtime><id>tt2380307</id></movie>
+        """.trimIndent())
+        file("Movies/Coco (2017)/Coco (2017).mp4", "a".repeat(200))
+        file("Movies/Coco (2017)/folder.jpg")
+
+        val library = LibraryScanner.scan(folder.root)
+        assertEquals(1, library.movies.size)
+        val movie = library.movies[0]
+        assertEquals("Coco - Lebendiger als das Leben!", movie.title)
+        assertEquals(2017, movie.year)
+        assertEquals(listOf("Familie"), movie.genres)
+        assertEquals(109, movie.runtimeMinutes)
+        assertNotNull(movie.posterPath)
+    }
+
+    @Test
+    fun looseVideoWithSidecarNfoIsAMovie() {
+        file("Incoming/Coco (2017).mp4", "a".repeat(100))
+        file("Incoming/Coco (2017).nfo", "<movie><title>Coco</title><year>2017</year></movie>")
+        file("Incoming/Coco (2017)-poster.jpg")
+        file("Incoming/SomeGame.sfc")
+
+        val library = LibraryScanner.scan(folder.root)
+        assertEquals(1, library.movies.size)
+        assertEquals("Coco", library.movies[0].title)
+        assertNotNull(library.movies[0].posterPath)
+    }
+
+    @Test
+    fun looseVideoNamedTitleYearNeedsNoNfo() {
+        file("Incoming/Ocean's 8 (2018).mp4", "a".repeat(100))
+
+        val library = LibraryScanner.scan(folder.root)
+        assertEquals(1, library.movies.size)
+        assertEquals("Ocean's 8", library.movies[0].title)
+        assertEquals(2018, library.movies[0].year)
+        assertNull(library.movies[0].plot)
+    }
+
+    @Test
+    fun mixedIncomingFolderYieldsOneMoviePerVideo() {
+        file("Incoming/Coco (2017).mp4", "a".repeat(100))
+        file("Incoming/Coco (2017).nfo", "<movie><title>Coco</title><year>2017</year></movie>")
+        file("Incoming/Ocean's 8 (2018).mp4", "a".repeat(100))
+
+        val library = LibraryScanner.scan(folder.root)
+        assertEquals(2, library.movies.size)
+        assertEquals(listOf("Coco", "Ocean's 8"), library.movies.map { it.title })
+    }
+
+    @Test
+    fun scansTheMaintainersRealLibraryWhenPresent() {
+        val real = File(System.getProperty("user.home"), "Media")
+        assumeTrue(real.isDirectory)
+
+        val library = LibraryScanner.scan(real)
+        val supernatural = library.shows.firstOrNull { it.title == "Supernatural" }
+        assertNotNull("Supernatural should be found in the real library", supernatural)
+        assertTrue(
+            "Supernatural season 4 should have episodes",
+            supernatural!!.seasons.any { it.number == 4 && it.episodes.isNotEmpty() },
+        )
+        assertTrue("Coco should be found among loose movies", library.movies.any { it.title.contains("Coco") })
+        assertTrue("every movie has a playable video", library.movies.all { File(it.videoPath).isFile })
+        assertTrue("every episode has a playable video",
+            library.shows.flatMap { it.seasons }.flatMap { it.episodes }.all { File(it.videoPath).isFile })
+    }
+
+    @Test
+    fun showFoldersAreNotWalkedTwice() {
+        file("TV Shows/Buru doragon (2007)/tvshow.nfo", "<tvshow><title>Blue Dragon</title><year>2007</year></tvshow>")
+        file("TV Shows/Buru doragon (2007)/Season 01/s01e01.mkv", "a".repeat(100))
+        file("TV Shows/Buru doragon (2007)/Season 01/s01e01.nfo", """
+            <episodedetails><title>Schatten und Anfang</title><season>1</season><episode>1</episode></episodedetails>
+        """.trimIndent())
+
+        val library = LibraryScanner.scan(folder.root)
+        assertEquals(1, library.shows.size)
+        assertEquals("Blue Dragon", library.shows[0].title)
+        assertEquals(emptyList<Movie>(), library.movies)
+    }
+}
