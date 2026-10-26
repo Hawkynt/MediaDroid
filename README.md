@@ -58,12 +58,12 @@ Media libraries on Android are usually either a raw file browser or a client of 
 
 ## 📦 Installation
 
-Android 8.0 (API 26) or newer, phone, tablet, or TV box. Not on the Play Store (yet): download the APK from [Releases](https://github.com/Hawkynt/MediaDroid/releases) — a dated stable build or a `nightly-*` build — and enable installation from unknown sources. Storage stays on your device; the app needs access only to the folders you point it at.
+Android 8.0 (API 26) or newer, phone, tablet, or TV box. Not on the Play Store (yet): download the APK from [Releases](https://github.com/Hawkynt/MediaDroid/releases) — a dated stable build or a `nightly-*` build. Take `MediaDroid.apk`, the signed release build, and enable installation from unknown sources; `MediaDroid-debug.apk` is for development and cannot update over it. Storage stays on your device; the app needs access only to the folders you point it at.
 
 ## 🚀 Quick start
 
 ```bash
-adb install app-debug.apk
+adb install MediaDroid.apk
 ```
 
 Open MediaDroid, grant file access, point it at the root of your media folders and hit Scan: the wall fills with covers, and plots, seasons and episode thumbs come from the `.nfo` files already sitting there. Tapping a show offers Play next — episodes run in order and mark themselves watched.

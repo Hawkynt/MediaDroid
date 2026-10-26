@@ -37,27 +37,32 @@ jobs:
       - uses: android-actions/setup-android@v4
       - name: Assemble debug APK, release APK, release AAB
         run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon
-      - name: Stage artifacts
+      # Android refuses to install an APK without a signature ("package appears to be invalid"),
+      # so nothing unsigned is ever published. The release key is a PKCS12 keystore held in the
+      # repo secrets; a run without them fails here rather than shipping something uninstallable.
+      - name: Sign release APK and AAB with the release key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret missing; refusing to publish an unsigned release"
+            exit 1
+          fi
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk              dist/MediaDroid-debug.apk
-          cp app/build/outputs/apk/release/app-release-unsigned.apk dist/MediaDroid-release-unsigned.apk
-          cp app/build/outputs/bundle/release/app-release.aab       dist/MediaDroid-release.aab
-      # ----- SIGNING (uncomment once an upload keystore lives in the repo secrets) --------------
-      # The debug APK is installable as-is; the unsigned release APK is not. To ship signed
-      # releases, store the keystore base64-encoded in repo secrets and sign here:
-      # - name: Sign release APK with the upload key
-      #   env:
-      #     KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-      #     KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      #     KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      #     KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-      #   run: |
-      #     echo "$KEYSTORE_BASE64" | base64 -d > upload-keystore.jks
-      #     build-tools/*/apksigner sign --ks upload-keystore.jks \
-      #       --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD \
-      #       --out dist/MediaDroid.apk dist/MediaDroid-release-unsigned.apk
-      #     rm upload-keystore.jks
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
+          "$apksigner" sign --ks "$RUNNER_TEMP/release.p12" --ks-type PKCS12 --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --v4-signing-enabled false \
+            --out dist/MediaDroid.apk app/build/outputs/apk/release/app-release-unsigned.apk
+          "$apksigner" verify --verbose dist/MediaDroid.apk
+          jarsigner -keystore "$RUNNER_TEMP/release.p12" -storetype PKCS12 \
+            -storepass:env KEYSTORE_PASSWORD -keypass:env KEYSTORE_PASSWORD \
+            -signedjar dist/MediaDroid.aab app/build/outputs/bundle/release/app-release.aab "$KEY_ALIAS"
+          rm "$RUNNER_TEMP/release.p12"
+      - name: Stage debug APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk dist/MediaDroid-debug.apk
       - uses: actions/upload-artifact@v4
         with:
           name: app-artifacts
