@@ -185,7 +185,12 @@ fun SettingsScreen(store: StateStore, rootPath: String, onChangeFolder: () -> Un
         )
 
         Spacer(Modifier.height(16.dp))
-        Text("Picture", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text("Default picture", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Every video starts with this; the gear in the player changes one video on its own.",
+            fontSize = 15.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         SliderRow("Brightness", settings.brightness, -1f..1f, "%.2f".format(settings.brightness)) { v -> update { it.brightness = v } }
         SliderRow("Gamma", settings.gamma, 0.5f..2f, "%.2f".format(settings.gamma)) { v -> update { it.gamma = v } }
         SliderRow("Contrast", settings.contrast, 0.5f..2f, "%.2f".format(settings.contrast)) { v -> update { it.contrast = v } }

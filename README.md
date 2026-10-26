@@ -40,8 +40,9 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - No database: the folders are the library. It is re-read every time the app opens or comes back to the foreground, so a film copied onto the SD card is simply there. Watched marks and resume positions are the only things the app keeps.
 - Dark cinema theme and its own launcher icon, adaptive and themed-icon ready.
 - Subtitles on/off with a preferred language, and a picker for every audio and subtitle track a file carries.
-- Playback speed from 0.2× to 5×, right on the player screen.
-- Parent-guarded settings behind a four-digit PIN shown on screen as words — a child who cannot read cannot get in. There: default speed, loudness boost for unnormalized audio, brightness/gamma/contrast/color for dark videos, subtitle and stream languages, and a maximum-age mode that hides content whose NFO certification is too old (FSK, MPAA and TV ratings understood).
+- The player shows nothing but the picture: a tap brings the controls up, a few seconds untouched fade them out, and the status and navigation bars stay hidden while watching.
+- The player's gear holds playback speed from 0.2× to 5× (starting at the default speed), subtitles and track pickers, and brightness/gamma/contrast/color for the video on screen — remembered per video, live as you drag.
+- Parent-guarded settings behind a four-digit PIN shown on screen as words — a child who cannot read cannot get in. There: default speed, loudness boost for unnormalized audio, the default brightness/gamma/contrast/color every video starts from, subtitle and stream languages, and a maximum-age mode that hides content whose NFO certification is too old (FSK, MPAA and TV ratings understood).
 - Instant search across the whole library.
 - Filter by genre and year, group by decade, facet counts as you browse.
 - Big touch targets and high contrast — usable by kids and older users without glasses-or-guessing.

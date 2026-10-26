@@ -1,12 +1,22 @@
 package com.hawkynt.mediadroid.data
 
 import android.content.Context
+import com.hawkynt.mediadroid.player.PictureAdjustment
 import java.io.File
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 @Serializable
 data class ResumeInfo(val positionMs: Long = 0, val durationMs: Long = 0)
+
+/** A picture correction stored for one video; see [PictureAdjustment] for the ranges. */
+@Serializable
+data class PictureOverride(
+    val brightness: Float = 0f,
+    val gamma: Float = 1f,
+    val contrast: Float = 1f,
+    val saturation: Float = 1f,
+)
 
 /**
  * Parent-guarded playback and library preferences. Picture values are neutral
@@ -34,6 +44,7 @@ data class AppData(
     var sidebarExpanded: Boolean? = null,      // null: decided by the screen width
     val watched: MutableList<String> = mutableListOf(),
     val resume: MutableMap<String, ResumeInfo> = mutableMapOf(),
+    val picture: MutableMap<String, PictureOverride> = mutableMapOf(),
     var settings: Settings = Settings(),
 )
 
@@ -89,4 +100,24 @@ class StateStore(context: Context) {
     }
 
     fun resumeFor(videoPath: String): ResumeInfo? = data.resume[videoPath]
+
+    /** The household's default picture, from the guarded settings. */
+    fun defaultPicture(): PictureAdjustment = with(data.settings) {
+        PictureAdjustment(brightness, gamma, contrast, saturation)
+    }
+
+    /** The picture for [videoPath]: its own correction if one was set, else the default. */
+    fun pictureFor(videoPath: String): PictureAdjustment =
+        data.picture[videoPath]?.let { PictureAdjustment(it.brightness, it.gamma, it.contrast, it.saturation) }
+            ?: defaultPicture()
+
+    /** Remembers [picture] for [videoPath]; the default (or null) drops the video's own entry. */
+    fun savePicture(videoPath: String, picture: PictureAdjustment?) {
+        if (picture == null || picture == defaultPicture()) {
+            data.picture.remove(videoPath)
+        } else {
+            data.picture[videoPath] = PictureOverride(picture.brightness, picture.gamma, picture.contrast, picture.saturation)
+        }
+        save()
+    }
 }
