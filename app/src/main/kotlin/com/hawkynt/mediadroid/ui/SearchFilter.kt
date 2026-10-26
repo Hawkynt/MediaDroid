@@ -47,7 +47,7 @@ fun SearchScreen(library: Library, store: com.hawkynt.mediadroid.data.StateStore
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(results, key = { it.path }) { item ->
+            items(results, key = { it.key }) { item ->
                 PosterCard(item, onClick = { onOpen(item) })
             }
         }

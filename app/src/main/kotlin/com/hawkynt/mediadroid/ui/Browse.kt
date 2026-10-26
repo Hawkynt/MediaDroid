@@ -89,7 +89,7 @@ fun BrowseScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            items(items, key = { it.path }) { item ->
+            items(items, key = { it.key }) { item ->
                 PosterCard(item, onClick = { onOpen(item) })
             }
         }

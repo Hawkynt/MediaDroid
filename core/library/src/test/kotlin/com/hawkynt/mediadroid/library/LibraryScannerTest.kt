@@ -22,6 +22,22 @@ class LibraryScannerTest {
         }
 
     @Test
+    fun looseMoviesAndShowsSharingAFolderKeepDistinctKeys() {
+        // A card wall keys its cards by item; several loose files in one folder share that folder
+        // as their path, so the path alone cannot be the key.
+        file("Movies/Coco (2017).mkv")
+        file("Movies/Up (2009).mkv")
+        file("Movies/Firefly.S01E01.Serenity.mkv")
+        file("Movies/Dark.S01E01.Secrets.mkv")
+
+        val library = LibraryScanner.scan(File(folder.root, "Movies"))
+        assertEquals(listOf("Coco", "Up"), library.movies.map { it.title })
+        assertEquals(listOf("Dark", "Firefly"), library.shows.map { it.title })
+        assertEquals(1, library.items.map { it.path }.distinct().size)
+        assertEquals(library.items.size, library.items.map { it.key }.distinct().size)
+    }
+
+    @Test
     fun recognizesShowWithSeasonFoldersAndSidecarNfos() {
         file("TV Shows/Supernatural (2005)/tvshow.nfo", """
             <tvshow><title>Supernatural</title><premiered>2005-09-13</premiered>

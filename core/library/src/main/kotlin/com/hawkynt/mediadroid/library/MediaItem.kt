@@ -12,6 +12,12 @@ sealed interface MediaItem {
 
     /** Minimum viewer age derived from the NFO certification; null when unknown. */
     val minAge: Int?
+
+    /**
+     * Unique within one [Library]. [path] is not: loose files in one folder all share it, and
+     * several shows can be grouped out of one dump folder.
+     */
+    val key: String
 }
 
 data class Movie(
@@ -29,7 +35,9 @@ data class Movie(
     val playcount: Int = 0,
     val intro: TimeRange? = null,
     val credits: TimeRange? = null,
-) : MediaItem
+) : MediaItem {
+    override val key: String get() = "movie:$videoPath"
+}
 
 data class Show(
     override val title: String,
@@ -41,7 +49,9 @@ data class Show(
     val fanartPath: String? = null,
     val plot: String? = null,
     val seasons: List<Season> = emptyList(),
-) : MediaItem
+) : MediaItem {
+    override val key: String get() = "show:$path:${title.lowercase()}"
+}
 
 data class Season(
     val number: Int,
