@@ -28,6 +28,7 @@ jobs:
   build:
     needs: ci
     uses: ./.github/workflows/_build.yml
+    secrets: inherit                           # the release key signs the APK and AAB
 
   release:
     needs: build
