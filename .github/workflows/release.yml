@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write                         # the changelog goes to main as a pull request
+  actions: write                               # ...whose gate this workflow dispatches
 
 # Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
 # the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
@@ -53,24 +55,38 @@ jobs:
           marker: ${{ env.REL }}
           notes: RELEASE_NOTES.md
 
-      # The changelog commit happens BEFORE the release is cut, and the tag is placed ON that
-      # commit (target_commitish below) so the bookkeeping commit stays inside the tag.
-      - name: Commit changelog (if it changed)
-        run: |
-          if ! git diff --quiet -- CHANGELOG.md; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add CHANGELOG.md
-            git commit -m "* update changelog for $REL [skip ci]"
-            git push
-          fi
-          echo "REL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-
-      - name: Create GitHub Release (dated marker; tags vYYYYMMDD at the changelog commit)
+      - name: Create GitHub Release (dated marker; tags vYYYYMMDD at the commit that was built)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.REL }}
           name: ${{ env.REL }}
-          target_commitish: ${{ env.REL_SHA }}
+          target_commitish: ${{ github.sha }}
           files: dist/*
           body_path: RELEASE_NOTES.md            # commit-message changelog, not GitHub's PR notes
+
+      # main takes changes through signed pull requests only, so the changelog cannot be pushed
+      # there. It is committed through the contents API instead, which GitHub signs, onto a branch
+      # of its own, and offered as a pull request. A pull request opened with the workflow token
+      # starts no workflow, so the gate is dispatched on that branch explicitly. The generator
+      # filters its own "* update changelog for vYYYYMMDD" commit, so it never shows up in a later
+      # release's notes even though it lands after the tag.
+      - name: Offer the changelog as a pull request (if it changed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$(git status --porcelain -- CHANGELOG.md)" ]; then
+            echo "::notice::CHANGELOG.md is unchanged."
+            exit 0
+          fi
+          branch="changelog/$REL"
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$branch" -f sha="$GITHUB_SHA" >/dev/null
+          args=(-X PUT "repos/$GITHUB_REPOSITORY/contents/CHANGELOG.md"
+                -f message="* update changelog for $REL" -f branch="$branch" -F content=@-)
+          blob=$(gh api "repos/$GITHUB_REPOSITORY/contents/CHANGELOG.md?ref=$branch" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$blob" ]; then
+            args+=(-f sha="$blob")
+          fi
+          base64 -w0 CHANGELOG.md | gh api "${args[@]}" --jq '"committed \(.commit.sha[0:8]), verified=\(.commit.verification.verified)"'
+          gh pr create --base main --head "$branch" --title "* update changelog for $REL" \
+            --body "Changelog for the $REL release, generated from the commit subjects since the previous release."
+          gh workflow run ci.yml --ref "$branch"
