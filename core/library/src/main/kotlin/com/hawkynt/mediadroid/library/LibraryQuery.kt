@@ -1,5 +1,15 @@
 package com.hawkynt.mediadroid.library
 
+/** How the poster wall is ordered. */
+enum class SortOrder { TITLE, YEAR_NEW, YEAR_OLD }
+
+/** What the Filters screen narrows the poster wall to; the default shows everything A–Z. */
+data class BrowseFilter(
+    val genres: Set<String> = emptySet(),
+    val decade: Int? = null,
+    val sort: SortOrder = SortOrder.TITLE,
+)
+
 /**
  * The filtering and grouping the browse screens run on. Everything here is pure so
  * it stays fast on a shelf tablet and testable without a device.
@@ -51,6 +61,29 @@ object LibraryQuery {
             .eachCount()
             .toList()
             .sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first.lowercase() })
+
+    /** The poster wall: [items] cut down by the max-age mode and [filter], then sorted. */
+    fun browse(items: List<MediaItem>, filter: BrowseFilter, maxAgeYears: Int = 0): List<MediaItem> {
+        var result = filterByAge(items, maxAgeYears)
+        result = filterByGenres(result, filter.genres)
+        filter.decade?.let { result = filterByYear(result, it, it + 9) }
+        return when (filter.sort) {
+            SortOrder.TITLE -> result.sortedBy { it.title.lowercase() }
+            SortOrder.YEAR_NEW -> result.sortedWith(compareBy<MediaItem> { it.year == null }.thenByDescending { it.year })
+            SortOrder.YEAR_OLD -> result.sortedWith(compareBy<MediaItem> { it.year == null }.thenBy { it.year })
+        }
+    }
+
+    /**
+     * The title a hero banner shows: the first of [preferredKeys] (what is being watched) that has
+     * a backdrop, else any item with a backdrop, else simply the first item.
+     */
+    fun featured(items: List<MediaItem>, preferredKeys: List<String> = emptyList()): MediaItem? {
+        val byKey = items.associateBy { it.key }
+        return preferredKeys.firstNotNullOfOrNull { key -> byKey[key]?.takeIf { it.fanartPath != null } }
+            ?: items.firstOrNull { it.fanartPath != null }
+            ?: items.firstOrNull()
+    }
 
     const val UNDATED = -1
 }

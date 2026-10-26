@@ -13,6 +13,9 @@ sealed interface MediaItem {
     /** Minimum viewer age derived from the NFO certification; null when unknown. */
     val minAge: Int?
 
+    /** The backdrop (`fanart.jpg`) a hero banner or details screen paints behind the title. */
+    val fanartPath: String?
+
     /**
      * Unique within one [Library]. [path] is not: loose files in one folder all share it, and
      * several shows can be grouped out of one dump folder.
@@ -27,7 +30,7 @@ data class Movie(
     override val path: String,
     override val posterPath: String? = null,
     override val minAge: Int? = null,
-    val fanartPath: String? = null,
+    override val fanartPath: String? = null,
     val videoPath: String,
     val plot: String? = null,
     val runtimeMinutes: Int? = null,
@@ -46,7 +49,7 @@ data class Show(
     override val path: String,
     override val posterPath: String? = null,
     override val minAge: Int? = null,
-    val fanartPath: String? = null,
+    override val fanartPath: String? = null,
     val plot: String? = null,
     val seasons: List<Season> = emptyList(),
 ) : MediaItem {
@@ -69,7 +72,16 @@ data class Episode(
     val credits: TimeRange? = null,
 )
 
+/** The two halves of the library the sidebar switches between. */
+enum class LibrarySection { MOVIES, SHOWS }
+
 /** Everything one scan of one library root produced. */
 data class Library(val movies: List<Movie>, val shows: List<Show>) {
     val items: List<MediaItem> get() = movies + shows
+
+    /** Only the items of one [section], in scan order. */
+    fun itemsIn(section: LibrarySection): List<MediaItem> = when (section) {
+        LibrarySection.MOVIES -> movies
+        LibrarySection.SHOWS -> shows
+    }
 }
