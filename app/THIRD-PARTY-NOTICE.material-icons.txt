@@ -1,0 +1,9 @@
+src/main/res/drawable/ic_movie.xml, ic_tv.xml, ic_menu.xml, ic_menu_open.xml,
+ic_folder_open.xml, ic_filter_list.xml, ic_video_library.xml
+
+Path data copied verbatim from Material Icons (filled style, 24px) in
+google/material-design-icons (https://github.com/google/material-design-icons),
+src/<category>/<name>/materialicons/24px.svg.
+
+Copyright Google LLC. Licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0).

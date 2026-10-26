@@ -34,7 +34,11 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - AC3, E-AC3, DTS, TrueHD and other exotic audio tracks play through a bundled FFmpeg decoder, even on hardware without them.
 - Binge mode: when an episode ends, the next unwatched one starts — season by season, in order. Intros and credits are skipped when the file's Matroska chapters or the NFO sidecar attribute them.
 - Resume: every item remembers where you stopped.
-- Movies and Shows are separate main-menu tabs.
+- A sidebar on the left switches between Movies and TV Shows (plus Search, Filters and Settings); the content side shows only that selection. One tap collapses it to an icon rail and expands it again, and it remembers how you left it.
+- The home of each section reads like the streaming apps everyone already knows: a backdrop hero for one title with Play and More info, a Continue watching row, then the poster wall. Works with touch, a mouse, or a TV remote's D-pad.
+- The media folder is chosen with Android's own folder picker — internal storage, SD card or USB drive — with a typed path as the fallback for boxes that ship no picker.
+- No database: the folders are the library. It is re-read every time the app opens or comes back to the foreground, so a film copied onto the SD card is simply there. Watched marks and resume positions are the only things the app keeps.
+- Dark cinema theme and its own launcher icon, adaptive and themed-icon ready.
 - Subtitles on/off with a preferred language, and a picker for every audio and subtitle track a file carries.
 - Playback speed from 0.2× to 5×, right on the player screen.
 - Parent-guarded settings behind a four-digit PIN shown on screen as words — a child who cannot read cannot get in. There: default speed, loudness boost for unnormalized audio, brightness/gamma/contrast/color for dark videos, subtitle and stream languages, and a maximum-age mode that hides content whose NFO certification is too old (FSK, MPAA and TV ratings understood).
@@ -66,7 +70,7 @@ Android 8.0 (API 26) or newer, phone, tablet, or TV box. Not on the Play Store (
 adb install MediaDroid.apk
 ```
 
-Open MediaDroid, grant file access, point it at the root of your media folders and hit Scan: the wall fills with covers, and plots, seasons and episode thumbs come from the `.nfo` files already sitting there. Tapping a show offers Play next — episodes run in order and mark themselves watched.
+Open MediaDroid, grant file access, tap **Choose media folder** and pick the root of your media folders in the system folder picker: the library is read, the sidebar opens on Movies, and the wall fills with covers, and plots, seasons and episode thumbs come from the `.nfo` files already sitting there. Tapping a show offers Play next — episodes run in order and mark themselves watched.
 
 ## 🖼️ Screenshots
 

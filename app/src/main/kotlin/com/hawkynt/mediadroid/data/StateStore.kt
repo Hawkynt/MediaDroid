@@ -30,7 +30,8 @@ data class Settings(
 
 @Serializable
 data class AppData(
-    var rootPath: String = "/sdcard/Media",
+    var rootPath: String = "",                 // "" until a media folder is chosen
+    var sidebarExpanded: Boolean? = null,      // null: decided by the screen width
     val watched: MutableList<String> = mutableListOf(),
     val resume: MutableMap<String, ResumeInfo> = mutableMapOf(),
     var settings: Settings = Settings(),

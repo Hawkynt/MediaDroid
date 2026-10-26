@@ -134,7 +134,7 @@ fun PinGate(
  * the maximum age for the library. Every change is saved straight away.
  */
 @Composable
-fun SettingsScreen(store: StateStore) {
+fun SettingsScreen(store: StateStore, rootPath: String, onChangeFolder: () -> Unit) {
     var unlocked by remember { mutableStateOf(false) }
     if (!unlocked) {
         PinGate(store, onUnlocked = { unlocked = true })
@@ -152,6 +152,14 @@ fun SettingsScreen(store: StateStore) {
     ) {
         Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(16.dp))
+
+        Text("Library", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text("Media folder", fontSize = 18.sp)
+        Text(rootPath, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onChangeFolder) { Text("Choose another folder", fontSize = 18.sp) }
+        Spacer(Modifier.height(24.dp))
 
         Text("Playback", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
