@@ -27,6 +27,7 @@ env:
 jobs:
   build:
     uses: ./.github/workflows/_build.yml
+    secrets: inherit                           # the release key signs the APK and AAB
     with:
       ref: ${{ github.sha }}
 
