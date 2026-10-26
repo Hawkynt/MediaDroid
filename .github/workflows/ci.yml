@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0                        # the signature check walks base..head
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -38,12 +38,17 @@ jobs:
       # GitHub's branch-API signed-commit rule is not available on this account, so the
       # gate itself refuses unsigned commits: only signed work can become green, and
       # only green work can merge.
+      # GitHub's own verification is asked rather than git on the runner, which knows neither
+      # the authors' SSH signing keys nor GitHub's web-flow key and reads both as unverified.
       - name: Every commit must carry a good signature
         if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          bad=$(git log --format="%h %G?" "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" | grep -vE ' [GU]$' || true)
+          bad=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/${{ github.event.pull_request.number }}/commits" \
+            --jq '.[] | select(.commit.verification.verified | not) | "\(.sha[0:7]) \(.commit.verification.reason)"')
           if [ -n "$bad" ]; then
-            echo "These commits are not signed with a verifiable key (%G? not G/U):"
+            echo "These commits are not signed with a key GitHub verifies:"
             echo "$bad"
             exit 1
           fi
