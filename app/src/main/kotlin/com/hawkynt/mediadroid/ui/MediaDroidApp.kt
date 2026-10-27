@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -62,7 +63,7 @@ sealed interface Screen {
     data object Filters : Screen
     data object Settings : Screen
     data class Details(val item: MediaItem) : Screen
-    data class Player(val queue: List<Playable>, val startIndex: Int) : Screen
+    data class Player(val queue: List<Playable>, val startIndex: Int, val autoAdvance: Boolean) : Screen
 }
 
 /** Authorities whose tree document ids [StorageVolumes] can turn back into file paths. */
@@ -91,6 +92,13 @@ fun MediaDroidApp(store: StateStore) {
     var screen by remember { mutableStateOf<Screen>(Screen.Browse(LibrarySection.MOVIES)) }
     var lastBrowse by remember { mutableStateOf<Screen>(Screen.Browse(LibrarySection.MOVIES)) }
     var filter by remember { mutableStateOf(BrowseFilter()) }
+    var searchQuery by remember { mutableStateOf("") }
+    // Where Back from a title's details leads: the wall or the search it was opened from.
+    var detailsReturn by remember { mutableStateOf<Screen>(Screen.Browse(LibrarySection.MOVIES)) }
+    // Scroll positions outlive a visit to a title's details, so Back lands where you were.
+    val movieGrid = rememberLazyGridState()
+    val showGrid = rememberLazyGridState()
+    val searchGrid = rememberLazyGridState()
     val wide = LocalConfiguration.current.screenWidthDp >= 600
     var sidebarExpanded by remember { mutableStateOf(store.data.sidebarExpanded ?: wide) }
 
@@ -150,7 +158,8 @@ fun MediaDroidApp(store: StateStore) {
             null
         }
         if (path == null) {
-            scanError = "That folder is not on this device's storage. Pick one on the internal storage, an SD card or a USB drive."
+            scanError = "That folder is not on this device's storage. " +
+                "Pick one on the internal storage, an SD card or a USB drive."
         } else {
             scan(path, adopt = true)
         }
@@ -201,21 +210,39 @@ fun MediaDroidApp(store: StateStore) {
         return
     }
 
-    fun openDetails(item: MediaItem) { screen = Screen.Details(item) }
-    fun playMovie(movie: Movie) {
-        screen = Screen.Player(listOf(movie.playable()), 0)
+    fun openDetails(item: MediaItem) {
+        if (screen !is Screen.Details) detailsReturn = screen
+        screen = Screen.Details(item)
     }
-    fun playShow(show: Show, fromEpisode: Episode? = null) {
+
+    /**
+     * Where a queue picks up: the file asked for, else one with a resume point, else the first not
+     * yet watched — so Play on a show continues it instead of starting at the pilot again.
+     */
+    fun startOf(queue: List<Playable>, path: String?): Int =
+        path?.let { p -> queue.indexOfFirst { it.videoPath == p } }?.takeIf { it >= 0 }
+            ?: queue.indexOfFirst { store.resumeFor(it.videoPath) != null }.takeIf { it >= 0 }
+            ?: queue.indexOfFirst { !store.isWatched(it.videoPath) }.takeIf { it >= 0 }
+            ?: 0
+
+    fun playMovie(movie: Movie, path: String? = null) {
+        val queue = movie.playQueue()
+        // The parts of one movie always run on; binge mode is about episodes.
+        screen = Screen.Player(queue, startOf(queue, path), autoAdvance = true)
+    }
+    fun playShow(show: Show, fromEpisode: Episode? = null, path: String? = null) {
         val queue = show.playQueue()
         if (queue.isEmpty()) return
-        val index = fromEpisode?.let { target -> queue.indexOfFirst { it.videoPath == target.videoPath } }
-            ?.takeIf { it >= 0 } ?: 0
-        screen = Screen.Player(queue, index)
+        screen = Screen.Player(
+            queue,
+            startOf(queue, fromEpisode?.videoPath ?: path),
+            autoAdvance = store.data.settings.bingeWatching,
+        )
     }
-    fun play(item: MediaItem) {
+    fun play(item: MediaItem, path: String? = null) {
         when (item) {
-            is Movie -> playMovie(item)
-            is Show -> playShow(item)
+            is Movie -> playMovie(item, path)
+            is Show -> playShow(item, path = path)
         }
     }
     fun navigate(target: Screen) {
@@ -225,12 +252,12 @@ fun MediaDroidApp(store: StateStore) {
 
     when (val s = screen) {
         is Screen.Details -> {
-            BackHandler { screen = lastBrowse }
+            BackHandler { screen = detailsReturn }
             DetailsScreen(
                 item = s.item,
                 store = store,
-                onBack = { screen = lastBrowse },
-                onPlayMovie = ::playMovie,
+                onBack = { screen = detailsReturn },
+                onPlayMovie = { playMovie(it) },
                 onPlayShow = { show, episode -> playShow(show, episode) },
             )
             return
@@ -240,6 +267,7 @@ fun MediaDroidApp(store: StateStore) {
                 queue = s.queue,
                 startIndex = s.startIndex,
                 store = store,
+                autoAdvance = s.autoAdvance,
                 onExit = { screen = lastBrowse },
             )
             return
@@ -276,11 +304,19 @@ fun MediaDroidApp(store: StateStore) {
                     store = store,
                     filter = filter,
                     rootPath = rootPath,
+                    gridState = if (s.section == LibrarySection.MOVIES) movieGrid else showGrid,
                     onOpen = ::openDetails,
-                    onPlay = ::play,
+                    onPlay = { item, path -> play(item, path) },
                     onClearFilter = { filter = BrowseFilter() },
                 )
-                Screen.Search -> SearchScreen(lib, store, onOpen = ::openDetails)
+                Screen.Search -> SearchScreen(
+                    library = lib,
+                    store = store,
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    gridState = searchGrid,
+                    onOpen = ::openDetails,
+                )
                 Screen.Filters -> FiltersScreen(lib, filter, onFilterChange = { filter = it })
                 Screen.Settings -> SettingsScreen(store, rootPath = rootPath, onChangeFolder = ::launchPicker)
                 else -> Unit
@@ -289,7 +325,17 @@ fun MediaDroidApp(store: StateStore) {
     }
 }
 
-fun Movie.playable() = Playable(title, year?.toString(), videoPath, posterPath, intro, credits)
+/** The movie's files in order; a multi-part movie labels them `Part 1 of 2`. */
+fun Movie.playQueue(): List<Playable> = parts.mapIndexed { i, part ->
+    Playable(
+        title = title,
+        subtitle = if (parts.size > 1) "Part ${i + 1} of ${parts.size}" else year?.toString(),
+        videoPath = part,
+        posterPath = posterPath,
+        intro = intro.takeIf { i == 0 },
+        credits = credits.takeIf { i == parts.lastIndex },
+    )
+}
 
 /** All episodes in binge order, labelled `S04 · E09 · Title`. */
 fun Show.playQueue(): List<Playable> =

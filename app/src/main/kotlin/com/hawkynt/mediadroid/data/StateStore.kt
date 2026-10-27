@@ -35,7 +35,8 @@ data class Settings(
     var subtitleLanguage: String = "",
     var audioLanguage: String = "",
     var maxAgeYears: Int = 0,                 // 0 = off, else hide content above
-    var pin: String = "",                     // four digits, "" until first set up
+    var bingeWatching: Boolean = true,        // a finished episode starts the next one
+    var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
 )
 
 @Serializable
@@ -116,7 +117,8 @@ class StateStore(context: Context) {
         if (picture == null || picture == defaultPicture()) {
             data.picture.remove(videoPath)
         } else {
-            data.picture[videoPath] = PictureOverride(picture.brightness, picture.gamma, picture.contrast, picture.saturation)
+            data.picture[videoPath] =
+                PictureOverride(picture.brightness, picture.gamma, picture.contrast, picture.saturation)
         }
         save()
     }

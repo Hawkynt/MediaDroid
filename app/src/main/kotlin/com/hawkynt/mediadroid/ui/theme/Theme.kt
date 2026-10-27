@@ -18,8 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 
 /** Night-blue cinema dark with a warm amber accent — the launcher icon's colours. */
 object MediaDroidColors {
@@ -59,11 +61,29 @@ private val Scheme = darkColorScheme(
     outlineVariant = MediaDroidColors.Outline,
 )
 
+/**
+ * Line heights relative to the font size: text set with a larger `fontSize` keeps a matching line
+ * height, so a title that wraps stacks its lines instead of drawing them over each other.
+ */
+private fun TextStyle.relativeLines() = copy(lineHeight = 1.25.em)
+
 private val Type = Typography().run {
     copy(
-        headlineLarge = headlineLarge.copy(fontWeight = FontWeight.Bold),
-        headlineMedium = headlineMedium.copy(fontWeight = FontWeight.Bold),
-        titleLarge = titleLarge.copy(fontWeight = FontWeight.Bold),
+        displayLarge = displayLarge.relativeLines(),
+        displayMedium = displayMedium.relativeLines(),
+        displaySmall = displaySmall.relativeLines(),
+        headlineLarge = headlineLarge.relativeLines().copy(fontWeight = FontWeight.Bold),
+        headlineMedium = headlineMedium.relativeLines().copy(fontWeight = FontWeight.Bold),
+        headlineSmall = headlineSmall.relativeLines(),
+        titleLarge = titleLarge.relativeLines().copy(fontWeight = FontWeight.Bold),
+        titleMedium = titleMedium.relativeLines(),
+        titleSmall = titleSmall.relativeLines(),
+        bodyLarge = bodyLarge.relativeLines(),
+        bodyMedium = bodyMedium.relativeLines(),
+        bodySmall = bodySmall.relativeLines(),
+        labelLarge = labelLarge.relativeLines(),
+        labelMedium = labelMedium.relativeLines(),
+        labelSmall = labelSmall.relativeLines(),
     )
 }
 

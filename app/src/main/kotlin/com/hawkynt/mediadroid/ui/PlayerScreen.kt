@@ -73,6 +73,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.ui.PlayerView
 import com.hawkynt.mediadroid.R
 import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.library.SkipRules
 import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
 import java.io.File
 import kotlinx.coroutines.delay
@@ -96,6 +97,7 @@ fun PlayerScreen(
     queue: List<Playable>,
     startIndex: Int,
     store: StateStore,
+    autoAdvance: Boolean,
     onExit: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -164,9 +166,10 @@ fun PlayerScreen(
         }
     }
 
-    // Intro/credits skip targets for the current item: Matroska chapters first,
-    // NFO sidecar spans as fallback (see SkipRules).
-    var introEndMs by remember { mutableStateOf<Long?>(null) }
+    // Intro/credits for the current item: Matroska chapters first, NFO sidecar spans as fallback
+    // (see SkipRules). Only acted on while the household has skipping switched on.
+    val skipping = settings.skipIntroCredits
+    var introSpanMs by remember { mutableStateOf<LongRange?>(null) }
     var creditsStartMs by remember { mutableStateOf<Long?>(null) }
 
     // Preferred languages steer automatic selection for each new item. The
@@ -182,13 +185,12 @@ fun PlayerScreen(
         val chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             com.hawkynt.mediadroid.library.MatroskaChapters.parse(File(playable.videoPath))
         }
-        introEndMs = com.hawkynt.mediadroid.library.SkipRules.introEndMs(chapters, playable.intro)
-        creditsStartMs = com.hawkynt.mediadroid.library.SkipRules.creditsStartMs(chapters, playable.credits)
+        introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, playable.intro) else null
+        creditsStartMs = if (skipping) SkipRules.creditsStartMs(chapters, playable.credits) else null
         player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(playable.videoPath))))
         val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
-        val intro = introEndMs
         // Resume where you left off — but never back into a known intro.
-        val startPos = if (intro != null && resumePos in 1 until intro) intro else resumePos
+        val startPos = SkipRules.skipTarget(resumePos, introSpanMs) ?: resumePos
         if (startPos > 0) player.seekTo(startPos)
         player.prepare()
         player.playWhenReady = true
@@ -203,7 +205,7 @@ fun PlayerScreen(
 
     fun finishCurrent() {
         store.markWatched(queue[index].videoPath)
-        if (index + 1 < queue.size) index++ else finished = true
+        if (autoAdvance && index + 1 < queue.size) index++ else finished = true
     }
 
     DisposableEffect(player) {
@@ -240,16 +242,23 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(player) {
+        var tick = 0
         while (true) {
-            delay(3_000)
+            delay(500)
             if (!player.isPlaying) continue
+            val position = player.currentPosition
+            // Inside a known intro (also one after a cold open): jump to its end.
+            SkipRules.skipTarget(position, introSpanMs)?.let {
+                player.seekTo(it)
+                continue
+            }
             val credits = creditsStartMs
-            if (credits != null && player.currentPosition >= credits) {
-                // The credits have begun: binge straight to the next episode.
+            if (credits != null && position >= credits) {
+                // The credits have begun: end the episode, binge mode takes it from there.
                 player.seekTo(player.duration)
                 continue
             }
-            store.saveResume(queue[index].videoPath, player.currentPosition, player.duration)
+            if (++tick % 6 == 0) store.saveResume(queue[index].videoPath, position, player.duration)
         }
     }
 
@@ -258,10 +267,6 @@ fun PlayerScreen(
     }
 
     val current = queue[index]
-    // The picture correction runs as one colour matrix on the video layer (see PictureAdjustment).
-    val pictureLayer = Modifier.graphicsLayer {
-        colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(ColorMatrix(picture.colorMatrix()))
-    }
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { androidContext ->
@@ -289,7 +294,7 @@ fun PlayerScreen(
                     playerView = this
                 }
             },
-            modifier = pictureLayer.fillMaxSize(),
+            modifier = Modifier.pictureCorrection(picture).fillMaxSize(),
         )
         // Our controls ride on top, in the band Media3 leaves free, and come and go with its own.
         AnimatedVisibility(
@@ -495,13 +500,15 @@ private fun PlayerPanel(
         }
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 20.dp)) {
-            Text("Picture for this video", fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text(
+                "Picture for this video",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
             TextButton(onClick = onResetPicture) { Text("Reset", fontSize = 16.sp) }
         }
-        PictureSlider("Brightness", picture.brightness, -1f..1f, onPictureDone) { onPicture(picture.copy(brightness = it)) }
-        PictureSlider("Gamma", picture.gamma, 0.5f..2f, onPictureDone) { onPicture(picture.copy(gamma = it)) }
-        PictureSlider("Contrast", picture.contrast, 0.5f..2f, onPictureDone) { onPicture(picture.copy(contrast = it)) }
-        PictureSlider("Colors", picture.saturation, 0f..2f, onPictureDone) { onPicture(picture.copy(saturation = it)) }
+        PictureSliders(picture, onChange = onPicture, onDone = onPictureDone)
 
         PanelTitle("Subtitles & sound")
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -518,19 +525,4 @@ private fun PlayerPanel(
 @Composable
 private fun PanelTitle(text: String) {
     Text(text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
-}
-
-@Composable
-private fun PictureSlider(
-    label: String,
-    value: Float,
-    range: ClosedFloatingPointRange<Float>,
-    onDone: () -> Unit,
-    onChange: (Float) -> Unit,
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 16.sp, modifier = Modifier.weight(1f))
-        Text("%.2f".format(value), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    Slider(value = value, onValueChange = onChange, valueRange = range, onValueChangeFinished = onDone)
 }

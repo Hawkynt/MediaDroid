@@ -30,21 +30,28 @@ import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.SortOrder
 
 @Composable
-fun SearchScreen(library: Library, store: com.hawkynt.mediadroid.data.StateStore, onOpen: (MediaItem) -> Unit) {
-    var query by remember { mutableStateOf("") }
+fun SearchScreen(
+    library: Library,
+    store: com.hawkynt.mediadroid.data.StateStore,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    onOpen: (MediaItem) -> Unit,
+) {
     val allowed = LibraryQuery.filterByAge(library.items, store.data.settings.maxAgeYears)
     val results = LibraryQuery.search(allowed, query)
 
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = query,
-            onValueChange = { query = it },
+            onValueChange = onQueryChange,
             label = { Text("Search titles") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(16.dp),
         )
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 130.dp),
+            state = gridState,
+            columns = GridCells.Adaptive(minSize = 104.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
