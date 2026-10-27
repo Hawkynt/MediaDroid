@@ -7,5 +7,6 @@ kotlin {
 }
 
 dependencies {
+    api(project(":core:imaging"))
     testImplementation(libs.junit)
 }
