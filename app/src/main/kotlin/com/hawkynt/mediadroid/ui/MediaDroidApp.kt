@@ -55,6 +55,8 @@ data class Playable(
     val posterPath: String?,
     val intro: com.hawkynt.mediadroid.nfo.TimeRange? = null,
     val credits: com.hawkynt.mediadroid.nfo.TimeRange? = null,
+    /** What the NFO says: watched unless the household unticked it. */
+    val nfoWatched: Boolean = false,
 )
 
 sealed interface Screen {
@@ -227,7 +229,7 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     fun startOf(queue: List<Playable>, path: String?): Int =
         path?.let { p -> queue.indexOfFirst { it.videoPath == p } }?.takeIf { it >= 0 }
             ?: queue.indexOfFirst { store.resumeFor(it.videoPath) != null }.takeIf { it >= 0 }
-            ?: queue.indexOfFirst { !store.isWatched(it.videoPath) }.takeIf { it >= 0 }
+            ?: queue.indexOfFirst { !store.isWatched(it.videoPath, it.nfoWatched) }.takeIf { it >= 0 }
             ?: 0
 
     fun playMovie(movie: Movie, path: String? = null) {
@@ -340,6 +342,7 @@ fun Movie.playQueue(): List<Playable> = parts.mapIndexed { i, part ->
         posterPath = posterPath,
         intro = intro.takeIf { i == 0 },
         credits = credits.takeIf { i == parts.lastIndex },
+        nfoWatched = playcount > 0,
     )
 }
 
@@ -354,6 +357,7 @@ fun Show.playQueue(): List<Playable> =
                 posterPath = episode.thumbPath ?: posterPath,
                 intro = episode.intro,
                 credits = episode.credits,
+                nfoWatched = episode.watched,
             )
         }
     }

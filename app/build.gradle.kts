@@ -50,6 +50,7 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
+    implementation(project(":core:imaging"))
     implementation(project(":core:nfo"))
     implementation(project(":core:library"))
     implementation(project(":core:player"))

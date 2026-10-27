@@ -167,9 +167,39 @@ fun SettingsScreen(store: StateStore, rootPath: String, onChangeFolder: () -> Un
         )
         SwitchRow(
             label = "Skip intros and credits",
-            detail = "Jumps over intros and ends an episode at its credits, where the file or NFO marks them.",
+            detail = "Jumps over intros and ends an episode at its credits, " +
+                "where its chapters or its .edl file mark them.",
             checked = settings.skipIntroCredits,
             onChange = { c -> update { it.skipIntroCredits = c } },
+        )
+        Spacer(Modifier.height(8.dp))
+        Text("Video decoding", fontSize = 18.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(
+                selected = !settings.softwareVideoDecoding,
+                onClick = { update { it.softwareVideoDecoding = false } },
+                label = { Text("Hardware (recommended)", fontSize = 16.sp) },
+            )
+            FilterChip(
+                selected = settings.softwareVideoDecoding,
+                onClick = { update { it.softwareVideoDecoding = true } },
+                label = { Text("Software", fontSize = 16.sp) },
+            )
+        }
+        Text(
+            if (settings.softwareVideoDecoding) {
+                "Software decoding drains the battery fast and can stutter on large videos. It is meant for " +
+                    "videos that otherwise do not play at all or only with errors."
+            } else {
+                "The device's own decoders play the picture; the built-in software decoder only steps in " +
+                    "for videos they cannot play."
+            },
+            fontSize = 14.sp,
+            color = if (settings.softwareVideoDecoding) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
         )
         Spacer(Modifier.height(8.dp))
         Text("Default speed", fontSize = 18.sp)

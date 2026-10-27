@@ -10,7 +10,8 @@ An Android media player: Kotlin, Jetpack Compose, Gradle (wrapper 9.6.0). It pla
 straight from local storage, reading the Kodi-convention `.nfo` sidecars for titles, plots and art and
 `folder.jpg` / `poster.jpg` for covers — no server, no account, no re-scraping, no re-encoding. The
 Gradle modules are `:app` (the Compose app: onboarding, browse wall, details, search, filters,
-player with resume and binge) and three plain-JVM cores: `:core:nfo` (NFO XML parsing,
+player with resume and binge) and four plain-JVM cores: `:core:imaging` (decoders for the picture formats
+Android cannot read: TIFF, TGA, PCX), `:core:nfo` (NFO XML parsing,
 the `SxxExx` / `NxNN` name convention, Kodi art discovery), `:core:library` (the folder scanner
 plus domain models, search / filter / group-by-decade) and `:core:player` (the binge queue). `:app` also ships
 `app/libs/lib-decoder-ffmpeg-release.aar` — the Media3 FFmpeg audio decoder extension (AC3/E-AC3/DTS/TrueHD on
@@ -48,8 +49,8 @@ Stable releases are **manual** (`gh workflow run release.yml`) — never cut one
 
 ## Tests come in two tiers
 
-The fast tier is what `./gradlew test` runs: the pure-JVM unit tests in `:core:nfo`, `:core:library`
-and `:core:player`. They finish in seconds because the cores import no Android — that is the whole
+The fast tier is what `./gradlew test` runs: the pure-JVM unit tests in `:core:imaging`, `:core:nfo`,
+`:core:library` and `:core:player`. They finish in seconds because the cores import no Android — that is the whole
 point of keeping parsing, search and binge logic out of `:app`. A test belongs to the fast tier unless
 it genuinely needs a device, and that direction is deliberate: the one slow test somebody leaves on the
 fast path silently turns a seconds-long smoke into a minutes-long one.

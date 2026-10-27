@@ -20,13 +20,13 @@ class SkipRulesTest {
 
     @Test
     fun nfoSpanIsUsedWhenNoChapterMatches() {
-        assertEquals(130_000L, SkipRules.introEndMs(emptyList(), TimeRange(70, 130)))
-        assertEquals(130_000L, SkipRules.introEndMs(listOf(Chapter(0, 2000, "Chapter 1")), TimeRange(70, 130)))
+        assertEquals(130_000L, SkipRules.introEndMs(emptyList(), TimeRange(70000, 130000)))
+        assertEquals(130_000L, SkipRules.introEndMs(listOf(Chapter(0, 2000, "Chapter 1")), TimeRange(70000, 130000)))
     }
 
     @Test
     fun chaptersWinOverNfoSpans() {
-        assertEquals(5000L, SkipRules.introEndMs(chapters, TimeRange(70, 130)))
+        assertEquals(5000L, SkipRules.introEndMs(chapters, TimeRange(70000, 130000)))
     }
 
     @Test
@@ -36,7 +36,7 @@ class SkipRulesTest {
 
     @Test
     fun nfoCreditsSpanIsUsedWhenNoChapterMatches() {
-        assertEquals(1180_000L, SkipRules.creditsStartMs(emptyList(), TimeRange(1180, 1260)))
+        assertEquals(1180_000L, SkipRules.creditsStartMs(emptyList(), TimeRange(1180000, 1260000)))
     }
 
     @Test
@@ -53,9 +53,9 @@ class SkipRulesTest {
     }
 
     @Test
-    fun introSpanComesFromTheChapterOrTheNfo() {
+    fun introSpanComesFromTheChapterOrTheEdl() {
         assertEquals(2000L..5000L, SkipRules.introSpanMs(chapters, null))
-        assertEquals(70_000L..130_000L, SkipRules.introSpanMs(emptyList(), TimeRange(70, 130)))
+        assertEquals(70_000L..130_000L, SkipRules.introSpanMs(emptyList(), TimeRange(70000, 130000)))
         assertEquals(null, SkipRules.introSpanMs(emptyList(), null))
     }
 
