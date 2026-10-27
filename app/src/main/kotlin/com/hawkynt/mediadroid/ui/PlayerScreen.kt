@@ -136,11 +136,33 @@ fun PlayerScreen(
     val context = LocalContext.current
     val settings = store.data.settings
     // PREFER lets the bundled FFmpeg decoder win over the device's own audio
-    // decoders, so AC3/DTS/TrueHD tracks play on hardware that lacks them.
+    // decoders, so AC3/DTS/TrueHD tracks play on hardware that lacks them. Video
+    // stays on the device's (hardware) decoders with FFmpeg only as the fallback,
+    // unless the household chose software decoding in Settings.
     val player = remember {
         ExoPlayer.Builder(context)
             .setRenderersFactory(
                 object : DefaultRenderersFactory(context) {
+                    override fun buildVideoRenderers(
+                        context: android.content.Context,
+                        extensionRendererMode: Int,
+                        mediaCodecSelector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector,
+                        enableDecoderFallback: Boolean,
+                        eventHandler: android.os.Handler,
+                        eventListener: androidx.media3.exoplayer.video.VideoRendererEventListener,
+                        allowedVideoJoiningTimeMs: Long,
+                        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
+                    ) = super.buildVideoRenderers(
+                        context,
+                        if (settings.softwareVideoDecoding) EXTENSION_RENDERER_MODE_PREFER else EXTENSION_RENDERER_MODE_ON,
+                        mediaCodecSelector,
+                        enableDecoderFallback,
+                        eventHandler,
+                        eventListener,
+                        allowedVideoJoiningTimeMs,
+                        out,
+                    )
+
                     // Real loudness fix for unnormalized streams: the settings dB
                     // is applied to the decoded PCM and re-read per buffer, so the
                     // slider takes effect mid-playback without rebuilding anything.
