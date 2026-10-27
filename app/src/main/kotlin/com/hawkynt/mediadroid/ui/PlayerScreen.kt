@@ -430,13 +430,13 @@ fun PlayerScreen(
                         screenBrightness = brightness.coerceIn(0.01f, 1f)
                     }
                 }
-                show("Brightness ${(brightness * 100).roundToInt()} %")
+                show("Brightness ${PlaybackMath.percent(brightness)} %")
             }
             Side.RIGHT -> {
                 volume = PlaybackMath.boostedLevel(volume, upFraction)
                 loudnessBoostDb = PlaybackMath.boostDb(volume)
                 audio.setStreamVolume(AudioManager.STREAM_MUSIC, (volume.coerceAtMost(1f) * maxVolume).roundToInt(), 0)
-                show("Volume ${(volume * 100).roundToInt()} %")
+                show("Volume ${PlaybackMath.percent(volume)} %")
             }
         }
     }
