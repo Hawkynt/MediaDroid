@@ -212,7 +212,7 @@ fun PlayerScreen(
         }
     }
 
-    // Intro/credits for the current item: Matroska chapters first, NFO sidecar spans as fallback
+    // Intro/credits for the current item: the file's own chapters first, NFO sidecar spans as fallback
     // (see SkipRules). Skipped only while the household has skipping switched on; the credits
     // count towards "watched" either way.
     val skipping = settings.skipIntroCredits
@@ -230,7 +230,7 @@ fun PlayerScreen(
             .setPreferredAudioLanguage(settings.audioLanguage.ifEmpty { null })
             .build()
         val chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            com.hawkynt.mediadroid.library.MatroskaChapters.parse(File(playable.videoPath))
+            com.hawkynt.mediadroid.library.Chapters.read(File(playable.videoPath))
         }
         introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, playable.intro) else null
         creditsStartMs = SkipRules.creditsStartMs(chapters, playable.credits)
