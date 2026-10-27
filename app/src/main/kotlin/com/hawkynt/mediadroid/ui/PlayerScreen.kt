@@ -159,7 +159,11 @@ fun PlayerScreen(
                         out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
                     ) = super.buildVideoRenderers(
                         context,
-                        if (settings.softwareVideoDecoding) EXTENSION_RENDERER_MODE_PREFER else EXTENSION_RENDERER_MODE_ON,
+                        if (settings.softwareVideoDecoding) {
+                            EXTENSION_RENDERER_MODE_PREFER
+                        } else {
+                            EXTENSION_RENDERER_MODE_ON
+                        },
                         mediaCodecSelector,
                         enableDecoderFallback,
                         eventHandler,
@@ -404,7 +408,9 @@ fun PlayerScreen(
                 ) / 255f).coerceIn(0f, 1f),
         )
     }
-    var volume by remember { mutableFloatStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume) }
+    var volume by remember {
+        mutableFloatStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume)
+    }
     // The swipe-set brightness belongs to the player; leaving it hands control back to the system.
     DisposableEffect(activityWindow) {
         onDispose {
@@ -585,7 +591,8 @@ fun PlayerScreen(
                         ) {
                             Icon(
                                 painterResource(R.drawable.ic_tv),
-                                contentDescription = if (onSecondScreen) "Back to this screen" else "Play on the other screen",
+                                contentDescription =
+                                    if (onSecondScreen) "Back to this screen" else "Play on the other screen",
                                 tint = if (onSecondScreen) MaterialTheme.colorScheme.primary else Color.White,
                             )
                         }
