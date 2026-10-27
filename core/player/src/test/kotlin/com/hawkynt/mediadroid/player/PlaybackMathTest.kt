@@ -75,4 +75,27 @@ class PlaybackMathTest {
         assertFalse(PlaybackMath.isWatched(500_000, 0, creditsStartMs = 100_000))
         assertFalse(PlaybackMath.isWatched(0, 3_600_000, creditsStartMs = 0))
     }
+
+    @Test
+    fun `swipes run past the device maximum up to twice it`() {
+        assertEquals(1.5f, PlaybackMath.boostedLevel(1f, dragUpFraction = 0.5f), 1e-6f)
+        assertEquals(2f, PlaybackMath.boostedLevel(1.8f, dragUpFraction = 0.5f), 1e-6f)
+        assertEquals(0f, PlaybackMath.boostedLevel(0.2f, dragUpFraction = -0.5f), 1e-6f)
+    }
+
+    @Test
+    fun `volume past the maximum turns into loudness gain`() {
+        assertEquals(0f, PlaybackMath.boostDb(0.7f), 1e-6f)
+        assertEquals(0f, PlaybackMath.boostDb(1f), 1e-6f)
+        assertEquals(6.0206f, PlaybackMath.boostDb(2f), 1e-3f)
+        assertEquals(3.5218f, PlaybackMath.boostDb(1.5f), 1e-3f)
+    }
+
+    @Test
+    fun `brightness past the maximum turns into gamma`() {
+        assertEquals(1f, PlaybackMath.gammaBoost(0.4f), 1e-6f)
+        assertEquals(1f, PlaybackMath.gammaBoost(1f), 1e-6f)
+        assertEquals(1.5f, PlaybackMath.gammaBoost(1.5f), 1e-6f)
+        assertEquals(2f, PlaybackMath.gammaBoost(2f), 1e-6f)
+    }
 }

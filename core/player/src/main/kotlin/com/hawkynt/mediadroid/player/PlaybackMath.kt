@@ -30,6 +30,21 @@ object PlaybackMath {
     fun previous(positionMs: Long, index: Int): Previous =
         if (positionMs > RESTART_THRESHOLD_MS || index == 0) Previous.Restart else Previous.GoTo(index - 1)
 
+    /** How far past the device's own maximum a swipe may go: twice it, as VLC's 200 %. */
+    const val MAX_BOOST = 2f
+
+    /**
+     * A brightness or volume level after a vertical swipe, from 0 up to [MAX_BOOST]: up to 1 is the
+     * device's own range, beyond it the app boosts (see [boostDb], [gammaBoost]).
+     */
+    fun boostedLevel(start: Float, dragUpFraction: Float): Float = (start + dragUpFraction).coerceIn(0f, MAX_BOOST)
+
+    /** Loudness gain for a volume level past the device maximum: the level as an amplitude factor, in dB. */
+    fun boostDb(level: Float): Float = if (level <= 1f) 0f else 20f * kotlin.math.log10(level)
+
+    /** Gamma factor for a brightness level past the device maximum: lifts the shadows, never the clipping point. */
+    fun gammaBoost(level: Float): Float = if (level <= 1f) 1f else level
+
     /** A brightness or volume level after a vertical swipe; a swipe over the whole height spans 0..1. */
     fun level(start: Float, dragUpFraction: Float): Float = (start + dragUpFraction).coerceIn(0f, 1f)
 
