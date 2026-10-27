@@ -88,4 +88,32 @@ class MovieNfoTest {
         val movie = parseMovieNfo("<movie><title>X</title><intro>130,70</intro></movie>")
         assertNull(movie.intro)
     }
+
+    @Test
+    fun streamLanguagesComeFromStreamdetailsInFileOrder() {
+        val info = parseMovieNfo(
+            """
+            <movie><title>Heat</title>
+              <fileinfo><streamdetails>
+                <video><codec>h264</codec></video>
+                <audio><codec>ac3</codec><language>ger</language><channels>6</channels></audio>
+                <audio><codec>dts</codec><language>eng</language></audio>
+                <audio><codec>aac</codec><language>ger</language></audio>
+                <subtitle><language>ger</language></subtitle>
+                <subtitle><language>ENG</language></subtitle>
+                <subtitle><language></language></subtitle>
+              </streamdetails></fileinfo>
+            </movie>
+            """.trimIndent(),
+        )
+        assertEquals(listOf("ger", "eng"), info.audioLanguages)
+        assertEquals(listOf("ger", "eng"), info.subtitleLanguages)
+    }
+
+    @Test
+    fun noStreamdetailsMeansNoLanguages() {
+        val info = parseMovieNfo("<movie><title>Heat</title></movie>")
+        assertEquals(emptyList<String>(), info.audioLanguages)
+        assertEquals(emptyList<String>(), info.subtitleLanguages)
+    }
 }
