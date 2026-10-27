@@ -212,7 +212,7 @@ fun PlayerScreen(
         }
     }
 
-    // Intro/credits for the current item: the file's own chapters first, NFO sidecar spans as fallback
+    // Intro/credits for the current item: the file's own chapters first, the `.edl` beside it as fallback
     // (see SkipRules). Skipped only while the household has skipping switched on; the credits
     // count towards "watched" either way.
     val skipping = settings.skipIntroCredits

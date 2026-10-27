@@ -1,6 +1,9 @@
 package com.hawkynt.mediadroid.library
 
+import com.hawkynt.mediadroid.imaging.ImageFormats
 import com.hawkynt.mediadroid.nfo.ArtKind
+import com.hawkynt.mediadroid.nfo.EditDecisionList
+import com.hawkynt.mediadroid.nfo.EdlSkips
 import com.hawkynt.mediadroid.nfo.EpisodeRef
 import com.hawkynt.mediadroid.nfo.bareEpisodeFromName
 import com.hawkynt.mediadroid.nfo.MovieStacking
@@ -24,11 +27,22 @@ import java.io.File
  */
 object LibraryScanner {
 
-    private val videoExtensions = setOf("mkv", "mp4", "avi", "mov", "m4v", "webm", "ts")
+    /**
+     * Every container family Media3's extractors read (they sniff the content, so the extension
+     * only has to say "video"): MP4/QuickTime, Matroska/WebM, AVI, MPEG-PS, MPEG-TS, Ogg and FLV.
+     */
+    private val videoExtensions = setOf(
+        "mp4", "m4v", "mov", "qt", "3gp", "3g2", "f4v",
+        "mkv", "mk3d", "webm",
+        "avi", "divx", "xvid",
+        "mpg", "mpeg", "mpe", "mp2", "m2p", "vob",
+        "ts", "m2ts", "mts", "m2t", "tp", "trp",
+        "ogv", "ogm",
+        "flv",
+    )
     private val seasonDirName = Regex("(?i)^season[ ._-]*(\\d+)$")
     private val episodeToken = Regex("(?i)\\b(?:s\\d{1,2}[ ._-]?e\\d{1,3}|\\d{1,2}x(?!26[456]\\b)\\d{1,3})\\b")
     private val trailingYear = Regex("\\s((?:19|20)\\d{2})$")
-    private val imageExtensions = setOf("jpg", "jpeg", "png", "webp")
 
     fun scan(root: File): Library {
         val movies = ArrayList<Movie>()
@@ -187,6 +201,14 @@ object LibraryScanner {
         return episodeRefFromName(video.name) == null && bareEpisodeFromName(video.name) == null
     }
 
+    /** The intro and credits the `<video>.edl` beside [video] marks; nothing when there is none. */
+    private fun edlSkips(video: File, names: List<String>): EdlSkips {
+        val edl = EditDecisionList.fileNameFor(video.name)
+        val hit = names.firstOrNull { it.equals(edl, ignoreCase = true) } ?: return EdlSkips(null, null)
+        val text = File(video.parentFile, hit).readTextSafe() ?: return EdlSkips(null, null)
+        return EditDecisionList.skips(EditDecisionList.parse(text))
+    }
+
     private fun sidecarNfo(video: File, names: List<String>): File? {
         val nfo = video.nameWithoutExtension + ".nfo"
         val hit = names.firstOrNull { it.equals(nfo, ignoreCase = true) } ?: return null
@@ -270,9 +292,11 @@ object LibraryScanner {
             ?: seasonFolder?.let { season -> bareEpisodeFromName(video.name)?.let { EpisodeRef(season, it) } }
         if (nfo?.episode == null && ref == null) return null
 
+        val skips = edlSkips(video, siblingNames)
         val stem = video.nameWithoutExtension
-        val thumb = siblingNames.firstOrNull { it.equals("$stem-thumb.jpg", ignoreCase = true) }
-            ?: siblingNames.firstOrNull { it.equals("$stem-thumb.png", ignoreCase = true) }
+        val thumb = siblingNames.firstOrNull {
+            it.substringBeforeLast('.').equals("$stem-thumb", ignoreCase = true) && ImageFormats.isImage(it)
+        }
 
         return Episode(
             number = nfo?.episode ?: ref!!.episode,
@@ -281,8 +305,8 @@ object LibraryScanner {
             watched = (nfo?.playcount ?: 0) > 0,
             videoPath = video.absolutePath,
             thumbPath = thumb?.let { File(video.parentFile, it).absolutePath },
-            intro = nfo?.intro,
-            credits = nfo?.credits,
+            intro = skips.intro,
+            credits = skips.credits,
             audioLanguages = nfo?.audioLanguages ?: emptyList(),
             subtitleLanguages = nfo?.subtitleLanguages ?: emptyList(),
         )
@@ -293,14 +317,14 @@ object LibraryScanner {
         val base = if (season == 0) "season-specials-poster" else "season%02d-poster".format(season)
         return showNames.firstOrNull { name ->
             name.substringBeforeLast('.').equals(base, ignoreCase = true) &&
-                name.substringAfterLast('.').lowercase() in imageExtensions
+                ImageFormats.isImage(name)
         }?.let { File(showDir, it).absolutePath }
     }
 
     /** A poster named after the video: `<stem>-poster.jpg` first, then a plain `<stem>.jpg`. */
     private fun stemPoster(stem: String, names: List<String>): String? {
         val lower = stem.lowercase()
-        fun image(name: String) = name.substringAfterLast('.').lowercase() in imageExtensions
+        fun image(name: String) = ImageFormats.isImage(name)
         return names.firstOrNull { it.lowercase().startsWith("$lower-poster.") && image(it) }
             ?: names.firstOrNull { it.substringBeforeLast('.').lowercase() == lower && image(it) }
     }
@@ -342,8 +366,8 @@ object LibraryScanner {
             runtimeMinutes = info?.runtimeMinutes,
             cast = info?.cast?.map { it.name } ?: emptyList(),
             playcount = info?.playcount ?: 0,
-            intro = info?.intro,
-            credits = info?.credits,
+            intro = edlSkips(parts.first(), names).intro,
+            credits = edlSkips(parts.last(), names).credits,
             parts = parts.map { it.absolutePath },
             audioLanguages = info?.audioLanguages ?: emptyList(),
             subtitleLanguages = info?.subtitleLanguages ?: emptyList(),
@@ -379,8 +403,8 @@ object LibraryScanner {
             runtimeMinutes = info?.runtimeMinutes,
             cast = info?.cast?.map { it.name } ?: emptyList(),
             playcount = info?.playcount ?: 0,
-            intro = info?.intro,
-            credits = info?.credits,
+            intro = edlSkips(parts.first(), names).intro,
+            credits = edlSkips(parts.last(), names).credits,
             parts = parts.map { it.absolutePath },
             audioLanguages = info?.audioLanguages ?: emptyList(),
             subtitleLanguages = info?.subtitleLanguages ?: emptyList(),

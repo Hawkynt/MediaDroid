@@ -17,6 +17,7 @@ dependencyResolutionManagement {
 rootProject.name = "MediaDroid"
 
 include(":app")
+include(":core:imaging")
 include(":core:nfo")
 include(":core:library")
 include(":core:player")
