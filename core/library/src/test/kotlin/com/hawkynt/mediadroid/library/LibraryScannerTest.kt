@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.library
 
+import com.hawkynt.mediadroid.nfo.TimeRange
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -114,6 +115,58 @@ class LibraryScannerTest {
         val movie = LibraryScanner.scan(File(folder.root, "Movies")).movies.single()
         assertEquals(listOf("ger", "eng"), movie.audioLanguages)
         assertEquals(listOf("eng"), movie.subtitleLanguages)
+    }
+
+    @Test
+    fun introAndCreditsComeFromTheEditDecisionListBesideTheVideo() {
+        file("Shows/Dark/Season 01/S01E01.mkv")
+        file("Shows/Dark/Season 01/S01E01.edl", "## Intro Skipper\n62.5 152 3\n1250 1320 3\n")
+        file("Movies/Heat (1995)/Heat (1995) CD1.avi")
+        file("Movies/Heat (1995)/Heat (1995) CD1.edl", "0:30 2:00 4\n")
+        file("Movies/Heat (1995)/Heat (1995) CD2.avi")
+        file("Movies/Heat (1995)/Heat (1995) CD2.edl", "1:41:00 1:45:00 3\n")
+
+        val episode = LibraryScanner.scan(File(folder.root, "Shows")).shows.single().seasons.single().episodes.single()
+        assertEquals(TimeRange(62_500, 152_000), episode.intro)
+        assertEquals(TimeRange(1_250_000, 1_320_000), episode.credits)
+        val movie = LibraryScanner.scan(File(folder.root, "Movies")).movies.single()
+        assertEquals("the first part's EDL has the intro", TimeRange(30_000, 120_000), movie.intro)
+        assertEquals("the last part's EDL has the credits", TimeRange(6_060_000, 6_300_000), movie.credits)
+    }
+
+    @Test
+    fun postersSeasonArtAndThumbsInAnyPictureFormat() {
+        file("Shows/Dark/tvshow.nfo", "<tvshow><title>Dark</title></tvshow>")
+        file("Shows/Dark/season01-poster.tga")
+        file("Shows/Dark/Season 01/S01E01.mkv")
+        file("Shows/Dark/Season 01/S01E01-thumb.tif")
+        file("Movies/Heat (1995)/Heat (1995).mkv")
+        file("Movies/Heat (1995)/Heat (1995).pcx")
+
+        val show = LibraryScanner.scan(File(folder.root, "Shows")).shows.single()
+        assertTrue(show.seasons.single().posterPath!!.endsWith("season01-poster.tga"))
+        assertTrue(show.seasons.single().episodes.single().thumbPath!!.endsWith("S01E01-thumb.tif"))
+        val movie = LibraryScanner.scan(File(folder.root, "Movies")).movies.single()
+        assertTrue(movie.posterPath!!.endsWith("Heat (1995).pcx"))
+    }
+
+    @Test
+    fun everyContainerThePlayerReadsIsAVideo() {
+        val extensions = listOf(
+            "mp4", "m4v", "mov", "qt", "3gp", "3g2", "f4v", "mkv", "mk3d", "webm", "avi", "divx", "xvid",
+            "mpg", "mpeg", "mpe", "mp2", "m2p", "vob", "ts", "m2ts", "mts", "m2t", "tp", "trp", "ogv", "ogm", "flv",
+        )
+        // Neutral names: "DivX", "XviD" or "TS" in a title are release tags the cleaner strips.
+        val names = (
+            "Alpaca Badger Camel Dingo Eagle Falcon Gecko Heron Ibis Jaguar Koala Lemur Moose Newt Otter Panda " +
+                "Quail Raven Sloth Tapir Urchin Viper Walrus Yak Zebra Bison Crane Dove"
+            ).split(" ")
+        extensions.forEachIndexed { i, ext -> file("Movies/${names[i]}.$ext") }
+        file("Movies/notes.txt")
+        file("Movies/cover.jpg")
+
+        val titles = LibraryScanner.scan(File(folder.root, "Movies")).movies.map { it.title }.toSet()
+        assertEquals(names.take(extensions.size).toSet(), titles)
     }
 
     @Test

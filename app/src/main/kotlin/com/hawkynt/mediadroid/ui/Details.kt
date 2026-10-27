@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -39,7 +41,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.data.StateStore
@@ -47,6 +51,9 @@ import com.hawkynt.mediadroid.library.Episode
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
 import java.io.File
+
+/** The largest share of the screen height the backdrop on top of the details may take. */
+private const val BACKDROP_SHARE = 0.4f
 
 @Composable
 fun DetailsScreen(
@@ -65,13 +72,25 @@ fun DetailsScreen(
                     is Movie -> item.fanartPath ?: item.posterPath
                     is Show -> item.fanartPath ?: item.posterPath
                 }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                ) {
-                    PosterImage(backdrop, contentScale = ContentScale.Crop)
+                // 16:9 across the width, but never more than [BACKDROP_SHARE] of the screen height: in
+                // landscape a full-width backdrop is taller than the screen and hides that the page goes on.
+                val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(minOf(maxWidth * 9f / 16f, screenHeight * BACKDROP_SHARE))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                    ) {
+                        PosterImage(
+                            backdrop,
+                            videoFallback = when (item) {
+                                is Movie -> item.videoPath
+                                is Show -> item.representativeVideo
+                            },
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
                 }
                 IconButton(onClick = onBack, modifier = Modifier.padding(8.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -143,7 +162,18 @@ fun DetailsScreen(
             val season = seasons.firstOrNull { it.number == selected }
             val episodes = season?.episodes ?: emptyList()
             item {
-                SeasonHeader(season?.number ?: selected, episodes.size, season?.posterPath)
+                SeasonHeader(
+                    season?.number ?: selected,
+                    episodes.size,
+                    season?.posterPath ?: season?.representativeThumb,
+                    season?.representativeVideo,
+                    watched = season != null && store.marks.isWatched(season),
+                    onToggleWatched = {
+                        season?.let {
+                            store.setWatched(it.episodes.map { e -> e.videoPath }, !store.marks.isWatched(it))
+                        }
+                    },
+                )
             }
             items(episodes, key = { it.videoPath }) { episode ->
                 EpisodeRow(
@@ -160,7 +190,7 @@ fun DetailsScreen(
 
 @Composable
 private fun MovieActions(movie: Movie, store: StateStore, onPlay: (Movie) -> Unit) {
-    val watched = store.isWatched(movie.videoPath) || movie.playcount > 0
+    val watched = store.marks.isWatched(movie)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Button(
             onClick = { onPlay(movie) },
@@ -171,19 +201,7 @@ private fun MovieActions(movie: Movie, store: StateStore, onPlay: (Movie) -> Uni
             Text(if (store.resumeFor(movie.videoPath) != null) "Resume" else "Play", fontSize = 22.sp)
         }
         Spacer(Modifier.width(16.dp))
-        IconButton(
-            onClick = { store.setWatched(movie.videoPath, !watched) },
-            modifier = Modifier
-                .width(56.dp)
-                .height(56.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        ) {
-            Icon(
-                if (watched) Icons.Filled.CheckCircle else Icons.Filled.Check,
-                contentDescription = if (watched) "Watched" else "Mark watched",
-            )
-        }
+        WatchedToggle(watched, onToggle = { store.setWatched(movie.parts, !watched) })
     }
     val facts = listOfNotNull(
         movie.runtimeMinutes?.let { "$it minutes" },
@@ -209,7 +227,7 @@ private fun ShowHeaderActions(show: Show, store: StateStore, onPlay: (Show, Epis
 
 @Composable
 private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick: () -> Unit) {
-    val watched = episode.watched || store.isWatched(episode.videoPath)
+    val watched = store.isWatched(episode.videoPath, episode.watched)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -252,20 +270,43 @@ private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick
             }
             LanguageFlags(episode.audioLanguages, episode.subtitleLanguages, Modifier.padding(top = 2.dp))
         }
-        if (watched) {
-            Icon(Icons.Filled.CheckCircle, contentDescription = "Watched", modifier = Modifier.width(28.dp))
-        }
+        Spacer(Modifier.width(8.dp))
+        WatchedToggle(watched, onToggle = { store.setWatched(listOf(episode.videoPath), !watched) }, size = 48.dp)
+    }
+}
+
+/** The watched tick: filled when watched, a plain check to tick it off; tapping toggles. */
+@Composable
+private fun WatchedToggle(watched: Boolean, onToggle: () -> Unit, size: Dp = 56.dp) {
+    IconButton(
+        onClick = onToggle,
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Icon(
+            if (watched) Icons.Filled.CheckCircle else Icons.Filled.Check,
+            contentDescription = if (watched) "Watched" else "Mark watched",
+        )
     }
 }
 
 /** The selected season: its own cover when the folder has one, and how many episodes it holds. */
 @Composable
-private fun SeasonHeader(number: Int, episodeCount: Int, posterPath: String?) {
+private fun SeasonHeader(
+    number: Int,
+    episodeCount: Int,
+    posterPath: String?,
+    videoPath: String?,
+    watched: Boolean,
+    onToggleWatched: () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        if (posterPath != null) {
+        if (posterPath != null || videoPath != null) {
             Box(
                 modifier = Modifier
                     .width(72.dp)
@@ -273,11 +314,11 @@ private fun SeasonHeader(number: Int, episodeCount: Int, posterPath: String?) {
                     .clip(RoundedCornerShape(8.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             ) {
-                PosterImage(posterPath, contentScale = ContentScale.Crop)
+                PosterImage(posterPath, videoFallback = videoPath, contentScale = ContentScale.Crop)
             }
             Spacer(Modifier.width(14.dp))
         }
-        Column {
+        Column(Modifier.weight(1f)) {
             Text(seasonName(number), fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text(
                 if (episodeCount == 1) "1 episode" else "$episodeCount episodes",
@@ -285,6 +326,7 @@ private fun SeasonHeader(number: Int, episodeCount: Int, posterPath: String?) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (episodeCount > 0) WatchedToggle(watched, onToggle = onToggleWatched)
     }
 }
 
