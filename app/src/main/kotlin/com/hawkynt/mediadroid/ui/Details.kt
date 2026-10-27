@@ -80,7 +80,14 @@ fun DetailsScreen(
                             .height(minOf(maxWidth * 9f / 16f, screenHeight * BACKDROP_SHARE))
                             .background(MaterialTheme.colorScheme.surfaceVariant),
                     ) {
-                        PosterImage(backdrop, contentScale = ContentScale.Crop)
+                        PosterImage(
+                            backdrop,
+                            videoFallback = when (item) {
+                                is Movie -> item.videoPath
+                                is Show -> item.representativeVideo
+                            },
+                            contentScale = ContentScale.Crop,
+                        )
                     }
                 }
                 IconButton(onClick = onBack, modifier = Modifier.padding(8.dp)) {
@@ -153,7 +160,12 @@ fun DetailsScreen(
             val season = seasons.firstOrNull { it.number == selected }
             val episodes = season?.episodes ?: emptyList()
             item {
-                SeasonHeader(season?.number ?: selected, episodes.size, season?.posterPath)
+                SeasonHeader(
+                    season?.number ?: selected,
+                    episodes.size,
+                    season?.posterPath ?: season?.representativeThumb,
+                    season?.representativeVideo,
+                )
             }
             items(episodes, key = { it.videoPath }) { episode ->
                 EpisodeRow(
@@ -268,14 +280,17 @@ private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick
     }
 }
 
-/** The selected season: its own cover when the folder has one, and how many episodes it holds. */
+/**
+ * The selected season and how many episodes it holds, with its cover: the folder's own, else the
+ * first episode's thumb, else a frame from the first episode.
+ */
 @Composable
-private fun SeasonHeader(number: Int, episodeCount: Int, posterPath: String?) {
+private fun SeasonHeader(number: Int, episodeCount: Int, posterPath: String?, videoPath: String?) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        if (posterPath != null) {
+        if (posterPath != null || videoPath != null) {
             Box(
                 modifier = Modifier
                     .width(72.dp)
@@ -283,7 +298,7 @@ private fun SeasonHeader(number: Int, episodeCount: Int, posterPath: String?) {
                     .clip(RoundedCornerShape(8.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             ) {
-                PosterImage(posterPath, contentScale = ContentScale.Crop)
+                PosterImage(posterPath, videoFallback = videoPath, contentScale = ContentScale.Crop)
             }
             Spacer(Modifier.width(14.dp))
         }
