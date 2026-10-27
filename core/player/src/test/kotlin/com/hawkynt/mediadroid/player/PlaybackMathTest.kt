@@ -1,0 +1,78 @@
+package com.hawkynt.mediadroid.player
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PlaybackMathTest {
+
+    @Test
+    fun `double tap seeks fifteen seconds and stays inside the video`() {
+        assertEquals(75_000L, PlaybackMath.seekBy(60_000L, 600_000L, forward = true))
+        assertEquals(45_000L, PlaybackMath.seekBy(60_000L, 600_000L, forward = false))
+        assertEquals(0L, PlaybackMath.seekBy(5_000L, 600_000L, forward = false))
+        assertEquals(600_000L, PlaybackMath.seekBy(595_000L, 600_000L, forward = true))
+        // Unknown duration: only the start bounds it.
+        assertEquals(75_000L, PlaybackMath.seekBy(60_000L, -1L, forward = true))
+    }
+
+    @Test
+    fun `previous restarts when more than three seconds in, else goes back`() {
+        assertEquals(PlaybackMath.Previous.Restart, PlaybackMath.previous(positionMs = 3_001L, index = 4))
+        assertEquals(PlaybackMath.Previous.GoTo(3), PlaybackMath.previous(positionMs = 2_000L, index = 4))
+        assertEquals(PlaybackMath.Previous.Restart, PlaybackMath.previous(positionMs = 1_000L, index = 0))
+    }
+
+    @Test
+    fun `a swipe over the full height moves a level from bottom to top`() {
+        assertEquals(1f, PlaybackMath.level(0f, dragUpFraction = 1f), 1e-6f)
+        assertEquals(0.75f, PlaybackMath.level(0.5f, dragUpFraction = 0.25f), 1e-6f)
+        assertEquals(0f, PlaybackMath.level(0.2f, dragUpFraction = -0.5f), 1e-6f)
+        assertEquals(1f, PlaybackMath.level(0.9f, dragUpFraction = 0.5f), 1e-6f)
+    }
+
+    @Test
+    fun `pinch zoom stays between the whole picture and four times`() {
+        assertEquals(2f, PlaybackMath.zoom(1f, 2f), 1e-6f)
+        assertEquals(1f, PlaybackMath.zoom(1.2f, 0.5f), 1e-6f)
+        assertEquals(4f, PlaybackMath.zoom(3f, 2f), 1e-6f)
+    }
+
+    @Test
+    fun `panning a zoomed picture never shows past its edge`() {
+        // At 2x the picture is twice the view: it may move half a view each way.
+        assertEquals(500f, PlaybackMath.pan(800f, zoom = 2f, viewSize = 1000f), 1e-3f)
+        assertEquals(-500f, PlaybackMath.pan(-800f, zoom = 2f, viewSize = 1000f), 1e-3f)
+        assertEquals(300f, PlaybackMath.pan(300f, zoom = 2f, viewSize = 1000f), 1e-3f)
+        assertEquals(0f, PlaybackMath.pan(300f, zoom = 1f, viewSize = 1000f), 1e-3f)
+    }
+
+    @Test
+    fun `the last two minutes left count as watched`() {
+        val hour = 3_600_000L
+        assertFalse(PlaybackMath.isWatched(hour - 121_000, hour, creditsStartMs = null))
+        assertTrue(PlaybackMath.isWatched(hour - 120_000, hour, creditsStartMs = null))
+        assertTrue(PlaybackMath.isWatched(hour, hour, creditsStartMs = null))
+    }
+
+    @Test
+    fun `reaching the credits counts as watched`() {
+        val hour = 3_600_000L
+        assertFalse(PlaybackMath.isWatched(hour - 600_001, hour, creditsStartMs = hour - 600_000))
+        assertTrue(PlaybackMath.isWatched(hour - 600_000, hour, creditsStartMs = hour - 600_000))
+    }
+
+    @Test
+    fun `a short clip is not watched just by starting it`() {
+        // Two minutes would be all of a 90 s clip: the tail shrinks to a tenth of the runtime.
+        assertFalse(PlaybackMath.isWatched(30_000, 90_000, creditsStartMs = null))
+        assertTrue(PlaybackMath.isWatched(81_000, 90_000, creditsStartMs = null))
+    }
+
+    @Test
+    fun `nothing is watched while the runtime is unknown`() {
+        assertFalse(PlaybackMath.isWatched(500_000, 0, creditsStartMs = 100_000))
+        assertFalse(PlaybackMath.isWatched(0, 3_600_000, creditsStartMs = 0))
+    }
+}

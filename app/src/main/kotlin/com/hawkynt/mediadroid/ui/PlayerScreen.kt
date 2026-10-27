@@ -4,6 +4,15 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.net.Uri
+import android.media.AudioManager
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.res.painterResource
+import androidx.media3.ui.AspectRatioFrameLayout
+import com.hawkynt.mediadroid.player.PlaybackMath
+import kotlin.math.roundToInt
 import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -84,13 +93,37 @@ val Speeds = listOf(0.2f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 5.0f)
 /** How long the controls stay up after the last touch, like the streaming apps' players. */
 private const val ControlsTimeoutMs = 3_000
 
+/** How the video fills the screen; maps onto Media3's resize modes. */
+enum class VideoFit(val label: String, val resizeMode: Int) {
+    FIT("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    FILL("Fill", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
+    STRETCH("Stretch", AspectRatioFrameLayout.RESIZE_MODE_FILL),
+}
+
+/**
+ * Fit, zoom and picture correction on the video frame inside a player view only — the controls
+ * and subtitles drawn above it are neither scaled nor tinted.
+ */
+private fun PlayerView.applyVideoLook(fit: VideoFit, zoom: Float, pan: Offset, picture: PictureAdjustment) {
+    resizeMode = fit.resizeMode
+    val frame = findViewById<View>(androidx.media3.ui.R.id.exo_content_frame) ?: return
+    frame.scaleX = zoom
+    frame.scaleY = zoom
+    frame.translationX = pan.x
+    frame.translationY = pan.y
+    frame.applyPicture(picture)
+}
+
 /**
  * Full-screen playback: it remembers where you stopped, a show keeps going, and
  * the household controls live right on the screen — speed from 0.2x to 5x,
  * subtitles on/off, and a picker for audio and subtitle tracks when the file
  * carries several. Picture and sound follow the guarded settings. Nothing but
  * the picture shows while watching: a tap brings every control up together,
- * and they fade out again after a few seconds untouched.
+ * and they fade out again after a few seconds untouched. On the bare picture a
+ * double tap jumps 15 s, vertical swipes set brightness (left) and volume
+ * (right), and two fingers zoom. With an external display attached the video
+ * can go there while the phone keeps the controls.
  */
 @Composable
 fun PlayerScreen(
@@ -144,6 +177,19 @@ fun PlayerScreen(
     // Per video: its own picture if one was saved, else the household default.
     var picture by remember { mutableStateOf(store.pictureFor(queue[startIndex].videoPath)) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    var fit by remember { mutableStateOf(VideoFit.FIT) }
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var pan by remember { mutableStateOf(Offset.Zero) }
+    // Short-lived on-screen confirmation of a gesture: "+15 s", "Volume 40 %".
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var feedbackStamp by remember { mutableIntStateOf(0) }
+    fun show(text: String) {
+        feedback = text
+        feedbackStamp++
+    }
+    val externalDisplay = rememberExternalDisplay()
+    var onSecondScreen by remember { mutableStateOf(false) }
+    var presentation by remember { mutableStateOf<VideoPresentation?>(null) }
 
     // Touching one of our own controls must keep Media3's controls up too, or they would time
     // out mid-choice: both are one set of controls to the viewer.
@@ -167,7 +213,8 @@ fun PlayerScreen(
     }
 
     // Intro/credits for the current item: Matroska chapters first, NFO sidecar spans as fallback
-    // (see SkipRules). Only acted on while the household has skipping switched on.
+    // (see SkipRules). Skipped only while the household has skipping switched on; the credits
+    // count towards "watched" either way.
     val skipping = settings.skipIntroCredits
     var introSpanMs by remember { mutableStateOf<LongRange?>(null) }
     var creditsStartMs by remember { mutableStateOf<Long?>(null) }
@@ -186,7 +233,7 @@ fun PlayerScreen(
             com.hawkynt.mediadroid.library.MatroskaChapters.parse(File(playable.videoPath))
         }
         introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, playable.intro) else null
-        creditsStartMs = if (skipping) SkipRules.creditsStartMs(chapters, playable.credits) else null
+        creditsStartMs = SkipRules.creditsStartMs(chapters, playable.credits)
         player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(playable.videoPath))))
         val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
         // Resume where you left off — but never back into a known intro.
@@ -203,6 +250,42 @@ fun PlayerScreen(
             .build()
     }
 
+    /** Remembers how far the current item got: watched once only its tail or credits are left. */
+    fun saveProgress(position: Long = player.currentPosition, duration: Long = player.duration) {
+        if (duration <= 0 || position <= 0) return
+        val path = queue[index].videoPath
+        // Right after Next/Previous the player still holds the last file: its position is not ours.
+        if (player.currentMediaItem?.localConfiguration?.uri?.path != path) return
+        if (PlaybackMath.isWatched(position, duration, creditsStartMs)) {
+            store.markWatched(path)
+        } else {
+            store.saveResume(path, position, duration)
+        }
+    }
+
+    // Next and Previous on the controls move through the queue (see QueuePlayer).
+    val queuePlayer = remember {
+        QueuePlayer(
+            player,
+            hasNext = { index + 1 < queue.size },
+            onNext = {
+                if (index + 1 < queue.size) {
+                    saveProgress()
+                    index++
+                }
+            },
+            onPrevious = {
+                when (val previous = PlaybackMath.previous(player.currentPosition, index)) {
+                    PlaybackMath.Previous.Restart -> player.seekTo(0)
+                    is PlaybackMath.Previous.GoTo -> {
+                        saveProgress()
+                        index = previous.index
+                    }
+                }
+            },
+        )
+    }
+
     fun finishCurrent() {
         store.markWatched(queue[index].videoPath)
         if (autoAdvance && index + 1 < queue.size) index++ else finished = true
@@ -212,6 +295,15 @@ fun PlayerScreen(
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) finishCurrent()
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                // Skipping forward into the tail or the credits finishes the item as well.
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) saveProgress(newPosition.positionMs)
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -233,9 +325,7 @@ fun PlayerScreen(
         }
         player.addListener(listener)
         onDispose {
-            val position = player.currentPosition
-            val duration = player.duration
-            if (duration > 0 && position > 0) store.saveResume(queue[index].videoPath, position, duration)
+            saveProgress()
             player.removeListener(listener)
             player.release()
         }
@@ -253,13 +343,78 @@ fun PlayerScreen(
                 continue
             }
             val credits = creditsStartMs
-            if (credits != null && position >= credits) {
+            if (skipping && credits != null && position >= credits) {
                 // The credits have begun: end the episode, binge mode takes it from there.
                 player.seekTo(player.duration)
                 continue
             }
-            if (++tick % 6 == 0) store.saveResume(queue[index].videoPath, position, player.duration)
+            if (++tick % 6 == 0) saveProgress(position)
         }
+    }
+
+    val activityWindow = remember(hostView) { hostView.context.findActivity()?.window }
+    val audio = remember { context.getSystemService(AudioManager::class.java) }
+    val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    var brightness by remember {
+        mutableFloatStateOf(
+            activityWindow?.attributes?.screenBrightness?.takeIf { it >= 0f }
+                ?: (android.provider.Settings.System.getInt(
+                    context.contentResolver,
+                    android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                    128,
+                ) / 255f).coerceIn(0f, 1f),
+        )
+    }
+    var volume by remember { mutableFloatStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume) }
+    // The swipe-set brightness belongs to the player; leaving it hands control back to the system.
+    DisposableEffect(activityWindow) {
+        onDispose {
+            activityWindow?.let { window ->
+                window.attributes = window.attributes.apply { screenBrightness = -1f }
+            }
+        }
+    }
+
+    fun swipe(side: Side, upFraction: Float) {
+        when (side) {
+            Side.LEFT -> {
+                brightness = PlaybackMath.level(brightness, upFraction)
+                activityWindow?.let { window ->
+                    window.attributes = window.attributes.apply { screenBrightness = brightness.coerceAtLeast(0.01f) }
+                }
+                show("Brightness ${(brightness * 100).roundToInt()} %")
+            }
+            Side.RIGHT -> {
+                volume = PlaybackMath.level(volume, upFraction)
+                audio.setStreamVolume(AudioManager.STREAM_MUSIC, (volume * maxVolume).roundToInt(), 0)
+                show("Volume ${(volume * 100).roundToInt()} %")
+            }
+        }
+    }
+
+    // The video on the external display while the phone keeps the controls; back to the phone
+    // when switched off or when the display goes away.
+    DisposableEffect(onSecondScreen, externalDisplay?.displayId) {
+        val display = externalDisplay
+        if (onSecondScreen && display != null) {
+            presentation = VideoPresentation(context, display, player).also { it.show() }
+        } else if (onSecondScreen) {
+            onSecondScreen = false
+        }
+        onDispose {
+            presentation?.let {
+                it.release()
+                presentation = null
+                // The phone's view takes the picture back.
+                playerView?.player = null
+                playerView?.player = queuePlayer
+            }
+        }
+    }
+
+    LaunchedEffect(feedbackStamp) {
+        delay(800)
+        feedback = null
     }
 
     BackHandler {
@@ -276,7 +431,7 @@ fun PlayerScreen(
                     android.view.LayoutInflater.from(androidContext)
                         .inflate(R.layout.player_view, null, false) as PlayerView
                     ).apply {
-                    this.player = player
+                    this.player = queuePlayer
                     useController = true
                     // Start on the bare picture; a tap shows the controls, inactivity hides them.
                     controllerAutoShow = false
@@ -294,8 +449,55 @@ fun PlayerScreen(
                     playerView = this
                 }
             },
-            modifier = Modifier.pictureCorrection(picture).fillMaxSize(),
+            update = { view -> view.applyVideoLook(fit, zoom, pan, picture) },
+            modifier = Modifier.fillMaxSize(),
         )
+        presentation?.let { shown ->
+            if (shown.isShowing) shown.playerView.applyVideoLook(fit, zoom, pan, picture)
+            Text(
+                "Playing on ${externalDisplay?.name ?: "the other screen"}",
+                color = Color.White,
+                fontSize = 20.sp,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
+        // The bare picture listens for gestures; with the controls up, touches go to the controls.
+        if (!controlsVisible && !panelOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .playerGestures(
+                        onTap = { playerView?.showController() },
+                        onDoubleTap = { side ->
+                            val forward = side == Side.RIGHT
+                            player.seekTo(PlaybackMath.seekBy(player.currentPosition, player.duration, forward))
+                            show(if (forward) "+15 s" else "−15 s")
+                        },
+                        onSwipe = ::swipe,
+                        onSwipeEnd = {},
+                        onPinch = { factor, move ->
+                            val view = playerView ?: return@playerGestures
+                            zoom = PlaybackMath.zoom(zoom, factor)
+                            pan = Offset(
+                                PlaybackMath.pan(pan.x + move.x, zoom, view.width.toFloat()),
+                                PlaybackMath.pan(pan.y + move.y, zoom, view.height.toFloat()),
+                            )
+                            show("Zoom %.1f×".format(zoom))
+                        },
+                    ),
+            )
+        }
+        feedback?.let {
+            Text(
+                it,
+                color = Color.White,
+                fontSize = 22.sp,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
+            )
+        }
         // Our controls ride on top, in the band Media3 leaves free, and come and go with its own.
         AnimatedVisibility(
             visible = controlsVisible,
@@ -324,6 +526,20 @@ fun PlayerScreen(
                         maxLines = 1,
                         modifier = Modifier.weight(1f),
                     )
+                    if (externalDisplay != null) {
+                        IconButton(
+                            onClick = {
+                                onSecondScreen = !onSecondScreen
+                                keepControls()
+                            },
+                        ) {
+                            Icon(
+                                painterResource(R.drawable.ic_tv),
+                                contentDescription = if (onSecondScreen) "Back to this screen" else "Play on the other screen",
+                                tint = if (onSecondScreen) MaterialTheme.colorScheme.primary else Color.White,
+                            )
+                        }
+                    }
                     IconButton(
                         onClick = {
                             panelOpen = true
@@ -345,6 +561,12 @@ fun PlayerScreen(
             PlayerPanel(
                 speed = speed,
                 onSpeed = { speed = it },
+                fit = fit,
+                onFit = {
+                    fit = it
+                    zoom = 1f
+                    pan = Offset.Zero
+                },
                 subtitlesOn = subtitlesOn,
                 onSubtitles = { subtitlesOn = it },
                 picture = picture,
@@ -459,6 +681,8 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 private fun PlayerPanel(
     speed: Float,
     onSpeed: (Float) -> Unit,
+    fit: VideoFit,
+    onFit: (VideoFit) -> Unit,
     subtitlesOn: Boolean,
     onSubtitles: (Boolean) -> Unit,
     picture: PictureAdjustment,
@@ -498,6 +722,23 @@ private fun PlayerPanel(
                 )
             }
         }
+
+        PanelTitle("Picture size")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            VideoFit.entries.forEach { option ->
+                FilterChip(
+                    selected = fit == option,
+                    onClick = { onFit(option) },
+                    label = { Text(option.label, fontSize = 16.sp) },
+                )
+            }
+        }
+        Text(
+            "Pinch with two fingers to zoom; choosing a size resets the zoom.",
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 20.dp)) {
             Text(
