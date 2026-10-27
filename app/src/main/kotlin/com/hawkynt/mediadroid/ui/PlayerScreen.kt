@@ -442,6 +442,7 @@ fun PlayerScreen(
                 it.release()
                 presentation = null
                 // The phone's view takes the picture back.
+                playerView?.videoSurfaceView?.visibility = View.VISIBLE
                 playerView?.player = null
                 playerView?.player = queuePlayer
             }
@@ -489,7 +490,13 @@ fun PlayerScreen(
                     playerView = this
                 }
             },
-            update = { view -> view.applyVideoLook(fit, zoom, pan, picture) },
+            update = { view ->
+                // While the picture is on the other screen the phone's surface would keep showing the
+                // last frame it got; it is hidden so the phone stays black behind the controls.
+                val elsewhere = presentation?.isShowing == true
+                view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
+                if (!elsewhere) view.applyVideoLook(fit, zoom, pan, picture)
+            },
             modifier = Modifier.fillMaxSize(),
         )
 
