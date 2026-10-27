@@ -42,6 +42,8 @@ data class Movie(
     val parts: List<String> = listOf(videoPath),
     val audioLanguages: List<String> = emptyList(),
     val subtitleLanguages: List<String> = emptyList(),
+    /** Resolution, HDR, video and audio format for the badges; see [Quality]. */
+    val quality: Quality = Quality.NONE,
 ) : MediaItem {
     override val key: String get() = "movie:$videoPath"
 }
@@ -94,6 +96,8 @@ data class Episode(
     val credits: TimeRange? = null,
     val audioLanguages: List<String> = emptyList(),
     val subtitleLanguages: List<String> = emptyList(),
+    /** Resolution, HDR, video and audio format for the badges; see [Quality]. */
+    val quality: Quality = Quality.NONE,
 )
 
 /** The two halves of the library the sidebar switches between. */

@@ -237,7 +237,7 @@ private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick
     ) {
         Box(
             modifier = Modifier
-                .width(120.dp)
+                .width(168.dp)
                 .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
@@ -248,6 +248,19 @@ private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick
                 // No scraped `-thumb.jpg`: pull a still out of the video itself.
                 VideoFrameImage(episode.videoPath)
             }
+            // What the file itself holds, probed once and cached; the NFO only when the file cannot be read.
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val probed by androidx.compose.runtime.produceState<com.hawkynt.mediadroid.nfo.StreamDetails?>(
+                null,
+                episode.videoPath,
+            ) { value = com.hawkynt.mediadroid.data.QualityStore.of(context).detailsFor(episode.videoPath) }
+            val details = probed
+            ThumbBadges(
+                audio = details?.audio?.mapNotNull { it.language }?.distinct()?.ifEmpty { null }
+                    ?: episode.audioLanguages,
+                subtitles = episode.subtitleLanguages,
+                quality = details?.let { com.hawkynt.mediadroid.library.Quality.of(it) } ?: episode.quality,
+            )
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
@@ -268,7 +281,6 @@ private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick
             episode.firstAired?.let {
                 Text(it, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            LanguageFlags(episode.audioLanguages, episode.subtitleLanguages, Modifier.padding(top = 2.dp))
         }
         Spacer(Modifier.width(8.dp))
         WatchedToggle(watched, onToggle = { store.setWatched(listOf(episode.videoPath), !watched) }, size = 48.dp)

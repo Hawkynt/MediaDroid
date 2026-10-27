@@ -3,6 +3,8 @@ package com.hawkynt.mediadroid.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -20,6 +22,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.library.Languages
+import com.hawkynt.mediadroid.library.Quality
 
 /**
  * The minimum age as a square badge in the colours German households know from FSK labels —
@@ -77,4 +80,48 @@ private fun FlagGroup(label: String, codes: List<String>) {
             }
         }
     }
+}
+
+/**
+ * What a preview picture tells about its file, drawn over it: audio languages as flags at the top
+ * left, subtitle languages behind a "CC" at the top right, and resolution, HDR, video and audio format
+ * along the bottom. Every mark sits on its own dark chip so it reads on any picture.
+ */
+@Composable
+fun BoxScope.ThumbBadges(audio: List<String>, subtitles: List<String>, quality: Quality) {
+    if (audio.isNotEmpty()) {
+        Row(Modifier.align(Alignment.TopStart).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            audio.take(4).forEach { ThumbChip(Languages.flag(it) ?: Languages.label(it)) }
+        }
+    }
+    if (subtitles.isNotEmpty()) {
+        Row(Modifier.align(Alignment.TopEnd).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            ThumbChip("CC " + subtitles.take(3).joinToString(" ") { Languages.flag(it) ?: Languages.label(it) })
+        }
+    }
+    if (quality.badges.isNotEmpty()) {
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(
+            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            quality.badges.forEach { ThumbChip(it, bold = true) }
+        }
+    }
+}
+
+@Composable
+private fun ThumbChip(text: String, bold: Boolean = false) {
+    Text(
+        text,
+        fontSize = 10.sp,
+        lineHeight = 12.sp,
+        fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+        color = Color.White,
+        maxLines = 1,
+        modifier = Modifier
+            .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(3.dp))
+            .padding(horizontal = 3.dp, vertical = 1.dp),
+    )
 }
