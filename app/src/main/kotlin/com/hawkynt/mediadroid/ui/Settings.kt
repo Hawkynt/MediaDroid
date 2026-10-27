@@ -167,7 +167,8 @@ fun SettingsScreen(store: StateStore, rootPath: String, onChangeFolder: () -> Un
         )
         SwitchRow(
             label = "Skip intros and credits",
-            detail = "Jumps over intros and ends an episode at its credits, where the file or NFO marks them.",
+            detail = "Jumps over intros and ends an episode at its credits, " +
+                "where its chapters or its .edl file mark them.",
             checked = settings.skipIntroCredits,
             onChange = { c -> update { it.skipIntroCredits = c } },
         )
