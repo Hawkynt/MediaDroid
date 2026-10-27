@@ -161,6 +161,12 @@ fun PlayerScreen(
                 }
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
             )
+            .setMediaSourceFactory(
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                    context,
+                    com.hawkynt.mediadroid.player.AviAudioFraming.extractors,
+                ),
+            )
             .build()
     }
     var index by remember { mutableStateOf(startIndex) }
