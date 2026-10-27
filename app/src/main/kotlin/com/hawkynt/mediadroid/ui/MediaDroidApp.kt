@@ -78,13 +78,18 @@ private val LocalStorageAuthorities = setOf(
  * The app shell. There is no library database: the folders are re-read whenever the app starts or
  * comes back to the foreground, and the previous result stays on screen until the new one is in,
  * so a rescan never blanks the wall. Watched marks and resume positions live in [StateStore].
+ *
+ * [demo] is the documentation mode the README screenshots are taken in: the library is the generated
+ * demo folder in [StateStore.data]'s root, file access counts as granted and the player does not play
+ * its placeholder videos.
  */
 @Composable
-fun MediaDroidApp(store: StateStore) {
+fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var hasAccess by remember { mutableStateOf(Environment.isExternalStorageManager()) }
+    fun storageAccess() = demo || Environment.isExternalStorageManager()
+    var hasAccess by remember { mutableStateOf(storageAccess()) }
     var rootPath by remember { mutableStateOf(store.data.rootPath) }
     var library by remember { mutableStateOf<Library?>(null) }
     var scanning by remember { mutableStateOf(false) }
@@ -136,7 +141,7 @@ fun MediaDroidApp(store: StateStore) {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                hasAccess = Environment.isExternalStorageManager()
+                hasAccess = storageAccess()
                 // Back in the foreground: re-read the folders, they are the only truth.
                 if (hasAccess && rootPath.isNotEmpty() && !choosingFolder) scan(rootPath)
             }
@@ -271,6 +276,7 @@ fun MediaDroidApp(store: StateStore) {
                 store = store,
                 autoAdvance = s.autoAdvance,
                 onExit = { screen = lastBrowse },
+                demo = demo,
             )
             return
         }

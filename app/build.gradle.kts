@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.roborazzi)
 }
 
 android {
@@ -25,6 +26,27 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+}
+
+// The README screenshots are rendered by the real screens on the JVM (Robolectric + Roborazzi) from a
+// generated demo library. They are the slow tier: `./gradlew test` leaves them out, and
+// `./gradlew :app:recordRoborazziDebug -Pscreenshots` (the screenshots workflow) writes screenshots/*.png.
+tasks.withType<Test>().configureEach {
+    if (!project.hasProperty("screenshots")) {
+        exclude("**/screenshots/**")
+        // Without them the app has no fast-tier tests of its own; that is expected, not a misconfiguration.
+        failOnNoDiscoveredTests = false
+    }
+    // Robolectric's Android 16 sandbox reaches into these JDK internals.
+    jvmArgs(
+        "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
+    )
 }
 
 dependencies {
@@ -50,4 +72,10 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    debugImplementation(libs.compose.ui.test.manifest)
 }

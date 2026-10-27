@@ -60,6 +60,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorMatrix
@@ -132,6 +133,7 @@ fun PlayerScreen(
     store: StateStore,
     autoAdvance: Boolean,
     onExit: () -> Unit,
+    demo: Boolean = false,
 ) {
     val context = LocalContext.current
     val settings = store.data.settings
@@ -262,13 +264,19 @@ fun PlayerScreen(
         }
         introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, playable.intro) else null
         creditsStartMs = SkipRules.creditsStartMs(chapters, playable.credits)
-        player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(playable.videoPath))))
-        val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
-        // Resume where you left off — but never back into a known intro.
-        val startPos = SkipRules.skipTarget(resumePos, introSpanMs) ?: resumePos
-        if (startPos > 0) player.seekTo(startPos)
-        player.prepare()
-        player.playWhenReady = true
+        // Back on the main thread before touching the player: ExoPlayer only answers the thread it was built on.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+            player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(playable.videoPath))))
+            val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
+            // Resume where you left off — but never back into a known intro.
+            val startPos = SkipRules.skipTarget(resumePos, introSpanMs) ?: resumePos
+            if (startPos > 0) player.seekTo(startPos)
+            // The demo library's videos are placeholders: the screen shows its chrome without playing them.
+            if (!demo) {
+                player.prepare()
+                player.playWhenReady = true
+            }
+        }
     }
 
     LaunchedEffect(speed, subtitlesOn) {
@@ -451,6 +459,9 @@ fun PlayerScreen(
 
     val current = queue[index]
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        // The demo library's videos are empty placeholders: their picture stands in for the video,
+        // showing through the player's (then transparent) shutter beneath its controls.
+        if (demo) PosterImage(queue[index].posterPath, contentScale = ContentScale.Crop)
         AndroidView(
             factory = { androidContext ->
                 // Inflated, not constructed: the texture surface (see the layout)
@@ -474,12 +485,14 @@ fun PlayerScreen(
                             controlsVisible = visibility == View.VISIBLE
                         },
                     )
+                    if (demo) setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
                     playerView = this
                 }
             },
             update = { view -> view.applyVideoLook(fit, zoom, pan, picture) },
             modifier = Modifier.fillMaxSize(),
         )
+
         presentation?.let { shown ->
             if (shown.isShowing) shown.playerView.applyVideoLook(fit, zoom, pan, picture)
             Text(

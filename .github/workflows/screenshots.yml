@@ -1,0 +1,60 @@
+name: Screenshots
+
+# The README screenshots are generated documentation: on every push to a working branch the real
+# screens render the generated demo library (app/src/test/.../screenshots) on the JVM, and every
+# picture that changed goes straight back onto the branch as a GitHub-signed commit. By the time a
+# pull request exists, its screenshots already show what it changed.
+#
+# Never on main: that branch takes changes through pull requests, and commit-generated-file refuses it.
+on:
+  push:
+    branches-ignore: [main, master]
+  workflow_dispatch: {}
+
+# Force JavaScript-based actions to run on Node 24 instead of the deprecated Node 20 ahead of
+# the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+permissions:
+  contents: write
+
+# A newer push renders newer screens; the older run has nothing left to add.
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: gradle
+      - uses: android-actions/setup-android@v4
+      - name: Render the README screenshots from the demo library
+        run: ./gradlew :app:recordRoborazziDebug -Pscreenshots --no-daemon
+      - name: Commit the browse wall
+        uses: Hawkynt/RepositoryTemplate/commit-generated-file@v1
+        with:
+          file: screenshots/main.png
+          message: '* README screenshot: browse wall'
+      - name: Commit the details screen
+        uses: Hawkynt/RepositoryTemplate/commit-generated-file@v1
+        with:
+          file: screenshots/detail.png
+          message: '* README screenshot: details'
+      - name: Commit the filters
+        uses: Hawkynt/RepositoryTemplate/commit-generated-file@v1
+        with:
+          file: screenshots/filters.png
+          message: '* README screenshot: filters'
+      - name: Commit the player
+        uses: Hawkynt/RepositoryTemplate/commit-generated-file@v1
+        with:
+          file: screenshots/player.png
+          message: '* README screenshot: player'
