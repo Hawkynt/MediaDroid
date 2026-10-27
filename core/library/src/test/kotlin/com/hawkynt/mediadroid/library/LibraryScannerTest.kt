@@ -117,6 +117,22 @@ class LibraryScannerTest {
     }
 
     @Test
+    fun postersSeasonArtAndThumbsInAnyPictureFormat() {
+        file("Shows/Dark/tvshow.nfo", "<tvshow><title>Dark</title></tvshow>")
+        file("Shows/Dark/season01-poster.tga")
+        file("Shows/Dark/Season 01/S01E01.mkv")
+        file("Shows/Dark/Season 01/S01E01-thumb.tif")
+        file("Movies/Heat (1995)/Heat (1995).mkv")
+        file("Movies/Heat (1995)/Heat (1995).pcx")
+
+        val show = LibraryScanner.scan(File(folder.root, "Shows")).shows.single()
+        assertTrue(show.seasons.single().posterPath!!.endsWith("season01-poster.tga"))
+        assertTrue(show.seasons.single().episodes.single().thumbPath!!.endsWith("S01E01-thumb.tif"))
+        val movie = LibraryScanner.scan(File(folder.root, "Movies")).movies.single()
+        assertTrue(movie.posterPath!!.endsWith("Heat (1995).pcx"))
+    }
+
+    @Test
     fun everyContainerThePlayerReadsIsAVideo() {
         val extensions = listOf(
             "mp4", "m4v", "mov", "qt", "3gp", "3g2", "f4v", "mkv", "mk3d", "webm", "avi", "divx", "xvid",

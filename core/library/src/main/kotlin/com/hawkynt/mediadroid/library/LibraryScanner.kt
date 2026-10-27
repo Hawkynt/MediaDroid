@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.library
 
+import com.hawkynt.mediadroid.imaging.ImageFormats
 import com.hawkynt.mediadroid.nfo.ArtKind
 import com.hawkynt.mediadroid.nfo.EpisodeRef
 import com.hawkynt.mediadroid.nfo.bareEpisodeFromName
@@ -40,7 +41,6 @@ object LibraryScanner {
     private val seasonDirName = Regex("(?i)^season[ ._-]*(\\d+)$")
     private val episodeToken = Regex("(?i)\\b(?:s\\d{1,2}[ ._-]?e\\d{1,3}|\\d{1,2}x(?!26[456]\\b)\\d{1,3})\\b")
     private val trailingYear = Regex("\\s((?:19|20)\\d{2})$")
-    private val imageExtensions = setOf("jpg", "jpeg", "png", "webp")
 
     fun scan(root: File): Library {
         val movies = ArrayList<Movie>()
@@ -283,8 +283,9 @@ object LibraryScanner {
         if (nfo?.episode == null && ref == null) return null
 
         val stem = video.nameWithoutExtension
-        val thumb = siblingNames.firstOrNull { it.equals("$stem-thumb.jpg", ignoreCase = true) }
-            ?: siblingNames.firstOrNull { it.equals("$stem-thumb.png", ignoreCase = true) }
+        val thumb = siblingNames.firstOrNull {
+            it.substringBeforeLast('.').equals("$stem-thumb", ignoreCase = true) && ImageFormats.isImage(it)
+        }
 
         return Episode(
             number = nfo?.episode ?: ref!!.episode,
@@ -305,14 +306,14 @@ object LibraryScanner {
         val base = if (season == 0) "season-specials-poster" else "season%02d-poster".format(season)
         return showNames.firstOrNull { name ->
             name.substringBeforeLast('.').equals(base, ignoreCase = true) &&
-                name.substringAfterLast('.').lowercase() in imageExtensions
+                ImageFormats.isImage(name)
         }?.let { File(showDir, it).absolutePath }
     }
 
     /** A poster named after the video: `<stem>-poster.jpg` first, then a plain `<stem>.jpg`. */
     private fun stemPoster(stem: String, names: List<String>): String? {
         val lower = stem.lowercase()
-        fun image(name: String) = name.substringAfterLast('.').lowercase() in imageExtensions
+        fun image(name: String) = ImageFormats.isImage(name)
         return names.firstOrNull { it.lowercase().startsWith("$lower-poster.") && image(it) }
             ?: names.firstOrNull { it.substringBeforeLast('.').lowercase() == lower && image(it) }
     }
