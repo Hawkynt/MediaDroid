@@ -38,6 +38,10 @@ data class Movie(
     val playcount: Int = 0,
     val intro: TimeRange? = null,
     val credits: TimeRange? = null,
+    /** Every file of a multi-part movie in playing order; just [videoPath] for a single file. */
+    val parts: List<String> = listOf(videoPath),
+    val audioLanguages: List<String> = emptyList(),
+    val subtitleLanguages: List<String> = emptyList(),
 ) : MediaItem {
     override val key: String get() = "movie:$videoPath"
 }
@@ -59,6 +63,8 @@ data class Show(
 data class Season(
     val number: Int,
     val episodes: List<Episode> = emptyList(),
+    /** The season's own cover: `folder.jpg` in its folder, or `seasonNN-poster.jpg` beside the show. */
+    val posterPath: String? = null,
 )
 
 data class Episode(
@@ -70,6 +76,8 @@ data class Episode(
     val thumbPath: String? = null,
     val intro: TimeRange? = null,
     val credits: TimeRange? = null,
+    val audioLanguages: List<String> = emptyList(),
+    val subtitleLanguages: List<String> = emptyList(),
 )
 
 /** The two halves of the library the sidebar switches between. */
