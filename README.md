@@ -45,6 +45,7 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - Dark cinema theme and its own launcher icon, adaptive and themed-icon ready.
 - Subtitles on/off with a preferred language, and a picker for every audio and subtitle track a file carries.
 - The player shows nothing but the picture: a tap brings the controls up, a few seconds untouched fade them out, and the status and navigation bars stay hidden while watching.
+- Video plays on the device's own hardware decoders; the bundled FFmpeg decoder only steps in for what they cannot play. Settings can put software decoding first, with a warning: it drains the battery fast and is meant for videos that otherwise do not play at all or only with errors.
 - The player's gear holds playback speed from 0.2× to 5× (starting at the default speed), subtitles and track pickers, and brightness/gamma/contrast/color for the video on screen — remembered per video, live as you drag, and the picture size: Fit, Fill (crop to the screen) or Stretch.
 - Touch on the bare picture: double tap left or right jumps 15 s back or ahead, a vertical swipe on the left half sets the screen brightness and on the right half the volume, and a pinch zooms up to 4× and pans the zoomed picture.
 - Next and Previous on the controls move through the episodes or the parts of a movie; Previous restarts the current one when it is more than 3 s in.
