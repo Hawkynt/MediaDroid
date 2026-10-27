@@ -141,6 +141,9 @@ fun PlayerScreen(
     // decoders, so AC3/DTS/TrueHD tracks play on hardware that lacks them. Video
     // stays on the device's (hardware) decoders with FFmpeg only as the fallback,
     // unless the household chose software decoding in Settings.
+    // Past the device's own maximum a volume swipe adds loudness gain and a brightness swipe adds gamma.
+    var loudnessBoostDb by remember { mutableFloatStateOf(0f) }
+    var gammaBoost by remember { mutableFloatStateOf(1f) }
     val player = remember {
         ExoPlayer.Builder(context)
             .setRenderersFactory(
@@ -156,7 +159,11 @@ fun PlayerScreen(
                         out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
                     ) = super.buildVideoRenderers(
                         context,
-                        if (settings.softwareVideoDecoding) EXTENSION_RENDERER_MODE_PREFER else EXTENSION_RENDERER_MODE_ON,
+                        if (settings.softwareVideoDecoding) {
+                            EXTENSION_RENDERER_MODE_PREFER
+                        } else {
+                            EXTENSION_RENDERER_MODE_ON
+                        },
                         mediaCodecSelector,
                         enableDecoderFallback,
                         eventHandler,
@@ -178,7 +185,7 @@ fun PlayerScreen(
                             .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
                             .setAudioProcessorChain(
                                 DefaultAudioSink.DefaultAudioProcessorChain(
-                                    LoudnessAudioProcessor { settings.loudness },
+                                    LoudnessAudioProcessor { settings.loudness + loudnessBoostDb },
                                 ),
                             )
                             .build()
@@ -401,7 +408,9 @@ fun PlayerScreen(
                 ) / 255f).coerceIn(0f, 1f),
         )
     }
-    var volume by remember { mutableFloatStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume) }
+    var volume by remember {
+        mutableFloatStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume)
+    }
     // The swipe-set brightness belongs to the player; leaving it hands control back to the system.
     DisposableEffect(activityWindow) {
         onDispose {
@@ -414,16 +423,20 @@ fun PlayerScreen(
     fun swipe(side: Side, upFraction: Float) {
         when (side) {
             Side.LEFT -> {
-                brightness = PlaybackMath.level(brightness, upFraction)
+                brightness = PlaybackMath.boostedLevel(brightness, upFraction)
+                gammaBoost = PlaybackMath.gammaBoost(brightness)
                 activityWindow?.let { window ->
-                    window.attributes = window.attributes.apply { screenBrightness = brightness.coerceAtLeast(0.01f) }
+                    window.attributes = window.attributes.apply {
+                        screenBrightness = brightness.coerceIn(0.01f, 1f)
+                    }
                 }
-                show("Brightness ${(brightness * 100).roundToInt()} %")
+                show("Brightness ${PlaybackMath.percent(brightness)} %")
             }
             Side.RIGHT -> {
-                volume = PlaybackMath.level(volume, upFraction)
-                audio.setStreamVolume(AudioManager.STREAM_MUSIC, (volume * maxVolume).roundToInt(), 0)
-                show("Volume ${(volume * 100).roundToInt()} %")
+                volume = PlaybackMath.boostedLevel(volume, upFraction)
+                loudnessBoostDb = PlaybackMath.boostDb(volume)
+                audio.setStreamVolume(AudioManager.STREAM_MUSIC, (volume.coerceAtMost(1f) * maxVolume).roundToInt(), 0)
+                show("Volume ${PlaybackMath.percent(volume)} %")
             }
         }
     }
@@ -459,6 +472,8 @@ fun PlayerScreen(
     }
 
     val current = queue[index]
+    // The video's own picture correction, with the brightness swipe's gamma on top once past the maximum.
+    val shownPicture = picture.copy(gamma = picture.gamma * gammaBoost)
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         // The demo library's videos are empty placeholders: their picture stands in for the video,
         // showing through the player's (then transparent) shutter beneath its controls.
@@ -495,13 +510,13 @@ fun PlayerScreen(
                 // last frame it got; it is hidden so the phone stays black behind the controls.
                 val elsewhere = presentation?.isShowing == true
                 view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
-                if (!elsewhere) view.applyVideoLook(fit, zoom, pan, picture)
+                if (!elsewhere) view.applyVideoLook(fit, zoom, pan, shownPicture)
             },
             modifier = Modifier.fillMaxSize(),
         )
 
         presentation?.let { shown ->
-            if (shown.isShowing) shown.playerView.applyVideoLook(fit, zoom, pan, picture)
+            if (shown.isShowing) shown.playerView.applyVideoLook(fit, zoom, pan, shownPicture)
             Text(
                 "Playing on ${externalDisplay?.name ?: "the other screen"}",
                 color = Color.White,
@@ -583,7 +598,8 @@ fun PlayerScreen(
                         ) {
                             Icon(
                                 painterResource(R.drawable.ic_tv),
-                                contentDescription = if (onSecondScreen) "Back to this screen" else "Play on the other screen",
+                                contentDescription =
+                                    if (onSecondScreen) "Back to this screen" else "Play on the other screen",
                                 tint = if (onSecondScreen) MaterialTheme.colorScheme.primary else Color.White,
                             )
                         }

@@ -1,5 +1,10 @@
 package com.hawkynt.mediadroid.player
 
+import kotlin.math.log10
+import kotlin.math.pow
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
+
 /** The arithmetic behind the player's buttons and gestures, kept pure so it is tested without a device. */
 object PlaybackMath {
 
@@ -29,6 +34,27 @@ object PlaybackMath {
     /** What Previous does at [positionMs] into queue item [index]. */
     fun previous(positionMs: Long, index: Int): Previous =
         if (positionMs > RESTART_THRESHOLD_MS || index == 0) Previous.Restart else Previous.GoTo(index - 1)
+
+    /** How far past the device's own maximum a swipe may go: eight times it (800 %). */
+    const val MAX_BOOST = 8f
+
+    /**
+     * A brightness or volume swipe position from 0 to 2: up to 1 is the device's own range, linear; the
+     * second stretch boosts past it on a logarithmic scale up to [MAX_BOOST] (see [boostFactor]).
+     */
+    fun boostedLevel(start: Float, dragUpFraction: Float): Float = (start + dragUpFraction).coerceIn(0f, 2f)
+
+    /** How many times the device maximum [level] stands for: 1 up to 1, then doubling every third of the stretch. */
+    fun boostFactor(level: Float): Float = if (level <= 1f) 1f else MAX_BOOST.pow(level - 1f)
+
+    /** The level as the percentage shown while swiping: 0..100 on the device, up to 800 beyond it. */
+    fun percent(level: Float): Int = (if (level <= 1f) level * 100f else boostFactor(level) * 100f).roundToInt()
+
+    /** Loudness gain for a volume level past the device maximum: the boost factor in dB (up to +18 dB). */
+    fun boostDb(level: Float): Float = 20f * log10(boostFactor(level))
+
+    /** Gamma factor for a brightness level past the device maximum: the square root of the boost, at most ≈2.8. */
+    fun gammaBoost(level: Float): Float = sqrt(boostFactor(level))
 
     /** A brightness or volume level after a vertical swipe; a swipe over the whole height spans 0..1. */
     fun level(start: Float, dragUpFraction: Float): Float = (start + dragUpFraction).coerceIn(0f, 1f)
