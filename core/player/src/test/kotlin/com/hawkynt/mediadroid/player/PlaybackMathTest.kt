@@ -77,6 +77,38 @@ class PlaybackMathTest {
     }
 
     @Test
+    fun `a swipe runs on past the device maximum for a second full stretch`() {
+        assertEquals(1.5f, PlaybackMath.boostedLevel(1f, dragUpFraction = 0.5f), 1e-6f)
+        assertEquals(2f, PlaybackMath.boostedLevel(1.8f, dragUpFraction = 0.5f), 1e-6f)
+        assertEquals(0f, PlaybackMath.boostedLevel(0.2f, dragUpFraction = -0.5f), 1e-6f)
+    }
+
+    @Test
+    fun `past the maximum the level climbs logarithmically to 800 percent`() {
+        assertEquals(70, PlaybackMath.percent(0.7f))
+        assertEquals(100, PlaybackMath.percent(1f))
+        assertEquals(200, PlaybackMath.percent(1f + 1f / 3f)) // each third of the stretch doubles it
+        assertEquals(400, PlaybackMath.percent(1f + 2f / 3f))
+        assertEquals(800, PlaybackMath.percent(2f))
+    }
+
+    @Test
+    fun `volume past the maximum turns into loudness gain in even decibel steps`() {
+        assertEquals(0f, PlaybackMath.boostDb(0.7f), 1e-6f)
+        assertEquals(0f, PlaybackMath.boostDb(1f), 1e-6f)
+        assertEquals(9.0309f, PlaybackMath.boostDb(1.5f), 1e-3f)
+        assertEquals(18.0618f, PlaybackMath.boostDb(2f), 1e-3f)
+    }
+
+    @Test
+    fun `brightness past the maximum turns into a gentler gamma lift`() {
+        assertEquals(1f, PlaybackMath.gammaBoost(0.4f), 1e-6f)
+        assertEquals(1f, PlaybackMath.gammaBoost(1f), 1e-6f)
+        assertEquals(2f, PlaybackMath.gammaBoost(1f + 2f / 3f), 1e-4f) // 400 % → gamma ×2
+        assertEquals(2.8284f, PlaybackMath.gammaBoost(2f), 1e-3f)
+    }
+
+    @Test
     fun `a mirrored screen keeps its overlays inside the centred 16 by 9 area`() {
         // A 20:9 phone in landscape (2400 x 1080): a 16:9 TV shows the middle 1920 px.
         assertEquals(240f to 0f, PlaybackMath.mirrorSafeInset(2400f, 1080f))

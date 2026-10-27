@@ -26,6 +26,8 @@ data class MovieInfo(
     val audioLanguages: List<String> = emptyList(),
     /** Languages of the subtitle streams, from `<fileinfo><streamdetails>`. */
     val subtitleLanguages: List<String> = emptyList(),
+    /** Video size, codecs and HDR from `<fileinfo><streamdetails>`; null when the NFO has none. */
+    val streamDetails: StreamDetails? = null,
 )
 
 data class SetInfo(val name: String)
@@ -72,5 +74,6 @@ fun parseMovieNfo(xml: String): MovieInfo {
         playcount = root.childInt("playcount") ?: 0,
         audioLanguages = root.streamLanguages("audio"),
         subtitleLanguages = root.streamLanguages("subtitle"),
+        streamDetails = root.streamDetails(),
     )
 }

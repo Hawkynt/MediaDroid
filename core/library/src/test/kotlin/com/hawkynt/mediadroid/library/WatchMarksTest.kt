@@ -58,4 +58,20 @@ class WatchMarksTest {
         assertTrue(marks.isWatched(movie))
         assertTrue(marks.isWatched(movie.copy(videoPath = "/n.mkv", parts = listOf("/n.mkv"), playcount = 1)))
     }
+
+    @Test
+    fun aShowIsWatchedWhenEverySeasonIs() {
+        val show = Show(
+            title = "Dark",
+            path = "/tv/Dark",
+            seasons = listOf(
+                Season(1, listOf(Episode(number = 1, videoPath = "/a.mkv", watched = true))),
+                Season(2, listOf(Episode(number = 1, videoPath = "/b.mkv"))),
+            ),
+        )
+        assertFalse(marks.isWatched(show))
+        marks.set(listOf("/b.mkv"), watched = true)
+        assertTrue(marks.isWatched(show))
+        assertFalse("a show without episodes is not watched", marks.isWatched(Show(title = "Empty", path = "/e")))
+    }
 }
