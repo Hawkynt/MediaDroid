@@ -1,6 +1,9 @@
 package com.hawkynt.mediadroid.data
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import java.io.File
 import kotlinx.serialization.Serializable
@@ -59,15 +62,24 @@ class StateStore(context: Context) {
     private val stateFile = File(context.filesDir, "state.json")
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
 
-    var data: AppData = load()
-        private set
+    /** Bumped on every save; reading [data] subscribes a screen to it, so a change shows at once. */
+    private var revision by mutableIntStateOf(0)
+
+    private val current: AppData = load()
+
+    val data: AppData
+        get() {
+            revision
+            return current
+        }
 
     private fun load(): AppData = runCatching {
         json.decodeFromString(AppData.serializer(), stateFile.readText())
     }.getOrDefault(AppData())
 
     fun save() {
-        runCatching { stateFile.writeText(json.encodeToString(AppData.serializer(), data)) }
+        runCatching { stateFile.writeText(json.encodeToString(AppData.serializer(), current)) }
+        revision++
     }
 
     fun isWatched(videoPath: String): Boolean = videoPath in data.watched
