@@ -309,6 +309,7 @@ object LibraryScanner {
             credits = skips.credits,
             audioLanguages = nfo?.audioLanguages ?: emptyList(),
             subtitleLanguages = nfo?.subtitleLanguages ?: emptyList(),
+            quality = Quality.of(nfo?.streamDetails),
         )
     }
 
@@ -371,6 +372,7 @@ object LibraryScanner {
             parts = parts.map { it.absolutePath },
             audioLanguages = info?.audioLanguages ?: emptyList(),
             subtitleLanguages = info?.subtitleLanguages ?: emptyList(),
+            quality = Quality.of(info?.streamDetails),
         )
     }
 
@@ -408,6 +410,7 @@ object LibraryScanner {
             parts = parts.map { it.absolutePath },
             audioLanguages = info?.audioLanguages ?: emptyList(),
             subtitleLanguages = info?.subtitleLanguages ?: emptyList(),
+            quality = Quality.of(info?.streamDetails),
         )
     }
 
