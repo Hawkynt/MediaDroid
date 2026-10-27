@@ -117,6 +117,25 @@ class LibraryScannerTest {
     }
 
     @Test
+    fun everyContainerThePlayerReadsIsAVideo() {
+        val extensions = listOf(
+            "mp4", "m4v", "mov", "qt", "3gp", "3g2", "f4v", "mkv", "mk3d", "webm", "avi", "divx", "xvid",
+            "mpg", "mpeg", "mpe", "mp2", "m2p", "vob", "ts", "m2ts", "mts", "m2t", "tp", "trp", "ogv", "ogm", "flv",
+        )
+        // Neutral names: "DivX", "XviD" or "TS" in a title are release tags the cleaner strips.
+        val names = (
+            "Alpaca Badger Camel Dingo Eagle Falcon Gecko Heron Ibis Jaguar Koala Lemur Moose Newt Otter Panda " +
+                "Quail Raven Sloth Tapir Urchin Viper Walrus Yak Zebra Bison Crane Dove"
+            ).split(" ")
+        extensions.forEachIndexed { i, ext -> file("Movies/${names[i]}.$ext") }
+        file("Movies/notes.txt")
+        file("Movies/cover.jpg")
+
+        val titles = LibraryScanner.scan(File(folder.root, "Movies")).movies.map { it.title }.toSet()
+        assertEquals(names.take(extensions.size).toSet(), titles)
+    }
+
+    @Test
     fun anyLooseVideoThatIsNoEpisodeIsAMovie() {
         file("Movies/Heat.mp4")
         file("Movies/Cold Storage.mp4")
