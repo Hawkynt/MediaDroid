@@ -5,10 +5,11 @@ import com.hawkynt.mediadroid.nfo.TimeRange
 /**
  * What binge watching skips: the intro at the start and the credits at the end.
  * Matroska chapters are the authoritative source — they are what the file
- * carries — and the NFO sidecar spans (our extension, see [TimeRange]) fill in
- * where a file has no chapter atoms. Titles are matched in the languages real
- * releases use; a chapter named "Intro" in an English file and "Vorspann" in a
- * German one mean the same thing.
+ * carries — and the edit decision list beside the video (see
+ * [com.hawkynt.mediadroid.nfo.EditDecisionList]) fills in where a file has no
+ * chapter atoms. Titles are matched in the languages real releases use; a
+ * chapter named "Intro" in an English file and "Vorspann" in a German one mean
+ * the same thing.
  */
 object SkipRules {
 
@@ -18,12 +19,12 @@ object SkipRules {
     /** Millisecond to seek to when starting playback; null means no intro known. */
     fun introEndMs(chapters: List<Chapter>, intro: TimeRange?): Long? =
         chapters.firstOrNull { INTRO_TITLE.containsMatchIn(it.title) && it.endMs > 0 }?.endMs
-            ?: intro?.let { it.endSec * 1000L }
+            ?: intro?.endMs
 
     /** Where the intro runs, start to end in milliseconds; null means no intro known. */
     fun introSpanMs(chapters: List<Chapter>, intro: TimeRange?): LongRange? =
         chapters.firstOrNull { INTRO_TITLE.containsMatchIn(it.title) && it.endMs > 0 }?.let { it.startMs..it.endMs }
-            ?: intro?.let { it.startSec * 1000L..it.endSec * 1000L }
+            ?: intro?.let { it.startMs..it.endMs }
 
     /**
      * Where to jump when playback is at [positionMs]: the intro's end while inside the intro, else
@@ -38,5 +39,5 @@ object SkipRules {
     /** Millisecond at which the credits begin; null means no credits known. */
     fun creditsStartMs(chapters: List<Chapter>, credits: TimeRange?): Long? =
         chapters.firstOrNull { CREDITS_TITLE.containsMatchIn(it.title) }?.startMs
-            ?: credits?.let { it.startSec * 1000L }
+            ?: credits?.startMs
 }
