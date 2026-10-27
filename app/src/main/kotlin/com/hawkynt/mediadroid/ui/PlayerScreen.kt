@@ -1,8 +1,27 @@
 package com.hawkynt.mediadroid.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.net.Uri
+import android.view.View
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.ui.text.font.FontWeight
+import com.hawkynt.mediadroid.player.PictureAdjustment
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,13 +51,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -49,6 +73,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.ui.PlayerView
 import com.hawkynt.mediadroid.R
 import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.library.SkipRules
 import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
 import java.io.File
 import kotlinx.coroutines.delay
@@ -56,17 +81,23 @@ import kotlinx.coroutines.delay
 /** Playback speeds the player offers, slowest to fastest. */
 val Speeds = listOf(0.2f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 5.0f)
 
+/** How long the controls stay up after the last touch, like the streaming apps' players. */
+private const val ControlsTimeoutMs = 3_000
+
 /**
  * Full-screen playback: it remembers where you stopped, a show keeps going, and
  * the household controls live right on the screen — speed from 0.2x to 5x,
  * subtitles on/off, and a picker for audio and subtitle tracks when the file
- * carries several. Picture and sound follow the guarded settings.
+ * carries several. Picture and sound follow the guarded settings. Nothing but
+ * the picture shows while watching: a tap brings every control up together,
+ * and they fade out again after a few seconds untouched.
  */
 @Composable
 fun PlayerScreen(
     queue: List<Playable>,
     startIndex: Int,
     store: StateStore,
+    autoAdvance: Boolean,
     onExit: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -108,10 +139,37 @@ fun PlayerScreen(
     var subtitlePicker by remember { mutableStateOf(false) }
     // Once the household picks a track by hand, the settings language steps back.
     var manualTrackPick by remember { mutableStateOf(false) }
+    var controlsVisible by remember { mutableStateOf(false) }
+    var panelOpen by remember { mutableStateOf(false) }
+    // Per video: its own picture if one was saved, else the household default.
+    var picture by remember { mutableStateOf(store.pictureFor(queue[startIndex].videoPath)) }
+    var playerView by remember { mutableStateOf<PlayerView?>(null) }
 
-    // Intro/credits skip targets for the current item: Matroska chapters first,
-    // NFO sidecar spans as fallback (see SkipRules).
-    var introEndMs by remember { mutableStateOf<Long?>(null) }
+    // Touching one of our own controls must keep Media3's controls up too, or they would time
+    // out mid-choice: both are one set of controls to the viewer.
+    fun keepControls() {
+        playerView?.showController()
+    }
+
+    // Immersive while watching: no status or navigation bar over the picture; a swipe from the
+    // edge shows them for a moment, leaving the player puts them back.
+    val hostView = LocalView.current
+    DisposableEffect(hostView) {
+        val window = hostView.context.findActivity()?.window
+        val insets = window?.let { WindowCompat.getInsetsController(it, hostView) }
+        insets?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        insets?.hide(WindowInsetsCompat.Type.systemBars())
+        hostView.keepScreenOn = true
+        onDispose {
+            insets?.show(WindowInsetsCompat.Type.systemBars())
+            hostView.keepScreenOn = false
+        }
+    }
+
+    // Intro/credits for the current item: Matroska chapters first, NFO sidecar spans as fallback
+    // (see SkipRules). Only acted on while the household has skipping switched on.
+    val skipping = settings.skipIntroCredits
+    var introSpanMs by remember { mutableStateOf<LongRange?>(null) }
     var creditsStartMs by remember { mutableStateOf<Long?>(null) }
 
     // Preferred languages steer automatic selection for each new item. The
@@ -120,19 +178,19 @@ fun PlayerScreen(
     LaunchedEffect(index) {
         val playable = queue[index]
         manualTrackPick = false
+        picture = store.pictureFor(playable.videoPath)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguage(settings.audioLanguage.ifEmpty { null })
             .build()
         val chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             com.hawkynt.mediadroid.library.MatroskaChapters.parse(File(playable.videoPath))
         }
-        introEndMs = com.hawkynt.mediadroid.library.SkipRules.introEndMs(chapters, playable.intro)
-        creditsStartMs = com.hawkynt.mediadroid.library.SkipRules.creditsStartMs(chapters, playable.credits)
+        introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, playable.intro) else null
+        creditsStartMs = if (skipping) SkipRules.creditsStartMs(chapters, playable.credits) else null
         player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(playable.videoPath))))
         val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
-        val intro = introEndMs
         // Resume where you left off — but never back into a known intro.
-        val startPos = if (intro != null && resumePos in 1 until intro) intro else resumePos
+        val startPos = SkipRules.skipTarget(resumePos, introSpanMs) ?: resumePos
         if (startPos > 0) player.seekTo(startPos)
         player.prepare()
         player.playWhenReady = true
@@ -147,7 +205,7 @@ fun PlayerScreen(
 
     fun finishCurrent() {
         store.markWatched(queue[index].videoPath)
-        if (index + 1 < queue.size) index++ else finished = true
+        if (autoAdvance && index + 1 < queue.size) index++ else finished = true
     }
 
     DisposableEffect(player) {
@@ -184,44 +242,31 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(player) {
+        var tick = 0
         while (true) {
-            delay(3_000)
+            delay(500)
             if (!player.isPlaying) continue
+            val position = player.currentPosition
+            // Inside a known intro (also one after a cold open): jump to its end.
+            SkipRules.skipTarget(position, introSpanMs)?.let {
+                player.seekTo(it)
+                continue
+            }
             val credits = creditsStartMs
-            if (credits != null && player.currentPosition >= credits) {
-                // The credits have begun: binge straight to the next episode.
+            if (credits != null && position >= credits) {
+                // The credits have begun: end the episode, binge mode takes it from there.
                 player.seekTo(player.duration)
                 continue
             }
-            store.saveResume(queue[index].videoPath, player.currentPosition, player.duration)
+            if (++tick % 6 == 0) store.saveResume(queue[index].videoPath, position, player.duration)
         }
     }
 
-    BackHandler(onBack = onExit)
+    BackHandler {
+        if (panelOpen) panelOpen = false else onExit()
+    }
 
     val current = queue[index]
-    // Picture settings: brightness is a scrim over the picture, the rest a
-    // color matrix on the layer (gamma approximated via the matrix).
-    val picture = Modifier.graphicsLayer {
-        // One composed matrix: saturation around gray, then contrast around mid
-        // gray. Brightness and an approximated gamma (a matrix cannot do a true
-        // power curve) both land in the offset — a dark video gets lifted at the
-        // matrix level instead of washed under a white scrim. Row sums of the
-        // saturation part are 1, so the offset passes through untouched.
-        val c = settings.contrast
-        val s = settings.saturation
-        val o = (c - 1f) * -127.5f + (settings.gamma - 1f) * -40f + settings.brightness * 80f
-        colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(
-            ColorMatrix(
-                floatArrayOf(
-                    (0.213f + 0.787f * s) * c, (0.715f - 0.715f * s) * c, (0.072f - 0.072f * s) * c, 0f, o,
-                    (0.213f - 0.213f * s) * c, (0.715f + 0.285f * s) * c, (0.072f - 0.072f * s) * c, 0f, o,
-                    (0.213f - 0.213f * s) * c, (0.715f - 0.715f * s) * c, (0.072f + 0.928f * s) * c, 0f, o,
-                    0f, 0f, 0f, 1f, 0f,
-                ),
-            ),
-        )
-    }
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { androidContext ->
@@ -233,47 +278,87 @@ fun PlayerScreen(
                     ).apply {
                     this.player = player
                     useController = true
+                    // Start on the bare picture; a tap shows the controls, inactivity hides them.
+                    controllerAutoShow = false
+                    controllerShowTimeoutMs = ControlsTimeoutMs
+                    controllerHideOnTouch = true
+                    // Speed, subtitles and tracks are ours (wider speed range, language rules);
+                    // Media3's gear would offer a second, conflicting set.
+                    findViewById<View>(androidx.media3.ui.R.id.exo_settings)?.visibility = View.GONE
+                    setShowSubtitleButton(false)
+                    setControllerVisibilityListener(
+                        PlayerView.ControllerVisibilityListener { visibility ->
+                            controlsVisible = visibility == View.VISIBLE
+                        },
+                    )
+                    playerView = this
                 }
             },
-            modifier = picture.fillMaxSize(),
+            modifier = Modifier.pictureCorrection(picture).fillMaxSize(),
         )
-        Row(
-            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        // Our controls ride on top, in the band Media3 leaves free, and come and go with its own.
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter),
         ) {
-            IconButton(onClick = onExit) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent)))
+                    .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 24.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onExit) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        buildString {
+                            append(current.title)
+                            current.subtitle?.let { append("  ·  $it") }
+                        },
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        onClick = {
+                            panelOpen = true
+                            playerView?.hideController()
+                        },
+                    ) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Playback and picture", tint = Color.White)
+                    }
+                }
             }
-            Spacer(Modifier.width(8.dp))
-            Text(
-                buildString {
-                    append(current.title)
-                    current.subtitle?.let { append("  ·  $it") }
-                },
-                color = Color.White,
-                fontSize = 18.sp,
-            )
         }
-        // Household controls, big enough for a thumb.
-        Row(
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(8.dp).horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Speeds.forEach { s ->
-                FilterChip(
-                    selected = speed == s,
-                    onClick = { speed = s },
-                    label = { Text(if (s == 1.0f) "1×" else "${s}×", fontSize = 16.sp) },
-                )
-            }
-            FilterChip(
-                selected = subtitlesOn,
-                onClick = { subtitlesOn = !subtitlesOn },
-                label = { Text("Subtitles", fontSize = 16.sp) },
+        if (panelOpen) {
+            // Tapping beside the panel closes it, like the players everyone knows.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(interactionSource = null, indication = null) { panelOpen = false },
             )
-            FilterChip(selected = false, onClick = { audioPicker = true }, label = { Text("Audio…", fontSize = 16.sp) })
-            FilterChip(selected = false, onClick = { subtitlePicker = true }, label = { Text("Subtitle track…", fontSize = 16.sp) })
+            PlayerPanel(
+                speed = speed,
+                onSpeed = { speed = it },
+                subtitlesOn = subtitlesOn,
+                onSubtitles = { subtitlesOn = it },
+                picture = picture,
+                onPicture = { picture = it },
+                onPictureDone = { store.savePicture(queue[index].videoPath, picture) },
+                onResetPicture = {
+                    store.savePicture(queue[index].videoPath, null)
+                    picture = store.pictureFor(queue[index].videoPath)
+                },
+                onAudioTrack = { audioPicker = true },
+                onSubtitleTrack = { subtitlePicker = true },
+                onClose = { panelOpen = false },
+                modifier = Modifier.align(Alignment.CenterEnd),
+            )
         }
         if (audioPicker) {
             TrackDialog(
@@ -358,4 +443,86 @@ private fun TrackDialog(
             }
         },
     )
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/**
+ * The gear's side panel: speed, this video's picture, subtitles and tracks. Picture changes show
+ * live and are remembered for this one video when a slider is let go.
+ */
+@Composable
+private fun PlayerPanel(
+    speed: Float,
+    onSpeed: (Float) -> Unit,
+    subtitlesOn: Boolean,
+    onSubtitles: (Boolean) -> Unit,
+    picture: PictureAdjustment,
+    onPicture: (PictureAdjustment) -> Unit,
+    onPictureDone: () -> Unit,
+    onResetPicture: () -> Unit,
+    onAudioTrack: () -> Unit,
+    onSubtitleTrack: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .widthIn(max = 400.dp)
+            .fillMaxWidth(0.9f)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
+            .clickable(interactionSource = null, indication = null) {}
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Playback & picture", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close") }
+        }
+
+        PanelTitle("Speed")
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Speeds.forEach { s ->
+                FilterChip(
+                    selected = speed == s,
+                    onClick = { onSpeed(s) },
+                    label = { Text(if (s == 1.0f) "1×" else "${s}×", fontSize = 16.sp) },
+                )
+            }
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 20.dp)) {
+            Text(
+                "Picture for this video",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onResetPicture) { Text("Reset", fontSize = 16.sp) }
+        }
+        PictureSliders(picture, onChange = onPicture, onDone = onPictureDone)
+
+        PanelTitle("Subtitles & sound")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Subtitles", fontSize = 17.sp, modifier = Modifier.weight(1f))
+            Switch(checked = subtitlesOn, onCheckedChange = onSubtitles)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+            OutlinedButton(onClick = onAudioTrack) { Text("Audio track…", fontSize = 16.sp) }
+            OutlinedButton(onClick = onSubtitleTrack) { Text("Subtitle track…", fontSize = 16.sp) }
+        }
+    }
+}
+
+@Composable
+private fun PanelTitle(text: String) {
+    Text(text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
 }

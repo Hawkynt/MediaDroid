@@ -2,6 +2,8 @@ package com.hawkynt.mediadroid.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,29 +40,21 @@ import com.hawkynt.mediadroid.data.StateStore
 private val DigitWords = listOf("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
 
 /**
- * The parent gate. A random four-digit PIN is generated once and shown on
- * screen as words, big enough to read from a sofa: grown-ups read the words and
- * tap the digits, small children see four words they cannot read yet. The PIN
- * is re-shown on every visit, so nobody has to remember it.
+ * The parent gate. Every visit draws a fresh random four-digit PIN and shows it on screen as words,
+ * big enough to read from a sofa: grown-ups read the words and tap the digits, small children see
+ * four words they cannot read yet. Nothing to remember, nothing stored.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PinGate(
-    store: StateStore,
     onUnlocked: () -> Unit,
 ) {
-    val fresh = store.data.settings.pin.isEmpty()
-    var pin by remember {
-        mutableStateOf(store.data.settings.pin.ifEmpty { (1000..9999).random().toString() })
-    }
+    val pin = remember { (1000..9999).random().toString() }
     var entered by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
 
     fun submit(digits: String) {
         if (digits == pin) {
-            if (fresh) {
-                store.data.settings.pin = pin
-                store.save()
-            }
             onUnlocked()
         } else {
             wrong = true
@@ -74,12 +68,12 @@ fun PinGate(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            if (fresh) "Your new PIN — tap these four numbers" else "Settings are for grown-ups",
+            "Settings are for grown-ups — tap these four numbers",
             fontSize = 22.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(16.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally)) {
             pin.forEach { digit ->
                 Text(
                     DigitWords[digit - '0'],
@@ -133,15 +127,17 @@ fun PinGate(
  * The guarded settings: playback defaults, picture and sound, languages, and
  * the maximum age for the library. Every change is saved straight away.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(store: StateStore) {
+fun SettingsScreen(store: StateStore, rootPath: String, onChangeFolder: () -> Unit) {
     var unlocked by remember { mutableStateOf(false) }
     if (!unlocked) {
-        PinGate(store, onUnlocked = { unlocked = true })
+        PinGate(onUnlocked = { unlocked = true })
         return
     }
 
     val settings = store.data.settings
+    var defaultPicture by remember { mutableStateOf(store.defaultPicture()) }
     fun update(block: (Settings) -> Unit) {
         block(settings)
         store.save()
@@ -153,7 +149,28 @@ fun SettingsScreen(store: StateStore) {
         Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(16.dp))
 
+        Text("Library", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text("Media folder", fontSize = 18.sp)
+        Text(rootPath, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onChangeFolder) { Text("Choose another folder", fontSize = 18.sp) }
+        Spacer(Modifier.height(24.dp))
+
         Text("Playback", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        SwitchRow(
+            label = "Binge-watch shows",
+            detail = "When an episode ends, the next one starts.",
+            checked = settings.bingeWatching,
+            onChange = { c -> update { it.bingeWatching = c } },
+        )
+        SwitchRow(
+            label = "Skip intros and credits",
+            detail = "Jumps over intros and ends an episode at its credits, where the file or NFO marks them.",
+            checked = settings.skipIntroCredits,
+            onChange = { c -> update { it.skipIntroCredits = c } },
+        )
         Spacer(Modifier.height(8.dp))
         Text("Default speed", fontSize = 18.sp)
         Row(
@@ -177,11 +194,24 @@ fun SettingsScreen(store: StateStore) {
         )
 
         Spacer(Modifier.height(16.dp))
-        Text("Picture", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        SliderRow("Brightness", settings.brightness, -1f..1f, "%.2f".format(settings.brightness)) { v -> update { it.brightness = v } }
-        SliderRow("Gamma", settings.gamma, 0.5f..2f, "%.2f".format(settings.gamma)) { v -> update { it.gamma = v } }
-        SliderRow("Contrast", settings.contrast, 0.5f..2f, "%.2f".format(settings.contrast)) { v -> update { it.contrast = v } }
-        SliderRow("Colors", settings.saturation, 0f..2f, "%.2f".format(settings.saturation)) { v -> update { it.saturation = v } }
+        Text("Default picture", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Every video starts with this; the gear in the player changes one video on its own.",
+            fontSize = 15.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        PictureSliders(
+            picture = defaultPicture,
+            onChange = { defaultPicture = it },
+            onDone = {
+                update {
+                    it.brightness = defaultPicture.brightness
+                    it.gamma = defaultPicture.gamma
+                    it.contrast = defaultPicture.contrast
+                    it.saturation = defaultPicture.saturation
+                }
+            },
+        )
 
         Spacer(Modifier.height(16.dp))
         Text("Languages", fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -211,7 +241,7 @@ fun SettingsScreen(store: StateStore) {
         Text("Children", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text("Maximum age for the library", fontSize = 18.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(0, 6, 12, 16, 18).forEach { age ->
                 FilterChip(
                     selected = settings.maxAgeYears == age,
@@ -220,14 +250,19 @@ fun SettingsScreen(store: StateStore) {
                 )
             }
         }
-        Spacer(Modifier.height(16.dp))
-        OutlinedButton(
-            onClick = {
-                update { it.pin = (1000..9999).random().toString() }
-                unlocked = false
-            },
-        ) { Text("Choose a new PIN", fontSize = 18.sp) }
         Spacer(Modifier.height(32.dp))
+    }
+}
+
+@Composable
+private fun SwitchRow(label: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, fontSize = 18.sp)
+            Text(detail, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 

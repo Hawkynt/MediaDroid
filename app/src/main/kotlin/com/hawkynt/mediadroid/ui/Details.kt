@@ -1,6 +1,7 @@
 package com.hawkynt.mediadroid.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -84,8 +85,17 @@ fun DetailsScreen(
                     item.year?.let { append("$it  ·  ") }
                     append(item.genres.joinToString(" · "))
                 }
-                if (subtitle.isNotBlank()) {
-                    Text(subtitle, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    item.minAge?.let {
+                        AgeBadge(it)
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    if (subtitle.isNotBlank()) {
+                        Text(subtitle, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (item is Movie) {
+                    LanguageFlags(item.audioLanguages, item.subtitleLanguages, Modifier.padding(top = 8.dp))
                 }
                 Spacer(Modifier.height(16.dp))
 
@@ -116,18 +126,25 @@ fun DetailsScreen(
             item {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(androidx.compose.foundation.rememberScrollState())
+                        .padding(horizontal = 16.dp),
                 ) {
                     seasons.forEach { season ->
                         FilterChip(
                             selected = season.number == selected,
                             onClick = { selected = season.number },
-                            label = { Text("Season ${season.number}", fontSize = 16.sp) },
+                            label = { Text(seasonName(season.number), fontSize = 16.sp) },
                         )
                     }
                 }
             }
-            val episodes = seasons.firstOrNull { it.number == selected }?.episodes ?: emptyList()
+            val season = seasons.firstOrNull { it.number == selected }
+            val episodes = season?.episodes ?: emptyList()
+            item {
+                SeasonHeader(season?.number ?: selected, episodes.size, season?.posterPath)
+            }
             items(episodes, key = { it.videoPath }) { episode ->
                 EpisodeRow(
                     season = selected,
@@ -168,9 +185,13 @@ private fun MovieActions(movie: Movie, store: StateStore, onPlay: (Movie) -> Uni
             )
         }
     }
-    movie.runtimeMinutes?.let {
+    val facts = listOfNotNull(
+        movie.runtimeMinutes?.let { "$it minutes" },
+        movie.parts.size.takeIf { it > 1 }?.let { "$it parts, played one after the other" },
+    )
+    if (facts.isNotEmpty()) {
         Spacer(Modifier.height(8.dp))
-        Text("$it minutes", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(facts.joinToString("  ·  "), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -213,16 +234,59 @@ private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                "E%02d — ${episode.title ?: "Episode ${episode.number}"}".format(episode.number),
+                "Episode ${episode.number}",
                 fontSize = 17.sp,
                 fontWeight = if (watched) FontWeight.Normal else FontWeight.SemiBold,
+                maxLines = 1,
             )
+            episode.title?.let {
+                Text(
+                    it,
+                    fontSize = 15.sp,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
             episode.firstAired?.let {
                 Text(it, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            LanguageFlags(episode.audioLanguages, episode.subtitleLanguages, Modifier.padding(top = 2.dp))
         }
         if (watched) {
             Icon(Icons.Filled.CheckCircle, contentDescription = "Watched", modifier = Modifier.width(28.dp))
         }
     }
 }
+
+/** The selected season: its own cover when the folder has one, and how many episodes it holds. */
+@Composable
+private fun SeasonHeader(number: Int, episodeCount: Int, posterPath: String?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        if (posterPath != null) {
+            Box(
+                modifier = Modifier
+                    .width(72.dp)
+                    .aspectRatio(2f / 3f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            ) {
+                PosterImage(posterPath, contentScale = ContentScale.Crop)
+            }
+            Spacer(Modifier.width(14.dp))
+        }
+        Column {
+            Text(seasonName(number), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(
+                if (episodeCount == 1) "1 episode" else "$episodeCount episodes",
+                fontSize = 15.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** Season 0 holds the specials, the Kodi convention. */
+private fun seasonName(number: Int): String = if (number == 0) "Specials" else "Season $number"

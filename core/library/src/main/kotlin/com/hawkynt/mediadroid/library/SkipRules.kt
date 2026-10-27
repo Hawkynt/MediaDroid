@@ -20,6 +20,21 @@ object SkipRules {
         chapters.firstOrNull { INTRO_TITLE.containsMatchIn(it.title) && it.endMs > 0 }?.endMs
             ?: intro?.let { it.endSec * 1000L }
 
+    /** Where the intro runs, start to end in milliseconds; null means no intro known. */
+    fun introSpanMs(chapters: List<Chapter>, intro: TimeRange?): LongRange? =
+        chapters.firstOrNull { INTRO_TITLE.containsMatchIn(it.title) && it.endMs > 0 }?.let { it.startMs..it.endMs }
+            ?: intro?.let { it.startSec * 1000L..it.endSec * 1000L }
+
+    /**
+     * Where to jump when playback is at [positionMs]: the intro's end while inside the intro, else
+     * null. A cold open before the intro plays; the last second is left alone so a seek landing just
+     * short of the end cannot loop.
+     */
+    fun skipTarget(positionMs: Long, intro: LongRange?): Long? {
+        if (intro == null) return null
+        return if (positionMs >= intro.first && positionMs < intro.last - 1000) intro.last else null
+    }
+
     /** Millisecond at which the credits begin; null means no credits known. */
     fun creditsStartMs(chapters: List<Chapter>, credits: TimeRange?): Long? =
         chapters.firstOrNull { CREDITS_TITLE.containsMatchIn(it.title) }?.startMs

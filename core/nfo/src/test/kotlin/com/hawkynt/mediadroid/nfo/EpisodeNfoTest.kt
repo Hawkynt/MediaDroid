@@ -41,4 +41,20 @@ class EpisodeNfoTest {
         assertEquals(TimeRange(20, 90), episode.intro)
         assertEquals(TimeRange(1180, 1260), episode.credits)
     }
+
+    @Test
+    fun episodeStreamLanguagesComeFromStreamdetails() {
+        val info = parseEpisodeNfo(
+            """
+            <episodedetails><title>Pilot</title>
+              <fileinfo><streamdetails>
+                <audio><language>jpn</language></audio>
+                <subtitle><language>eng</language></subtitle>
+              </streamdetails></fileinfo>
+            </episodedetails>
+            """.trimIndent(),
+        )
+        assertEquals(listOf("jpn"), info.audioLanguages)
+        assertEquals(listOf("eng"), info.subtitleLanguages)
+    }
 }

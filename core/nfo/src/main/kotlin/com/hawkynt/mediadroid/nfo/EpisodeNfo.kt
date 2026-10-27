@@ -17,6 +17,10 @@ data class EpisodeInfo(
     val playcount: Int = 0,
     val intro: TimeRange? = null,
     val credits: TimeRange? = null,
+    /** Spoken languages of the audio streams, from `<fileinfo><streamdetails>`. */
+    val audioLanguages: List<String> = emptyList(),
+    /** Languages of the subtitle streams, from `<fileinfo><streamdetails>`. */
+    val subtitleLanguages: List<String> = emptyList(),
 )
 
 /**
@@ -48,5 +52,7 @@ fun parseEpisodeNfo(xml: String): EpisodeInfo {
         playcount = root.childInt("playcount") ?: 0,
         intro = parseTimeRange(root.childText("intro")),
         credits = parseTimeRange(root.childText("credits")),
+        audioLanguages = root.streamLanguages("audio"),
+        subtitleLanguages = root.streamLanguages("subtitle"),
     )
 }

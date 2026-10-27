@@ -51,4 +51,28 @@ class SkipRulesTest {
         assertEquals(null, SkipRules.introEndMs(emptyList(), null))
         assertEquals(null, SkipRules.creditsStartMs(chapters.take(3), null))
     }
+
+    @Test
+    fun introSpanComesFromTheChapterOrTheNfo() {
+        assertEquals(2000L..5000L, SkipRules.introSpanMs(chapters, null))
+        assertEquals(70_000L..130_000L, SkipRules.introSpanMs(emptyList(), TimeRange(70, 130)))
+        assertEquals(null, SkipRules.introSpanMs(emptyList(), null))
+    }
+
+    @Test
+    fun playbackInsideTheIntroJumpsToItsEnd() {
+        val intro = 70_000L..130_000L
+        assertEquals(130_000L, SkipRules.skipTarget(70_500L, intro))
+        assertEquals(60_000L, SkipRules.skipTarget(0L, 0L..60_000L))
+        assertEquals(null, SkipRules.skipTarget(65_000L, intro))
+        // The last second is left alone, or a seek that lands just short would loop.
+        assertEquals(null, SkipRules.skipTarget(129_500L, intro))
+        assertEquals(null, SkipRules.skipTarget(200_000L, intro))
+        assertEquals(null, SkipRules.skipTarget(70_500L, null))
+    }
+
+    @Test
+    fun aColdOpenPlaysUntilTheIntroBegins() {
+        assertEquals(null, SkipRules.skipTarget(0L, 70_000L..130_000L))
+    }
 }

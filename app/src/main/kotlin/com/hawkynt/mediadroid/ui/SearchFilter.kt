@@ -23,31 +23,40 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hawkynt.mediadroid.library.BrowseFilter
 import com.hawkynt.mediadroid.library.Library
 import com.hawkynt.mediadroid.library.LibraryQuery
 import com.hawkynt.mediadroid.library.MediaItem
+import com.hawkynt.mediadroid.library.SortOrder
 
 @Composable
-fun SearchScreen(library: Library, store: com.hawkynt.mediadroid.data.StateStore, onOpen: (MediaItem) -> Unit) {
-    var query by remember { mutableStateOf("") }
+fun SearchScreen(
+    library: Library,
+    store: com.hawkynt.mediadroid.data.StateStore,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    onOpen: (MediaItem) -> Unit,
+) {
     val allowed = LibraryQuery.filterByAge(library.items, store.data.settings.maxAgeYears)
     val results = LibraryQuery.search(allowed, query)
 
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = query,
-            onValueChange = { query = it },
+            onValueChange = onQueryChange,
             label = { Text("Search titles") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(16.dp),
         )
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 130.dp),
+            state = gridState,
+            columns = GridCells.Adaptive(minSize = 104.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(results, key = { it.path }) { item ->
+            items(results, key = { it.key }) { item ->
                 PosterCard(item, onClick = { onOpen(item) })
             }
         }
@@ -56,7 +65,7 @@ fun SearchScreen(library: Library, store: com.hawkynt.mediadroid.data.StateStore
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun FiltersScreen(library: Library, filter: FilterState, onFilterChange: (FilterState) -> Unit) {
+fun FiltersScreen(library: Library, filter: BrowseFilter, onFilterChange: (BrowseFilter) -> Unit) {
     val facets = LibraryQuery.genreFacets(library.items)
     val decades = LibraryQuery.groupByYear(library.items).keys.filter { it >= 0 }
 
@@ -93,16 +102,16 @@ fun FiltersScreen(library: Library, filter: FilterState, onFilterChange: (Filter
 
         Text("Sort", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 24.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Sort.entries.forEach { sort ->
+            SortOrder.entries.forEach { sort ->
                 FilterChip(
                     selected = filter.sort == sort,
                     onClick = { onFilterChange(filter.copy(sort = sort)) },
                     label = {
                         Text(
                             when (sort) {
-                                Sort.TITLE -> "Title A–Z"
-                                Sort.YEAR_NEW -> "Newest first"
-                                Sort.YEAR_OLD -> "Oldest first"
+                                SortOrder.TITLE -> "Title A–Z"
+                                SortOrder.YEAR_NEW -> "Newest first"
+                                SortOrder.YEAR_OLD -> "Oldest first"
                             },
                             fontSize = 16.sp,
                         )
@@ -112,7 +121,7 @@ fun FiltersScreen(library: Library, filter: FilterState, onFilterChange: (Filter
         }
 
         Text(
-            "Filters apply on the Browse screen.",
+            "Filters apply to the Movies and TV Shows walls.",
             fontSize = 15.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 24.dp),

@@ -62,4 +62,57 @@ class LibraryQueryTest {
         // Ties break alphabetically, so the facet list is stable regardless of scan order.
         assertEquals(listOf("Drama" to 2, "Science Fiction" to 2, "Action" to 1, "Crime" to 1), facets)
     }
+
+    @Test
+    fun sectionsSplitTheLibraryIntoMoviesAndShows() {
+        val library = Library(movies = items.filterIsInstance<Movie>(), shows = items.filterIsInstance<Show>())
+        assertEquals(listOf("Blade Runner 2049", "Blade Runner", "Undated Short"), library.itemsIn(LibrarySection.MOVIES).map { it.title })
+        assertEquals(listOf("Breaking Bad"), library.itemsIn(LibrarySection.SHOWS).map { it.title })
+    }
+
+    @Test
+    fun browseAppliesAgeGenreDecadeAndSortTogether() {
+        val filter = BrowseFilter(genres = setOf("Science Fiction"), sort = SortOrder.YEAR_OLD)
+        assertEquals(listOf("Blade Runner", "Blade Runner 2049"), LibraryQuery.browse(items, filter).map { it.title })
+        assertEquals(
+            listOf("Blade Runner 2049"),
+            LibraryQuery.browse(items, BrowseFilter(decade = 2010)).map { it.title },
+        )
+        assertEquals(
+            listOf("Blade Runner", "Blade Runner 2049", "Breaking Bad", "Undated Short"),
+            LibraryQuery.browse(items, BrowseFilter()).map { it.title },
+        )
+    }
+
+    @Test
+    fun newestFirstPutsUndatedItemsLast() {
+        assertEquals(
+            listOf("Blade Runner 2049", "Breaking Bad", "Blade Runner", "Undated Short"),
+            LibraryQuery.browse(items, BrowseFilter(sort = SortOrder.YEAR_NEW)).map { it.title },
+        )
+    }
+
+    @Test
+    fun browseHonoursTheMaximumAge() {
+        val rated = listOf(
+            Movie(title = "Kids Film", minAge = 6, path = "/m/kids", videoPath = "/m/kids/k.mkv"),
+            Movie(title = "Teen Film", minAge = 16, path = "/m/teen", videoPath = "/m/teen/t.mkv"),
+        )
+        assertEquals(listOf("Kids Film"), LibraryQuery.browse(rated, BrowseFilter(), maxAgeYears = 12).map { it.title })
+    }
+
+    @Test
+    fun featuredPrefersWhatIsBeingWatchedThenAnythingWithABackdrop() {
+        val withArt = listOf(
+            Movie(title = "Alien", path = "/m/a", videoPath = "/m/a/a.mkv"),
+            Movie(title = "Brazil", path = "/m/b", videoPath = "/m/b/b.mkv", fanartPath = "/m/b/fanart.jpg"),
+            Movie(title = "Cars", path = "/m/c", videoPath = "/m/c/c.mkv", fanartPath = "/m/c/fanart.jpg"),
+        )
+        assertEquals("Brazil", LibraryQuery.featured(withArt)?.title)
+        assertEquals("Cars", LibraryQuery.featured(withArt, preferredKeys = listOf("movie:/m/c/c.mkv"))?.title)
+        // A title in progress without a backdrop still beats nothing, but not a backdrop.
+        assertEquals("Brazil", LibraryQuery.featured(withArt, preferredKeys = listOf("movie:/m/a/a.mkv"))?.title)
+        assertEquals("Alien", LibraryQuery.featured(withArt.take(1))?.title)
+        assertEquals(null, LibraryQuery.featured(emptyList()))
+    }
 }

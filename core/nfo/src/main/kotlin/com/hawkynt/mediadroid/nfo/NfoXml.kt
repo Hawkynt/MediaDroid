@@ -69,3 +69,14 @@ internal fun Element.uniqueIds(): Map<String, String> {
 }
 
 class NfoFormatException(message: String) : IllegalArgumentException(message)
+
+/**
+ * Languages of the `<audio>` or `<subtitle>` streams under `<fileinfo><streamdetails>`, as Kodi
+ * writes them (3-letter codes): lower-cased, blanks dropped, each once in file order.
+ */
+internal fun Element.streamLanguages(streamKind: String): List<String> =
+    childElements("fileinfo").flatMap { it.childElements("streamdetails") }
+        .flatMap { it.childElements(streamKind) }
+        .mapNotNull { it.childText("language")?.lowercase() }
+        .filter { it.isNotEmpty() }
+        .distinct()

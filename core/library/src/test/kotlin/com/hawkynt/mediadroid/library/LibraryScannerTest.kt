@@ -22,6 +22,140 @@ class LibraryScannerTest {
         }
 
     @Test
+    fun sceneNamedMovieFoldersAndFilesShowCleanTitles() {
+        file(
+            "Movies/The.Big.Short.2015.German.DL.1080p.BluRay.x264-GRP/" +
+                "the.big.short.2015.german.dl.1080p.bluray.x264-grp.mkv",
+        )
+        file("Movies/Heat.1995.MULTi.2160p.UHD.BluRay.x265-GRP.mkv")
+
+        val movies = LibraryScanner.scan(File(folder.root, "Movies")).movies
+        assertEquals(listOf("Heat" to 1995, "The Big Short" to 2015), movies.map { it.title to it.year })
+    }
+
+    @Test
+    fun onlyCleanEpisodeNamesGiveTitlesSoTheUiOtherwiseSaysEpisodeN() {
+        file("Dark/Season 01/Dark.S01E01.Secrets.German.DL.1080p.WEB.x264-GRP.mkv")
+        file("Dark/Season 01/S01E02 - Lies.mkv")
+        file("Dark/Season 01/E03 - Past and Present.mkv")
+        file("Dark/Season 01/1x04 - Double Lives.mkv")
+
+        val episodes = LibraryScanner.scan(folder.root).shows.single().seasons.single().episodes
+        assertEquals(listOf(1, 2, 3, 4), episodes.map { it.number })
+        assertEquals(listOf(null, "Lies", "Past and Present", "Double Lives"), episodes.map { it.title })
+    }
+
+    @Test
+    fun animeWithAbsoluteNumbersAndNoSeasonsIsOneSeason() {
+        file("Anime/One Piece/EP001 - Romance Dawn.mkv")
+        file("Anime/One Piece/EP002 - Enter the Great Swordsman.mkv")
+        file("Anime/One Piece/EP1071 - Luffy's Peak.mkv")
+        file("Anime/One Piece/folder.jpg")
+
+        val library = LibraryScanner.scan(File(folder.root, "Anime"))
+        val show = library.shows.single()
+        assertEquals("One Piece", show.title)
+        assertEquals(listOf(1), show.seasons.map { it.number })
+        assertEquals(listOf(1, 2, 1071), show.seasons.single().episodes.map { it.number })
+        assertEquals("Romance Dawn", show.seasons.single().episodes.first().title)
+        assertEquals(File(folder.root, "Anime/One Piece/folder.jpg").absolutePath, show.posterPath)
+        assertEquals(emptyList<Movie>(), library.movies)
+    }
+
+    @Test
+    fun seasonArtComesFromTheSeasonFolderOrTheShowFolder() {
+        file("Dark/Season 01/folder.jpg")
+        file("Dark/Season 01/s01e01.mkv")
+        file("Dark/Season 02/s02e01.mkv")
+        file("Dark/season02-poster.jpg")
+        file("Dark/Season 03/s03e01.mkv")
+
+        val seasons = LibraryScanner.scan(folder.root).shows.single().seasons
+        assertEquals(File(folder.root, "Dark/Season 01/folder.jpg").absolutePath, seasons[0].posterPath)
+        assertEquals(File(folder.root, "Dark/season02-poster.jpg").absolutePath, seasons[1].posterPath)
+        assertNull(seasons[2].posterPath)
+    }
+
+    @Test
+    fun aJpgNamedAfterTheMovieFileIsItsPoster() {
+        file("Movies/Coco (2017).mkv")
+        file("Movies/Coco (2017).jpg")
+
+        val movie = LibraryScanner.scan(File(folder.root, "Movies")).movies.single()
+        assertEquals(File(folder.root, "Movies/Coco (2017).jpg").absolutePath, movie.posterPath)
+    }
+
+    @Test
+    fun multiPartMovieInAFolderIsOneMovieWithTheFolderCover() {
+        file("Movies/Heat (1995)/Heat.CD2.avi")
+        file("Movies/Heat (1995)/Heat.CD1.avi")
+        file("Movies/Heat (1995)/folder.jpg")
+
+        val movie = LibraryScanner.scan(File(folder.root, "Movies")).movies.single()
+        assertEquals("Heat", movie.title)
+        assertEquals(1995, movie.year)
+        assertEquals(
+            listOf("Heat.CD1.avi", "Heat.CD2.avi").map { File(folder.root, "Movies/Heat (1995)/$it").absolutePath },
+            movie.parts,
+        )
+        assertEquals(movie.parts.first(), movie.videoPath)
+        assertEquals(File(folder.root, "Movies/Heat (1995)/folder.jpg").absolutePath, movie.posterPath)
+    }
+
+    @Test
+    fun streamLanguagesFromNfosReachTheModels() {
+        file("Movies/Heat (1995)/Heat (1995).mkv")
+        file("Movies/Heat (1995)/movie.nfo", """
+            <movie><title>Heat</title><fileinfo><streamdetails>
+            <audio><language>ger</language></audio><audio><language>eng</language></audio>
+            <subtitle><language>eng</language></subtitle></streamdetails></fileinfo></movie>
+        """.trimIndent())
+
+        val movie = LibraryScanner.scan(File(folder.root, "Movies")).movies.single()
+        assertEquals(listOf("ger", "eng"), movie.audioLanguages)
+        assertEquals(listOf("eng"), movie.subtitleLanguages)
+    }
+
+    @Test
+    fun anyLooseVideoThatIsNoEpisodeIsAMovie() {
+        file("Movies/Heat.mp4")
+        file("Movies/Cold Storage.mp4")
+        file("Movies/Coyote vs. ACME.mp4")
+        file("Movies/Heat-trailer.mp4")
+        file("Movies/sample.mkv")
+
+        val movies = LibraryScanner.scan(File(folder.root, "Movies")).movies
+        assertEquals(listOf("Cold Storage", "Coyote vs. ACME", "Heat"), movies.map { it.title })
+        assertEquals(listOf(null, null, null), movies.map { it.year })
+    }
+
+    @Test
+    fun aFolderWithOneVideoIsAMovieNamedAfterTheFolder() {
+        file("Movies/Ronin/ronin_final_cut.mkv")
+        file("Movies/Ronin/folder.jpg")
+
+        val movie = LibraryScanner.scan(File(folder.root, "Movies")).movies.single()
+        assertEquals("Ronin", movie.title)
+        assertEquals(File(folder.root, "Movies/Ronin/folder.jpg").absolutePath, movie.posterPath)
+    }
+
+    @Test
+    fun looseMoviesAndShowsSharingAFolderKeepDistinctKeys() {
+        // A card wall keys its cards by item; several loose files in one folder share that folder
+        // as their path, so the path alone cannot be the key.
+        file("Movies/Coco (2017).mkv")
+        file("Movies/Up (2009).mkv")
+        file("Movies/Firefly.S01E01.Serenity.mkv")
+        file("Movies/Dark.S01E01.Secrets.mkv")
+
+        val library = LibraryScanner.scan(File(folder.root, "Movies"))
+        assertEquals(listOf("Coco", "Up"), library.movies.map { it.title })
+        assertEquals(listOf("Dark", "Firefly"), library.shows.map { it.title })
+        assertEquals(1, library.items.map { it.path }.distinct().size)
+        assertEquals(library.items.size, library.items.map { it.key }.distinct().size)
+    }
+
+    @Test
     fun recognizesShowWithSeasonFoldersAndSidecarNfos() {
         file("TV Shows/Supernatural (2005)/tvshow.nfo", """
             <tvshow><title>Supernatural</title><premiered>2005-09-13</premiered>
@@ -162,11 +296,11 @@ class LibraryScannerTest {
     }
 
     @Test
-    fun mergesLooseEpisodesIntoSeasonFoldersAndDerivesTitlesFromNames() {
+    fun mergesLooseEpisodesIntoSeasonFoldersAndDerivesTitlesFromCleanNames() {
         file("TV Shows/The Expanse (2015)/tvshow.nfo", "<tvshow><title>The Expanse</title><year>2015</year></tvshow>")
         file("TV Shows/The Expanse (2015)/Season 01/s01e01.mkv", "a".repeat(100))
-        file("TV Shows/The Expanse (2015)/The.Expanse.S01E02.Salvage.mkv", "a".repeat(100))
-        file("TV Shows/The Expanse (2015)/The.Expanse.S02E01.Safe.mkv", "a".repeat(100))
+        file("TV Shows/The Expanse (2015)/S01E02 - Salvage.mkv", "a".repeat(100))
+        file("TV Shows/The Expanse (2015)/2x01 - Safe.mkv", "a".repeat(100))
 
         val library = LibraryScanner.scan(folder.root)
         val seasons = library.shows[0].seasons
@@ -211,13 +345,17 @@ class LibraryScannerTest {
     }
 
     @Test
-    fun episodeTitleStopsAtTheFirstReleaseToken() {
+    fun sceneEpisodeNamesCarryNoTitle() {
         file("TV Shows/The Expanse (2015)/tvshow.nfo", "<tvshow><title>The Expanse</title><year>2015</year></tvshow>")
-        file("TV Shows/The Expanse (2015)/The.Expanse.S01E02.Salvage.1080p.ATMOS.WEB-DL.DDP5.1.x264-GRP.mkv", "a".repeat(100))
+        file(
+            "TV Shows/The Expanse (2015)/The.Expanse.S01E02.Salvage.1080p.ATMOS.WEB-DL.DDP5.1.x264-GRP.mkv",
+            "a".repeat(100),
+        )
 
         val library = LibraryScanner.scan(folder.root)
         val episode = library.shows[0].seasons[0].episodes[0]
-        assertEquals("Salvage", episode.title)
+        assertEquals(2, episode.number)
+        assertNull(episode.title)
     }
 
     @Test
