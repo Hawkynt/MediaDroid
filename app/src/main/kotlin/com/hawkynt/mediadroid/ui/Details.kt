@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -49,6 +51,9 @@ import com.hawkynt.mediadroid.library.Episode
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
 import java.io.File
+
+/** The largest share of the screen height the backdrop on top of the details may take. */
+private const val BACKDROP_SHARE = 0.4f
 
 @Composable
 fun DetailsScreen(
@@ -67,13 +72,25 @@ fun DetailsScreen(
                     is Movie -> item.fanartPath ?: item.posterPath
                     is Show -> item.fanartPath ?: item.posterPath
                 }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                ) {
-                    PosterImage(backdrop, contentScale = ContentScale.Crop)
+                // 16:9 across the width, but never more than [BACKDROP_SHARE] of the screen height: in
+                // landscape a full-width backdrop is taller than the screen and hides that the page goes on.
+                val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(minOf(maxWidth * 9f / 16f, screenHeight * BACKDROP_SHARE))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                    ) {
+                        PosterImage(
+                            backdrop,
+                            videoFallback = when (item) {
+                                is Movie -> item.videoPath
+                                is Show -> item.representativeVideo
+                            },
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
                 }
                 IconButton(onClick = onBack, modifier = Modifier.padding(8.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -148,7 +165,8 @@ fun DetailsScreen(
                 SeasonHeader(
                     season?.number ?: selected,
                     episodes.size,
-                    season?.posterPath,
+                    season?.posterPath ?: season?.representativeThumb,
+                    season?.representativeVideo,
                     watched = season != null && store.marks.isWatched(season),
                     onToggleWatched = {
                         season?.let {
@@ -280,6 +298,7 @@ private fun SeasonHeader(
     number: Int,
     episodeCount: Int,
     posterPath: String?,
+    videoPath: String?,
     watched: Boolean,
     onToggleWatched: () -> Unit,
 ) {
@@ -287,7 +306,7 @@ private fun SeasonHeader(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        if (posterPath != null) {
+        if (posterPath != null || videoPath != null) {
             Box(
                 modifier = Modifier
                     .width(72.dp)
@@ -295,7 +314,7 @@ private fun SeasonHeader(
                     .clip(RoundedCornerShape(8.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             ) {
-                PosterImage(posterPath, contentScale = ContentScale.Crop)
+                PosterImage(posterPath, videoFallback = videoPath, contentScale = ContentScale.Crop)
             }
             Spacer(Modifier.width(14.dp))
         }

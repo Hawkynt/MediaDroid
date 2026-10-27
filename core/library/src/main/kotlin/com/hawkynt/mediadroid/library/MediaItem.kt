@@ -58,6 +58,14 @@ data class Show(
     val seasons: List<Season> = emptyList(),
 ) : MediaItem {
     override val key: String get() = "show:$path:${title.lowercase()}"
+
+    /**
+     * The video whose frame stands in for missing art: the first episode of the first regular season,
+     * the specials (season 0) only when there is nothing else.
+     */
+    val representativeVideo: String?
+        get() = (seasons.filter { it.number > 0 }.minByOrNull { it.number } ?: seasons.minByOrNull { it.number })
+            ?.representativeVideo
 }
 
 data class Season(
@@ -65,7 +73,15 @@ data class Season(
     val episodes: List<Episode> = emptyList(),
     /** The season's own cover: `folder.jpg` in its folder, or `seasonNN-poster.jpg` beside the show. */
     val posterPath: String? = null,
-)
+) {
+    private val firstEpisode: Episode? get() = episodes.minByOrNull { it.number }
+
+    /** The first episode's video, whose frame stands in for a missing season cover. */
+    val representativeVideo: String? get() = firstEpisode?.videoPath?.ifEmpty { null }
+
+    /** The first episode's scraped thumb, the next best thing to a season cover. */
+    val representativeThumb: String? get() = firstEpisode?.thumbPath
+}
 
 data class Episode(
     val number: Int,
