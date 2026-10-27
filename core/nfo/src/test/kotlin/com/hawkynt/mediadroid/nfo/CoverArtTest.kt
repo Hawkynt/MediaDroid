@@ -29,4 +29,11 @@ class CoverArtTest {
     fun nonImagesAreIgnored() {
         assertEquals(emptyMap<ArtKind, String>(), findArt(listOf("poster.txt", "fanart.nfo")))
     }
+
+    @Test
+    fun everyPictureFormatTheAppReadsCounts() {
+        for (ext in listOf("gif", "bmp", "heic", "heif", "avif", "tif", "tiff", "tga", "pcx")) {
+            assertEquals(ext, "folder.$ext", findArt(listOf("folder.$ext"))[ArtKind.Poster])
+        }
+    }
 }
