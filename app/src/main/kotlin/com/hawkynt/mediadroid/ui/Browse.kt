@@ -168,7 +168,10 @@ fun BrowseScreen(
         items(items, key = { it.key }) { item ->
             PosterCard(
                 item = item,
-                watched = item is Movie && store.marks.isWatched(item),
+                watched = when (item) {
+                    is Movie -> store.marks.isWatched(item)
+                    is Show -> store.marks.isWatched(item)
+                },
                 onClick = { onOpen(item) },
             )
         }
