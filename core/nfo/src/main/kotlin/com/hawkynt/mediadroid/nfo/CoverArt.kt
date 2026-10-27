@@ -1,9 +1,9 @@
 package com.hawkynt.mediadroid.nfo
 
+import com.hawkynt.mediadroid.imaging.ImageFormats
+
 /** The art kinds the library displays, in the order a scraper would have written them. */
 enum class ArtKind { Poster, Fanart, Banner, ClearLogo, DiscArt }
-
-private val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "bmp")
 
 // Base names in preference order. `folder.jpg` is the cover Kodi shows in a file
 // browser, so it is the fallback every media folder is likely to have.
@@ -30,7 +30,7 @@ fun findArt(fileNames: List<String>): Map<ArtKind, String> {
                 val stem = name.substring(0, dot).lowercase()
                 val extension = name.substring(dot + 1).lowercase()
                 // `poster.jpg` matches exactly; `poster-1.jpg` matches as a numbered variant.
-                (stem == base || stem.startsWith("$base-")) && extension in imageExtensions
+                (stem == base || stem.startsWith("$base-")) && extension in ImageFormats.extensions
             }
             if (hit != null) {
                 result[kind] = hit
