@@ -80,3 +80,40 @@ internal fun Element.streamLanguages(streamKind: String): List<String> =
         .mapNotNull { it.childText("language")?.lowercase() }
         .filter { it.isNotEmpty() }
         .distinct()
+
+/**
+ * One audio stream of `<streamdetails>`: Kodi's codec name (`ac3`, `truehd_atmos`, `dtshd_ma`, …),
+ * channel count and language.
+ */
+data class AudioStream(val codec: String?, val channels: Int?, val language: String?)
+
+/**
+ * The technical side of a file as `<fileinfo><streamdetails>` records it: the first video stream's size,
+ * codec and HDR type (`hdr10`, `hdr10plus`, `dolbyvision`, `hlg`) and every audio stream.
+ */
+data class StreamDetails(
+    val videoWidth: Int?,
+    val videoHeight: Int?,
+    val videoCodec: String?,
+    val hdrType: String?,
+    val audio: List<AudioStream>,
+)
+
+/** The `<fileinfo><streamdetails>` of this NFO, or null when it has none. */
+internal fun Element.streamDetails(): StreamDetails? {
+    val details = childElements("fileinfo").flatMap { it.childElements("streamdetails") }.firstOrNull() ?: return null
+    val video = details.childElements("video").firstOrNull()
+    return StreamDetails(
+        videoWidth = video?.childInt("width"),
+        videoHeight = video?.childInt("height"),
+        videoCodec = video?.childText("codec")?.lowercase(),
+        hdrType = video?.childText("hdrtype")?.lowercase(),
+        audio = details.childElements("audio").map {
+            AudioStream(
+                codec = it.childText("codec")?.lowercase(),
+                channels = it.childInt("channels"),
+                language = it.childText("language")?.lowercase(),
+            )
+        },
+    )
+}
