@@ -39,18 +39,33 @@ class PictureAdjustmentTest {
     }
 
     @Test
-    fun `brightness lifts every channel by the same offset`() {
+    fun `full brightness lifts every channel by half the range`() {
         val m = PictureAdjustment(brightness = 1f).colorMatrix()
-        assertEquals(80f, m[4], 1e-4f)
-        assertEquals(80f, m[9], 1e-4f)
-        assertEquals(80f, m[14], 1e-4f)
+        assertEquals(128f, m[4], 1e-4f)
+        assertEquals(128f, m[9], 1e-4f)
+        assertEquals(128f, m[14], 1e-4f)
         assertEquals(0f, m[19], 1e-6f)
     }
 
     @Test
-    fun `gamma above one darkens and below one lifts`() {
-        assertTrue(PictureAdjustment(gamma = 1.5f).colorMatrix()[4] < 0f)
-        assertTrue(PictureAdjustment(gamma = 0.5f).colorMatrix()[4] > 0f)
+    fun `gamma above one brightens and below one darkens, like every video player`() {
+        assertTrue(PictureAdjustment(gamma = 1.5f).colorMatrix()[4] > 0f)
+        assertTrue(PictureAdjustment(gamma = 0.5f).colorMatrix()[4] < 0f)
+    }
+
+    @Test
+    fun `matrix gamma lifts mid grey where the true curve puts it`() {
+        // 0.5 ^ (1 / 4) = 0.8409: mid grey moves from 127.5 to 214.4.
+        assertEquals(255f * (0.8409f - 0.5f), PictureAdjustment(gamma = 4f).colorMatrix()[4], 0.1f)
+    }
+
+    @Test
+    fun `shader uniforms carry the same correction in unit range`() {
+        val u = PictureAdjustment(brightness = 0.5f, gamma = 2f, contrast = 3f, saturation = 0f).shaderUniforms()
+        assertEquals(64f / 255f, u.brightness, 1e-5f)
+        assertEquals(0.5f, u.inverseGamma, 1e-6f)
+        assertEquals(3f, u.contrast, 1e-6f)
+        assertEquals(0f, u.saturation, 1e-6f)
     }
 
     @Test
