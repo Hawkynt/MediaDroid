@@ -20,6 +20,10 @@ class WatchMarks(
     fun isWatched(season: Season): Boolean =
         season.episodes.isNotEmpty() && season.episodes.all { isWatched(it.videoPath, it.watched) }
 
+    /** A show is watched once every one of its episodes is. */
+    fun isWatched(show: Show): Boolean =
+        show.seasons.any { it.episodes.isNotEmpty() } && show.seasons.all { it.episodes.isEmpty() || isWatched(it) }
+
     /** A movie is watched once every one of its parts is. */
     fun isWatched(movie: Movie): Boolean = movie.parts.all { isWatched(it, movie.playcount > 0) }
 
