@@ -1,8 +1,11 @@
 package com.hawkynt.mediadroid.ui
 
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
 import android.os.Build
+import android.view.View
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,10 +16,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
-import androidx.compose.ui.graphics.asComposeRenderEffect
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureControl
@@ -54,17 +53,20 @@ fun PictureSliders(
 }
 
 /**
- * Applies [picture] to whatever this layer draws — the video's TextureView. Android 13 and newer
- * run a small shader with a true gamma curve; older devices get the colour-matrix approximation.
+ * Applies [picture] to this view — the video frame inside the player, so the controls drawn above
+ * it keep their colours. Android 13 and newer run a small shader with a true gamma curve; older
+ * devices get the colour-matrix approximation through a hardware layer.
  */
-fun Modifier.pictureCorrection(picture: PictureAdjustment): Modifier =
-    if (picture.isNeutral) {
-        this
-    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        graphicsLayer { renderEffect = PictureShader.effect(picture) }
+fun View.applyPicture(picture: PictureAdjustment) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        setRenderEffect(if (picture.isNeutral) null else PictureShader.effect(picture))
+    } else if (picture.isNeutral) {
+        setLayerType(View.LAYER_TYPE_NONE, null)
     } else {
-        graphicsLayer { colorFilter = ColorFilter.colorMatrix(ColorMatrix(picture.colorMatrix())) }
+        val paint = Paint().apply { colorFilter = ColorMatrixColorFilter(picture.colorMatrix()) }
+        setLayerType(View.LAYER_TYPE_HARDWARE, paint)
     }
+}
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 private object PictureShader {
@@ -91,7 +93,7 @@ private object PictureShader {
         }
     """
 
-    fun effect(picture: PictureAdjustment): androidx.compose.ui.graphics.RenderEffect {
+    fun effect(picture: PictureAdjustment): RenderEffect {
         val u = picture.shaderUniforms()
         val shader = RuntimeShader(SOURCE).apply {
             setFloatUniform("brightness", u.brightness)
@@ -99,6 +101,6 @@ private object PictureShader {
             setFloatUniform("saturation", u.saturation)
             setFloatUniform("inverseGamma", u.inverseGamma)
         }
-        return RenderEffect.createRuntimeShaderEffect(shader, "content").asComposeRenderEffect()
+        return RenderEffect.createRuntimeShaderEffect(shader, "content")
     }
 }
