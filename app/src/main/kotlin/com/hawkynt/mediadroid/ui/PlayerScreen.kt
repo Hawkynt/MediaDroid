@@ -474,6 +474,16 @@ fun PlayerScreen(
     val current = queue[index]
     // The video's own picture correction, with the brightness swipe's gamma on top once past the maximum.
     val shownPicture = picture.copy(gamma = picture.gamma * gammaBoost)
+    // While the phone's own screen is mirrored to a TV (Smart View and friends show up as a presentation
+    // display we are not using), the TV crops a long phone screen to 16:9: overlays stay inside that part.
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val mirrored = externalDisplay != null && !onSecondScreen
+    val (insetX, insetY) = if (mirrored) {
+        PlaybackMath.mirrorSafeInset(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat())
+    } else {
+        0f to 0f
+    }
+    val safeArea = Modifier.padding(horizontal = insetX.dp, vertical = insetY.dp)
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         // The demo library's videos are empty placeholders: their picture stands in for the video,
         // showing through the player's (then transparent) shutter beneath its controls.
@@ -511,6 +521,13 @@ fun PlayerScreen(
                 val elsewhere = presentation?.isShowing == true
                 view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
                 if (!elsewhere) view.applyVideoLook(fit, zoom, pan, shownPicture)
+                val density = view.resources.displayMetrics.density
+                view.findViewById<View>(androidx.media3.ui.R.id.exo_controller)?.setPadding(
+                    (insetX * density).toInt(),
+                    (insetY * density).toInt(),
+                    (insetX * density).toInt(),
+                    (insetY * density).toInt(),
+                )
             },
             modifier = Modifier.fillMaxSize(),
         )
@@ -566,7 +583,7 @@ fun PlayerScreen(
             visible = controlsVisible,
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.align(Alignment.TopCenter),
+            modifier = Modifier.align(Alignment.TopCenter).then(safeArea),
         ) {
             Column(
                 modifier = Modifier
@@ -643,7 +660,7 @@ fun PlayerScreen(
                 onAudioTrack = { audioPicker = true },
                 onSubtitleTrack = { subtitlePicker = true },
                 onClose = { panelOpen = false },
-                modifier = Modifier.align(Alignment.CenterEnd),
+                modifier = Modifier.align(Alignment.CenterEnd).then(safeArea),
             )
         }
         if (audioPicker) {

@@ -107,4 +107,15 @@ class PlaybackMathTest {
         assertEquals(2f, PlaybackMath.gammaBoost(1f + 2f / 3f), 1e-4f) // 400 % → gamma ×2
         assertEquals(2.8284f, PlaybackMath.gammaBoost(2f), 1e-3f)
     }
+
+    @Test
+    fun `a mirrored screen keeps its overlays inside the centred 16 by 9 area`() {
+        // A 20:9 phone in landscape (2400 x 1080): a 16:9 TV shows the middle 1920 px.
+        assertEquals(240f to 0f, PlaybackMath.mirrorSafeInset(2400f, 1080f))
+        // In portrait the crop takes the top and bottom.
+        assertEquals(0f to 240f, PlaybackMath.mirrorSafeInset(1080f, 2400f))
+        // A screen that is 16:9 already, or wider-than-tall less than that, loses nothing.
+        assertEquals(0f to 0f, PlaybackMath.mirrorSafeInset(1920f, 1080f))
+        assertEquals(0f to 0f, PlaybackMath.mirrorSafeInset(1600f, 1200f))
+    }
 }
