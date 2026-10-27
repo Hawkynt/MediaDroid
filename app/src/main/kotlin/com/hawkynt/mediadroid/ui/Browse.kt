@@ -168,7 +168,7 @@ fun BrowseScreen(
         items(items, key = { it.key }) { item ->
             PosterCard(
                 item = item,
-                watched = item is Movie && item.parts.all { store.isWatched(it) },
+                watched = item is Movie && store.marks.isWatched(item),
                 onClick = { onOpen(item) },
             )
         }
@@ -277,7 +277,7 @@ private fun Hero(item: MediaItem, onPlay: () -> Unit, onInfo: () -> Unit) {
 
 private fun videoOf(item: MediaItem): String? = when (item) {
     is Movie -> item.videoPath
-    is Show -> item.seasons.firstOrNull()?.episodes?.firstOrNull()?.videoPath
+    is Show -> item.representativeVideo
 }
 
 /** One card of the Continue watching row: what it resumes, how it is labelled, how far in it is. */

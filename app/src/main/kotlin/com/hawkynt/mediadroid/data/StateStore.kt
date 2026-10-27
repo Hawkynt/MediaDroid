@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import com.hawkynt.mediadroid.library.WatchMarks
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import java.io.File
 import kotlinx.serialization.Serializable
@@ -47,6 +48,7 @@ data class AppData(
     var rootPath: String = "",                 // "" until a media folder is chosen
     var sidebarExpanded: Boolean? = null,      // null: decided by the screen width
     val watched: MutableList<String> = mutableListOf(),
+    val unwatched: MutableList<String> = mutableListOf(), // unticked in the app, beats an NFO playcount
     val resume: MutableMap<String, ResumeInfo> = mutableMapOf(),
     val picture: MutableMap<String, PictureOverride> = mutableMapOf(),
     var settings: Settings = Settings(),
@@ -82,21 +84,22 @@ class StateStore(context: Context) {
         revision++
     }
 
-    fun isWatched(videoPath: String): Boolean = videoPath in data.watched
+    /** The household's watched marks over what the NFOs say; reading it subscribes a screen to changes. */
+    val marks: WatchMarks get() = WatchMarks(data.watched, data.unwatched)
 
+    /** Whether [videoPath] counts as watched; [nfoWatched] is what its NFO says. */
+    fun isWatched(videoPath: String, nfoWatched: Boolean = false): Boolean = marks.isWatched(videoPath, nfoWatched)
+
+    /** Marks a video watched as it finishes playing; cheap to call again and again. */
     fun markWatched(videoPath: String) {
-        if (videoPath !in data.watched) {
-            data.watched.add(videoPath)
-            data.resume.remove(videoPath)
-            save()
-        }
+        if (videoPath !in current.watched) setWatched(listOf(videoPath), true)
     }
 
-    fun setWatched(videoPath: String, watched: Boolean) {
-        if (watched) markWatched(videoPath) else {
-            data.watched.remove(videoPath)
-            save()
-        }
+    /** Ticks [videoPaths] off as watched (dropping their resume points) or unticks them. */
+    fun setWatched(videoPaths: Collection<String>, watched: Boolean) {
+        WatchMarks(current.watched, current.unwatched).set(videoPaths, watched)
+        if (watched) videoPaths.forEach { current.resume.remove(it) }
+        save()
     }
 
     fun saveResume(videoPath: String, positionMs: Long, durationMs: Long) {
