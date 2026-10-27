@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.library
 
+import com.hawkynt.mediadroid.nfo.TimeRange
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -114,6 +115,23 @@ class LibraryScannerTest {
         val movie = LibraryScanner.scan(File(folder.root, "Movies")).movies.single()
         assertEquals(listOf("ger", "eng"), movie.audioLanguages)
         assertEquals(listOf("eng"), movie.subtitleLanguages)
+    }
+
+    @Test
+    fun introAndCreditsComeFromTheEditDecisionListBesideTheVideo() {
+        file("Shows/Dark/Season 01/S01E01.mkv")
+        file("Shows/Dark/Season 01/S01E01.edl", "## Intro Skipper\n62.5 152 3\n1250 1320 3\n")
+        file("Movies/Heat (1995)/Heat (1995) CD1.avi")
+        file("Movies/Heat (1995)/Heat (1995) CD1.edl", "0:30 2:00 4\n")
+        file("Movies/Heat (1995)/Heat (1995) CD2.avi")
+        file("Movies/Heat (1995)/Heat (1995) CD2.edl", "1:41:00 1:45:00 3\n")
+
+        val episode = LibraryScanner.scan(File(folder.root, "Shows")).shows.single().seasons.single().episodes.single()
+        assertEquals(TimeRange(62_500, 152_000), episode.intro)
+        assertEquals(TimeRange(1_250_000, 1_320_000), episode.credits)
+        val movie = LibraryScanner.scan(File(folder.root, "Movies")).movies.single()
+        assertEquals("the first part's EDL has the intro", TimeRange(30_000, 120_000), movie.intro)
+        assertEquals("the last part's EDL has the credits", TimeRange(6_060_000, 6_300_000), movie.credits)
     }
 
     @Test

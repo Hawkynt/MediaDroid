@@ -2,6 +2,8 @@ package com.hawkynt.mediadroid.library
 
 import com.hawkynt.mediadroid.imaging.ImageFormats
 import com.hawkynt.mediadroid.nfo.ArtKind
+import com.hawkynt.mediadroid.nfo.EditDecisionList
+import com.hawkynt.mediadroid.nfo.EdlSkips
 import com.hawkynt.mediadroid.nfo.EpisodeRef
 import com.hawkynt.mediadroid.nfo.bareEpisodeFromName
 import com.hawkynt.mediadroid.nfo.MovieStacking
@@ -199,6 +201,14 @@ object LibraryScanner {
         return episodeRefFromName(video.name) == null && bareEpisodeFromName(video.name) == null
     }
 
+    /** The intro and credits the `<video>.edl` beside [video] marks; nothing when there is none. */
+    private fun edlSkips(video: File, names: List<String>): EdlSkips {
+        val edl = EditDecisionList.fileNameFor(video.name)
+        val hit = names.firstOrNull { it.equals(edl, ignoreCase = true) } ?: return EdlSkips(null, null)
+        val text = File(video.parentFile, hit).readTextSafe() ?: return EdlSkips(null, null)
+        return EditDecisionList.skips(EditDecisionList.parse(text))
+    }
+
     private fun sidecarNfo(video: File, names: List<String>): File? {
         val nfo = video.nameWithoutExtension + ".nfo"
         val hit = names.firstOrNull { it.equals(nfo, ignoreCase = true) } ?: return null
@@ -282,6 +292,7 @@ object LibraryScanner {
             ?: seasonFolder?.let { season -> bareEpisodeFromName(video.name)?.let { EpisodeRef(season, it) } }
         if (nfo?.episode == null && ref == null) return null
 
+        val skips = edlSkips(video, siblingNames)
         val stem = video.nameWithoutExtension
         val thumb = siblingNames.firstOrNull {
             it.substringBeforeLast('.').equals("$stem-thumb", ignoreCase = true) && ImageFormats.isImage(it)
@@ -294,8 +305,8 @@ object LibraryScanner {
             watched = (nfo?.playcount ?: 0) > 0,
             videoPath = video.absolutePath,
             thumbPath = thumb?.let { File(video.parentFile, it).absolutePath },
-            intro = nfo?.intro,
-            credits = nfo?.credits,
+            intro = skips.intro,
+            credits = skips.credits,
             audioLanguages = nfo?.audioLanguages ?: emptyList(),
             subtitleLanguages = nfo?.subtitleLanguages ?: emptyList(),
         )
@@ -355,8 +366,8 @@ object LibraryScanner {
             runtimeMinutes = info?.runtimeMinutes,
             cast = info?.cast?.map { it.name } ?: emptyList(),
             playcount = info?.playcount ?: 0,
-            intro = info?.intro,
-            credits = info?.credits,
+            intro = edlSkips(parts.first(), names).intro,
+            credits = edlSkips(parts.last(), names).credits,
             parts = parts.map { it.absolutePath },
             audioLanguages = info?.audioLanguages ?: emptyList(),
             subtitleLanguages = info?.subtitleLanguages ?: emptyList(),
@@ -392,8 +403,8 @@ object LibraryScanner {
             runtimeMinutes = info?.runtimeMinutes,
             cast = info?.cast?.map { it.name } ?: emptyList(),
             playcount = info?.playcount ?: 0,
-            intro = info?.intro,
-            credits = info?.credits,
+            intro = edlSkips(parts.first(), names).intro,
+            credits = edlSkips(parts.last(), names).credits,
             parts = parts.map { it.absolutePath },
             audioLanguages = info?.audioLanguages ?: emptyList(),
             subtitleLanguages = info?.subtitleLanguages ?: emptyList(),
