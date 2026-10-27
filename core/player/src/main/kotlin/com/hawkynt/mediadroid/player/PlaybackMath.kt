@@ -52,4 +52,18 @@ object PlaybackMath {
         if (creditsStartMs != null && creditsStartMs > 0 && positionMs >= creditsStartMs) return true
         return durationMs - positionMs <= minOf(WATCHED_TAIL_MS, durationMs / 10)
     }
+
+    /**
+     * How far in from the left/right and top/bottom edges overlays must stay while the screen is being
+     * mirrored to a 16:9 TV, which shows only the centred 16:9 part of a longer phone screen.
+     */
+    fun mirrorSafeInset(width: Float, height: Float): Pair<Float, Float> {
+        if (width <= 0f || height <= 0f) return 0f to 0f
+        val tv = 16f / 9f
+        return when {
+            width / height > tv -> (width - height * tv) / 2f to 0f
+            height / width > tv -> 0f to (height - width * tv) / 2f
+            else -> 0f to 0f
+        }
+    }
 }
