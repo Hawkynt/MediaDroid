@@ -58,6 +58,10 @@ fast path silently turns a seconds-long smoke into a minutes-long one.
   the fast path. A fast tier that creeps up to twenty minutes stops being read, and then people open
   pull requests just to learn whether their code compiles — which runs the expensive tier ten times
   per change instead of once.
+- **The README screenshots are their own tier**: `app/src/test/.../screenshots` renders the real screens
+  under Robolectric + Roborazzi from the generated demo library. `./gradlew test` leaves them out (the
+  `screenshots` Gradle property brings them in); the `screenshots.yml` workflow renders them on every
+  working-branch push and commits the changed pictures through `commit-generated-file`.
 - **Anything that needs an emulator or a real device — instrumented UI, a `connectedCheck` — is the
   slow tier** and runs only on the pull-request gate, never on the branch smoke. Keep the logic it
   exercises in a core where a plain unit test can reach it; reserve the device tier for what cannot run

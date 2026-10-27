@@ -19,7 +19,7 @@
 
 > Your movies and shows are already organized — folders with `.nfo` files and cover art, scraped by Kodi or MediaBrowser over the years. MediaDroid plays that library straight from local storage on any Android box, tablet, or phone: no server, no account, no re-scraping, no re-encoding. It reads what is already on disk and turns it into a browse-and-play app simple enough for a six-year-old and a grandparent.
 
-![The browse wall](screenshots/main.png)
+![The browse wall: what is being watched as the hero, Continue watching, then every movie](screenshots/main.png)
 
 ## 🧭 Vision
 
@@ -85,12 +85,14 @@ Open MediaDroid, grant file access, tap **Choose media folder** and pick the roo
 
 ## 🖼️ Screenshots
 
-Captured from the running app on an API 36 emulator against a sample library. Once the demo
-mode lands these become generated documentation that CI regenerates.
+Generated documentation: every push to a working branch renders the real screens on the JVM
+(Robolectric + Roborazzi) from a demo library of invented titles whose posters, backdrops and episode
+thumbs are painted from the titles themselves, and commits whatever changed back onto the branch. Run
+`./gradlew :app:recordRoborazziDebug -Pscreenshots` to render them locally.
 
-![Details screen](screenshots/detail.png)
-![Player with binge queue](screenshots/player.png)
-![Filters and facets](screenshots/filters.png)
+![A show's details: backdrop, Play next, seasons and episodes with thumbs, language flags and watched ticks](screenshots/detail.png)
+![The player on an episode of a binge queue: previous and next episode, the gear for speed and picture](screenshots/player.png)
+![Filters and facets: genres with counts, decades and sort order](screenshots/filters.png)
 
 ## 🛠️ Building
 
