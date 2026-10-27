@@ -25,7 +25,19 @@ import java.io.File
  */
 object LibraryScanner {
 
-    private val videoExtensions = setOf("mkv", "mp4", "avi", "mov", "m4v", "webm", "ts")
+    /**
+     * Every container family Media3's extractors read (they sniff the content, so the extension
+     * only has to say "video"): MP4/QuickTime, Matroska/WebM, AVI, MPEG-PS, MPEG-TS, Ogg and FLV.
+     */
+    private val videoExtensions = setOf(
+        "mp4", "m4v", "mov", "qt", "3gp", "3g2", "f4v",
+        "mkv", "mk3d", "webm",
+        "avi", "divx", "xvid",
+        "mpg", "mpeg", "mpe", "mp2", "m2p", "vob",
+        "ts", "m2ts", "mts", "m2t", "tp", "trp",
+        "ogv", "ogm",
+        "flv",
+    )
     private val seasonDirName = Regex("(?i)^season[ ._-]*(\\d+)$")
     private val episodeToken = Regex("(?i)\\b(?:s\\d{1,2}[ ._-]?e\\d{1,3}|\\d{1,2}x(?!26[456]\\b)\\d{1,3})\\b")
     private val trailingYear = Regex("\\s((?:19|20)\\d{2})$")
