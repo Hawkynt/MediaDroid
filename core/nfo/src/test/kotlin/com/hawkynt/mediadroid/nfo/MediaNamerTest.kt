@@ -29,4 +29,17 @@ class MediaNamerTest {
         assertNull(episodeRefFromName("Movie.5.1x264.mkv"))
         assertNull(episodeRefFromName("Movie.7.1x265.mkv"))
     }
+
+    @Test
+    fun bareEpisodeNumbersNeedTheSeasonFromElsewhere() {
+        assertEquals(2, bareEpisodeFromName("E02 - Lies.mkv"))
+        assertEquals(12, bareEpisodeFromName("e12.mkv"))
+        assertEquals(5, bareEpisodeFromName("E5.mkv"))
+        assertEquals(1, bareEpisodeFromName("EP001 - Romance Dawn.mkv"))
+        assertEquals(7, bareEpisodeFromName("Ep7.mkv"))
+        assertEquals(1071, bareEpisodeFromName("EP1071 - Luffy's Peak.mkv"))
+        assertNull(bareEpisodeFromName("S01E02 - Lies.mkv"))
+        assertNull(bareEpisodeFromName("Episode.mkv"))
+        assertNull(bareEpisodeFromName("Epic (2013).mkv"))
+    }
 }
