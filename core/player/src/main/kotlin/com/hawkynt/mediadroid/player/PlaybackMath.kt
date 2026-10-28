@@ -98,4 +98,15 @@ object PlaybackMath {
         if (durationMs <= 0 || speed <= 0f) return null
         return nowMs + ((durationMs - positionMs).coerceAtLeast(0L) / speed).toLong()
     }
+
+    /** How often a held skip button steps. */
+    const val HOLD_REPEAT_MS = 250L
+
+    /** How far a held skip button steps once it has been held [heldMs]: 10 s, 30 s after 3 s, 60 s after 6, 5 min after 9. */
+    fun holdStepMs(heldMs: Long): Long = when {
+        heldMs >= 9_000 -> 300_000L
+        heldMs >= 6_000 -> 60_000L
+        heldMs >= 3_000 -> 30_000L
+        else -> 10_000L
+    }
 }
