@@ -6,6 +6,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,12 +67,13 @@ fun Sidebar(
     onNavigate: (Screen) -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    resume: ResumeSpot? = null,
 ) {
     val width by animateDpAsState(if (expanded) ExpandedWidth else CollapsedWidth, label = "sidebar-width")
+    Column(modifier = modifier.width(width).background(MaterialTheme.colorScheme.surface)) {
     Column(
-        modifier = modifier
-            .width(width)
-            .background(MaterialTheme.colorScheme.surface)
+        modifier = Modifier
+            .weight(1f)
             .verticalScroll(rememberScrollState())
             .padding(vertical = 12.dp, horizontal = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -153,6 +159,9 @@ fun Sidebar(
             )
         }
     }
+    // The last thing played, one tap from resuming it, on every screen.
+    resume?.let { ResumeCard(it, expanded) }
+    }
 }
 
 @Composable
@@ -197,6 +206,59 @@ private fun SidebarButton(
                     maxLines = 1,
                     overflow = TextOverflow.Clip,
                 )
+            }
+        }
+    }
+}
+
+/** The video played last, as the sidebar offers it for resuming. */
+data class ResumeSpot(
+    val title: String,
+    val subtitle: String?,
+    val picturePath: String?,
+    val videoPath: String,
+    val progress: Float?,
+    val onResume: () -> Unit,
+)
+
+@Composable
+private fun ResumeCard(spot: ResumeSpot, expanded: Boolean) {
+    val shape = RoundedCornerShape(12.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(12.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .focusClickable(shape = shape, onClick = spot.onResume),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxWidth().aspectRatio(if (expanded) 16f / 9f else 1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            PosterImage(spot.picturePath, videoFallback = spot.videoPath, contentScale = ContentScale.Crop)
+            Box(
+                modifier = Modifier.size(40.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = "Resume ${spot.title}", tint = Color.White)
+            }
+        }
+        spot.progress?.let {
+            LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth().height(3.dp))
+        }
+        if (expanded) {
+            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                Text(
+                    spot.title,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                spot.subtitle?.let {
+                    Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
             }
         }
     }

@@ -67,6 +67,7 @@ data class Settings(
 data class AppData(
     var rootPath: String = "",                 // "" until a media folder is chosen
     var sidebarExpanded: Boolean? = null,      // null: decided by the screen width
+    var lastPlayed: String = "",               // the video played last, resumed from the sidebar
     val watched: MutableList<String> = mutableListOf(),
     val unwatched: MutableList<String> = mutableListOf(), // unticked in the app, beats an NFO playcount
     val resume: MutableMap<String, ResumeInfo> = mutableMapOf(),

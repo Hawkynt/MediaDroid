@@ -495,6 +495,10 @@ fun PlayerScreen(
         val playable = queue[index]
         manualTrackPick = false
         picture = store.pictureFor(playable.videoPath)
+        if (!demo && store.data.lastPlayed != playable.videoPath) {
+            store.data.lastPlayed = playable.videoPath
+            store.save()
+        }
         subtitleLook = store.subtitleLookFor(playable.videoPath)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguage(settings.audioLanguage.ifEmpty { null })

@@ -39,6 +39,7 @@ import com.hawkynt.mediadroid.library.Library
 import com.hawkynt.mediadroid.library.LibraryScanner
 import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.MediaItem
+import com.hawkynt.mediadroid.library.LibraryQuery
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
 import com.hawkynt.mediadroid.library.StorageVolumes
@@ -252,6 +253,37 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
             is Show -> playShow(item, path = path)
         }
     }
+    /** The last video played, offered at the bottom of the sidebar; null when it is gone or finished. */
+    fun resumeSpot(library: Library): ResumeSpot? {
+        val path = store.data.lastPlayed.takeIf { it.isNotEmpty() } ?: return null
+        val item = LibraryQuery.itemForVideo(library, path) ?: return null
+        val resume = store.resumeFor(path)
+        return when (item) {
+            is Movie -> ResumeSpot(
+                title = item.title,
+                subtitle = item.parts.indexOf(path).takeIf { item.parts.size > 1 }
+                    ?.let { "Part ${it + 1} of ${item.parts.size}" } ?: item.year?.toString(),
+                picturePath = item.fanartPath ?: item.posterPath,
+                videoPath = path,
+                progress = resume?.let { it.positionMs.toFloat() / it.durationMs },
+                onResume = { playMovie(item, path) },
+            )
+            is Show -> {
+                val (season, episode) = item.seasons.firstNotNullOf { s ->
+                    s.episodes.firstOrNull { it.videoPath == path }?.let { s to it }
+                }
+                ResumeSpot(
+                    title = item.title,
+                    subtitle = "S%02d · E%02d".format(season.number, episode.number) +
+                        (episode.title?.let { " · $it" } ?: ""),
+                    picturePath = episode.thumbPath ?: item.fanartPath ?: item.posterPath,
+                    videoPath = path,
+                    progress = resume?.let { it.positionMs.toFloat() / it.durationMs },
+                    onResume = { playShow(item, path = path) },
+                )
+            }
+        }
+    }
     fun navigate(target: Screen) {
         screen = target
         if (target is Screen.Browse) lastBrowse = target
@@ -303,6 +335,7 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
             onNavigate = ::navigate,
             onRefresh = { scan(rootPath) },
             modifier = Modifier.fillMaxHeight(),
+            resume = resumeSpot(lib),
         )
         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
             when (val s = screen) {
