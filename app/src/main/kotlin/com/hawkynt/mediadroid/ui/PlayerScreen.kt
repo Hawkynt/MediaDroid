@@ -82,6 +82,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.ui.PlayerView
 import com.hawkynt.mediadroid.R
+import com.hawkynt.mediadroid.player.PlayerWindow
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.library.SkipRules
 import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
@@ -209,6 +210,40 @@ fun PlayerScreen(
             )
             .build()
     }
+    // Picture in picture: leaving the app mid-film shrinks it into a small window; once the app is out of
+    // sight (or that window is closed) the film pauses.
+    val pipActivity = remember(context) { context.findActivity() }
+    DisposableEffect(player) {
+        fun publish() {
+            PlayerWindow.playing = player.isPlaying
+            val size = player.videoSize
+            PlayerWindow.aspect = PlaybackMath.pipAspect(size.width, size.height, size.pixelWidthHeightRatio)
+                ?.let { (w, h) -> android.util.Rational(w, h) }
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                runCatching { pipActivity?.setPictureInPictureParams(PlayerWindow.params()) }
+            }
+        }
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) = publish()
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) = publish()
+        }
+        player.addListener(listener)
+        val lifecycle = (pipActivity as? androidx.lifecycle.LifecycleOwner)?.lifecycle
+        val stopObserver = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) player.pause()
+        }
+        lifecycle?.addObserver(stopObserver)
+        onDispose {
+            player.removeListener(listener)
+            lifecycle?.removeObserver(stopObserver)
+            PlayerWindow.playing = false
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                runCatching { pipActivity?.setPictureInPictureParams(PlayerWindow.params()) }
+            }
+        }
+    }
+    val inPip = PlayerWindow.inPictureInPicture
+
     var index by remember { mutableStateOf(startIndex) }
     var finished by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf<String?>(null) }
@@ -223,6 +258,13 @@ fun PlayerScreen(
     // Per video: its own picture if one was saved, else the household default.
     var picture by remember { mutableStateOf(store.pictureFor(queue[startIndex].videoPath)) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    LaunchedEffect(inPip) {
+        if (inPip) {
+            panelOpen = false
+            playerView?.hideController()
+        }
+        playerView?.useController = !inPip
+    }
     var fit by remember { mutableStateOf(VideoFit.FIT) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
@@ -662,7 +704,7 @@ fun PlayerScreen(
             )
         }
         // The bare picture listens for gestures; with the controls up, touches go to the controls.
-        if (!controlsVisible && !panelOpen) {
+        if (!controlsVisible && !panelOpen && !inPip) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -687,7 +729,7 @@ fun PlayerScreen(
                     ),
             )
         }
-        feedback?.let {
+        feedback?.takeIf { !inPip }?.let {
             Text(
                 it,
                 color = Color.White,
@@ -699,7 +741,7 @@ fun PlayerScreen(
             )
         }
         // When the film will be over on the clock, on the free right end of Media3's time row.
-        if (controlsVisible) {
+        if (controlsVisible && !inPip) {
             var endsAt by remember { mutableStateOf<Long?>(null) }
             LaunchedEffect(Unit) {
                 while (true) {
@@ -726,7 +768,7 @@ fun PlayerScreen(
         }
         // Our controls ride on top, in the band Media3 leaves free, and come and go with its own.
         AnimatedVisibility(
-            visible = controlsVisible,
+            visible = controlsVisible && !inPip,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.TopCenter).then(safeArea),
