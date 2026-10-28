@@ -152,6 +152,18 @@ fun PlayerScreen(
     // unless the household chose software decoding in Settings.
     // Past the device's own maximum a volume swipe adds loudness gain and a brightness swipe adds gamma.
     var loudnessBoostDb by remember { mutableFloatStateOf(0f) }
+    // Rotation for this session: following the sensor, or held in landscape or portrait.
+    var rotation by remember { mutableStateOf(Rotation.AUTO) }
+    val rotationActivity = remember(context) { context.findActivity() }
+    DisposableEffect(rotation) {
+        rotationActivity?.requestedOrientation = rotation.orientation
+        onDispose { }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            rotationActivity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
     var gammaBoost by remember { mutableFloatStateOf(1f) }
     val player = remember {
         ExoPlayer.Builder(context)
@@ -833,6 +845,17 @@ fun PlayerScreen(
                         modifier = Modifier.padding(top = 4.dp),
                     )
 
+                    PanelTitle("Rotation")
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Rotation.entries.forEach { option ->
+                            FilterChip(
+                                selected = rotation == option,
+                                onClick = { rotation = option },
+                                label = { Text(option.label, fontSize = 16.sp) },
+                            )
+                        }
+                    }
+
                     PanelTitle("Sleep timer")
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                     androidx.compose.foundation.layout.FlowRow(
@@ -1178,4 +1201,11 @@ private fun LockOverlay(stamp: Int, onTouch: () -> Unit, onUnlock: () -> Unit) {
             }
         }
     }
+}
+
+/** How the player screen turns: with the device, or held in one orientation (sensor-flipped either way). */
+private enum class Rotation(val label: String, val orientation: Int) {
+    AUTO("Auto", android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_USER),
+    LANDSCAPE("Landscape", android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE),
+    PORTRAIT("Portrait", android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT),
 }
