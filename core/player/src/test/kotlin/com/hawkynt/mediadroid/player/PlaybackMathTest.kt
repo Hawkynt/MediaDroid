@@ -174,4 +174,16 @@ class PlaybackMathTest {
         assertEquals(2500, PlaybackMath.nudgeAudioDelay(2480, steps = 1))
         assertEquals(-2500, PlaybackMath.nudgeAudioDelay(-2500, steps = -3))
     }
+
+    @Test
+    fun `the display rate is the lowest whole multiple of the film's frame rate the screen offers`() {
+        val tv = listOf(23.976f, 24f, 25f, 29.97f, 50f, 59.94f, 60f)
+        assertEquals(23.976f, PlaybackMath.matchingRefreshRate(23.976f, tv)!!, 1e-3f)
+        assertEquals(24f, PlaybackMath.matchingRefreshRate(24f, tv)!!, 1e-3f)
+        assertEquals(50f, PlaybackMath.matchingRefreshRate(25f, listOf(50f, 60f))!!, 1e-3f)
+        assertEquals(59.94f, PlaybackMath.matchingRefreshRate(29.97f, listOf(59.94f, 60f))!!, 1e-3f)
+        // 24 fps on a 60 Hz-only screen: no clean multiple, so no switch.
+        assertEquals(null, PlaybackMath.matchingRefreshRate(24f, listOf(60f)))
+        assertEquals(null, PlaybackMath.matchingRefreshRate(0f, tv))
+    }
 }
