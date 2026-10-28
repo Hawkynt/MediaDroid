@@ -4,25 +4,34 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hawkynt.mediadroid.data.QualityStore
 import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.library.Quality
+import com.hawkynt.mediadroid.nfo.StreamDetails
 
 /**
  * The minimum age as a square badge in the colours German households know from FSK labels —
@@ -125,3 +134,56 @@ private fun ThumbChip(text: String, bold: Boolean = false) {
             .padding(horizontal = 3.dp, vertical = 1.dp),
     )
 }
+
+/** Quality badges in a line of their own, for list rows rather than over a picture. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun QualityChips(quality: Quality, modifier: Modifier = Modifier) {
+    if (quality.badges.isEmpty()) return
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        quality.badges.forEach {
+            Text(
+                it,
+                fontSize = 11.sp,
+                lineHeight = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(3.dp))
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
+            )
+        }
+    }
+}
+
+/** What [videoPath] really holds, probed once and cached; [fallback] (the NFO's) until then or when unreadable. */
+@Composable
+fun rememberQuality(videoPath: String, fallback: Quality): Quality {
+    val context = LocalContext.current
+    val probed by produceState<StreamDetails?>(null, videoPath) {
+        value = QualityStore.of(context).detailsFor(videoPath)
+    }
+    return probed?.let { Quality.of(it) } ?: fallback
+}
+
+/** The round tick a watched title carries. */
+@Composable
+fun WatchedTick(modifier: Modifier = Modifier, size: Dp = 26.dp) {
+    Box(
+        modifier = modifier.size(size).background(MaterialTheme.colorScheme.primary, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Filled.Check,
+            contentDescription = "Watched",
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(size * 0.7f),
+        )
+    }
+}
+

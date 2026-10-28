@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +14,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,10 +34,14 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -102,13 +106,20 @@ fun BrowseScreen(
         LibrarySection.SHOWS -> "TV Shows"
     }
     val filtered = filter.copy(sort = SortOrder.TITLE) != BrowseFilter()
+    var mode by remember { mutableStateOf(store.wallMode) }
 
     // Phones get two or three posters across; tablets and TVs as many as fit.
     val compact = LocalConfiguration.current.screenWidthDp < 600
     val gutter = if (compact) 16.dp else 24.dp
     LazyVerticalGrid(
         state = gridState,
-        columns = GridCells.Adaptive(minSize = if (compact) 104.dp else 140.dp),
+        columns = GridCells.Adaptive(
+            minSize = when (mode) {
+                WallMode.POSTERS -> if (compact) 104.dp else 140.dp
+                WallMode.LIST -> 340.dp
+                WallMode.DETAILS -> 480.dp
+            },
+        ),
         contentPadding = PaddingValues(start = gutter, end = gutter, top = 16.dp, bottom = 32.dp),
         horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 14.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -150,6 +161,15 @@ fun BrowseScreen(
                         modifier = Modifier.padding(top = 16.dp),
                     )
                 }
+                Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
+                WallModeSwitch(
+                    mode,
+                    onChange = {
+                        mode = it
+                        store.saveWallMode(it)
+                    },
+                    modifier = Modifier.padding(top = 16.dp),
+                )
             }
         }
         if (items.isEmpty()) {
@@ -167,14 +187,93 @@ fun BrowseScreen(
             }
         }
         items(items, key = { it.key }) { item ->
-            PosterCard(
-                item = item,
-                watched = when (item) {
-                    is Movie -> store.marks.isWatched(item)
-                    is Show -> store.marks.isWatched(item)
-                },
-                onClick = { onOpen(item) },
+            val watched = when (item) {
+                is Movie -> store.marks.isWatched(item)
+                is Show -> store.marks.isWatched(item)
+            }
+            when (mode) {
+                WallMode.POSTERS -> PosterCard(item = item, watched = watched, onClick = { onOpen(item) })
+                else -> WallRow(item, watched, withPlot = mode == WallMode.DETAILS, onClick = { onOpen(item) })
+            }
+        }
+    }
+}
+
+/** Posters, a compact list, or a list with two lines of plot — the toggle at the head of the wall. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WallModeSwitch(mode: WallMode, onChange: (WallMode) -> Unit, modifier: Modifier = Modifier) {
+    SingleChoiceSegmentedButtonRow(modifier) {
+        WallMode.entries.forEachIndexed { i, entry ->
+            SegmentedButton(
+                selected = mode == entry,
+                onClick = { onChange(entry) },
+                shape = SegmentedButtonDefaults.itemShape(i, WallMode.entries.size),
+                icon = {},
+                label = { Text(entry.label, fontSize = 14.sp, maxLines = 1) },
             )
+        }
+    }
+}
+
+/** One title as a list row: small poster, title with its watched tick, year and runtime, badges, plot. */
+@Composable
+private fun WallRow(item: MediaItem, watched: Boolean, withPlot: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .focusClickable(shape = shape, onClick = onClick)
+            .padding(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(if (withPlot) 72.dp else 52.dp)
+                .aspectRatio(2f / 3f)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        ) {
+            PosterImage(
+                item.posterPath,
+                fallbackLetter = item.title.take(1),
+                videoFallback = videoOf(item),
+                contentScale = ContentScale.Crop,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    item.title,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (watched) {
+                    Spacer(Modifier.width(8.dp))
+                    WatchedTick(size = 20.dp)
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                item.minAge?.let {
+                    AgeBadge(it, size = 18.dp)
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    metaLine(item),
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (item is Movie) QualityChips(rememberQuality(item.videoPath, item.quality))
+            if (withPlot) {
+                plotOf(item)?.let { Text(it, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            }
         }
     }
 }
@@ -235,12 +334,7 @@ private fun Hero(item: MediaItem, onPlay: () -> Unit, onInfo: () -> Unit) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val meta = listOfNotNull(
-                    item.year?.toString(),
-                    (item as? Show)?.seasons?.size?.let { if (it == 1) "1 season" else "$it seasons" },
-                    (item as? Movie)?.runtimeMinutes?.let { "$it min" },
-                    item.genres.take(3).joinToString(" · ").ifEmpty { null },
-                ).joinToString("  ·  ")
+                val meta = metaLine(item)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     item.minAge?.let {
                         AgeBadge(it, size = 24.dp)
@@ -250,11 +344,7 @@ private fun Hero(item: MediaItem, onPlay: () -> Unit, onInfo: () -> Unit) {
                         Text(meta, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                val plot = when (item) {
-                    is Movie -> item.plot
-                    is Show -> item.plot
-                }
-                plot?.let {
+                plotOf(item)?.let {
                     Spacer(Modifier.height(8.dp))
                     Text(it, fontSize = 16.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
@@ -277,6 +367,19 @@ private fun Hero(item: MediaItem, onPlay: () -> Unit, onInfo: () -> Unit) {
             }
         }
     }
+}
+
+/** Year, seasons or runtime, and up to three genres, the way a card's second line reads. */
+private fun metaLine(item: MediaItem): String = listOfNotNull(
+    item.year?.toString(),
+    (item as? Show)?.seasons?.size?.let { if (it == 1) "1 season" else "$it seasons" },
+    (item as? Movie)?.runtimeMinutes?.let { "$it min" },
+    item.genres.take(3).joinToString(" · ").ifEmpty { null },
+).joinToString("  ·  ")
+
+private fun plotOf(item: MediaItem): String? = when (item) {
+    is Movie -> item.plot
+    is Show -> item.plot
 }
 
 private fun videoOf(item: MediaItem): String? = when (item) {
@@ -416,23 +519,7 @@ fun PosterCard(item: MediaItem, onClick: () -> Unit, watched: Boolean = false, m
             item.minAge?.let {
                 AgeBadge(it, size = 24.dp, modifier = Modifier.align(Alignment.TopStart).padding(6.dp))
             }
-            if (watched) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(6.dp)
-                        .size(26.dp)
-                        .background(MaterialTheme.colorScheme.primary, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Filled.Check,
-                        contentDescription = "Watched",
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            }
+            if (watched) WatchedTick(Modifier.align(Alignment.TopEnd).padding(6.dp))
         }
         Text(
             item.title,
@@ -505,3 +592,7 @@ private fun LetterBox(fallbackLetter: String?) {
         }
     }
 }
+
+/** How the wall lays out its titles. */
+enum class WallMode(val label: String) { POSTERS("Posters"), LIST("List"), DETAILS("Details") }
+
