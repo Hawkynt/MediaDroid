@@ -11,7 +11,11 @@ import java.io.File
  * stored location — a resume point, a poster — to play or show. One connection per network source,
  * kept open until [close].
  */
-class SourceFiles(private val secrets: Secrets) : AutoCloseable {
+class SourceFiles(
+    private val secrets: Secrets,
+    /** Sources only the platform can read — Android's document providers — opened by the app. */
+    private val platform: (Source) -> RemoteFs? = { null },
+) : AutoCloseable {
 
     private val remote = HashMap<String, RemoteFs>()
 
@@ -29,7 +33,7 @@ class SourceFiles(private val secrets: Secrets) : AutoCloseable {
     @Synchronized
     private fun remoteOf(source: Source): RemoteFs? {
         remote[source.id]?.let { return it }
-        return open(source, secrets)?.also { remote[source.id] = it }
+        return (open(source, secrets) ?: platform(source))?.also { remote[source.id] = it }
     }
 
     /** Forgets [sourceId]'s connection, after its settings or password changed. */

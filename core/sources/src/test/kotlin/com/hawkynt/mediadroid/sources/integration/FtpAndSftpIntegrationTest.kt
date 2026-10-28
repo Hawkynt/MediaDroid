@@ -6,6 +6,7 @@ import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.library.readTextOrNull
 import com.hawkynt.mediadroid.sources.FtpFs
 import com.hawkynt.mediadroid.sources.SftpFs
+import com.hawkynt.mediadroid.sources.Secrets
 import com.hawkynt.mediadroid.sources.SourceFiles
 import java.io.File
 import java.net.ServerSocket
@@ -48,7 +49,7 @@ class FtpAndSftpIntegrationTest {
             assertEquals("<movie><title>Heat</title></movie>", movies.child("movie.nfo").readTextOrNull())
             assertEquals(10, fs.resolve("ftp://127.0.0.1:$ftpPort/Movies/Heat (1995).mkv")!!.length())
         }
-        SourceFiles { null }.use { files ->
+        SourceFiles(Secrets { null }).use { files ->
             assertEquals("Heat", LibraryScanner.scan(files.root(source)!!).movies.single().title)
         }
     }

@@ -5,6 +5,7 @@ import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.library.readTextOrNull
 import com.hawkynt.mediadroid.sources.SmbFs
+import com.hawkynt.mediadroid.sources.Secrets
 import com.hawkynt.mediadroid.sources.SourceFiles
 import java.io.File
 import java.net.Socket
@@ -66,7 +67,7 @@ class SmbFsIntegrationTest {
     @Test
     fun aShareScansIntoALibraryAndItsLocationsLeadBackToTheFiles() {
         val nas = source("nas", path = "/media")
-        SourceFiles { null }.use { files ->
+        SourceFiles(Secrets { null }).use { files ->
             val library = LibraryScanner.scan(files.root(nas)!!)
             val heat = library.movies.single()
             assertEquals("Heat", heat.title)
