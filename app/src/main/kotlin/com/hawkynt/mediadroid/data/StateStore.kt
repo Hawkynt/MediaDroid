@@ -41,6 +41,7 @@ data class Settings(
     var maxAgeYears: Int = 0,                 // 0 = off, else hide content above
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
+    var spatialAudio: Boolean = false,        // hand multichannel sound to the platform spatializer (Android 13+)
     var softwareVideoDecoding: Boolean = false, // FFmpeg before the device's decoders: last resort, drains the battery
 )
 

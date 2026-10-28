@@ -152,6 +152,12 @@ fun PlayerScreen(
     // unless the household chose software decoding in Settings.
     // Past the device's own maximum a volume swipe adds loudness gain and a brightness swipe adds gamma.
     var loudnessBoostDb by remember { mutableFloatStateOf(0f) }
+    var spatialAudio by remember { mutableStateOf(settings.spatialAudio) }
+    val spatializerAvailable = remember {
+        android.os.Build.VERSION.SDK_INT >= 33 &&
+            context.getSystemService(AudioManager::class.java).spatializer.immersiveAudioLevel !=
+            android.media.Spatializer.SPATIALIZER_IMMERSIVE_LEVEL_NONE
+    }
     var gammaBoost by remember { mutableFloatStateOf(1f) }
     val player = remember {
         ExoPlayer.Builder(context)
@@ -208,6 +214,19 @@ fun PlayerScreen(
                 ),
             )
             .build()
+    }
+    // A film's sound: other players pause for it, it pauses for a call; spatialized only when switched on.
+    LaunchedEffect(spatialAudio) {
+        player.setAudioAttributes(
+            androidx.media3.common.AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .setSpatializationBehavior(
+                    if (spatialAudio) C.SPATIALIZATION_BEHAVIOR_AUTO else C.SPATIALIZATION_BEHAVIOR_NEVER,
+                )
+                .build(),
+            true,
+        )
     }
     var index by remember { mutableStateOf(startIndex) }
     var finished by remember { mutableStateOf(false) }
@@ -832,6 +851,26 @@ fun PlayerScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),
                     )
+
+                    if (spatializerAvailable) {
+                        PanelTitle("Spatial audio")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Surround sound through the system's spatializer, for headphones that support it.",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
+                            )
+                            androidx.compose.material3.Switch(
+                                checked = spatialAudio,
+                                onCheckedChange = {
+                                    spatialAudio = it
+                                    store.data.settings.spatialAudio = it
+                                    store.save()
+                                },
+                            )
+                        }
+                    }
 
                     PanelTitle("Sleep timer")
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
