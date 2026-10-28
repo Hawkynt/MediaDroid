@@ -578,6 +578,32 @@ fun PlayerScreen(
                     .padding(horizontal = 20.dp, vertical = 10.dp),
             )
         }
+        // When the film will be over on the clock, on the free right end of Media3's time row.
+        if (controlsVisible) {
+            var endsAt by remember { mutableStateOf<Long?>(null) }
+            LaunchedEffect(Unit) {
+                while (true) {
+                    endsAt = PlaybackMath.endsAtMs(
+                        System.currentTimeMillis(),
+                        player.currentPosition,
+                        player.duration,
+                        player.playbackParameters.speed,
+                    )
+                    delay(1000)
+                }
+            }
+            endsAt?.let { at ->
+                Text(
+                    "Ends " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(at)),
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .then(safeArea)
+                        .padding(end = 16.dp, bottom = 14.dp),
+                )
+            }
+        }
         // Our controls ride on top, in the band Media3 leaves free, and come and go with its own.
         AnimatedVisibility(
             visible = controlsVisible,
