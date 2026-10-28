@@ -101,6 +101,46 @@ thumbs are painted from the titles themselves, and commits whatever changed back
 ![The player on an episode of a binge queue: previous and next episode, the gear for speed and picture](screenshots/player.png)
 ![Filters and facets: genres with counts, decades and sort order](screenshots/filters.png)
 
+## 🗺️ Roadmap
+
+### Player
+
+Specified, not built yet. Prior art: [Nova Video Player](https://github.com/nova-video-player/aos-Video) (Apache-2.0), looked at as a user would and read for its menus; only what fits a household player without accounts or a network made it here.
+
+- **Ends at.** Next to the remaining time the bar shows when the film will be over on the clock (`1:44:48 left · ends 21:35`), in the device's 12/24-hour format, updated as playback runs, pauses or changes speed.
+- **Sleep timer.** In the gear: off, 15, 30, 45, 60 or 90 minutes, or "at the end of this episode / film". When it runs out the sound fades over ten seconds, playback pauses and the screen may sleep; while it runs, the bar shows the minutes left. It never carries over to the next start.
+- **Child lock.** A lock in the gear freezes the player: every touch and swipe is ignored, a small lock symbol shows briefly on any touch, and only holding that symbol for two seconds unlocks. Volume keys keep working.
+- **Night mode.** A switch in the gear compresses the dynamic range in the app's audio stage: quiet dialogue comes up, explosions come down, for late evenings and thin walls. It combines with the loudness gain and the volume boost.
+- **Audio delay.** In the gear, −2.5 s … +2.5 s in 50 ms steps to fix lip-sync; remembered per audio output (the phone's speaker, each Bluetooth headset, HDMI), since each has its own latency.
+- **Subtitle delay and look.** Delay −10 s … +10 s per video; size (small … extra large), a raised position for films with burned-in text at the bottom, and an optional dark box behind the text. The look is a guarded default with a per-video override, like the picture.
+- **Seeking that speeds up.** Holding skip forward/back (on screen or on a TV remote's D-pad) steps 10 s, then 30 s after three seconds of holding, 60 s after six, five minutes after nine; letting go seeks once to where the steps arrived.
+- **Repeat.** Off, this video, or this show / folder — for the film a child wants to see again and again.
+- **Title from the file.** Without an NFO title, the title the container itself carries (Matroska / MP4 metadata) comes before the cleaned-up file or folder name.
+- **Display cutout.** In Fill mode the picture may extend into the camera notch / punch hole, as a switch next to the picture sizes.
+- **Spatial audio.** On Android 13+ a switch in the gear hands multichannel sound to the platform spatializer for headphones that support it.
+- **Picture in picture.** Leaving the app while a video plays keeps it running in a small window; returning brings the full player back where it was.
+- **Media controls everywhere.** A media session puts play/pause, next and previous on the lock screen, in the notification and on headset and Bluetooth buttons.
+- **What is playing.** An info sheet in the player lists the file, container, every video/audio/subtitle track with codec, language and channels, resolution and frame rate, and which decoder is at work (hardware or software).
+- **On TV boxes.** Optional switching of the display refresh rate to the film's frame rate (no judder at 23.976 fps), and an audio-passthrough option that hands AC3/E-AC3/DTS/TrueHD untouched to an AV receiver over HDMI.
+- **Rotation.** Auto, landscape or portrait, held for the session, from the gear.
+
+### Navigation and browsing
+
+From the same look at Nova's library side: what it browses, what an item tells about itself, and where.
+
+- **More rows on each home.** Under Continue watching: *Recently added* (by the file's date on disk, newest first), *Not watched yet* and, for shows, *New episodes* (shows whose newest episode is unwatched, newest first). Each row scrolls sideways and ends in a "See all" that opens the full wall in that order.
+- **Resume from anywhere.** The sidebar's foot shows the last thing played — its picture, title and a play button — so a single tap continues it from any screen.
+- **Sort orders.** Next to A–Z, Z–A, newest and oldest: *recently added*, *runtime* (shortest / longest first) and, where NFOs carry it, *rating*. Shows add *recently updated* (newest episode first). The choice is remembered per section.
+- **Display modes.** Posters (today's wall), a compact list (thumbnail, title, year, runtime, badges) and a details list that adds two lines of plot — for remotes and for libraries too big to scan by pictures.
+- **Jump by letter.** Long libraries get an A–Z rail along the edge of the wall; dragging along it jumps to the letter, the letter shows big while dragging.
+- **Browse by genre and year as places.** Besides the filter chips, Genres and Years are entries in the sidebar that open a list of genres / decades with counts and a poster collage each, leading to the wall for one of them.
+- **Folders.** A Folders entry shows the media root as it is on disk — folders first, then videos with their frame, duration and badges — so home videos and anything the scanner did not place as a movie or show are still one tap away.
+- **One title, several files.** The same film twice (1080p and 4K, a German and an English cut) is one card with a small count; its details list every file with resolution, HDR, audio and language badges and size, and Play takes the one last played, else the best picture.
+- **What a card shows.** Every poster and list item carries its resume bar (not only in Continue watching), the watched tick, and — in list mode — runtime and the quality badges the episode rows already have.
+- **Details.** Adds, where the NFO has them, rating, director, studio and the premiered date; a *Trailer* button when a `<name>-trailer.*` sits beside the film (trailers stay off the wall); and a collapsible *File* section with the path, size, container, every video / audio / subtitle track and which decoder plays it.
+
+Considered and left out: network shares (SMB, UPnP, FTP, cloud) and online scraping, playlists, and IMDb/TMDb links — MediaDroid stays a local, offline, account-free player that reads what is already on disk.
+
 ## 🛠️ Building
 
 Requires JDK 21 and an Android SDK with platform 37; `local.properties` must point `sdk.dir` at it.
