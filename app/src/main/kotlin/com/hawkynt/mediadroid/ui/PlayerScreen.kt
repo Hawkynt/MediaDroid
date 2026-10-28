@@ -482,6 +482,40 @@ fun PlayerScreen(
         )
     }
 
+    // Media controls everywhere: a session for headset, Bluetooth and the system's media controls, and a
+    // media notification that puts them in the shade and on the lock screen. Both drive the queue, so
+    // next and previous are episodes and parts.
+    val askNotifications = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { }
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !settings.askedForNotifications &&
+            context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            settings.askedForNotifications = true
+            store.save()
+            askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    DisposableEffect(queuePlayer) {
+        val session = androidx.media3.session.MediaSession.Builder(context, queuePlayer)
+            .setId("mediadroid-player")
+            .build()
+        val notifications = com.hawkynt.mediadroid.player.PlaybackNotification.attach(
+            context,
+            queuePlayer,
+            session,
+            title = { queue[index].title },
+            subtitle = { queue[index].subtitle },
+            posterPath = { queue[index].posterPath },
+        )
+        onDispose {
+            notifications.setPlayer(null)
+            session.release()
+        }
+    }
+
     var repeat by remember { mutableStateOf(PlaybackMath.Repeat.OFF) }
     // Child lock: while locked every touch and key but volume is ignored; holding the lock symbol unlocks.
     var locked by remember { mutableStateOf(false) }

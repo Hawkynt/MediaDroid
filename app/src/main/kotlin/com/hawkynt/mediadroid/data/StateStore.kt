@@ -41,6 +41,7 @@ data class PictureOverride(
 data class Settings(
     var defaultSpeed: Float = 1.0f,
     var loudness: Float = 0f,                 // dB-ish -10..10, mapped to volume
+    var askedForNotifications: Boolean = false, // the media notification's permission is asked once
     var brightness: Float = 0f,               // -1..1
     var gamma: Float = 1.0f,                  // 0.5..2
     var contrast: Float = 1.0f,               // 0.5..2
