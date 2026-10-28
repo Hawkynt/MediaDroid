@@ -34,8 +34,8 @@ interface FsFile {
     /** The entry called [name] in this folder, whether or not it exists. */
     fun child(name: String): FsFile
 
-    /** Reads it from the start. */
-    fun open(): InputStream
+    /** Reads it from byte [offset] on — 0 is the start; playback seeks by opening further in. */
+    fun open(offset: Long = 0): InputStream
 }
 
 /** The name without its last extension, as `java.io.File` has it. */
@@ -62,7 +62,8 @@ class LocalFile(val file: File) : FsFile {
 
     override fun child(name: String): FsFile = LocalFile(File(file, name))
 
-    override fun open(): InputStream = file.inputStream()
+    override fun open(offset: Long): InputStream =
+        file.inputStream().also { if (offset > 0) it.channel.position(offset) }
 
     override fun equals(other: Any?): Boolean = other is LocalFile && other.file == file
 

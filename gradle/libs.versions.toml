@@ -9,6 +9,10 @@ serializationJson = "1.12.0"
 junit = "4.13.2"
 roborazzi = "1.77.0"
 robolectric = "4.17"
+smbj = "0.15.0"
+commonsNet = "3.13.0"
+sshj = "0.41.2"
+nfsClient = "1.1.0"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -25,6 +29,10 @@ media3-inspector = { group = "androidx.media3", name = "media3-inspector", versi
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+smbj = { group = "com.hierynomus", name = "smbj", version.ref = "smbj" }
+commons-net = { group = "commons-net", name = "commons-net", version.ref = "commonsNet" }
+sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
+nfs-client = { group = "com.emc.ecs", name = "nfs-client", version.ref = "nfsClient" }
 compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }

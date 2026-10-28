@@ -27,6 +27,7 @@ class FsFileTest {
         assertEquals("Heat (1995)", video.nameWithoutExtension)
         assertEquals("mkv", video.extension)
         assertEquals(5, video.length())
+        assertEquals("deo", video.open(2).use { String(it.readBytes()) })
         assertEquals(File(folder.root, "Heat (1995)/Heat (1995).mkv").absolutePath, video.path)
         assertEquals(dir, video.parentFile)
         assertEquals("<movie><title>Heat</title></movie>", dir.child("movie.nfo").readTextOrNull())
