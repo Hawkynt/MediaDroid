@@ -102,7 +102,7 @@ object PlaybackMath {
     /** How often a held skip button steps. */
     const val HOLD_REPEAT_MS = 250L
 
-    /** How far a held skip button steps once it has been held [heldMs]: 10 s, 30 s after 3 s, 60 s after 6, 5 min after 9. */
+    /** How far a held skip button steps after [heldMs]: 10 s, 30 s after 3 s, 60 s after 6, 5 min after 9. */
     fun holdStepMs(heldMs: Long): Long = when {
         heldMs >= 9_000 -> 300_000L
         heldMs >= 6_000 -> 60_000L
@@ -134,4 +134,11 @@ object PlaybackMath {
     /** The whole minutes a sleep timer shows, rounding up so it never claims 0 while still running. */
     fun sleepMinutesLeft(remainingMs: Long): Int =
         if (remainingMs <= 0) 0 else ((remainingMs + 59_999) / 60_000).toInt()
+
+    const val AUDIO_DELAY_STEP_MS = 50
+    const val AUDIO_DELAY_LIMIT_MS = 2500
+
+    /** An audio delay (ms; positive: sound later) moved by [steps] of [AUDIO_DELAY_STEP_MS], held in range. */
+    fun nudgeAudioDelay(currentMs: Int, steps: Int): Int =
+        (currentMs + steps * AUDIO_DELAY_STEP_MS).coerceIn(-AUDIO_DELAY_LIMIT_MS, AUDIO_DELAY_LIMIT_MS)
 }

@@ -14,24 +14,47 @@ import java.nio.ByteBuffer
  * encoding accepted here; the sample math itself lives in [LoudnessCurve] where
  * a plain unit test can reach it.
  */
-class LoudnessAudioProcessor(private val gainDb: () -> Float) : BaseAudioProcessor() {
+class LoudnessAudioProcessor(
+    private val gainDb: () -> Float,
+    private val nightMode: () -> Boolean = { false },
+) : BaseAudioProcessor() {
+
+    private var channels = 1
+    private var compressor: NightModeCompressor? = null
 
     override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) {
             throw UnhandledAudioFormatException(inputAudioFormat)
         }
+        channels = inputAudioFormat.channelCount.coerceAtLeast(1)
+        compressor = NightModeCompressor(inputAudioFormat.sampleRate)
         return inputAudioFormat
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         if (!inputBuffer.hasRemaining()) return
         val factor = LoudnessCurve.factorFor(gainDb())
+        val night = if (nightMode()) compressor else null
         val buffer = replaceOutputBuffer(inputBuffer.remaining())
-        if (factor == 1f) {
-            buffer.put(inputBuffer)
+        if (night == null) {
+            if (factor == 1f) {
+                buffer.put(inputBuffer)
+            } else {
+                while (inputBuffer.hasRemaining()) {
+                    buffer.putShort(LoudnessCurve.apply(inputBuffer.short, factor))
+                }
+            }
         } else {
-            while (inputBuffer.hasRemaining()) {
-                buffer.putShort(LoudnessCurve.apply(inputBuffer.short, factor))
+            // Night mode: one gain per frame from the loudest channel, so the stereo image stays put.
+            val frame = ShortArray(channels)
+            while (inputBuffer.remaining() >= channels * 2) {
+                var peak = 0
+                for (c in 0 until channels) {
+                    frame[c] = inputBuffer.short
+                    peak = maxOf(peak, kotlin.math.abs(frame[c].toInt()))
+                }
+                val gain = night.gainFor(peak / 32768f) * factor
+                for (c in 0 until channels) buffer.putShort(LoudnessCurve.apply(frame[c], gain))
             }
         }
         buffer.flip()

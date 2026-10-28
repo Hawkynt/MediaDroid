@@ -86,6 +86,13 @@ import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.library.SkipRules
 import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
 import java.io.File
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.layout.size
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -146,6 +153,24 @@ fun PlayerScreen(
     // Past the device's own maximum a volume swipe adds loudness gain and a brightness swipe adds gamma.
     var loudnessBoostDb by remember { mutableFloatStateOf(0f) }
     var subtitleLook by remember { mutableStateOf(store.subtitleLookFor(queue[startIndex].videoPath)) }
+    var nightMode by remember { mutableStateOf(false) }
+
+    // Lip-sync, remembered per audio output: a Bluetooth headset lags differently from the speaker.
+    var audioOutput by remember { mutableStateOf(com.hawkynt.mediadroid.player.currentAudioOutput(context)) }
+    var audioDelayMs by remember { mutableIntStateOf(store.audioDelayFor(audioOutput.key)) }
+    DisposableEffect(Unit) {
+        val audioManager = context.getSystemService(AudioManager::class.java)
+        val callback = object : android.media.AudioDeviceCallback() {
+            fun refresh() {
+                audioOutput = com.hawkynt.mediadroid.player.currentAudioOutput(context)
+                audioDelayMs = store.audioDelayFor(audioOutput.key)
+            }
+            override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>?) = refresh()
+            override fun onAudioDevicesRemoved(removed: Array<out android.media.AudioDeviceInfo>?) = refresh()
+        }
+        audioManager.registerAudioDeviceCallback(callback, null)
+        onDispose { audioManager.unregisterAudioDeviceCallback(callback) }
+    }
     var gammaBoost by remember { mutableFloatStateOf(1f) }
     val player = remember {
         ExoPlayer.Builder(context)
@@ -196,16 +221,18 @@ fun PlayerScreen(
                         context: android.content.Context,
                         enableFloatOutput: Boolean,
                         enableAudioOutputPlaybackParams: Boolean,
-                    ): androidx.media3.exoplayer.audio.AudioSink =
+                    ): androidx.media3.exoplayer.audio.AudioSink = com.hawkynt.mediadroid.player.DelayedAudioSink(
                         DefaultAudioSink.Builder(context)
                             .setEnableFloatOutput(enableFloatOutput)
                             .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
                             .setAudioProcessorChain(
                                 DefaultAudioSink.DefaultAudioProcessorChain(
-                                    LoudnessAudioProcessor { settings.loudness + loudnessBoostDb },
+                                    LoudnessAudioProcessor({ settings.loudness + loudnessBoostDb }, { nightMode }),
                                 ),
                             )
-                            .build()
+                            .build(),
+                        { audioDelayMs },
+                    )
                 }
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
             )
@@ -375,6 +402,9 @@ fun PlayerScreen(
     }
 
     var repeat by remember { mutableStateOf(PlaybackMath.Repeat.OFF) }
+    // Child lock: while locked every touch and key but volume is ignored; holding the lock symbol unlocks.
+    var locked by remember { mutableStateOf(false) }
+    var lockHintStamp by remember { mutableIntStateOf(0) }
     // Sleep timer: a moment on the clock (elapsedRealtime) or "at the end of this video"; never kept.
     var sleepAt by remember { mutableStateOf<Long?>(null) }
     var sleepAtEnd by remember { mutableStateOf(false) }
@@ -553,7 +583,11 @@ fun PlayerScreen(
     }
 
     BackHandler {
-        if (panelOpen) panelOpen = false else onExit()
+        when {
+            locked -> lockHintStamp++
+            panelOpen -> panelOpen = false
+            else -> onExit()
+        }
     }
 
     val current = queue[index]
@@ -577,6 +611,13 @@ fun PlayerScreen(
             // they step like the on-screen buttons.
             .onPreviewKeyEvent { event ->
                 val native = event.nativeKeyEvent
+                if (locked) {
+                    val volumeKey = native.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP ||
+                        native.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN ||
+                        native.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_MUTE
+                    if (!volumeKey && native.action == android.view.KeyEvent.ACTION_DOWN) lockHintStamp++
+                    return@onPreviewKeyEvent !volumeKey
+                }
                 val forward = when (native.keyCode) {
                     android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> true
                     android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> false
@@ -809,6 +850,74 @@ fun PlayerScreen(
                 onSubtitleTrack = { subtitlePicker = true },
                 onClose = { panelOpen = false },
                 sections = {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = {
+                            locked = true
+                            panelOpen = false
+                            playerView?.hideController()
+                            lockHintStamp++
+                        },
+                        modifier = Modifier.padding(top = 12.dp),
+                    ) {
+                        Icon(Icons.Filled.Lock, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Lock the player", fontSize = 16.sp)
+                    }
+                    Text(
+                        "Touches and buttons do nothing until the lock symbol is held for two seconds.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+
+                    PanelTitle("Sound")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Night mode", fontSize = 16.sp)
+                            Text(
+                                "Quiet dialogue comes up, loud scenes come down.",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        androidx.compose.material3.Switch(checked = nightMode, onCheckedChange = { nightMode = it })
+                    }
+
+
+                    PanelTitle("Audio delay · ${audioOutput.name}")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        fun nudge(steps: Int) {
+                            audioDelayMs = PlaybackMath.nudgeAudioDelay(audioDelayMs, steps)
+                            store.saveAudioDelay(audioOutput.key, audioDelayMs)
+                        }
+                        androidx.compose.material3.OutlinedButton(onClick = { nudge(-1) }) {
+                            Text("−", fontSize = 20.sp)
+                        }
+                        Text(
+                            if (audioDelayMs == 0) "in sync" else "%+d ms".format(audioDelayMs),
+                            fontSize = 18.sp,
+                            modifier = Modifier.widthIn(min = 90.dp),
+                        )
+                        androidx.compose.material3.OutlinedButton(onClick = { nudge(1) }) {
+                            Text("+", fontSize = 20.sp)
+                        }
+                        if (audioDelayMs != 0) {
+                            androidx.compose.material3.TextButton(
+                                onClick = { nudge(-audioDelayMs / PlaybackMath.AUDIO_DELAY_STEP_MS) },
+                            ) {
+                                Text("Reset")
+                            }
+                        }
+                    }
+                    Text(
+                        "+ when the sound comes too early, − when it comes too late. Kept for this output.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
                     PanelTitle("Subtitles")
                     fun changeLook(look: com.hawkynt.mediadroid.player.SubtitleLook) {
                         subtitleLook = look
@@ -921,6 +1030,9 @@ fun PlayerScreen(
                 },
                 modifier = Modifier.align(Alignment.CenterEnd).then(safeArea),
             )
+        }
+        if (locked) {
+            LockOverlay(stamp = lockHintStamp, onTouch = { lockHintStamp++ }, onUnlock = { locked = false })
         }
         if (audioPicker) {
             TrackDialog(
@@ -1152,6 +1264,68 @@ private fun View.onHold(start: () -> Unit, end: () -> Unit) {
             }
         }
         false
+    }
+}
+
+/** How long the lock symbol must be held to unlock the player. */
+private const val UNLOCK_HOLD_MS = 2_000L
+
+/** How long the lock symbol stays up after a touch. */
+private const val LOCK_HINT_MS = 2_500L
+
+/**
+ * The locked player: a layer over everything that swallows every touch. Any touch (or a [stamp] change
+ * from a key or Back) shows the lock symbol for a moment; holding it for [UNLOCK_HOLD_MS] unlocks.
+ */
+@Composable
+private fun LockOverlay(stamp: Int, onTouch: () -> Unit, onUnlock: () -> Unit) {
+    var visible by remember { mutableStateOf(true) }
+    var holding by remember { mutableStateOf(false) }
+    LaunchedEffect(stamp, holding) {
+        visible = true
+        if (!holding) {
+            delay(LOCK_HINT_MS)
+            visible = false
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        event.changes.forEach { it.consume() }
+                        if (event.changes.any { it.pressed }) onTouch()
+                    }
+                }
+            },
+    ) {
+        if (visible) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(96.dp)
+                    .background(Color.Black.copy(alpha = if (holding) 0.85f else 0.6f), CircleShape)
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown()
+                            holding = true
+                            val released = withTimeoutOrNull(UNLOCK_HOLD_MS) { waitForUpOrCancellation() }
+                            holding = false
+                            if (released == null) onUnlock()
+                        }
+                    },
+            ) {
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = "Hold to unlock",
+                    tint = Color.White,
+                    modifier = Modifier.size(48.dp),
+                )
+            }
+        }
     }
 }
 

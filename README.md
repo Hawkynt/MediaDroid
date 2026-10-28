@@ -50,6 +50,9 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - Dark cinema theme and its own launcher icon, adaptive and themed-icon ready.
 - Subtitles on/off with a preferred language, and a picker for every audio and subtitle track a file carries.
 - Holding skip forward or back — on screen, or a remote's left/right and its rewind / fast-forward keys — steps 10 s, then 30 s after three seconds of holding, 60 s after six and five minutes after nine; the target time shows while holding and letting go seeks there once. A short tap stays the ordinary skip.
+- Child lock in the gear: once locked, every touch, swipe, Back and button is ignored — only the volume keys still work — and any touch shows a lock symbol for a moment; holding it for two seconds unlocks.
+- Night mode in the gear compresses the dynamic range in the app's own audio stage — quiet dialogue comes up, explosions come down — for late evenings and thin walls; it combines with the loudness gain and the volume boost (soft-knee compressor after Giannoulis, Massberg & Reiss, JAES 2012).
+- Audio delay in the gear, −2.5 s … +2.5 s in 50 ms steps, fixes lip-sync; it is remembered per audio output — the phone's speaker, each Bluetooth headset, USB, HDMI — since each has its own latency, and follows the output when it changes.
 - Subtitles in the gear: a delay of −10 … +10 s in tenths of a second, four sizes, a raised position above burned-in text and an optional dark box behind the text. The household sets the look in the guarded settings; each video can keep its own look and delay.
 - Sleep timer in the gear: off, 15, 30, 45, 60 or 90 minutes, or at the end of this video. While it runs the top bar shows the minutes left; when it runs out the sound fades over ten seconds and playback pauses. It never carries over to the next start.
 - Repeat in the gear: off, this video, or all of it (the show or the folder, round again from the start) — for the film a child wants to see again and again. It lasts for the session.
@@ -112,8 +115,8 @@ thumbs are painted from the titles themselves, and commits whatever changed back
 
 Specified, not built yet. Prior art: [Nova Video Player](https://github.com/nova-video-player/aos-Video) (Apache-2.0), looked at as a user would and read for its menus; only what fits a household player without accounts or a network made it here.
 
-- **Child lock.** A lock in the gear freezes the player: every touch and swipe is ignored, a small lock symbol shows briefly on any touch, and only holding that symbol for two seconds unlocks. Volume keys keep working.
 - **Night mode.** A switch in the gear compresses the dynamic range in the app's audio stage: quiet dialogue comes up, explosions come down, for late evenings and thin walls. It combines with the loudness gain and the volume boost.
+- **Child lock.** A lock in the gear freezes the player: every touch and swipe is ignored, a small lock symbol shows briefly on any touch, and only holding that symbol for two seconds unlocks. Volume keys keep working.
 - **Audio delay.** In the gear, −2.5 s … +2.5 s in 50 ms steps to fix lip-sync; remembered per audio output (the phone's speaker, each Bluetooth headset, HDMI), since each has its own latency.
 - **Title from the file.** Without an NFO title, the title the container itself carries (Matroska / MP4 metadata) comes before the cleaned-up file or folder name.
 - **Display cutout.** In Fill mode the picture may extend into the camera notch / punch hole, as a switch next to the picture sizes.

@@ -65,6 +65,8 @@ data class AppData(
     val unwatched: MutableList<String> = mutableListOf(), // unticked in the app, beats an NFO playcount
     val resume: MutableMap<String, ResumeInfo> = mutableMapOf(),
     val picture: MutableMap<String, PictureOverride> = mutableMapOf(),
+    val audioDelays: MutableMap<String, Int> = mutableMapOf(), // lip-sync per audio output, in ms
+
     val subtitles: MutableMap<String, SubtitleOverride> = mutableMapOf(),
     var settings: Settings = Settings(),
 )
@@ -131,6 +133,14 @@ class StateStore(context: Context) {
     }
 
     fun resumeFor(videoPath: String): ResumeInfo? = data.resume[videoPath]
+
+    /** The lip-sync delay remembered for the audio output [outputKey], in ms. */
+    fun audioDelayFor(outputKey: String): Int = data.audioDelays[outputKey] ?: 0
+
+    fun saveAudioDelay(outputKey: String, delayMs: Int) {
+        if (delayMs == 0) data.audioDelays.remove(outputKey) else data.audioDelays[outputKey] = delayMs
+        save()
+    }
 
     /** The household's default picture, from the guarded settings. */
     fun defaultPicture(): PictureAdjustment = with(data.settings) {
