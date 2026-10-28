@@ -25,6 +25,7 @@ dependencies {
     testImplementation(libs.ftpserver.core)
     testImplementation(libs.sshd.core)
     testImplementation(libs.sshd.sftp)
+    testImplementation(libs.nfs4j.core)
 }
 
 // Tests against real servers started on the machine (smbd, …) are the slow tier: `./gradlew test`
