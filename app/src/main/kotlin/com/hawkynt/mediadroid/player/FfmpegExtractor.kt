@@ -165,6 +165,7 @@ class FfmpegExtractor(
                         setWidth(stream.width.orUnset())
                         setHeight(stream.height.orUnset())
                         setRotationDegrees(stream.rotationDegrees)
+                        setPixelWidthHeightRatio(stream.pixelAspectRatio)
                         if (stream.frameRate > 0f) setFrameRate(stream.frameRate)
                     } else {
                         setSampleRate(stream.sampleRate.orUnset())

@@ -40,7 +40,8 @@ public final class DemuxCheck {
           System.out.println(
               "  #" + s.index + " kind=" + s.kind + " codec=" + s.codecName + " decoder=" + s.decoderName
                   + " " + s.width + "x" + s.height + " " + s.sampleRate + "Hz " + s.channels + "ch"
-                  + " params=" + s.parameters.length + "B");
+                  + " params=" + s.parameters.length + "B"
+                  + (s.pixelAspectRatio != 1f ? String.format(" pixel=%.4f", s.pixelAspectRatio) : ""));
         }
         long[] packets = new long[streams.length];
         long[] keys = new long[streams.length];
