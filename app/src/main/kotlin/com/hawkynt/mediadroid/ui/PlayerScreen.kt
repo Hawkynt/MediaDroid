@@ -87,6 +87,8 @@ import com.hawkynt.mediadroid.library.SkipRules
 import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
 import java.io.File
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 
 /** Playback speeds the player offers, slowest to fastest. */
 val Speeds = listOf(0.2f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 5.0f)
@@ -223,6 +225,33 @@ fun PlayerScreen(
     fun show(text: String) {
         feedback = text
         feedbackStamp++
+    }
+    // Holding a skip button (on screen or on a remote) steps further the longer it is held; the target
+    // shows while holding and letting go seeks there once.
+    val holdScope = androidx.compose.runtime.rememberCoroutineScope()
+    var holdJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var holdTarget by remember { mutableStateOf<Long?>(null) }
+    fun startHold(forward: Boolean) {
+        holdJob?.cancel()
+        val startedAt = android.os.SystemClock.uptimeMillis()
+        var target = player.currentPosition
+        holdJob = holdScope.launch {
+            while (true) {
+                val step = PlaybackMath.holdStepMs(android.os.SystemClock.uptimeMillis() - startedAt)
+                val end = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                target = (target + if (forward) step else -step).coerceIn(0L, end)
+                holdTarget = target
+                show((if (forward) "» " else "« ") + clock(target))
+                playerView?.showController()
+                delay(PlaybackMath.HOLD_REPEAT_MS)
+            }
+        }
+    }
+    fun endHold() {
+        holdJob?.cancel()
+        holdJob = null
+        holdTarget?.let { player.seekTo(it) }
+        holdTarget = null
     }
     val externalDisplay = rememberExternalDisplay()
     var onSecondScreen by remember { mutableStateOf(false) }
@@ -484,7 +513,35 @@ fun PlayerScreen(
         0f to 0f
     }
     val safeArea = Modifier.padding(horizontal = insetX.dp, vertical = insetY.dp)
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            // A remote's left/right (with the controls hidden) and its rewind/fast-forward keys: held,
+            // they step like the on-screen buttons.
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                val forward = when (native.keyCode) {
+                    android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> true
+                    android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> false
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> if (controlsVisible) null else true
+                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> if (controlsVisible) null else false
+                    else -> null
+                } ?: return@onPreviewKeyEvent false
+                when {
+                    native.action == android.view.KeyEvent.ACTION_DOWN && native.repeatCount == 1 -> {
+                        startHold(forward)
+                        true
+                    }
+                    native.action == android.view.KeyEvent.ACTION_DOWN && native.repeatCount > 1 -> true
+                    native.action == android.view.KeyEvent.ACTION_UP && holdJob != null -> {
+                        endHold()
+                        true
+                    }
+                    else -> false
+                }
+            },
+    ) {
         // The demo library's videos are empty placeholders: their picture stands in for the video,
         // showing through the player's (then transparent) shutter beneath its controls.
         if (demo) PosterImage(queue[index].posterPath, contentScale = ContentScale.Crop)
@@ -512,6 +569,8 @@ fun PlayerScreen(
                         },
                     )
                     if (demo) setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    findViewById<View>(androidx.media3.ui.R.id.exo_ffwd)?.onHold({ startHold(true) }, ::endHold)
+                    findViewById<View>(androidx.media3.ui.R.id.exo_rew)?.onHold({ startHold(false) }, ::endHold)
                     playerView = this
                 }
             },
@@ -873,4 +932,48 @@ private fun PlayerPanel(
 @Composable
 private fun PanelTitle(text: String) {
     Text(text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
+}
+
+/** `1:23:45` or `23:45` for a position in milliseconds. */
+private fun clock(ms: Long): String {
+    val total = ms / 1000
+    val h = total / 3600
+    val m = total / 60 % 60
+    val sec = total % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+}
+
+/** How long a skip button must be held before it starts stepping on its own. */
+private const val HOLD_START_MS = 400L
+
+/**
+ * Calls [start] once the view has been held for [HOLD_START_MS] and [end] when it is let go; a short
+ * tap stays an ordinary click.
+ */
+@android.annotation.SuppressLint("ClickableViewAccessibility")
+private fun View.onHold(start: () -> Unit, end: () -> Unit) {
+    var holding = false
+    val starter = Runnable {
+        holding = true
+        start()
+    }
+    setOnTouchListener { view, event ->
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                holding = false
+                view.postDelayed(starter, HOLD_START_MS)
+            }
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                view.removeCallbacks(starter)
+                if (holding) {
+                    holding = false
+                    end()
+                    // The hold replaced the click.
+                    view.isPressed = false
+                    return@setOnTouchListener true
+                }
+            }
+        }
+        false
+    }
 }

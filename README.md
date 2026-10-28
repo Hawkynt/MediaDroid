@@ -49,6 +49,7 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - No database: the folders are the library. It is re-read every time the app opens or comes back to the foreground, so a film copied onto the SD card is simply there. Watched marks and resume positions are the only things the app keeps. Coming back from a title's details lands at the same scroll position.
 - Dark cinema theme and its own launcher icon, adaptive and themed-icon ready.
 - Subtitles on/off with a preferred language, and a picker for every audio and subtitle track a file carries.
+- Holding skip forward or back — on screen, or a remote's left/right and its rewind / fast-forward keys — steps 10 s, then 30 s after three seconds of holding, 60 s after six and five minutes after nine; the target time shows while holding and letting go seeks there once. A short tap stays the ordinary skip.
 - With the controls up, the bar also tells when the film will be over on the clock ("Ends 21:35", in the device's 12/24-hour format), allowing for the playback speed.
 - The player shows nothing but the picture: a tap brings the controls up, a few seconds untouched fade them out, and the status and navigation bars stay hidden while watching.
 - Video plays on the device's own hardware decoders; the bundled FFmpeg decoder only steps in for what they cannot play. Settings can put software decoding first, with a warning: it drains the battery fast and is meant for videos that otherwise do not play at all or only with errors.
@@ -113,7 +114,6 @@ Specified, not built yet. Prior art: [Nova Video Player](https://github.com/nova
 - **Night mode.** A switch in the gear compresses the dynamic range in the app's audio stage: quiet dialogue comes up, explosions come down, for late evenings and thin walls. It combines with the loudness gain and the volume boost.
 - **Audio delay.** In the gear, −2.5 s … +2.5 s in 50 ms steps to fix lip-sync; remembered per audio output (the phone's speaker, each Bluetooth headset, HDMI), since each has its own latency.
 - **Subtitle delay and look.** Delay −10 s … +10 s per video; size (small … extra large), a raised position for films with burned-in text at the bottom, and an optional dark box behind the text. The look is a guarded default with a per-video override, like the picture.
-- **Seeking that speeds up.** Holding skip forward/back (on screen or on a TV remote's D-pad) steps 10 s, then 30 s after three seconds of holding, 60 s after six, five minutes after nine; letting go seeks once to where the steps arrived.
 - **Repeat.** Off, this video, or this show / folder — for the film a child wants to see again and again.
 - **Title from the file.** Without an NFO title, the title the container itself carries (Matroska / MP4 metadata) comes before the cleaned-up file or folder name.
 - **Display cutout.** In Fill mode the picture may extend into the camera notch / punch hole, as a switch next to the picture sizes.

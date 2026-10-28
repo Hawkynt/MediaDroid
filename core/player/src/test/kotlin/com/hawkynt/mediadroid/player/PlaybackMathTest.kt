@@ -127,4 +127,14 @@ class PlaybackMathTest {
         assertEquals(null, PlaybackMath.endsAtMs(now, positionMs = 0, durationMs = 0, speed = 1f))
         assertEquals(now, PlaybackMath.endsAtMs(now, positionMs = 1_200_000, durationMs = 1_000_000, speed = 1f))
     }
+
+    @Test
+    fun `holding a skip button steps further the longer it is held`() {
+        assertEquals(10_000L, PlaybackMath.holdStepMs(heldMs = 0))
+        assertEquals(10_000L, PlaybackMath.holdStepMs(heldMs = 2_999))
+        assertEquals(30_000L, PlaybackMath.holdStepMs(heldMs = 3_000))
+        assertEquals(60_000L, PlaybackMath.holdStepMs(heldMs = 6_000))
+        assertEquals(300_000L, PlaybackMath.holdStepMs(heldMs = 9_000))
+        assertEquals(300_000L, PlaybackMath.holdStepMs(heldMs = 60_000))
+    }
 }
