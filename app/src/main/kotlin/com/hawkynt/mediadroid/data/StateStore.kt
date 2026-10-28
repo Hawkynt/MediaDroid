@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import com.hawkynt.mediadroid.library.WatchMarks
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.SubtitleLook
 import java.io.File
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -14,6 +15,15 @@ import kotlinx.serialization.json.Json
 data class ResumeInfo(val positionMs: Long = 0, val durationMs: Long = 0)
 
 /** A picture correction stored for one video; see [PictureAdjustment] for the ranges. */
+/** A subtitle look stored for one video; see [SubtitleLook]. */
+@Serializable
+data class SubtitleOverride(
+    val delayMs: Int = 0,
+    val size: String = "NORMAL",
+    val raised: Boolean = false,
+    val box: Boolean = false,
+)
+
 @Serializable
 data class PictureOverride(
     val brightness: Float = 0f,
@@ -31,16 +41,23 @@ data class PictureOverride(
 data class Settings(
     var defaultSpeed: Float = 1.0f,
     var loudness: Float = 0f,                 // dB-ish -10..10, mapped to volume
+    var askedForNotifications: Boolean = false, // the media notification's permission is asked once
     var brightness: Float = 0f,               // -1..1
     var gamma: Float = 1.0f,                  // 0.5..2
     var contrast: Float = 1.0f,               // 0.5..2
     var saturation: Float = 1.0f,             // 0..2
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
+    var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
+    var subtitleRaised: Boolean = false,
+    var subtitleBox: Boolean = false,
     var audioLanguage: String = "",
     var maxAgeYears: Int = 0,                 // 0 = off, else hide content above
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
+    var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout
+
+    var spatialAudio: Boolean = false,        // hand multichannel sound to the platform spatializer (Android 13+)
     var softwareVideoDecoding: Boolean = false, // FFmpeg before the device's decoders: last resort, drains the battery
 )
 
@@ -52,6 +69,9 @@ data class AppData(
     val unwatched: MutableList<String> = mutableListOf(), // unticked in the app, beats an NFO playcount
     val resume: MutableMap<String, ResumeInfo> = mutableMapOf(),
     val picture: MutableMap<String, PictureOverride> = mutableMapOf(),
+    val audioDelays: MutableMap<String, Int> = mutableMapOf(), // lip-sync per audio output, in ms
+
+    val subtitles: MutableMap<String, SubtitleOverride> = mutableMapOf(),
     var settings: Settings = Settings(),
 )
 
@@ -118,6 +138,14 @@ class StateStore(context: Context) {
 
     fun resumeFor(videoPath: String): ResumeInfo? = data.resume[videoPath]
 
+    /** The lip-sync delay remembered for the audio output [outputKey], in ms. */
+    fun audioDelayFor(outputKey: String): Int = data.audioDelays[outputKey] ?: 0
+
+    fun saveAudioDelay(outputKey: String, delayMs: Int) {
+        if (delayMs == 0) data.audioDelays.remove(outputKey) else data.audioDelays[outputKey] = delayMs
+        save()
+    }
+
     /** The household's default picture, from the guarded settings. */
     fun defaultPicture(): PictureAdjustment = with(data.settings) {
         PictureAdjustment(brightness, gamma, contrast, saturation)
@@ -135,6 +163,33 @@ class StateStore(context: Context) {
         } else {
             data.picture[videoPath] =
                 PictureOverride(picture.brightness, picture.gamma, picture.contrast, picture.saturation)
+        }
+        save()
+    }
+
+    /** The household's subtitle look, from the guarded settings. */
+    fun defaultSubtitleLook(): SubtitleLook = SubtitleLook(
+        size = runCatching { SubtitleLook.Size.valueOf(data.settings.subtitleSize) }
+            .getOrDefault(SubtitleLook.Size.NORMAL),
+        raised = data.settings.subtitleRaised,
+        box = data.settings.subtitleBox,
+    )
+
+    fun subtitleLookFor(videoPath: String): SubtitleLook = data.subtitles[videoPath]?.let {
+        SubtitleLook(
+            delayMs = it.delayMs,
+            size = runCatching { SubtitleLook.Size.valueOf(it.size) }.getOrDefault(SubtitleLook.Size.NORMAL),
+            raised = it.raised,
+            box = it.box,
+        )
+    } ?: defaultSubtitleLook()
+
+    /** Remembers [look] for [videoPath]; the household default (or null) drops the video's own entry. */
+    fun saveSubtitleLook(videoPath: String, look: SubtitleLook?) {
+        if (look == null || look == defaultSubtitleLook()) {
+            data.subtitles.remove(videoPath)
+        } else {
+            data.subtitles[videoPath] = SubtitleOverride(look.delayMs, look.size.name, look.raised, look.box)
         }
         save()
     }
