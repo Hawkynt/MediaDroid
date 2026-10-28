@@ -57,6 +57,8 @@ public final class FfmpegDemuxer implements AutoCloseable {
     /** Frames per second, or 0 when unknown. */
     public final float frameRate;
     public final boolean isDefault;
+    /** Width over height of one pixel; 1 for square pixels or when unknown. */
+    public final float pixelAspectRatio;
     /** The codec parameters for FFmpeg's decoders; see {@code mediadroid_codecpar.h}. */
     public final byte[] parameters;
 
@@ -81,6 +83,7 @@ public final class FfmpegDemuxer implements AutoCloseable {
       this.bitRate = n[7];
       this.frameRate = n[8] > 0 && n[9] > 0 ? (float) n[8] / n[9] : 0f;
       this.isDefault = n[10] != 0;
+      this.pixelAspectRatio = n[11] > 0 && n[12] > 0 ? (float) n[11] / n[12] : 1f;
       this.parameters = parameters;
     }
   }
@@ -102,7 +105,7 @@ public final class FfmpegDemuxer implements AutoCloseable {
     this.handle = handle;
     int count = nStreamCount(handle);
     streams = new Stream[count];
-    long[] numbers = new long[11];
+    long[] numbers = new long[13];
     for (int i = 0; i < count; i++) {
       String codec = nStreamInfo(handle, i, numbers);
       streams[i] =

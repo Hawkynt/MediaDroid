@@ -12,7 +12,7 @@ sample.asf format=asf streams=2
   #1 packets=44 keyframes=44
   seek 1046ms ok=true next=510ms key=true
 sample.dv format=dv streams=2
-  #0 kind=0 codec=dvvideo decoder=dvvideo 720x576 0Hz 0ch params=48B
+  #0 kind=0 codec=dvvideo decoder=dvvideo 720x576 0Hz 0ch params=48B pixel=1.0667
   #1 kind=1 codec=pcm_s16le decoder=pcm_s16le 0x0 48000Hz 2ch params=48B
   #0 packets=50 keyframes=50
   #1 packets=50 keyframes=50

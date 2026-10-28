@@ -187,7 +187,7 @@ JNIEXPORT jint JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nStreamC
 }
 
 // numbers: kind, sampleRate, channels, width, height, durationUs, rotationDegrees, bitRate,
-// frameRateNum, frameRateDen, default (1/0). Returns the decoder's codec name.
+// frameRateNum, frameRateDen, default (1/0), sampleAspectNum, sampleAspectDen. Returns the codec name.
 JNIEXPORT jstring JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nStreamInfo(
     JNIEnv* env, jclass, jlong handle, jint index, jlongArray numbers) {
   Demuxer* d = demuxerOf(env, handle);
@@ -216,7 +216,9 @@ JNIEXPORT jstring JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nStre
     rotation = ((jlong)(degrees + (degrees < 0 ? -0.5 : 0.5)) % 360 + 360) % 360;
   }
   const AVRational rate = stream->avg_frame_rate.num > 0 ? stream->avg_frame_rate : stream->r_frame_rate;
-  const jlong values[11] = {
+  // The shape of a pixel: PAL DV is 720x576 drawn 4:3, anamorphic MXF and ASF video likewise.
+  const AVRational aspect = av_guess_sample_aspect_ratio(d->format, stream, nullptr);
+  const jlong values[13] = {
       kind,
       par->sample_rate,
       par->ch_layout.nb_channels,
@@ -228,8 +230,10 @@ JNIEXPORT jstring JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nStre
       rate.num,
       rate.den,
       (stream->disposition & AV_DISPOSITION_DEFAULT) ? 1 : 0,
+      aspect.num,
+      aspect.den,
   };
-  env->SetLongArrayRegion(numbers, 0, 11, values);
+  env->SetLongArrayRegion(numbers, 0, 13, values);
   const AVCodecDescriptor* descriptor = avcodec_descriptor_get(par->codec_id);
   return descriptor ? env->NewStringUTF(descriptor->name) : nullptr;
 }
