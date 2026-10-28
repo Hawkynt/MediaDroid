@@ -9,6 +9,7 @@ import com.hawkynt.mediadroid.library.SortOrder
 import com.hawkynt.mediadroid.library.WatchMarks
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.SubtitleLook
+import com.hawkynt.mediadroid.ui.WallMode
 import java.io.File
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -76,6 +77,7 @@ data class AppData(
     val picture: MutableMap<String, PictureOverride> = mutableMapOf(),
     val audioDelays: MutableMap<String, Int> = mutableMapOf(), // lip-sync per audio output, in ms
     val sorts: MutableMap<String, String> = mutableMapOf(), // SortOrder per LibrarySection, by name
+    var wallMode: String = "",                 // WallMode by name; "" is posters
     val subtitles: MutableMap<String, SubtitleOverride> = mutableMapOf(),
     var settings: Settings = Settings(),
 )
@@ -154,6 +156,14 @@ class StateStore(context: Context) {
     /** The order the [section]'s wall was last sorted by; A–Z until one is chosen. */
     fun sortFor(section: LibrarySection): SortOrder =
         data.sorts[section.name]?.let { name -> SortOrder.entries.firstOrNull { it.name == name } } ?: SortOrder.TITLE
+
+    /** Posters, list or details, as the walls were last laid out. */
+    val wallMode: WallMode get() = WallMode.entries.firstOrNull { it.name == data.wallMode } ?: WallMode.POSTERS
+
+    fun saveWallMode(mode: WallMode) {
+        data.wallMode = mode.name
+        save()
+    }
 
     fun saveSort(section: LibrarySection, order: SortOrder) {
         data.sorts[section.name] = order.name
