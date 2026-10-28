@@ -152,6 +152,7 @@ fun PlayerScreen(
     // unless the household chose software decoding in Settings.
     // Past the device's own maximum a volume swipe adds loudness gain and a brightness swipe adds gamma.
     var loudnessBoostDb by remember { mutableFloatStateOf(0f) }
+    var subtitleLook by remember { mutableStateOf(store.subtitleLookFor(queue[startIndex].videoPath)) }
     var nightMode by remember { mutableStateOf(false) }
 
     // Lip-sync, remembered per audio output: a Bluetooth headset lags differently from the speaker.
@@ -175,6 +176,20 @@ fun PlayerScreen(
         ExoPlayer.Builder(context)
             .setRenderersFactory(
                 object : DefaultRenderersFactory(context) {
+                    override fun buildTextRenderers(
+                        context: android.content.Context,
+                        output: androidx.media3.exoplayer.text.TextOutput,
+                        outputLooper: android.os.Looper,
+                        extensionRendererMode: Int,
+                        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
+                    ) {
+                        val built = java.util.ArrayList<androidx.media3.exoplayer.Renderer>()
+                        super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, built)
+                        built.mapTo(out) {
+                            com.hawkynt.mediadroid.player.DelayedTextRenderer(it) { subtitleLook.delayMs }
+                        }
+                    }
+
                     override fun buildVideoRenderers(
                         context: android.content.Context,
                         extensionRendererMode: Int,
@@ -319,6 +334,7 @@ fun PlayerScreen(
         val playable = queue[index]
         manualTrackPick = false
         picture = store.pictureFor(playable.videoPath)
+        subtitleLook = store.subtitleLookFor(playable.videoPath)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguage(settings.audioLanguage.ifEmpty { null })
             .build()
@@ -656,6 +672,7 @@ fun PlayerScreen(
                 }
             },
             update = { view ->
+                view.subtitleView?.applyLook(subtitleLook)
                 // While the picture is on the other screen the phone's surface would keep showing the
                 // last frame it got; it is hidden so the phone stays black behind the controls.
                 val elsewhere = presentation?.isShowing == true
@@ -900,6 +917,70 @@ fun PlayerScreen(
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+
+                    PanelTitle("Subtitles")
+                    fun changeLook(look: com.hawkynt.mediadroid.player.SubtitleLook) {
+                        subtitleLook = look
+                        store.saveSubtitleLook(queue[index].videoPath, look)
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Delay", fontSize = 16.sp, modifier = Modifier.widthIn(min = 56.dp))
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { changeLook(subtitleLook.nudgeDelay(-1)) },
+                        ) {
+                            Text("−", fontSize = 20.sp)
+                        }
+                        Text(
+                            if (subtitleLook.delayMs == 0) {
+                                "in sync"
+                            } else {
+                                "%+.1f s".format(subtitleLook.delayMs / 1000f)
+                            },
+                            fontSize = 18.sp,
+                            modifier = Modifier.widthIn(min = 80.dp),
+                        )
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { changeLook(subtitleLook.nudgeDelay(1)) },
+                        ) {
+                            Text("+", fontSize = 20.sp)
+                        }
+                    }
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 6.dp),
+                    ) {
+                        com.hawkynt.mediadroid.player.SubtitleLook.Size.entries.forEach { size ->
+                            FilterChip(
+                                selected = subtitleLook.size == size,
+                                onClick = { changeLook(subtitleLook.copy(size = size)) },
+                                label = { Text(size.label, fontSize = 16.sp) },
+                            )
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Raised above burned-in text", fontSize = 16.sp, modifier = Modifier.weight(1f))
+                        androidx.compose.material3.Switch(
+                            checked = subtitleLook.raised,
+                            onCheckedChange = { changeLook(subtitleLook.copy(raised = it)) },
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Dark box behind the text", fontSize = 16.sp, modifier = Modifier.weight(1f))
+                        androidx.compose.material3.Switch(
+                            checked = subtitleLook.box,
+                            onCheckedChange = { changeLook(subtitleLook.copy(box = it)) },
+                        )
+                    }
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            store.saveSubtitleLook(queue[index].videoPath, null)
+                            subtitleLook = store.subtitleLookFor(queue[index].videoPath)
+                        },
+                    ) { Text("Back to the household's look") }
 
                     PanelTitle("Sleep timer")
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -1246,4 +1327,21 @@ private fun LockOverlay(stamp: Int, onTouch: () -> Unit, onUnlock: () -> Unit) {
             }
         }
     }
+}
+
+/** Size, position and backing of the subtitles as [look] has them. */
+private fun androidx.media3.ui.SubtitleView.applyLook(look: com.hawkynt.mediadroid.player.SubtitleLook) {
+    setFractionalTextSize(look.textSizeFraction)
+    setBottomPaddingFraction(look.bottomPaddingFraction)
+    setStyle(
+        androidx.media3.ui.CaptionStyleCompat(
+            android.graphics.Color.WHITE,
+            if (look.box) 0xB0000000.toInt() else android.graphics.Color.TRANSPARENT,
+            android.graphics.Color.TRANSPARENT,
+            if (look.box) androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
+            else androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+            android.graphics.Color.BLACK,
+            null,
+        ),
+    )
 }
