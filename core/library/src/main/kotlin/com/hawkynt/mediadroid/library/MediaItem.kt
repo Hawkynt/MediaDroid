@@ -138,7 +138,7 @@ data class Episode(
 /** The two halves of the library the sidebar switches between. */
 enum class LibrarySection { MOVIES, SHOWS }
 
-/** Everything one scan of one library root produced. */
+/** Everything one scan of one library root produced — or of several, [merge]d. */
 data class Library(val movies: List<Movie>, val shows: List<Show>) {
     val items: List<MediaItem> get() = movies + shows
 
@@ -146,5 +146,17 @@ data class Library(val movies: List<Movie>, val shows: List<Show>) {
     fun itemsIn(section: LibrarySection): List<MediaItem> = when (section) {
         LibrarySection.MOVIES -> movies
         LibrarySection.SHOWS -> shows
+    }
+
+    companion object {
+        /**
+         * The libraries of several roots as one: a film found on more than one root is one card with
+         * every copy (see [MovieVersions]), a show split over roots one show with all its seasons.
+         */
+        fun merge(libraries: List<Library>): Library = Library(
+            movies = MovieVersions.merge(libraries.flatMap { it.movies }.flatMap { it.versions.ifEmpty { listOf(it) } })
+                .sortedBy { it.title.lowercase() },
+            shows = LibraryScanner.mergeShowsByTitle(libraries.flatMap { it.shows }),
+        )
     }
 }

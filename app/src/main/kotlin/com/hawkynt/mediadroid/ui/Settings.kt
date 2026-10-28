@@ -129,7 +129,14 @@ fun PinGate(
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(store: StateStore, rootPath: String, onChangeFolder: () -> Unit) {
+fun SettingsScreen(
+    store: StateStore,
+    rootPath: String,
+    onChangeFolder: () -> Unit,
+    unreachable: Set<String> = emptySet(),
+    onAddDeviceFolder: () -> Unit = {},
+    onSourcesChanged: () -> Unit = {},
+) {
     var unlocked by remember { mutableStateOf(false) }
     if (!unlocked) {
         PinGate(onUnlocked = { unlocked = true })
@@ -149,12 +156,13 @@ fun SettingsScreen(store: StateStore, rootPath: String, onChangeFolder: () -> Un
         Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(16.dp))
 
-        Text("Library", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        Text("Media folder", fontSize = 18.sp)
-        Text(rootPath, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = onChangeFolder) { Text("Choose another folder", fontSize = 18.sp) }
+        SourcesSection(
+            store = store,
+            unreachable = unreachable,
+            onChangeMainFolder = onChangeFolder,
+            onAddDeviceFolder = onAddDeviceFolder,
+            onChanged = onSourcesChanged,
+        )
         Spacer(Modifier.height(24.dp))
 
         Text("Playback", fontSize = 22.sp, fontWeight = FontWeight.Bold)

@@ -22,8 +22,8 @@ import java.io.File
  * show, a folder with a `movie.nfo`, a single video or one multi-part movie is a movie, and
  * any other loose video that is not an episode is a movie too. Trailers and samples are skipped.
  *
- * Everything is [java.io.File] so the whole scan runs — and is tested — as plain
- * JVM code, no Android, no storage framework.
+ * Everything goes through [FsFile], so the same scan reads the device and every network or cloud
+ * source, and runs — and is tested — as plain JVM code, no Android, no storage framework.
  */
 object LibraryScanner {
 
@@ -31,7 +31,11 @@ object LibraryScanner {
     private val episodeToken = Regex("(?i)\\b(?:s\\d{1,2}[ ._-]?e\\d{1,3}|\\d{1,2}x(?!26[456]\\b)\\d{1,3})\\b")
     private val trailingYear = Regex("\\s((?:19|20)\\d{2})$")
 
-    fun scan(root: File): Library {
+    /** Scans a folder on the device. */
+    fun scan(root: File): Library = scan(LocalFile(root))
+
+    /** Scans a [Source]'s root, wherever it lives. */
+    fun scan(root: FsFile): Library {
         val movies = ArrayList<Movie>()
         val shows = ArrayList<Show>()
         walk(root, movies, shows, isRoot = true)
@@ -39,14 +43,17 @@ object LibraryScanner {
             movies = MovieVersions.merge(movies).sortedBy { it.title.lowercase() },
             // Loose episodes found in a dump folder connect to the show folder
             // living elsewhere under the same name — one show, all its seasons.
-            shows = shows
-                .groupBy { it.title.lowercase() }
-                .map { (_, group) -> if (group.size == 1) group[0] else mergeShows(group) }
-                .sortedBy { it.title.lowercase() },
+            shows = mergeShowsByTitle(shows),
         )
     }
 
-    private fun mergeShows(group: List<Show>): Show {
+    /** One show per title, its seasons gathered from wherever they were found. */
+    internal fun mergeShowsByTitle(shows: List<Show>): List<Show> = shows
+        .groupBy { it.title.lowercase() }
+        .map { (_, group) -> if (group.size == 1) group[0] else mergeShows(group) }
+        .sortedBy { it.title.lowercase() }
+
+    internal fun mergeShows(group: List<Show>): Show {
         val seasons = group.flatMap { it.seasons }
             .groupBy { it.number }
             .map { (number, list) ->
@@ -73,7 +80,7 @@ object LibraryScanner {
         )
     }
 
-    private fun walk(dir: File, movies: MutableList<Movie>, shows: MutableList<Show>, isRoot: Boolean) {
+    private fun walk(dir: FsFile, movies: MutableList<Movie>, shows: MutableList<Show>, isRoot: Boolean) {
         val children = dir.listFiles()?.filter { !it.name.startsWith(".") } ?: return
         val files = children.filter { it.isFile }
         val subDirs = children.filter { it.isDirectory }
@@ -106,7 +113,7 @@ object LibraryScanner {
      * into shows by the name they share before the `SxxExx` token — release junk
      * after the token is ignored, a trailing year becomes the show year.
      */
-    private fun addLooseEpisodeShows(dir: File, files: List<File>, shows: MutableList<Show>) {
+    private fun addLooseEpisodeShows(dir: FsFile, files: List<FsFile>, shows: MutableList<Show>) {
         val videos = files.filter { isVideo(it) && episodeRefFromName(it.name) != null }
         if (videos.isEmpty()) return
         val folderName = ReleaseName.parse(dir.name)
@@ -127,9 +134,9 @@ object LibraryScanner {
                     title = title,
                     year = folderName.year,
                     genres = emptyList(),
-                    path = dir.absolutePath,
-                    posterPath = art[ArtKind.Poster]?.let { File(dir, it).absolutePath },
-                    fanartPath = art[ArtKind.Fanart]?.let { File(dir, it).absolutePath },
+                    path = dir.path,
+                    posterPath = art[ArtKind.Poster]?.let { dir.child(it).path },
+                    fanartPath = art[ArtKind.Fanart]?.let { dir.child(it).path },
                     plot = null,
                     seasons = seasons,
                 ),
@@ -149,10 +156,10 @@ object LibraryScanner {
     private fun cleanSeparators(text: String): String =
         text.replace(Regex("[._\\-]+"), " ").replace(Regex("\\s{2,}"), " ").trim()
 
-    private fun isVideo(file: File): Boolean = MediaFiles.isVideo(file.name)
+    private fun isVideo(file: FsFile): Boolean = MediaFiles.isVideo(file.name)
 
     /** Trailers (`<name>-trailer.mkv`, the Kodi convention) and release samples are no movies. */
-    private fun isExtra(file: File): Boolean {
+    private fun isExtra(file: FsFile): Boolean {
         val stem = file.nameWithoutExtension.lowercase()
         return stem.endsWith("-trailer") || stem == "sample" || stem.endsWith("-sample") || stem.endsWith(".sample")
     }
@@ -163,7 +170,7 @@ object LibraryScanner {
      * last rule is deliberately all-or-nothing: an `Incoming` dump that mixes
      * episodes with `Title (Year)` movies is a pile of loose files, not a show.
      */
-    private fun isShowDirectory(files: List<File>, subDirs: List<File>): Boolean {
+    private fun isShowDirectory(files: List<FsFile>, subDirs: List<FsFile>): Boolean {
         if (files.any { it.name.equals("tvshow.nfo", ignoreCase = true) }) return true
         if (subDirs.any { seasonDirName.matches(it.name) }) return true
         val videos = files.filter { isVideo(it) }
@@ -176,7 +183,7 @@ object LibraryScanner {
      * is no episode, or holds the parts of one multi-part movie. A folder with several
      * unrelated videos (an `Incoming` dump) is not one movie — each video is handled on its own.
      */
-    private fun isMovieDirectory(files: List<File>): Boolean {
+    private fun isMovieDirectory(files: List<FsFile>): Boolean {
         if (files.any { it.name.equals("movie.nfo", ignoreCase = true) }) return true
         val videos = files.filter { isVideo(it) && !isExtra(it) }
         if (videos.size > 1) {
@@ -189,22 +196,22 @@ object LibraryScanner {
     }
 
     /** The intro and credits the `<video>.edl` beside [video] marks; nothing when there is none. */
-    private fun edlSkips(video: File, names: List<String>): EdlSkips {
+    private fun edlSkips(video: FsFile, names: List<String>): EdlSkips {
         val edl = EditDecisionList.fileNameFor(video.name)
         val hit = names.firstOrNull { it.equals(edl, ignoreCase = true) } ?: return EdlSkips(null, null)
-        val text = File(video.parentFile, hit).readTextSafe() ?: return EdlSkips(null, null)
+        val text = video.folder.child(hit).readTextSafe() ?: return EdlSkips(null, null)
         return EditDecisionList.skips(EditDecisionList.parse(text))
     }
 
-    private fun sidecarNfo(video: File, names: List<String>): File? {
+    private fun sidecarNfo(video: FsFile, names: List<String>): FsFile? {
         val nfo = video.nameWithoutExtension + ".nfo"
         val hit = names.firstOrNull { it.equals(nfo, ignoreCase = true) } ?: return null
-        return File(video.parentFile, hit)
+        return video.folder.child(hit)
     }
 
     // ----- shows ---------------------------------------------------------------------------------
 
-    private fun parseShow(dir: File, files: List<File>, subDirs: List<File>): Show? {
+    private fun parseShow(dir: FsFile, files: List<FsFile>, subDirs: List<FsFile>): Show? {
         val nfoFile = files.firstOrNull { it.name.equals("tvshow.nfo", ignoreCase = true) }
         val info = nfoFile?.readTextSafe()?.let { runCatching { parseShowNfo(it) }.getOrNull() }
 
@@ -230,7 +237,7 @@ object LibraryScanner {
             val episodes = sub.listFiles()!!.filter { isVideo(it) }
                 .mapNotNull { video -> parseEpisode(video, siblings, seasonFolder = number) }
                 .sortedBy { it.number }
-            val poster = findArt(siblings)[ArtKind.Poster]?.let { File(sub, it).absolutePath }
+            val poster = findArt(siblings)[ArtKind.Poster]?.let { sub.child(it).path }
                 ?: seasonPoster(dir, showNames, number)
             if (episodes.isEmpty()) null else Season(number, episodes, poster)
         }
@@ -259,10 +266,10 @@ object LibraryScanner {
             title = title,
             year = year,
             genres = info?.genres ?: emptyList(),
-            path = dir.absolutePath,
-            posterPath = art[ArtKind.Poster]?.let { File(dir, it).absolutePath },
+            path = dir.path,
+            posterPath = art[ArtKind.Poster]?.let { dir.child(it).path },
             minAge = minAgeOf(info?.mpaa),
-            fanartPath = art[ArtKind.Fanart]?.let { File(dir, it).absolutePath },
+            fanartPath = art[ArtKind.Fanart]?.let { dir.child(it).path },
             plot = info?.plot,
             seasons = seasons,
             rating = info?.rating,
@@ -275,7 +282,7 @@ object LibraryScanner {
      * One episode file. [seasonFolder] is the season of the `Season NN` folder it sits in, which
      * lets a bare `E02 - Title.mkv` count as an episode of that season.
      */
-    private fun parseEpisode(video: File, siblingNames: List<String>, seasonFolder: Int? = null): Episode? {
+    private fun parseEpisode(video: FsFile, siblingNames: List<String>, seasonFolder: Int? = null): Episode? {
         val nfo = sidecarNfo(video, siblingNames)?.readTextSafe()
             ?.let { runCatching { parseEpisodeNfo(it) }.getOrNull() }
         val ref: EpisodeRef? = episodeRefFromName(video.name)
@@ -293,8 +300,8 @@ object LibraryScanner {
             title = nfo?.title ?: ReleaseName.episodeTitle(stem),
             firstAired = nfo?.firstAired,
             watched = (nfo?.playcount ?: 0) > 0,
-            videoPath = video.absolutePath,
-            thumbPath = thumb?.let { File(video.parentFile, it).absolutePath },
+            videoPath = video.path,
+            thumbPath = thumb?.let { video.folder.child(it).path },
             intro = skips.intro,
             credits = skips.credits,
             audioLanguages = nfo?.audioLanguages ?: emptyList(),
@@ -305,12 +312,12 @@ object LibraryScanner {
     }
 
     /** `seasonNN-poster.jpg` beside the show (`season-specials-poster` for season 0), the Kodi way. */
-    private fun seasonPoster(showDir: File, showNames: List<String>, season: Int): String? {
+    private fun seasonPoster(showDir: FsFile, showNames: List<String>, season: Int): String? {
         val base = if (season == 0) "season-specials-poster" else "season%02d-poster".format(season)
         return showNames.firstOrNull { name ->
             name.substringBeforeLast('.').equals(base, ignoreCase = true) &&
                 ImageFormats.isImage(name)
-        }?.let { File(showDir, it).absolutePath }
+        }?.let { showDir.child(it).path }
     }
 
     /** A poster named after the video: `<stem>-poster.jpg` first, then a plain `<stem>.jpg`. */
@@ -323,7 +330,7 @@ object LibraryScanner {
 
     // ----- movies --------------------------------------------------------------------------------
 
-    private fun parseMovieFolder(dir: File, files: List<File>): Movie? {
+    private fun parseMovieFolder(dir: FsFile, files: List<FsFile>): Movie? {
         val videos = files.filter { isVideo(it) && !isExtra(it) }
         val stack = MovieStacking.stack(videos.map { it.name }).firstOrNull()
         val parts = stack?.parts?.map { name -> videos.first { it.name == name } }
@@ -349,18 +356,18 @@ object LibraryScanner {
             title = info?.title ?: containerTitle(video) ?: name.title,
             year = info?.year ?: name.year ?: folderName.year ?: videoName.year,
             genres = info?.genres ?: emptyList(),
-            path = dir.absolutePath,
-            posterPath = poster?.let { File(dir, it).absolutePath },
+            path = dir.path,
+            posterPath = poster?.let { dir.child(it).path },
             minAge = minAgeOf(info?.mpaa),
-            fanartPath = fanart?.let { File(dir, it).absolutePath },
-            videoPath = video.absolutePath,
+            fanartPath = fanart?.let { dir.child(it).path },
+            videoPath = video.path,
             plot = info?.plot,
             runtimeMinutes = info?.runtimeMinutes,
             cast = info?.cast?.map { it.name } ?: emptyList(),
             playcount = info?.playcount ?: 0,
             intro = edlSkips(parts.first(), names).intro,
             credits = edlSkips(parts.last(), names).credits,
-            parts = parts.map { it.absolutePath },
+            parts = parts.map { it.path },
             audioLanguages = info?.audioLanguages ?: emptyList(),
             subtitleLanguages = info?.subtitleLanguages ?: emptyList(),
             quality = Quality.of(info?.streamDetails),
@@ -375,9 +382,9 @@ object LibraryScanner {
     }
 
     private fun parseLooseMovie(
-        video: File,
-        siblings: List<File>,
-        parts: List<File> = listOf(video),
+        video: FsFile,
+        siblings: List<FsFile>,
+        parts: List<FsFile> = listOf(video),
         stackTitle: String? = null,
     ): Movie? {
         val names = siblings.map { it.name }
@@ -394,18 +401,18 @@ object LibraryScanner {
             title = info?.title ?: containerTitle(video) ?: name.title,
             year = info?.year ?: name.year,
             genres = info?.genres ?: emptyList(),
-            path = video.parentFile.absolutePath,
-            posterPath = poster?.let { File(video.parentFile, it).absolutePath },
+            path = video.folder.path,
+            posterPath = poster?.let { video.folder.child(it).path },
             minAge = minAgeOf(info?.mpaa),
-            fanartPath = fanart?.let { File(video.parentFile, it).absolutePath },
-            videoPath = video.absolutePath,
+            fanartPath = fanart?.let { video.folder.child(it).path },
+            videoPath = video.path,
             plot = info?.plot,
             runtimeMinutes = info?.runtimeMinutes,
             cast = info?.cast?.map { it.name } ?: emptyList(),
             playcount = info?.playcount ?: 0,
             intro = edlSkips(parts.first(), names).intro,
             credits = edlSkips(parts.last(), names).credits,
-            parts = parts.map { it.absolutePath },
+            parts = parts.map { it.path },
             audioLanguages = info?.audioLanguages ?: emptyList(),
             subtitleLanguages = info?.subtitleLanguages ?: emptyList(),
             quality = Quality.of(info?.streamDetails),
@@ -423,29 +430,33 @@ object LibraryScanner {
      * The trailer for the film named [stem]: `<stem>-trailer.*`, or — in a folder that is one film —
      * any `*-trailer.*` video there.
      */
-    private fun trailerOf(stem: String, files: List<File>, wholeFolder: Boolean): String? {
+    private fun trailerOf(stem: String, files: List<FsFile>, wholeFolder: Boolean): String? {
         val trailers = files.filter { isVideo(it) && it.nameWithoutExtension.lowercase().endsWith("-trailer") }
         return (
             trailers.firstOrNull { it.nameWithoutExtension.equals("$stem-trailer", ignoreCase = true) }
                 ?: trailers.firstOrNull()?.takeIf { wholeFolder }
-            )?.absolutePath
+            )?.path
     }
 
     /** The file's modification time, which is when it was copied in for most libraries; null when unknown. */
-    private fun File.addedTime(): Long? = lastModified().takeIf { it > 0 }
+    private fun FsFile.addedTime(): Long? = lastModified().takeIf { it > 0 }
 
     /**
      * The title stored inside the video file, for movies without an NFO title. One written like a release
      * name (`Coco.2017.1080p.x264-GRP`, no spaces) gets the same clean-up as a file name.
      */
-    private fun containerTitle(video: File): String? {
-        val raw = ContainerTitle.read(video) ?: return null
+    private fun containerTitle(video: FsFile): String? {
+        // Container titles are read from local files for now; remote ones need random-access reads.
+        val raw = (video as? LocalFile)?.let { ContainerTitle.read(it.file) } ?: return null
         return if (' ' in raw) raw else ReleaseName.parse(raw).title.ifEmpty { null }
     }
 
     /** The season a loose file in a show folder belongs to; a bare `EP002` (absolute numbering) is season 1. */
-    private fun refSeason(video: File): Int? =
+    private fun refSeason(video: FsFile): Int? =
         episodeRefFromName(video.name)?.season ?: bareEpisodeFromName(video.name)?.let { 1 }
 
-    private fun File.readTextSafe(): String? = runCatching { readText() }.getOrNull()
+    private fun FsFile.readTextSafe(): String? = readTextOrNull()
+
+    /** The folder a file lies in; itself at a source's root, which never holds a video. */
+    private val FsFile.folder: FsFile get() = parentFile ?: this
 }

@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.hawkynt.mediadroid.data.SourceAccess
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.data.StorageRoot
 import com.hawkynt.mediadroid.data.StorageRoots
@@ -39,13 +40,15 @@ import com.hawkynt.mediadroid.library.BrowseFilter
 import com.hawkynt.mediadroid.library.Episode
 import com.hawkynt.mediadroid.library.HomeRow
 import com.hawkynt.mediadroid.library.Library
+import com.hawkynt.mediadroid.library.LibraryQuery
 import com.hawkynt.mediadroid.library.LibraryScanner
 import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.MediaItem
-import com.hawkynt.mediadroid.library.LibraryQuery
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.MovieVersions
 import com.hawkynt.mediadroid.library.Show
+import com.hawkynt.mediadroid.library.Source
+import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.library.StorageVolumes
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -102,6 +105,12 @@ private val LocalStorageAuthorities = setOf(
 fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Stored locations on network sources resolve against the saved sources, for player and pictures.
+    remember(store) {
+        val app = context.applicationContext
+        SourceAccess.sources = { store.sources }
+        com.hawkynt.mediadroid.player.AviAudioFraming.remote = { SourceAccess.resolve(app, it) }
+    }
 
     fun storageAccess() = demo || Environment.isExternalStorageManager()
     var hasAccess by remember { mutableStateOf(storageAccess()) }
@@ -109,6 +118,8 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     var library by remember { mutableStateOf<Library?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
+    // Sources that could not be read on the last scan, by id: their titles are missing until they are back.
+    var unreachable by remember { mutableStateOf(emptySet<String>()) }
     var scanGeneration by remember { mutableIntStateOf(0) }
     var choosingFolder by remember { mutableStateOf(false) }
     var screen by remember { mutableStateOf<Screen>(Screen.Browse(LibrarySection.MOVIES)) }
@@ -146,13 +157,22 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
                 runCatching {
                     val root = File(path)
                     require(root.isDirectory) { "the folder is not there — is the SD card or USB drive plugged in?" }
-                    LibraryScanner.scan(root)
+                    // The chosen folder first, then every other saved source; one that cannot be read
+                    // is left out of this scan rather than failing it.
+                    val others = store.sources.filter { it.kind != SourceKind.LOCAL || it.path != path }
+                    val files = SourceAccess.of(context)
+                    val scans = others.associate { source ->
+                        source.id to runCatching { files.root(source)?.let { LibraryScanner.scan(it) } }.getOrNull()
+                    }
+                    Library.merge(listOf(LibraryScanner.scan(root)) + scans.values.filterNotNull()) to
+                        scans.filterValues { it == null }.keys
                 }
             }
             if (generation != scanGeneration) return@launch
             scanning = false
-            result.onSuccess {
-                library = it
+            result.onSuccess { (scanned, missing) ->
+                library = scanned
+                unreachable = missing
                 if (adopt) {
                     rootPath = path
                     store.data.rootPath = path
@@ -197,6 +217,24 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
                 "Pick one on the internal storage, an SD card or a USB drive."
         } else {
             scan(path, adopt = true)
+        }
+    }
+
+    // A further folder on the device, kept as a source of its own beside the media folder.
+    val addFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        val path = if (uri.authority in LocalStorageAuthorities) {
+            StorageVolumes.pathForTreeDocumentId(
+                DocumentsContract.getTreeDocumentId(uri),
+                Environment.getExternalStorageDirectory().absolutePath,
+            )
+        } else {
+            null
+        }
+        if (path != null && store.sources.none { it.kind == SourceKind.LOCAL && it.path == path }) {
+            val added = Source.local(java.util.UUID.randomUUID().toString(), File(path).name.ifEmpty { path }, path)
+            store.saveSources(store.sources + added)
+            scan(rootPath)
         }
     }
 
@@ -443,7 +481,14 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
                         store.saveSort(section, order)
                     },
                 )
-                Screen.Settings -> SettingsScreen(store, rootPath = rootPath, onChangeFolder = ::launchPicker)
+                Screen.Settings -> SettingsScreen(
+                    store,
+                    rootPath = rootPath,
+                    onChangeFolder = ::launchPicker,
+                    unreachable = unreachable,
+                    onAddDeviceFolder = { addFolder.launch(null) },
+                    onSourcesChanged = { scan(rootPath) },
+                )
                 else -> Unit
             }
         }

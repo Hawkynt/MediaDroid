@@ -15,6 +15,7 @@ import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.SeekPoint
 import androidx.media3.extractor.TrackOutput
 import com.hawkynt.mediadroid.ffmpeg.FfmpegDemuxer
+import com.hawkynt.mediadroid.library.FsFile
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
@@ -26,7 +27,11 @@ import java.nio.ByteBuffer
  * with it, so Media3 still sees how far loading got and stops buffering in time.
  */
 @OptIn(UnstableApi::class)
-class FfmpegExtractor(private val uri: Uri?) : Extractor {
+class FfmpegExtractor(
+    private val uri: Uri?,
+    /** The file behind a network location; local files are read directly. */
+    private val remote: (String) -> FsFile? = { null },
+) : Extractor {
 
     private lateinit var output: ExtractorOutput
     private var file: RandomAccessFile? = null
@@ -87,7 +92,9 @@ class FfmpegExtractor(private val uri: Uri?) : Extractor {
 
     private fun open(): Boolean {
         if (!FfmpegDemuxer.isAvailable()) return false
-        val path = uri?.takeIf { it.scheme == null || it.scheme == "file" }?.path ?: return false
+        val uri = uri ?: return false
+        if (isNetworkLocation(uri)) return openRemote(uri)
+        val path = uri.takeIf { it.scheme == null || it.scheme == "file" }?.path ?: return false
         val raf = runCatching { RandomAccessFile(File(path), "r") }.getOrNull() ?: return false
         val opened = FfmpegDemuxer.open(object : FfmpegDemuxer.Input {
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int = raf.read(buffer, offset, length)
@@ -105,6 +112,36 @@ class FfmpegExtractor(private val uri: Uri?) : Extractor {
         }
         file = raf
         demuxer = opened
+        return true
+    }
+
+    /** A file on a network source: read as a stream, opened again further in when FFmpeg seeks. */
+    private fun openRemote(uri: Uri): Boolean {
+        val file = remote(uri.toString()) ?: return false
+        val input = object : FfmpegDemuxer.Input {
+            private var stream: java.io.InputStream? = null
+            private var position = 0L
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                val current = stream ?: java.io.BufferedInputStream(file.open(position), REMOTE_BUFFER)
+                    .also { stream = it }
+                val read = current.read(buffer, offset, length)
+                if (read > 0) position += read
+                return read
+            }
+
+            override fun seek(position: Long): Long {
+                if (position != this.position) {
+                    stream?.close()
+                    stream = null
+                    this.position = position
+                }
+                return position
+            }
+
+            override fun length(): Long = file.length().takeIf { it > 0 } ?: -1
+        }
+        demuxer = runCatching { FfmpegDemuxer.open(input) }.getOrNull() ?: return false
         return true
     }
 
@@ -173,5 +210,6 @@ class FfmpegExtractor(private val uri: Uri?) : Extractor {
     private companion object {
         const val INITIAL_BUFFER = 1 shl 20
         const val FOLLOW_CHUNK = 1 shl 20
+        const val REMOTE_BUFFER = 256 * 1024
     }
 }

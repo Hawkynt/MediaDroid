@@ -9,10 +9,13 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.inspector.MetadataRetriever
+import com.hawkynt.mediadroid.library.FsFile
 import com.hawkynt.mediadroid.library.Quality
 import com.hawkynt.mediadroid.nfo.AudioStream
 import com.hawkynt.mediadroid.nfo.StreamDetails
 import com.hawkynt.mediadroid.player.AviAudioFraming
+import com.hawkynt.mediadroid.player.SourceDataSource
+import com.hawkynt.mediadroid.player.playableUri
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -68,7 +71,7 @@ class QualityStore private constructor(private val context: Context) {
     suspend fun durationMsFor(videoPath: String): Long? = entryFor(videoPath)?.durationMs
 
     private suspend fun entryFor(videoPath: String): Entry? {
-        val video = File(videoPath)
+        val video = SourceAccess.resolve(context, videoPath) ?: return null
         val key = "$videoPath|${video.length()}|${video.lastModified()}"
         return lock.withLock {
             val entries = cache ?: withContext(Dispatchers.IO) { load() }.also { cache = it }
@@ -79,9 +82,14 @@ class QualityStore private constructor(private val context: Context) {
         }
     }
 
-    private fun probe(video: File): Entry? = runCatching {
-        MetadataRetriever.Builder(context, MediaItem.fromUri(Uri.fromFile(video)))
-            .setMediaSourceFactory(DefaultMediaSourceFactory(context, AviAudioFraming.extractors))
+    private fun probe(video: FsFile): Entry? = runCatching {
+        MetadataRetriever.Builder(context, MediaItem.fromUri(playableUri(video.path)))
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(
+                    SourceDataSource.Factory(context) { SourceAccess.resolve(context, it) },
+                    AviAudioFraming.extractors,
+                ),
+            )
             .build()
             .use { retriever ->
                 val groups = retriever.retrieveTrackGroups().get(PROBE_TIMEOUT_S, TimeUnit.SECONDS)

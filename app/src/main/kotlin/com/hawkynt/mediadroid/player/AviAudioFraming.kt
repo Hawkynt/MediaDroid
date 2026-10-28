@@ -19,6 +19,7 @@ import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.avi.AviExtractor
+import com.hawkynt.mediadroid.library.FsFile
 import java.io.EOFException
 
 /**
@@ -38,8 +39,12 @@ object AviAudioFraming {
         override fun createExtractors(): Array<Extractor> = wrap(DefaultExtractorsFactory().createExtractors())
 
         override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> =
-            wrap(DefaultExtractorsFactory().createExtractors(uri, responseHeaders)) + FfmpegExtractor(uri)
+            wrap(DefaultExtractorsFactory().createExtractors(uri, responseHeaders)) + FfmpegExtractor(uri, remote)
     }
+
+    /** The file behind a network location, for FFmpeg's demuxers; the app points this at its sources. */
+    @Volatile
+    var remote: (String) -> FsFile? = { null }
 
     private fun wrap(extractors: Array<Extractor>): Array<Extractor> =
         extractors.map { if (it is AviExtractor) FramingExtractor(it) else it }.toTypedArray()

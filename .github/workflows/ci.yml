@@ -54,6 +54,12 @@ jobs:
           fi
       - name: Unit tests
         run: ./gradlew test --no-daemon
+      # The network sources against real servers on the runner — the slow tier `./gradlew test` leaves out.
+      - name: Network-source integration tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq samba
+          ./gradlew :core:sources:test -Pintegration --no-daemon
       - name: Assemble every shipping artifact
         run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon
       - name: Check the repository README
