@@ -56,8 +56,10 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -407,8 +409,10 @@ private fun WallModeSwitch(mode: WallMode, onChange: (WallMode) -> Unit, modifie
 @Composable
 private fun WallRow(item: MediaItem, watched: Boolean, progress: Float?, withPlot: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(10.dp)
+    val away = LocalAway.current(item)
     Row(
         modifier = Modifier
+            .alpha(if (away) AWAY_ALPHA else 1f)
             .fillMaxWidth()
             .clip(shape)
             .focusClickable(shape = shape, onClick = onClick)
@@ -458,6 +462,7 @@ private fun WallRow(item: MediaItem, watched: Boolean, progress: Float?, withPlo
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            AwayNote(item)
             if (item is Movie) QualityChips(rememberQuality(item.videoPath, item.quality))
             if (withPlot) {
                 plotOf(item)?.let { Text(it, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
@@ -730,7 +735,8 @@ fun PosterCard(
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(10.dp)
-    Column(modifier = modifier) {
+    val away = LocalAway.current(item)
+    Column(modifier = modifier.alpha(if (away) AWAY_ALPHA else 1f)) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -776,6 +782,7 @@ fun PosterCard(
         item.year?.let {
             Text("$it", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        AwayNote(item)
     }
 }
 
@@ -846,4 +853,18 @@ private fun LetterBox(fallbackLetter: String?) {
 
 /** How the wall lays out its titles. */
 enum class WallMode(val label: String) { POSTERS("Posters"), LIST("List"), DETAILS("Details") }
+
+/** Whether a title's files all lie on a source that cannot be reached right now; the app provides it. */
+val LocalAway = staticCompositionLocalOf<(MediaItem) -> Boolean> { { false } }
+
+/** How faint a title whose source is away is drawn. */
+private const val AWAY_ALPHA = 0.4f
+
+/** The line a title whose source is away carries. */
+@Composable
+internal fun AwayNote(item: MediaItem, modifier: Modifier = Modifier) {
+    if (LocalAway.current(item)) {
+        Text("Not reachable right now", fontSize = 13.sp, color = MaterialTheme.colorScheme.error, modifier = modifier)
+    }
+}
 

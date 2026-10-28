@@ -1,6 +1,8 @@
 package com.hawkynt.mediadroid.nfo
 
+import kotlinx.serialization.Serializable
 /** A span inside a video, in milliseconds. */
+@Serializable
 data class TimeRange(val startMs: Long, val endMs: Long)
 
 /** One line of an edit decision list: a span and what to do with it (see [EditDecisionList]). */

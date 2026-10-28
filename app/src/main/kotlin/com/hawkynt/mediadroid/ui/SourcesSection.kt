@@ -34,6 +34,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hawkynt.mediadroid.data.LibraryStore
 import com.hawkynt.mediadroid.data.PRIMARY_SOURCE
 import com.hawkynt.mediadroid.data.SecretStore
 import com.hawkynt.mediadroid.data.SourceAccess
@@ -96,6 +97,7 @@ fun SourcesSection(
                     store.saveSources(sources.filter { it.id != source.id }.withPrimary(store))
                     SecretStore.of(context).save(source.id, null)
                     SourceAccess.of(context).forget(source.id)
+                    LibraryStore(context).forget(source.id)
                     onChanged()
                 }) { Text("Remove") }
             }
