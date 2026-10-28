@@ -134,7 +134,7 @@ object MatroskaChapters {
         }
 
     /** Minimal EBML cursor: variable-size ids and sizes per the EBML specification. */
-    private class Ebml(private val bytes: ByteArray) {
+    internal class Ebml(private val bytes: ByteArray) {
 
         var position = 0L
 

@@ -135,10 +135,37 @@ object PlaybackMath {
     fun sleepMinutesLeft(remainingMs: Long): Int =
         if (remainingMs <= 0) 0 else ((remainingMs + 59_999) / 60_000).toInt()
 
+    /**
+     * The picture-in-picture window's aspect ratio for a video of [width] × [height] with [pixelRatio]:
+     * the picture's own shape, held within the 1:2.39 … 2.39:1 Android accepts. Null while unknown.
+     */
+    fun pipAspect(width: Int, height: Int, pixelRatio: Float): Pair<Int, Int>? {
+        if (width <= 0 || height <= 0) return null
+        val shownWidth = (width * pixelRatio).toInt()
+        val ratio = shownWidth.toFloat() / height
+        return when {
+            ratio > 2.39f -> 239 to 100
+            ratio < 1f / 2.39f -> 100 to 239
+            else -> shownWidth to height
+        }
+    }
+
     const val AUDIO_DELAY_STEP_MS = 50
     const val AUDIO_DELAY_LIMIT_MS = 2500
 
     /** An audio delay (ms; positive: sound later) moved by [steps] of [AUDIO_DELAY_STEP_MS], held in range. */
     fun nudgeAudioDelay(currentMs: Int, steps: Int): Int =
         (currentMs + steps * AUDIO_DELAY_STEP_MS).coerceIn(-AUDIO_DELAY_LIMIT_MS, AUDIO_DELAY_LIMIT_MS)
+
+    /**
+     * The display refresh rate to play a [frameRate] film at: the lowest of [available] that is a whole
+     * multiple of it (within 0.1 %), or null when none is — then switching would not remove the judder.
+     */
+    fun matchingRefreshRate(frameRate: Float, available: List<Float>): Float? {
+        if (frameRate <= 0f) return null
+        return available.sorted().firstOrNull { rate ->
+            val multiple = kotlin.math.round(rate / frameRate)
+            multiple >= 1 && kotlin.math.abs(rate - multiple * frameRate) <= rate * 0.001f
+        }
+    }
 }

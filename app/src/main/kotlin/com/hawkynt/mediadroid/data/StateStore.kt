@@ -43,6 +43,9 @@ data class PictureOverride(
 data class Settings(
     var defaultSpeed: Float = 1.0f,
     var loudness: Float = 0f,                 // dB-ish -10..10, mapped to volume
+    var matchRefreshRate: Boolean = false,    // TV boxes: switch the display to a multiple of the film's frame rate
+    var audioPassthrough: Boolean = false,    // TV boxes: compressed surround untouched to an AV receiver
+    var askedForNotifications: Boolean = false, // the media notification's permission is asked once
     var brightness: Float = 0f,               // -1..1
     var gamma: Float = 1.0f,                  // 0.5..2
     var contrast: Float = 1.0f,               // 0.5..2
@@ -56,6 +59,9 @@ data class Settings(
     var maxAgeYears: Int = 0,                 // 0 = off, else hide content above
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
+    var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout
+
+    var spatialAudio: Boolean = false,        // hand multichannel sound to the platform spatializer (Android 13+)
     var softwareVideoDecoding: Boolean = false, // FFmpeg before the device's decoders: last resort, drains the battery
 )
 
@@ -63,6 +69,7 @@ data class Settings(
 data class AppData(
     var rootPath: String = "",                 // "" until a media folder is chosen
     var sidebarExpanded: Boolean? = null,      // null: decided by the screen width
+    var lastPlayed: String = "",               // the video played last, resumed from the sidebar
     val watched: MutableList<String> = mutableListOf(),
     val unwatched: MutableList<String> = mutableListOf(), // unticked in the app, beats an NFO playcount
     val resume: MutableMap<String, ResumeInfo> = mutableMapOf(),

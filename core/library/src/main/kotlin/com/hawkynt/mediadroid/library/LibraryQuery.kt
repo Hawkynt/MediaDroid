@@ -144,4 +144,11 @@ object LibraryQuery {
     }
 
     const val UNDATED = -1
+
+    /** The movie (any of its parts) or show (any of its episodes) the video at [videoPath] belongs to. */
+    fun itemForVideo(library: Library, videoPath: String): MediaItem? =
+        library.movies.firstOrNull { videoPath in it.parts }
+            ?: library.shows.firstOrNull { show ->
+                show.seasons.any { season -> season.episodes.any { it.videoPath == videoPath } }
+            }
 }

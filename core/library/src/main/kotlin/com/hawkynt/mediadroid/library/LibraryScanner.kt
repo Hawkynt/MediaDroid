@@ -357,7 +357,7 @@ object LibraryScanner {
         val fanart = names.firstOrNull { it.lowercase().startsWith("${stem.lowercase()}-fanart.") }
             ?: art[ArtKind.Fanart]
         return Movie(
-            title = info?.title ?: name.title,
+            title = info?.title ?: containerTitle(video) ?: name.title,
             year = info?.year ?: name.year ?: folderName.year ?: videoName.year,
             genres = info?.genres ?: emptyList(),
             path = dir.absolutePath,
@@ -397,7 +397,7 @@ object LibraryScanner {
         val fanart = names.firstOrNull { it.lowercase().startsWith("${stem.lowercase()}-fanart.") }
 
         return Movie(
-            title = info?.title ?: name.title,
+            title = info?.title ?: containerTitle(video) ?: name.title,
             year = info?.year ?: name.year,
             genres = info?.genres ?: emptyList(),
             path = video.parentFile.absolutePath,
@@ -422,6 +422,15 @@ object LibraryScanner {
 
     /** The file's modification time, which is when it was copied in for most libraries; null when unknown. */
     private fun File.addedTime(): Long? = lastModified().takeIf { it > 0 }
+
+    /**
+     * The title stored inside the video file, for movies without an NFO title. One written like a release
+     * name (`Coco.2017.1080p.x264-GRP`, no spaces) gets the same clean-up as a file name.
+     */
+    private fun containerTitle(video: File): String? {
+        val raw = ContainerTitle.read(video) ?: return null
+        return if (' ' in raw) raw else ReleaseName.parse(raw).title.ifEmpty { null }
+    }
 
     /** The season a loose file in a show folder belongs to; a bare `EP002` (absolute numbering) is season 1. */
     private fun refSeason(video: File): Int? =

@@ -116,6 +116,25 @@ class LibraryQueryTest {
         assertEquals(null, LibraryQuery.featured(emptyList()))
     }
 
+    @Test
+    fun aVideoLeadsBackToTheMovieOrShowItBelongsTo() {
+        val heat = Movie(
+            title = "Heat",
+            path = "/m/heat",
+            videoPath = "/m/heat/cd1.avi",
+            parts = listOf("/m/heat/cd1.avi", "/m/heat/cd2.avi"),
+        )
+        val dark = Show(
+            title = "Dark",
+            path = "/s/dark",
+            seasons = listOf(Season(1, listOf(Episode(number = 2, videoPath = "/s/dark/s01e02.mkv")))),
+        )
+        val library = Library(movies = listOf(heat), shows = listOf(dark))
+        assertEquals(heat, LibraryQuery.itemForVideo(library, "/m/heat/cd2.avi"))
+        assertEquals(dark, LibraryQuery.itemForVideo(library, "/s/dark/s01e02.mkv"))
+        assertEquals(null, LibraryQuery.itemForVideo(library, "/elsewhere.mkv"))
+    }
+
     private val shelf = listOf(
         Movie(title = "Coco", path = "/m/c", videoPath = "/m/c.mkv", runtimeMinutes = 105, rating = 8.4, addedMs = 300),
         Movie(title = "Heat", path = "/m/h", videoPath = "/m/h.mkv", runtimeMinutes = 170, rating = 8.3, addedMs = 100),
