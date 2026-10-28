@@ -52,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -72,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.hawkynt.mediadroid.data.ArtCache
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.data.ThumbnailStore
 import com.hawkynt.mediadroid.library.BrowseFilter
@@ -784,9 +786,16 @@ fun PosterImage(
     videoFallback: String? = null,
     contentScale: ContentScale = ContentScale.Fit,
 ) {
-    if (path != null && File(path).exists()) {
+    val context = LocalContext.current
+    // A picture on a network source shows from its cached copy, fetched once.
+    val remote = path != null && !path.startsWith("/")
+    val cached by produceState<File?>(null, path) {
+        if (remote) value = ArtCache.fileFor(context, path!!)
+    }
+    val picture = if (remote) cached else path?.let(::File)?.takeIf { it.exists() }
+    if (picture != null) {
         AsyncImage(
-            model = File(path),
+            model = picture,
             contentDescription = null,
             contentScale = contentScale,
             modifier = Modifier.fillMaxSize(),

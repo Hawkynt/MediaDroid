@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
  * the same video twice. Callers just `await` the frame; concurrent requests
  * for one video share a single extraction.
  */
-class ThumbnailStore private constructor(context: Context) {
+class ThumbnailStore private constructor(private val context: Context) {
 
     private val cacheRoot = File(context.cacheDir, "thumbs").apply { mkdirs() }
     private val extracting = Mutex()
@@ -34,7 +34,12 @@ class ThumbnailStore private constructor(context: Context) {
     }
 
     private fun cacheKey(videoPath: String): String {
-        val stamp = "$videoPath@${File(videoPath).lastModified()}"
+        val modified = if (videoPath.startsWith("/")) {
+            File(videoPath).lastModified()
+        } else {
+            SourceAccess.resolve(context, videoPath)?.lastModified() ?: 0
+        }
+        val stamp = "$videoPath@$modified"
         return MessageDigest.getInstance("SHA-1").digest(stamp.toByteArray())
             .joinToString("") { "%02x".format(it) }
     }
@@ -42,7 +47,12 @@ class ThumbnailStore private constructor(context: Context) {
     private fun extract(videoPath: String, target: File): File? = runCatching {
         val retriever = MediaMetadataRetriever()
         try {
-            retriever.setDataSource(videoPath)
+            if (videoPath.startsWith("/")) {
+                retriever.setDataSource(videoPath)
+            } else {
+                // A video on a network source, read where the retriever asks.
+                retriever.setDataSource(FsMediaDataSource(SourceAccess.resolve(context, videoPath) ?: return null))
+            }
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
             // A tenth of the way in skips black or logo intros without landing
             // in the closing credits of short clips.

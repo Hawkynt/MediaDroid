@@ -54,6 +54,7 @@ dependencies {
     implementation(project(":core:nfo"))
     implementation(project(":core:library"))
     implementation(project(":core:player"))
+    implementation(project(":core:sources"))
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

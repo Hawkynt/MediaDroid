@@ -7,6 +7,8 @@ import androidx.compose.runtime.setValue
 import com.hawkynt.mediadroid.library.FileSort
 import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.SortOrder
+import com.hawkynt.mediadroid.library.Source
+import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.library.WatchMarks
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.SubtitleLook
@@ -70,6 +72,7 @@ data class Settings(
 @Serializable
 data class AppData(
     var rootPath: String = "",                 // "" until a media folder is chosen
+    val sources: MutableList<Source> = mutableListOf(), // empty: just rootPath, see StateStore.sources
     var sidebarExpanded: Boolean? = null,      // null: decided by the screen width
     var lastPlayed: String = "",               // the video played last, resumed from the sidebar
     val watched: MutableList<String> = mutableListOf(),
@@ -165,6 +168,24 @@ class StateStore(context: Context) {
     /** How the Files browser orders videos, as last chosen. */
     val filesSort: FileSort get() = FileSort.entries.firstOrNull { it.name == data.filesSort } ?: FileSort.NAME
 
+    /**
+     * Every place the library is read from. Until a second one is added, that is the media folder
+     * chosen at the start, as a local source.
+     */
+    val sources: List<Source>
+        get() = data.sources.ifEmpty {
+            listOfNotNull(
+                data.rootPath.takeIf { it.isNotEmpty() }?.let { Source.local(PRIMARY_SOURCE, "Media folder", it) },
+            )
+        }
+
+    fun saveSources(sources: List<Source>) {
+        data.sources.clear()
+        data.sources.addAll(sources)
+        sources.firstOrNull { it.kind == SourceKind.LOCAL }?.let { data.rootPath = it.path }
+        save()
+    }
+
     fun saveFilesSort(sort: FileSort) {
         data.filesSort = sort.name
         save()
@@ -228,3 +249,6 @@ class StateStore(context: Context) {
         save()
     }
 }
+
+/** The id the media folder chosen at the start keeps as a source. */
+const val PRIMARY_SOURCE = "primary"

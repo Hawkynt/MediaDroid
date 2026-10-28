@@ -283,7 +283,10 @@ fun PlayerScreen(
             )
             .setMediaSourceFactory(
                 androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                    context,
+                    // Videos on a network source stream through it; local ones as before.
+                    com.hawkynt.mediadroid.player.SourceDataSource.Factory(context) {
+                        com.hawkynt.mediadroid.data.SourceAccess.resolve(context, it)
+                    },
                     com.hawkynt.mediadroid.player.AviAudioFraming.extractors,
                 ),
             )
@@ -510,7 +513,7 @@ fun PlayerScreen(
         creditsStartMs = SkipRules.creditsStartMs(chapters, playable.credits)
         // Back on the main thread before touching the player: ExoPlayer only answers the thread it was built on.
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
-            player.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(playable.videoPath))))
+            player.setMediaItem(MediaItem.fromUri(com.hawkynt.mediadroid.player.playableUri(playable.videoPath)))
             val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
             // Resume where you left off — but never back into a known intro.
             val startPos = SkipRules.skipTarget(resumePos, introSpanMs) ?: resumePos
