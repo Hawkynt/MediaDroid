@@ -101,14 +101,14 @@ fun Sidebar(
             painter = painterResource(R.drawable.ic_movie),
             label = "Movies",
             expanded = expanded,
-            selected = current == Screen.Browse(LibrarySection.MOVIES),
+            selected = (current as? Screen.Browse)?.section == LibrarySection.MOVIES,
             onClick = { onNavigate(Screen.Browse(LibrarySection.MOVIES)) },
         )
         SidebarItem(
             painter = painterResource(R.drawable.ic_tv),
             label = "TV Shows",
             expanded = expanded,
-            selected = current == Screen.Browse(LibrarySection.SHOWS),
+            selected = (current as? Screen.Browse)?.section == LibrarySection.SHOWS,
             onClick = { onNavigate(Screen.Browse(LibrarySection.SHOWS)) },
         )
 
