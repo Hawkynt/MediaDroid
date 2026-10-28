@@ -11,6 +11,7 @@ dependencies {
     implementation(libs.smbj)
     implementation(libs.commons.net)
     implementation(libs.sshj)
+    implementation(libs.okhttp)
     // smbj and sshj pull different BouncyCastle releases; the modules must be one release, or their
     // provider fails to load (a field missing between bcprov and bcutil).
     constraints {
@@ -19,6 +20,7 @@ dependencies {
         implementation(libs.bcutil)
     }
     testImplementation(libs.junit)
+    testImplementation(libs.mockwebserver)
     // In-process servers for the integration tier.
     testImplementation(libs.ftpserver.core)
     testImplementation(libs.sshd.core)

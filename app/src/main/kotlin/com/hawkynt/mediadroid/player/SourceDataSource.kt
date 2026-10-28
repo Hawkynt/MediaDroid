@@ -21,8 +21,18 @@ import java.io.InputStream
 fun playableUri(location: String): Uri =
     if (location.startsWith("/")) Uri.fromFile(File(location)) else Uri.parse(location)
 
-/** Whether a location lives on a network source, read through [SourceDataSource]. */
-fun isNetworkLocation(uri: Uri): Boolean = uri.scheme in NETWORK_SCHEMES
+/**
+ * Whether a location lives on a network source, read through [SourceDataSource]: an SMB, NFS, FTP or
+ * SFTP location, or an http(s) URL inside a saved WebDAV source (which needs its sign-in).
+ */
+fun isNetworkLocation(uri: Uri): Boolean =
+    uri.scheme in NETWORK_SCHEMES || (uri.scheme in WEB_SCHEMES && ownedLocation(uri.toString()))
+
+/** Whether a URL lies inside a saved source; the app points this at its sources. */
+@Volatile
+var ownedLocation: (String) -> Boolean = { false }
+
+private val WEB_SCHEMES = setOf("http", "https")
 
 private val NETWORK_SCHEMES = setOf("smb", "nfs", "ftp", "ftps", "sftp")
 

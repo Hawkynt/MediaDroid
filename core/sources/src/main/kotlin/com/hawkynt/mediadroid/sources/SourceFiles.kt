@@ -50,6 +50,7 @@ class SourceFiles(private val secrets: Secrets) : AutoCloseable {
             SourceKind.SMB -> SmbFs(source, secrets)
             SourceKind.FTP, SourceKind.FTPS -> FtpFs(source, secrets)
             SourceKind.SFTP -> SftpFs(source, secrets)
+            SourceKind.WEBDAV -> WebDavFs(source, secrets)
             else -> null
         }
     }

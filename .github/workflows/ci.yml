@@ -59,6 +59,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq samba
+          pip install --quiet wsgidav cheroot
           ./gradlew :core:sources:test -Pintegration --no-daemon
       # The README screenshots must still render: the working-branch workflow commits them, but only
       # this gate can stop a merge whose screens no longer reach what the pictures show.
