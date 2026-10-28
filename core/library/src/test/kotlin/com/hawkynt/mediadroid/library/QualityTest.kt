@@ -66,4 +66,24 @@ class QualityTest {
     fun nothingKnownIsNothingShown() {
         assertEquals(Quality.NONE, Quality.of(null))
     }
+
+    @Test
+    fun streamsTheBundledFfmpegDemuxedGetBadgesToo() {
+        assertEquals("wmv2", Quality.codecOf("video/x-ffmpeg-wmv2"))
+        assertEquals("wmav2", Quality.codecOf("audio/x-ffmpeg-wmav2"))
+        fun badges(video: String, audio: String) = Quality.of(
+            com.hawkynt.mediadroid.nfo.StreamDetails(
+                640,
+                360,
+                video,
+                null,
+                listOf(com.hawkynt.mediadroid.nfo.AudioStream(audio, 2, null)),
+            ),
+        ).badges
+        assertEquals(listOf("480p", "WMV", "WMA", "2.0"), badges("wmv2", "wmav2"))
+        assertEquals(listOf("480p", "RealVideo", "RealAudio", "2.0"), badges("rv40", "cook"))
+        assertEquals(listOf("480p", "DV", "PCM", "2.0"), badges("dvvideo", "pcm_s16le"))
+        assertEquals(listOf("480p", "MS-MPEG4", "WMA Pro", "2.0"), badges("msmpeg4", "wmapro"))
+    }
 }
+

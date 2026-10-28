@@ -45,7 +45,18 @@ data class Quality(
         }
 
         /** The Kodi codec name for a Media3 MIME type (`MimeTypes` constants); null when there is none. */
-        fun codecOf(mime: String?): String? = when (mime) {
+        fun codecOf(mime: String?): String? = when {
+            // Streams the bundled FFmpeg demuxed name their decoder in the MIME type.
+            mime == null -> null
+            mime.startsWith(FFMPEG_VIDEO) -> mime.removePrefix(FFMPEG_VIDEO)
+            mime.startsWith(FFMPEG_AUDIO) -> mime.removePrefix(FFMPEG_AUDIO)
+            else -> media3Codec(mime)
+        }
+
+        private const val FFMPEG_VIDEO = "video/x-ffmpeg-"
+        private const val FFMPEG_AUDIO = "audio/x-ffmpeg-"
+
+        private fun media3Codec(mime: String): String? = when (mime) {
             "video/avc" -> "h264"
             "video/hevc", "video/mv-hevc" -> "hevc"
             "video/dolby-vision" -> "hevc"
@@ -112,6 +123,10 @@ data class Quality(
             "mpeg4", "xvid", "divx", "dx50", "mp4v" -> "MPEG-4"
             "mpeg2video", "mpeg2" -> "MPEG-2"
             "vc1", "wvc1" -> "VC-1"
+            "wmv1", "wmv2", "wmv3" -> "WMV"
+            "rv10", "rv20", "rv30", "rv40" -> "RealVideo"
+            "dvvideo" -> "DV"
+            "msmpeg4", "msmpeg4v1", "msmpeg4v2", "msmpeg4v3" -> "MS-MPEG4"
             else -> codec.uppercase()
         }
 
@@ -132,6 +147,10 @@ data class Quality(
                 c == "flac" -> "FLAC"
                 c == "opus" -> "Opus"
                 c == "vorbis" -> "Vorbis"
+                c == "wmav1" || c == "wmav2" -> "WMA"
+                c == "wmapro" -> "WMA Pro"
+                c == "wmalossless" -> "WMA Lossless"
+                c == "cook" || c == "real_144" || c == "real_288" || c == "ra_144" || c == "ra_288" -> "RealAudio"
                 c.startsWith("pcm") || c == "lpcm" -> "PCM"
                 else -> c.uppercase()
             }

@@ -6,33 +6,34 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,9 +41,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,118 +76,139 @@ fun Sidebar(
 ) {
     val width by animateDpAsState(if (expanded) ExpandedWidth else CollapsedWidth, label = "sidebar-width")
     Column(modifier = modifier.width(width).background(MaterialTheme.colorScheme.surface)) {
-    Column(
-        modifier = Modifier
-            .weight(1f)
-            .verticalScroll(rememberScrollState())
-            .padding(vertical = 12.dp, horizontal = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(56.dp)) {
-            SidebarButton(
-                painter = painterResource(if (expanded) R.drawable.ic_menu_open else R.drawable.ic_menu),
-                label = null,
-                description = if (expanded) "Collapse menu" else "Expand menu",
-                selected = false,
-                onClick = onToggle,
-            )
-            AnimatedVisibility(expanded, enter = fadeIn(), exit = fadeOut()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(Modifier.width(8.dp))
-                    Image(painterResource(R.drawable.logo_mark), contentDescription = null, modifier = Modifier.size(32.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("MediaDroid", fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-
-        SidebarItem(
-            painter = painterResource(R.drawable.ic_movie),
-            label = "Movies",
-            expanded = expanded,
-            selected = (current as? Screen.Browse)?.section == LibrarySection.MOVIES,
-            onClick = { onNavigate(Screen.Browse(LibrarySection.MOVIES)) },
-        )
-        SidebarItem(
-            painter = painterResource(R.drawable.ic_tv),
-            label = "TV Shows",
-            expanded = expanded,
-            selected = (current as? Screen.Browse)?.section == LibrarySection.SHOWS,
-            onClick = { onNavigate(Screen.Browse(LibrarySection.SHOWS)) },
-        )
-        SidebarItem(
-            painter = rememberVectorPainter(Icons.Filled.Star),
-            label = "Genres",
-            expanded = expanded,
-            selected = current == Screen.Places(PlaceKind.GENRES),
-            onClick = { onNavigate(Screen.Places(PlaceKind.GENRES)) },
-        )
-        SidebarItem(
-            painter = rememberVectorPainter(Icons.Filled.DateRange),
-            label = "Years",
-            expanded = expanded,
-            selected = current == Screen.Places(PlaceKind.YEARS),
-            onClick = { onNavigate(Screen.Places(PlaceKind.YEARS)) },
-        )
-
-        SidebarItem(
-            painter = painterResource(R.drawable.ic_folder_open),
-            label = "Files",
-            expanded = expanded,
-            selected = current is Screen.Files,
-            onClick = { onNavigate(Screen.Files()) },
-        )
-
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline)
-
-        SidebarItem(
-            painter = rememberVectorPainter(Icons.Filled.Search),
-            label = "Search",
-            expanded = expanded,
-            selected = current == Screen.Search,
-            onClick = { onNavigate(Screen.Search) },
-        )
-        SidebarItem(
-            painter = painterResource(R.drawable.ic_filter_list),
-            label = "Filters",
-            expanded = expanded,
-            selected = current == Screen.Filters,
-            onClick = { onNavigate(Screen.Filters) },
-        )
-        SidebarItem(
-            painter = rememberVectorPainter(Icons.Filled.Lock),
-            label = "Settings",
-            expanded = expanded,
-            selected = current == Screen.Settings,
-            onClick = { onNavigate(Screen.Settings) },
-        )
-
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline)
-
-        if (scanning) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.height(56.dp).padding(horizontal = 16.dp),
+        // On a short screen — a phone in landscape — not every entry fits; an arrow says more lie below.
+        val scroll = rememberScrollState()
+        Box(Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scroll)
+                    .padding(vertical = 12.dp, horizontal = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                CircularProgressIndicator(strokeWidth = 3.dp, modifier = Modifier.size(24.dp))
-                if (expanded) {
-                    Spacer(Modifier.width(16.dp))
-                    Text("Reading folders…", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(56.dp)) {
+                    SidebarButton(
+                        painter = painterResource(if (expanded) R.drawable.ic_menu_open else R.drawable.ic_menu),
+                        label = null,
+                        description = if (expanded) "Collapse menu" else "Expand menu",
+                        selected = false,
+                        onClick = onToggle,
+                    )
+                    AnimatedVisibility(expanded, enter = fadeIn(), exit = fadeOut()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Spacer(Modifier.width(8.dp))
+                            Image(painterResource(R.drawable.logo_mark), contentDescription = null, modifier = Modifier.size(32.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("MediaDroid", fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+
+                SidebarItem(
+                    painter = painterResource(R.drawable.ic_movie),
+                    label = "Movies",
+                    expanded = expanded,
+                    selected = (current as? Screen.Browse)?.section == LibrarySection.MOVIES,
+                    onClick = { onNavigate(Screen.Browse(LibrarySection.MOVIES)) },
+                )
+                SidebarItem(
+                    painter = painterResource(R.drawable.ic_tv),
+                    label = "TV Shows",
+                    expanded = expanded,
+                    selected = (current as? Screen.Browse)?.section == LibrarySection.SHOWS,
+                    onClick = { onNavigate(Screen.Browse(LibrarySection.SHOWS)) },
+                )
+                SidebarItem(
+                    painter = rememberVectorPainter(Icons.Filled.Star),
+                    label = "Genres",
+                    expanded = expanded,
+                    selected = current == Screen.Places(PlaceKind.GENRES),
+                    onClick = { onNavigate(Screen.Places(PlaceKind.GENRES)) },
+                )
+                SidebarItem(
+                    painter = rememberVectorPainter(Icons.Filled.DateRange),
+                    label = "Years",
+                    expanded = expanded,
+                    selected = current == Screen.Places(PlaceKind.YEARS),
+                    onClick = { onNavigate(Screen.Places(PlaceKind.YEARS)) },
+                )
+
+                SidebarItem(
+                    painter = painterResource(R.drawable.ic_folder_open),
+                    label = "Files",
+                    expanded = expanded,
+                    selected = current is Screen.Files,
+                    onClick = { onNavigate(Screen.Files()) },
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline)
+
+                SidebarItem(
+                    painter = rememberVectorPainter(Icons.Filled.Search),
+                    label = "Search",
+                    expanded = expanded,
+                    selected = current == Screen.Search,
+                    onClick = { onNavigate(Screen.Search) },
+                )
+                SidebarItem(
+                    painter = painterResource(R.drawable.ic_filter_list),
+                    label = "Filters",
+                    expanded = expanded,
+                    selected = current == Screen.Filters,
+                    onClick = { onNavigate(Screen.Filters) },
+                )
+                SidebarItem(
+                    painter = rememberVectorPainter(Icons.Filled.Lock),
+                    label = "Settings",
+                    expanded = expanded,
+                    selected = current == Screen.Settings,
+                    onClick = { onNavigate(Screen.Settings) },
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline)
+
+                if (scanning) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.height(56.dp).padding(horizontal = 16.dp),
+                    ) {
+                        CircularProgressIndicator(strokeWidth = 3.dp, modifier = Modifier.size(24.dp))
+                        if (expanded) {
+                            Spacer(Modifier.width(16.dp))
+                            Text("Reading folders…", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                } else {
+                    SidebarItem(
+                        painter = rememberVectorPainter(Icons.Filled.Refresh),
+                        label = "Refresh",
+                        expanded = expanded,
+                        selected = false,
+                        onClick = onRefresh,
+                    )
                 }
             }
-        } else {
-            SidebarItem(
-                painter = rememberVectorPainter(Icons.Filled.Refresh),
-                label = "Refresh",
-                expanded = expanded,
-                selected = false,
-                onClick = onRefresh,
-            )
+            if (scroll.canScrollForward) {
+                Icon(
+                    Icons.Filled.KeyboardArrowDown,
+                    contentDescription = "More below",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                1f to MaterialTheme.colorScheme.surface,
+                            ),
+                        )
+                        .padding(top = 12.dp, bottom = 4.dp),
+                )
+            }
         }
-    }
-    // The last thing played, one tap from resuming it, on every screen.
-    resume?.let { ResumeCard(it, expanded) }
+        // The last thing played, one tap from resuming it, on every screen.
+        resume?.let { ResumeCard(it, expanded) }
     }
 }
 
