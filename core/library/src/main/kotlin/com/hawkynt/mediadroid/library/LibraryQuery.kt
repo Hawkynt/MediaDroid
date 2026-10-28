@@ -1,7 +1,23 @@
 package com.hawkynt.mediadroid.library
 
-/** How the poster wall is ordered. */
-enum class SortOrder { TITLE, YEAR_NEW, YEAR_OLD }
+/** How the poster wall is ordered. Items without the value sorted by go last. */
+enum class SortOrder {
+    TITLE,
+    TITLE_DESC,
+    YEAR_NEW,
+    YEAR_OLD,
+
+    /** Recently added first. */
+    ADDED,
+
+    /** Shows only: the one with the newest episode first. */
+    UPDATED,
+    RUNTIME_SHORT,
+    RUNTIME_LONG,
+
+    /** Best rated first. */
+    RATING,
+}
 
 /** What the Filters screen narrows the poster wall to; the default shows everything A–Z. */
 data class BrowseFilter(
@@ -67,11 +83,53 @@ object LibraryQuery {
         var result = filterByAge(items, maxAgeYears)
         result = filterByGenres(result, filter.genres)
         filter.decade?.let { result = filterByYear(result, it, it + 9) }
-        return when (filter.sort) {
-            SortOrder.TITLE -> result.sortedBy { it.title.lowercase() }
-            SortOrder.YEAR_NEW -> result.sortedWith(compareBy<MediaItem> { it.year == null }.thenByDescending { it.year })
-            SortOrder.YEAR_OLD -> result.sortedWith(compareBy<MediaItem> { it.year == null }.thenBy { it.year })
+        return sort(result, filter.sort)
+    }
+
+    /** [items] in [order], the title breaking ties. */
+    fun sort(items: List<MediaItem>, order: SortOrder): List<MediaItem> {
+        val byTitle = compareBy<MediaItem> { it.title.lowercase() }
+        fun <T : Comparable<T>> by(descending: Boolean, value: (MediaItem) -> T?): Comparator<MediaItem> {
+            val present = compareBy<MediaItem> { value(it) == null }
+            val ordered = if (descending) present.thenByDescending(value) else present.thenBy(value)
+            return ordered.then(byTitle)
         }
+        return items.sortedWith(
+            when (order) {
+                SortOrder.TITLE -> byTitle
+                SortOrder.TITLE_DESC -> byTitle.reversed()
+                SortOrder.YEAR_NEW -> by(descending = true) { it.year }
+                SortOrder.YEAR_OLD -> by(descending = false) { it.year }
+                SortOrder.ADDED -> by(descending = true, ::addedOf)
+                SortOrder.UPDATED -> by(descending = true) { (it as? Show)?.updatedMs ?: addedOf(it) }
+                SortOrder.RUNTIME_SHORT -> by(descending = false) { (it as? Movie)?.runtimeMinutes }
+                SortOrder.RUNTIME_LONG -> by(descending = true) { (it as? Movie)?.runtimeMinutes }
+                SortOrder.RATING -> by(descending = true, ::ratingOf)
+            },
+        )
+    }
+
+    /**
+     * The orders worth offering for [items]: runtime only where some item knows its runtime, recently
+     * updated only for shows, rating only where an NFO carries one.
+     */
+    fun sortOrders(items: List<MediaItem>): List<SortOrder> = SortOrder.entries.filter { order ->
+        when (order) {
+            SortOrder.UPDATED -> items.any { it is Show }
+            SortOrder.RUNTIME_SHORT, SortOrder.RUNTIME_LONG -> items.any { (it as? Movie)?.runtimeMinutes != null }
+            SortOrder.RATING -> items.any { ratingOf(it) != null }
+            else -> true
+        }
+    }
+
+    private fun addedOf(item: MediaItem): Long? = when (item) {
+        is Movie -> item.addedMs
+        is Show -> item.addedMs
+    }
+
+    private fun ratingOf(item: MediaItem): Double? = when (item) {
+        is Movie -> item.rating
+        is Show -> item.rating
     }
 
     /**

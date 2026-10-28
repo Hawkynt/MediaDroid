@@ -28,6 +28,10 @@ data class MovieInfo(
     val subtitleLanguages: List<String> = emptyList(),
     /** Video size, codecs and HDR from `<fileinfo><streamdetails>`; null when the NFO has none. */
     val streamDetails: StreamDetails? = null,
+    /** The rating on a 0–10 scale; null when unrated. */
+    val rating: Double? = null,
+    /** When the library got it, from `<dateadded>`, as epoch milliseconds. */
+    val dateAddedMs: Long? = null,
 )
 
 data class SetInfo(val name: String)
@@ -75,5 +79,7 @@ fun parseMovieNfo(xml: String): MovieInfo {
         audioLanguages = root.streamLanguages("audio"),
         subtitleLanguages = root.streamLanguages("subtitle"),
         streamDetails = root.streamDetails(),
+        rating = root.rating(),
+        dateAddedMs = root.dateAddedMs(),
     )
 }

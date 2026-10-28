@@ -68,6 +68,7 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - Parent-guarded settings behind a four-digit PIN, freshly drawn on every visit and shown on screen as words — a child who cannot read cannot get in, and nobody has to remember anything. There: default speed, loudness boost for unnormalized audio, the default brightness/gamma/contrast/color every video starts from, subtitle and stream languages, and a maximum-age mode that hides content whose NFO certification is too old (FSK, MPAA and TV ratings understood).
 - Instant search across the whole library.
 - Filter by genre and year, group by decade, facet counts as you browse.
+- Sort each wall its own way, remembered per section: title A–Z or Z–A, newest or oldest, recently added (the NFO's `<dateadded>`, else the file's time), runtime shortest or longest first and, where NFOs carry it, best rated; TV shows add recently updated, the show with the newest episode first.
 - Big touch targets and high contrast — usable by kids and older users without glasses-or-guessing.
 - Local libraries work fully offline. No account of ours and no telemetry; a network share or cloud is contacted only once you add it as a source, with the credentials you give it, kept in the device's keystore.
 
@@ -75,7 +76,7 @@ Media libraries on Android are usually either a raw file browser or a client of 
 
 | Source | Read | Write | Notes | Reference |
 | --- | :---: | :---: | --- | --- |
-| [Movie NFO](https://kodi.wiki/view/NFO_files/Movies) | ✅ | — | Title, plot, runtime, year, genres, set, cast, IDs | [Kodi NFO docs](https://kodi.wiki/view/NFO_files) |
+| [Movie NFO](https://kodi.wiki/view/NFO_files/Movies) | ✅ | — | Title, plot, runtime, year, genres, set, cast, IDs, rating, date added | [Kodi NFO docs](https://kodi.wiki/view/NFO_files) |
 | [TV show NFO](https://kodi.wiki/view/NFO_files/TV_shows) | ✅ | — | `tvshow.nfo` per show folder | [Kodi NFO docs](https://kodi.wiki/view/NFO_files) |
 | Episode NFO | ✅ | — | Named after its video file; season/episode may also come from the name | [Kodi NFO docs](https://kodi.wiki/view/NFO_files) |
 | NFO stream details | ✅ | — | `<fileinfo><streamdetails>` audio and subtitle languages (3-letter codes) shown as flags | [Kodi NFO docs](https://kodi.wiki/view/NFO_files/Movies) |
@@ -133,7 +134,6 @@ From the same look at Nova's library side: what it browses, what an item tells a
 
 - **More rows on each home.** Under Continue watching: *Recently added* (by the file's date on disk, newest first), *Not watched yet* and, for shows, *New episodes* (shows whose newest episode is unwatched, newest first). Each row scrolls sideways and ends in a "See all" that opens the full wall in that order.
 - **Resume from anywhere.** The bottom of the sidebar menu shows the last thing played — its picture, title, how far in, and a play button — so a single tap resumes it from any screen; collapsed, it is a single play button with the picture behind it.
-- **Sort orders.** Next to A–Z, Z–A, newest and oldest: *recently added*, *runtime* (shortest / longest first) and, where NFOs carry it, *rating*. Shows add *recently updated* (newest episode first). The choice is remembered per section.
 - **Display modes.** Posters (today's wall), a compact list (thumbnail, title, year, runtime, badges) and a details list that adds two lines of plot — for remotes and for libraries too big to scan by pictures.
 - **Jump by letter.** Long libraries get an A–Z rail along the edge of the wall; dragging along it jumps to the letter, the letter shows big while dragging.
 - **Browse by genre and year as places.** Besides the filter chips, Genres and Years are entries in the sidebar that open a list of genres / decades with counts and a poster collage each, leading to the wall for one of them.

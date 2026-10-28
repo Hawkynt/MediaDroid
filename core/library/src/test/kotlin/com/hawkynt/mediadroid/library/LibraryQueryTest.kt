@@ -115,4 +115,53 @@ class LibraryQueryTest {
         assertEquals("Alien", LibraryQuery.featured(withArt.take(1))?.title)
         assertEquals(null, LibraryQuery.featured(emptyList()))
     }
+
+    private val shelf = listOf(
+        Movie(title = "Coco", path = "/m/c", videoPath = "/m/c.mkv", runtimeMinutes = 105, rating = 8.4, addedMs = 300),
+        Movie(title = "Heat", path = "/m/h", videoPath = "/m/h.mkv", runtimeMinutes = 170, rating = 8.3, addedMs = 100),
+        Movie(title = "Alien", path = "/m/a", videoPath = "/m/a.mkv", addedMs = 200),
+    )
+
+    private fun sorted(items: List<MediaItem>, sort: SortOrder) =
+        LibraryQuery.browse(items, BrowseFilter(sort = sort)).map { it.title }
+
+    @Test
+    fun eachSortOrderPutsItemsWithoutTheValueLast() {
+        assertEquals(listOf("Heat", "Coco", "Alien"), sorted(shelf, SortOrder.TITLE_DESC))
+        assertEquals(listOf("Coco", "Alien", "Heat"), sorted(shelf, SortOrder.ADDED))
+        assertEquals(listOf("Coco", "Heat", "Alien"), sorted(shelf, SortOrder.RUNTIME_SHORT))
+        assertEquals(listOf("Heat", "Coco", "Alien"), sorted(shelf, SortOrder.RUNTIME_LONG))
+        assertEquals(listOf("Coco", "Heat", "Alien"), sorted(shelf, SortOrder.RATING))
+    }
+
+    @Test
+    fun recentlyUpdatedShowsTheShowWithTheNewestEpisodeFirst() {
+        fun show(title: String, vararg added: Long) = Show(
+            title = title,
+            path = "/s/$title",
+            seasons = listOf(Season(1, added.mapIndexed { i, ms -> Episode(i + 1, addedMs = ms) })),
+        )
+        val shows = listOf(show("Dark", 100, 900), show("Lost", 500, 600))
+        assertEquals(listOf("Dark", "Lost"), sorted(shows, SortOrder.UPDATED))
+        assertEquals(listOf("Lost", "Dark"), sorted(shows, SortOrder.ADDED))
+    }
+
+    @Test
+    fun aSectionOffersOnlyTheOrdersItsItemsCanBeSortedBy() {
+        assertEquals(
+            listOf(
+                SortOrder.TITLE, SortOrder.TITLE_DESC, SortOrder.YEAR_NEW, SortOrder.YEAR_OLD,
+                SortOrder.ADDED, SortOrder.RUNTIME_SHORT, SortOrder.RUNTIME_LONG, SortOrder.RATING,
+            ),
+            LibraryQuery.sortOrders(shelf),
+        )
+        val unrated = listOf(Show(title = "Dark", path = "/s/d"))
+        assertEquals(
+            listOf(
+                SortOrder.TITLE, SortOrder.TITLE_DESC, SortOrder.YEAR_NEW, SortOrder.YEAR_OLD,
+                SortOrder.ADDED, SortOrder.UPDATED,
+            ),
+            LibraryQuery.sortOrders(unrated),
+        )
+    }
 }

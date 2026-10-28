@@ -424,4 +424,26 @@ class LibraryScannerTest {
         assertEquals("Blue Dragon", library.shows[0].title)
         assertEquals(emptyList<Movie>(), library.movies)
     }
+
+    @Test
+    fun dateAddedComesFromTheNfoElseFromTheFileTime() {
+        file("Movies/Heat (1995)/Heat (1995).mkv")
+        file(
+            "Movies/Heat (1995)/movie.nfo",
+            "<movie><title>Heat</title><dateadded>2019-01-02 10:04:20</dateadded><rating>8.3</rating></movie>",
+        )
+        file("Movies/Coco (2017)/Coco (2017).mkv").setLastModified(1_600_000_000_000L)
+        file("Dark/Season 01/s01e01.mkv").setLastModified(1_500_000_000_000L)
+        file("Dark/Season 01/s01e02.mkv").setLastModified(1_700_000_000_000L)
+
+        val library = LibraryScanner.scan(folder.root)
+
+        val heat = library.movies.first { it.title == "Heat" }
+        assertEquals(1546423460000L, heat.addedMs)
+        assertEquals(8.3, heat.rating!!, 1e-9)
+        assertEquals(1_600_000_000_000L, library.movies.first { it.title == "Coco" }.addedMs)
+        val dark = library.shows.single()
+        assertEquals(1_500_000_000_000L, dark.addedMs)
+        assertEquals(1_700_000_000_000L, dark.updatedMs)
+    }
 }

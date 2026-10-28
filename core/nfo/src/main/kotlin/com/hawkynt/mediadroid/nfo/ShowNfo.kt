@@ -15,6 +15,8 @@ data class ShowInfo(
     val tags: List<String> = emptyList(),
     val imdbId: String? = null,
     val tmdbId: String? = null,
+    /** The rating on a 0–10 scale; null when unrated. */
+    val rating: Double? = null,
 )
 
 /** Reads a `tvshow.nfo`; like movies, only the title is required. */
@@ -38,5 +40,6 @@ fun parseShowNfo(xml: String): ShowInfo {
         tags = root.childElements("tag").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
         imdbId = root.childText("imdbid") ?: uniqueIds["imdb"],
         tmdbId = root.childText("tmdbid") ?: uniqueIds["tmdb"],
+        rating = root.rating(),
     )
 }
