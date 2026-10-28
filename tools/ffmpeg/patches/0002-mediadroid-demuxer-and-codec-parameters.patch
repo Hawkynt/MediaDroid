@@ -1,0 +1,208 @@
+diff --git a/libraries/decoder_ffmpeg/proguard-rules.txt b/libraries/decoder_ffmpeg/proguard-rules.txt
+index 025d2c1..2819514 100644
+--- a/libraries/decoder_ffmpeg/proguard-rules.txt
++++ b/libraries/decoder_ffmpeg/proguard-rules.txt
+@@ -19,3 +19,14 @@
+ -keep class androidx.media3.decoder.VideoDecoderOutputBuffer {
+   *;
+ }
++
++# MediaDroid: the demuxer's natives are bound by name, and native code calls Input's methods by
++# name (GetMethodID), so neither may be renamed in the app that implements Input.
++-keep class com.hawkynt.mediadroid.ffmpeg.FfmpegDemuxer {
++    native <methods>;
++}
++-keep class * implements com.hawkynt.mediadroid.ffmpeg.FfmpegDemuxer$Input {
++    public int read(byte[], int, int);
++    public long seek(long);
++    public long length();
++}
+diff --git a/libraries/decoder_ffmpeg/src/main/java/androidx/media3/decoder/ffmpeg/FfmpegAudioDecoder.java b/libraries/decoder_ffmpeg/src/main/java/androidx/media3/decoder/ffmpeg/FfmpegAudioDecoder.java
+index 12b2678..ec1cecc 100644
+--- a/libraries/decoder_ffmpeg/src/main/java/androidx/media3/decoder/ffmpeg/FfmpegAudioDecoder.java
++++ b/libraries/decoder_ffmpeg/src/main/java/androidx/media3/decoder/ffmpeg/FfmpegAudioDecoder.java
+@@ -201,6 +201,10 @@ public final class FfmpegAudioDecoder
+       case MimeTypes.AUDIO_FLAC:
+         return getFlacExtraData(initializationData);
+       default:
++        if (mimeType.startsWith(FfmpegLibrary.MEDIADROID_AUDIO_PREFIX)) {
++          // MediaDroid: the demuxer's codec parameters, applied natively.
++          return initializationData.isEmpty() ? null : initializationData.get(0);
++        }
+         // Other codecs do not require extra data.
+         return null;
+     }
+diff --git a/libraries/decoder_ffmpeg/src/main/java/androidx/media3/decoder/ffmpeg/FfmpegLibrary.java b/libraries/decoder_ffmpeg/src/main/java/androidx/media3/decoder/ffmpeg/FfmpegLibrary.java
+index b0d6d8a..9fe998e 100644
+--- a/libraries/decoder_ffmpeg/src/main/java/androidx/media3/decoder/ffmpeg/FfmpegLibrary.java
++++ b/libraries/decoder_ffmpeg/src/main/java/androidx/media3/decoder/ffmpeg/FfmpegLibrary.java
+@@ -29,6 +29,16 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+ @UnstableApi
+ public final class FfmpegLibrary {
+ 
++  /**
++   * MediaDroid: the MIME type prefixes of streams demuxed by FFmpeg, followed by the FFmpeg codec
++   * name — {@code audio/x-ffmpeg-wmav2}, {@code video/x-ffmpeg-rv40}. Their codec parameters travel
++   * in the format's first initialization data entry (see {@code mediadroid_codecpar.h}).
++   */
++  public static final String MEDIADROID_AUDIO_PREFIX = "audio/x-ffmpeg-";
++
++  public static final String MEDIADROID_VIDEO_PREFIX = "video/x-ffmpeg-";
++
++
+   static {
+     MediaLibraryInfo.registerModule("media3.decoder.ffmpeg");
+   }
+@@ -120,6 +130,13 @@ public final class FfmpegLibrary {
+    */
+   @Nullable
+   /* package */ static String getCodecName(String mimeType) {
++    // MediaDroid: a stream FFmpeg demuxed names its decoder in its MIME type.
++    if (mimeType.startsWith(MEDIADROID_AUDIO_PREFIX)) {
++      return mimeType.substring(MEDIADROID_AUDIO_PREFIX.length());
++    }
++    if (mimeType.startsWith(MEDIADROID_VIDEO_PREFIX)) {
++      return mimeType.substring(MEDIADROID_VIDEO_PREFIX.length());
++    }
+     switch (mimeType) {
+       case MimeTypes.AUDIO_AAC:
+         return "aac";
+@@ -171,8 +188,6 @@ public final class FfmpegLibrary {
+         return "mpeg2video";
+       case MimeTypes.VIDEO_MPEG2:
+         return "mpeg2video";
+-      case MimeTypes.VIDEO_PRORES:
+-        return "prores";
+       case MimeTypes.VIDEO_MP4V:
+       case MimeTypes.VIDEO_DIVX:
+         return "mpeg4";
+diff --git a/libraries/decoder_ffmpeg/src/main/jni/CMakeLists.txt b/libraries/decoder_ffmpeg/src/main/jni/CMakeLists.txt
+index 17325b3..5348aec 100644
+--- a/libraries/decoder_ffmpeg/src/main/jni/CMakeLists.txt
++++ b/libraries/decoder_ffmpeg/src/main/jni/CMakeLists.txt
+@@ -26,12 +26,13 @@ project(libffmpegJNI C CXX)
+ set(ffmpeg_location "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg")
+ set(ffmpeg_binaries "${ffmpeg_location}/android-libs/${ANDROID_ABI}")
+ 
+-foreach(ffmpeg_lib avutil swresample avcodec swscale)
+-    set(ffmpeg_lib_filename lib${ffmpeg_lib}.so)
++# MediaDroid: FFmpeg linked statically into this one library, avformat included for the demuxer.
++foreach(ffmpeg_lib avformat avcodec swscale swresample avutil)
++    set(ffmpeg_lib_filename lib${ffmpeg_lib}.a)
+     set(ffmpeg_lib_file_path ${ffmpeg_binaries}/${ffmpeg_lib_filename})
+     add_library(
+             ${ffmpeg_lib}
+-            SHARED
++            STATIC
+             IMPORTED)
+     set_target_properties(
+             ${ffmpeg_lib} PROPERTIES
+@@ -44,11 +45,11 @@ set(yuv_location "${CMAKE_CURRENT_SOURCE_DIR}/libyuv")
+ set(yuv_binaries "${yuv_location}/android-libs/${ANDROID_ABI}")
+ 
+ foreach(yuv_lib yuv)
+-    set(yuv_lib_filename lib${yuv_lib}.so)
++    set(yuv_lib_filename lib${yuv_lib}.a)
+     set(yuv_lib_file_path ${yuv_binaries}/${yuv_lib_filename})
+     add_library(
+             ${yuv_lib}
+-            SHARED
++            STATIC
+             IMPORTED)
+     set_target_properties(
+             ${yuv_lib} PROPERTIES
+@@ -64,7 +65,8 @@ find_library(android_log_lib log)
+ 
+ add_library(ffmpegJNI
+             SHARED
+-            ffmpeg_jni.cc)
++            ffmpeg_jni.cc
++            mediadroid_demux.cc)
+ 
+ set_target_properties(ffmpegJNI PROPERTIES
+                       CXX_VISIBILITY_PRESET hidden
+@@ -72,11 +74,13 @@ set_target_properties(ffmpegJNI PROPERTIES
+ 
+ target_link_libraries(ffmpegJNI
+                       PRIVATE android
+-                      PRIVATE swresample
++                      PRIVATE avformat
+                       PRIVATE avcodec
+-                      PRIVATE avutil
+                       PRIVATE swscale
++                      PRIVATE swresample
++                      PRIVATE avutil
+                       PRIVATE yuv
++                      PRIVATE z
+                       PRIVATE ${android_log_lib})
+ 
+ # Additional flags needed for "arm64-v8a" from NDK 23.1.7779620 and above.
+diff --git a/libraries/decoder_ffmpeg/src/main/jni/build_yuv.sh b/libraries/decoder_ffmpeg/src/main/jni/build_yuv.sh
+index 23ccef6..e7e5a0c 100755
+--- a/libraries/decoder_ffmpeg/src/main/jni/build_yuv.sh
++++ b/libraries/decoder_ffmpeg/src/main/jni/build_yuv.sh
+@@ -23,7 +23,8 @@ echo "NDK path is ${NDK_PATH}"
+ ANDROID_ABI="$3"
+ echo "ANDROID_ABI is ${ANDROID_ABI}"
+ 
+-ABI_LIST="armeabi-v7a arm64-v8a x86 x86_64"
++# MediaDroid: the two ABIs the app ships, libyuv linked statically into libffmpegJNI.
++ABI_LIST="arm64-v8a x86_64"
+ echo "ABI List is ${ABI_LIST}"
+ 
+ ANDROID_ABI_64BIT="$ANDROID_ABI"
+@@ -46,7 +47,8 @@ for abi in ${ABI_LIST}; do
+     -DANDROID_NDK=${NDK_PATH} \
+     -DANDROID_PLATFORM=${ANDROID_ABI} \
+     -DCMAKE_BUILD_TYPE=Release \
+-    -DBUILD_SHARED_LIBS=ON \
++    -DBUILD_SHARED_LIBS=OFF \
++    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+     -DCMAKE_SYSTEM_NAME=Android \
+     -DCMAKE_ANDROID_STL_TYPE=c++_shared \
+     -DCMAKE_THREAD_PREFER_PTHREAD=TRUE \
+@@ -54,12 +56,11 @@ for abi in ${ABI_LIST}; do
+     -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
+     -DBUILD_STATIC_LIBS=OFF
+ 
+-  cmake --build .
++  cmake --build . --target yuv -j"$(nproc)"
+   cd ..
+ done
+ 
+ for abi in ${ABI_LIST}; do
+   mkdir -p "./android-libs/${abi}"
+-  cp -r "build-${abi}/libyuv.so" "./android-libs/${abi}/libyuv.so"
+-  echo "build-${abi}/libyuv.so was successfully copied to ./android-libs/${abi}/libyuv.so!"
++  cp "build-${abi}/libyuv.a" "./android-libs/${abi}/libyuv.a"
+ done
+diff --git a/libraries/decoder_ffmpeg/src/main/jni/ffmpeg_jni.cc b/libraries/decoder_ffmpeg/src/main/jni/ffmpeg_jni.cc
+index 42271b9..85327b8 100644
+--- a/libraries/decoder_ffmpeg/src/main/jni/ffmpeg_jni.cc
++++ b/libraries/decoder_ffmpeg/src/main/jni/ffmpeg_jni.cc
+@@ -38,6 +38,7 @@ extern "C" {
+ #include <libswresample/swresample.h>
+ #include <libswscale/swscale.h>
+ }
++#include "mediadroid_codecpar.h"
+ 
+ #define LOG_TAG "ffmpeg_jni"
+ #define LOGE(...) \
+@@ -275,6 +276,8 @@ AVCodecContext* createContext(JNIEnv* env, const AVCodec* codec,
+       return NULL;
+     }
+     env->GetByteArrayRegion(extraData, 0, size, (jbyte*)context->extradata);
++    // MediaDroid: the codec parameters of a stream FFmpeg demuxed.
++    mediadroid::applyCodecParameters(context);
+   }
+   if (context->codec_id == AV_CODEC_ID_PCM_MULAW ||
+       context->codec_id == AV_CODEC_ID_PCM_ALAW) {
+@@ -619,6 +622,8 @@ JniContext *createVideoContext(JNIEnv *env,
+             return NULL;
+         }
+         env->GetByteArrayRegion(extraData, 0, size, (jbyte *) codecContext->extradata);
++        // MediaDroid: the codec parameters of a stream FFmpeg demuxed.
++        mediadroid::applyCodecParameters(codecContext);
+     }
+ 
+     // opt decode speed.
