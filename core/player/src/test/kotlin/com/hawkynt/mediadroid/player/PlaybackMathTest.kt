@@ -137,4 +137,17 @@ class PlaybackMathTest {
         assertEquals(300_000L, PlaybackMath.holdStepMs(heldMs = 9_000))
         assertEquals(300_000L, PlaybackMath.holdStepMs(heldMs = 60_000))
     }
+
+    @Test
+    fun `what plays after the end depends on binge and repeat`() {
+        val off = PlaybackMath.Repeat.OFF
+        assertEquals(1, PlaybackMath.afterEnd(index = 0, size = 3, autoAdvance = true, repeat = off))
+        assertEquals(null, PlaybackMath.afterEnd(index = 2, size = 3, autoAdvance = true, repeat = off))
+        assertEquals(null, PlaybackMath.afterEnd(index = 0, size = 3, autoAdvance = false, repeat = off))
+        // Repeat this video: the same one again, binge or not.
+        assertEquals(1, PlaybackMath.afterEnd(index = 1, size = 3, autoAdvance = true, repeat = PlaybackMath.Repeat.ONE))
+        // Repeat all: on through the queue and round again, even with binge off.
+        assertEquals(0, PlaybackMath.afterEnd(index = 2, size = 3, autoAdvance = false, repeat = PlaybackMath.Repeat.ALL))
+        assertEquals(2, PlaybackMath.afterEnd(index = 1, size = 3, autoAdvance = false, repeat = PlaybackMath.Repeat.ALL))
+    }
 }
