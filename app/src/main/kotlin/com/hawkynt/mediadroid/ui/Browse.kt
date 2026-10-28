@@ -187,13 +187,17 @@ fun BrowseScreen(
             }
         }
         items(items, key = { it.key }) { item ->
-            val watched = when (item) {
-                is Movie -> store.marks.isWatched(item)
-                is Show -> store.marks.isWatched(item)
-            }
+            val watched = isWatched(item, store)
+            val progress = resumeProgress(item, store)
             when (mode) {
-                WallMode.POSTERS -> PosterCard(item = item, watched = watched, onClick = { onOpen(item) })
-                else -> WallRow(item, watched, withPlot = mode == WallMode.DETAILS, onClick = { onOpen(item) })
+                WallMode.POSTERS -> PosterCard(item, onClick = { onOpen(item) }, watched = watched, progress = progress)
+                else -> WallRow(
+                    item,
+                    watched,
+                    progress,
+                    withPlot = mode == WallMode.DETAILS,
+                    onClick = { onOpen(item) },
+                )
             }
         }
     }
@@ -218,7 +222,7 @@ private fun WallModeSwitch(mode: WallMode, onChange: (WallMode) -> Unit, modifie
 
 /** One title as a list row: small poster, title with its watched tick, year and runtime, badges, plot. */
 @Composable
-private fun WallRow(item: MediaItem, watched: Boolean, withPlot: Boolean, onClick: () -> Unit) {
+private fun WallRow(item: MediaItem, watched: Boolean, progress: Float?, withPlot: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(10.dp)
     Row(
         modifier = Modifier
@@ -240,6 +244,7 @@ private fun WallRow(item: MediaItem, watched: Boolean, withPlot: Boolean, onClic
                 videoFallback = videoOf(item),
                 contentScale = ContentScale.Crop,
             )
+            progress?.let { ResumeBar(it, Modifier.align(Alignment.BottomCenter)) }
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -440,6 +445,40 @@ private fun rememberContinueItems(library: Library, store: StateStore): List<Con
         }
 }
 
+/** Whether [item] counts as watched — for a show, every episode. */
+fun isWatched(item: MediaItem, store: StateStore): Boolean = when (item) {
+    is Movie -> store.marks.isWatched(item)
+    is Show -> store.marks.isWatched(item)
+}
+
+/**
+ * How far in playback stopped, for the bar along a card's picture: the movie part or the show's
+ * episode that has a resume point (the latest in the show's order); null when nothing is under way.
+ */
+fun resumeProgress(item: MediaItem, store: StateStore): Float? {
+    val paths = when (item) {
+        is Movie -> item.parts
+        is Show -> item.seasons.sortedBy { it.number }.flatMap { season ->
+            season.episodes.sortedBy { it.number }.map { it.videoPath }
+        }
+    }
+    val info = paths.asReversed().firstNotNullOfOrNull { store.resumeFor(it) } ?: return null
+    return progressOf(info.positionMs, info.durationMs).takeIf { it > 0f }
+}
+
+/** A thin bar along the bottom of a picture showing how much of it is watched. */
+@Composable
+private fun ResumeBar(progress: Float, modifier: Modifier = Modifier) {
+    LinearProgressIndicator(
+        progress = { progress },
+        color = MaterialTheme.colorScheme.primary,
+        trackColor = Color.Black.copy(alpha = 0.55f),
+        drawStopIndicator = {},
+        gapSize = 0.dp,
+        modifier = modifier.fillMaxWidth().height(4.dp),
+    )
+}
+
 private fun progressOf(positionMs: Long, durationMs: Long): Float =
     if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 
@@ -499,7 +538,13 @@ private fun ContinueCard(entry: ContinueEntry, onClick: () -> Unit) {
 }
 
 @Composable
-fun PosterCard(item: MediaItem, onClick: () -> Unit, watched: Boolean = false, modifier: Modifier = Modifier) {
+fun PosterCard(
+    item: MediaItem,
+    onClick: () -> Unit,
+    watched: Boolean = false,
+    progress: Float? = null,
+    modifier: Modifier = Modifier,
+) {
     val shape = RoundedCornerShape(10.dp)
     Column(modifier = modifier) {
         Box(
@@ -520,6 +565,7 @@ fun PosterCard(item: MediaItem, onClick: () -> Unit, watched: Boolean = false, m
                 AgeBadge(it, size = 24.dp, modifier = Modifier.align(Alignment.TopStart).padding(6.dp))
             }
             if (watched) WatchedTick(Modifier.align(Alignment.TopEnd).padding(6.dp))
+            progress?.let { ResumeBar(it, Modifier.align(Alignment.BottomCenter)) }
         }
         Text(
             item.title,
