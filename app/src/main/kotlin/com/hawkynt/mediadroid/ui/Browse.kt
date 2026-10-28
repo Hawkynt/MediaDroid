@@ -588,9 +588,10 @@ private fun rememberContinueItems(library: Library, store: StateStore): List<Con
     val maxAge = store.data.settings.maxAgeYears
     return resume.entries.mapNotNull { (path, info) ->
         val progress = progressOf(info.positionMs, info.durationMs)
-        val movie = library.movies.firstOrNull { path in it.parts }
+        val movie = library.movies.firstOrNull { path in it.allParts }
         if (movie != null) {
-            val playable = movie.playQueue().first { it.videoPath == path }
+            val version = movie.versions.firstOrNull { path in it.parts } ?: movie
+            val playable = version.playQueue().first { it.videoPath == path }
             ContinueEntry(movie, playable, movie.title, playable.subtitle, progress)
         } else {
             val show = library.shows.firstOrNull { s ->
@@ -638,7 +639,7 @@ fun isWatched(item: MediaItem, store: StateStore): Boolean = when (item) {
  */
 fun resumeProgress(item: MediaItem, store: StateStore): Float? {
     val paths = when (item) {
-        is Movie -> item.parts
+        is Movie -> item.allParts
         is Show -> item.seasons.sortedBy { it.number }.flatMap { season ->
             season.episodes.sortedBy { it.number }.map { it.videoPath }
         }
@@ -746,6 +747,20 @@ fun PosterCard(
                 AgeBadge(it, size = 24.dp, modifier = Modifier.align(Alignment.TopStart).padding(6.dp))
             }
             if (watched) WatchedTick(Modifier.align(Alignment.TopEnd).padding(6.dp))
+            val copies = (item as? Movie)?.versions?.size ?: 0
+            if (copies > 1) {
+                Text(
+                    "$copies files",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 10.dp, end = 6.dp)
+                        .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                )
+            }
             progress?.let { ResumeBar(it, Modifier.align(Alignment.BottomCenter)) }
         }
         Text(

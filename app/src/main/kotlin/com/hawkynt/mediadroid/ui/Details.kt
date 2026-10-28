@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +52,7 @@ import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.library.Episode
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
+import com.hawkynt.mediadroid.ui.theme.focusClickable
 import java.io.File
 
 /** The largest share of the screen height the backdrop on top of the details may take. */
@@ -224,7 +226,7 @@ private fun MovieActions(movie: Movie, store: StateStore, onPlay: (Movie) -> Uni
         ) {
             Icon(Icons.Filled.PlayArrow, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text(if (store.resumeFor(movie.videoPath) != null) "Resume" else "Play", fontSize = 22.sp)
+            Text(if (movie.allParts.any { store.resumeFor(it) != null }) "Resume" else "Play", fontSize = 22.sp)
         }
         if (movie.trailerPath != null) {
             Spacer(Modifier.width(12.dp))
@@ -233,7 +235,7 @@ private fun MovieActions(movie: Movie, store: StateStore, onPlay: (Movie) -> Uni
             }
         }
         Spacer(Modifier.width(16.dp))
-        WatchedToggle(watched, onToggle = { store.setWatched(movie.parts, !watched) })
+        WatchedToggle(watched, onToggle = { store.setWatched(movie.allParts, !watched) })
     }
     val facts = listOfNotNull(
         movie.runtimeMinutes?.let { "$it minutes" },
@@ -243,6 +245,46 @@ private fun MovieActions(movie: Movie, store: StateStore, onPlay: (Movie) -> Uni
         Spacer(Modifier.height(8.dp))
         Text(facts.joinToString("  ·  "), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+    if (movie.versions.size > 1) {
+        Spacer(Modifier.height(16.dp))
+        Text("${movie.versions.size} files", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        movie.versions.forEach { version -> VersionRow(version, onClick = { onPlay(version) }) }
+    }
+}
+
+/** One file of a film found several times: what its picture and sound are, its languages and size. */
+@Composable
+private fun VersionRow(version: Movie, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .focusClickable(shape = shape, onClick = onClick)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            java.io.File(version.videoPath).name,
+            fontSize = 15.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        QualityChips(rememberQuality(version.videoPath, version.quality))
+        LanguageFlags(version.audioLanguages, version.subtitleLanguages)
+        version.sizeBytes?.let {
+            Text(fileSize(it), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** A size as people read it: `4.7 GB`, `700 MB`. */
+private fun fileSize(bytes: Long): String = when {
+    bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
+    bytes >= 1L shl 20 -> "%d MB".format(bytes shr 20)
+    else -> "%d KB".format(bytes shr 10)
 }
 
 @Composable

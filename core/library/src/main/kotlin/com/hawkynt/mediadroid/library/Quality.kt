@@ -17,11 +17,18 @@ data class Quality(
     val audio: String? = null,
     val channels: String? = null,
 ) {
+    /** How good the picture is, for choosing between copies of one film: resolution first, then HDR. */
+    val pictureRank: Int
+        get() = RESOLUTIONS.indexOf(resolution) * 2 + if (hdr != null) 1 else 0
+
     /** Every known badge, in the order a player shows them. */
     val badges: List<String> get() = listOfNotNull(resolution, hdr, video, audio, channels)
 
     companion object {
         val NONE = Quality()
+
+        /** The resolution classes from worst to best; unknown ranks below them all. */
+        private val RESOLUTIONS = listOf("480p", "576p", "720p", "1080p", "2K", "4K", "8K")
 
         fun of(details: StreamDetails?): Quality {
             if (details == null) return NONE

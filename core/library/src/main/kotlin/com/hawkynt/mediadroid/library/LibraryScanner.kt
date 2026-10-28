@@ -49,7 +49,7 @@ object LibraryScanner {
         val shows = ArrayList<Show>()
         walk(root, movies, shows, isRoot = true)
         return Library(
-            movies = movies.sortedBy { it.title.lowercase() },
+            movies = MovieVersions.merge(movies).sortedBy { it.title.lowercase() },
             // Loose episodes found in a dump folder connect to the show folder
             // living elsewhere under the same name — one show, all its seasons.
             shows = shows
@@ -383,6 +383,7 @@ object LibraryScanner {
             studios = info?.studios ?: emptyList(),
             premiered = info?.premiered,
             trailerPath = trailerOf(stem, files, wholeFolder = true),
+            sizeBytes = parts.sumOf { it.length() },
         )
     }
 
@@ -427,6 +428,7 @@ object LibraryScanner {
             studios = info?.studios ?: emptyList(),
             premiered = info?.premiered,
             trailerPath = trailerOf(stem, siblings, wholeFolder = false),
+            sizeBytes = parts.sumOf { it.length() },
         )
     }
 
