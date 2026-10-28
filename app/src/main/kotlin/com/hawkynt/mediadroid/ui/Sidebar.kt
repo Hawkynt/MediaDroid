@@ -128,6 +128,14 @@ fun Sidebar(
             onClick = { onNavigate(Screen.Places(PlaceKind.YEARS)) },
         )
 
+        SidebarItem(
+            painter = painterResource(R.drawable.ic_folder_open),
+            label = "Files",
+            expanded = expanded,
+            selected = current is Screen.Files,
+            onClick = { onNavigate(Screen.Files()) },
+        )
+
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline)
 
         SidebarItem(

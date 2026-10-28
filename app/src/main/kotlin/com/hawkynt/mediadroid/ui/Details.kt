@@ -281,7 +281,7 @@ private fun VersionRow(version: Movie, onClick: () -> Unit) {
 }
 
 /** A size as people read it: `4.7 GB`, `700 MB`. */
-private fun fileSize(bytes: Long): String = when {
+internal fun fileSize(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%d MB".format(bytes shr 20)
     else -> "%d KB".format(bytes shr 10)

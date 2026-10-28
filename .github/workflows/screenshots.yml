@@ -53,6 +53,11 @@ jobs:
         with:
           file: screenshots/filters.png
           message: '* README screenshot: filters'
+      - name: Commit the Files browser
+        uses: Hawkynt/RepositoryTemplate/commit-generated-file@v1
+        with:
+          file: screenshots/files.png
+          message: '* README screenshot: files'
       - name: Commit the player
         uses: Hawkynt/RepositoryTemplate/commit-generated-file@v1
         with:

@@ -29,7 +29,7 @@ import org.robolectric.annotation.GraphicsMode
 
 /**
  * The README's screenshots, taken from the real app running on the generated [DemoLibrary]: the browse
- * wall, a show's details, the filters and the player on an episode of a binge queue. Run with
+ * wall, a show's details, the filters, the Files browser and the player on an episode of a binge queue. Run with
  * `./gradlew :app:recordRoborazziDebug -Pscreenshots`; the files land in `screenshots/`.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -104,6 +104,18 @@ class ReadmeScreenshots {
         tap(hasContentDescription("Filters"))
         compose.waitForIdle()
         capture("filters.png")
+    }
+
+    @Test
+    fun files() {
+        // Storage as it is: a season folder with its real file names, NFO titles, thumbs and marks.
+        tap(hasContentDescription("Files"))
+        listOf("Internal storage", "TV Shows", "Starlight Bakery (2020)", "Season 01").forEach {
+            waitFor(hasText(it))
+            tap(hasText(it))
+        }
+        waitFor(hasText("Flour Power"))
+        capture("files.png")
     }
 
     @Test
