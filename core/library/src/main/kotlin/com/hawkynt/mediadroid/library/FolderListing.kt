@@ -43,12 +43,15 @@ data class Listing(val folders: List<FolderEntry>, val videos: List<FileEntry>)
 object FolderListing {
 
     /** [dir]'s folders (hidden ones left out) and videos, the videos in [sort] order. */
-    fun list(dir: File, sort: FileSort = FileSort.NAME): Listing {
+    fun list(dir: File, sort: FileSort = FileSort.NAME): Listing = list(LocalFile(dir), sort)
+
+    /** The same for a folder on any [Source]. */
+    fun list(dir: FsFile, sort: FileSort = FileSort.NAME): Listing {
         val entries = dir.listFiles()?.filterNot { it.name.startsWith(".") } ?: emptyList()
         val names = entries.filter { it.isFile }.map { it.name }
         val folders = entries.filter { it.isDirectory }
             .sortedWith(compareBy(NaturalOrder) { it.name })
-            .map { FolderEntry(it.name, it.absolutePath, cover(it)) }
+            .map { FolderEntry(it.name, it.path, cover(it)) }
         val videos = entries.filter { it.isFile && MediaFiles.isVideo(it.name) }
             .map { entry(it, names) }
             .sortedWith(
@@ -61,22 +64,23 @@ object FolderListing {
         return Listing(folders, videos)
     }
 
-    private fun cover(dir: File): String? {
-        val names = dir.list()?.toList() ?: return null
-        return findArt(names)[ArtKind.Poster]?.let { File(dir, it).absolutePath }
+    private fun cover(dir: FsFile): String? {
+        val names = dir.listFiles()?.map { it.name } ?: return null
+        return findArt(names)[ArtKind.Poster]?.let { dir.child(it).path }
     }
 
-    private fun entry(video: File, names: List<String>): FileEntry {
+    private fun entry(video: FsFile, names: List<String>): FileEntry {
         val stem = video.nameWithoutExtension
+        val folder = video.parentFile ?: video
         val nfo = names.firstOrNull { it.equals("$stem.nfo", ignoreCase = true) }
-            ?.let { runCatching { File(video.parentFile, it).readText() }.getOrNull() }
+            ?.let { folder.child(it).readTextOrNull() }
         val movie = nfo?.takeIf { "<movie" in it }?.let { runCatching { parseMovieNfo(it) }.getOrNull() }
         val episode = nfo?.takeIf { movie == null }?.let { runCatching { parseEpisodeNfo(it) }.getOrNull() }
         return FileEntry(
             name = video.name,
-            path = video.absolutePath,
+            path = video.path,
             title = movie?.title ?: episode?.title ?: stem,
-            picturePath = picture(stem, names)?.let { File(video.parentFile, it).absolutePath },
+            picturePath = picture(stem, names)?.let { folder.child(it).path },
             plot = movie?.plot ?: episode?.plot,
             minAge = minAgeOf(movie?.mpaa),
             nfoWatched = (movie?.playcount ?: episode?.playcount ?: 0) > 0,
