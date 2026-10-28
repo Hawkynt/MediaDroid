@@ -140,13 +140,16 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     val searchGrid = rememberLazyGridState()
     val rowGrid = rememberLazyGridState()
     // The demo has no real volumes: its library stands in for the internal storage.
-    val storageRoots = remember(demo) {
+    val volumes = remember(demo) {
         if (demo) {
             listOf(StorageRoot("Internal storage", store.data.rootPath, removable = false))
         } else {
             StorageRoots.list(context)
         }
     }
+    // The Files browser starts from the device's volumes and every saved network or cloud source.
+    val storageRoots = volumes + store.sources.filter { it.kind != SourceKind.LOCAL }
+        .map { StorageRoot(it.name, it.rootUri, removable = false) }
     // Which section the Genres and Years places group; follows the wall last browsed.
     var placeSection by remember { mutableStateOf(LibrarySection.MOVIES) }
     val wide = LocalConfiguration.current.screenWidthDp >= 600

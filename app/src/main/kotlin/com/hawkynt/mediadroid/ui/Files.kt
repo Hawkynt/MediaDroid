@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.ui
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.R
 import com.hawkynt.mediadroid.data.QualityStore
+import com.hawkynt.mediadroid.data.SourceAccess
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.data.StorageRoot
 import com.hawkynt.mediadroid.library.FileEntry
@@ -75,13 +77,17 @@ fun FilesScreen(
     onOpen: (String?) -> Unit,
     onPlay: (queue: List<Playable>, startIndex: Int) -> Unit,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var sort by remember { mutableStateOf(store.filesSort) }
     val listing by produceState<Listing?>(null, dir, sort) {
-        value = dir?.let { withContext(Dispatchers.IO) { FolderListing.list(File(it), sort) } }
+        // Any source: the device's storage, a share, a WebDAV or cloud folder.
+        value = dir?.let {
+            withContext(Dispatchers.IO) { SourceAccess.resolve(context, it)?.let { d -> FolderListing.list(d, sort) } }
+        }
     }
     // Up one folder; from a volume's top back to the list of volumes.
-    val up: () -> Unit = { onOpen(dir?.takeUnless { d -> roots.any { it.path == d } }?.let { File(it).parent }) }
+    val up: () -> Unit = { onOpen(dir?.takeUnless { d -> roots.any { it.path == d } }?.let(::parentOf)) }
     if (dir != null) BackHandler(onBack = up)
 
     fun play(videos: List<FileEntry>, start: Int) {
@@ -109,7 +115,7 @@ fun FilesScreen(
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    dir?.let { d -> roots.firstOrNull { it.path == d }?.label ?: File(d).name } ?: "Files",
+                    dir?.let { d -> roots.firstOrNull { it.path == d }?.label ?: nameOf(d) } ?: "Files",
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -173,7 +179,9 @@ fun FilesScreen(
                         onPlay = {
                             scope.launch {
                                 val videos = withContext(Dispatchers.IO) {
-                                    FolderListing.list(File(folder.path), sort).videos
+                                    SourceAccess.resolve(context, folder.path)
+                                        ?.let { FolderListing.list(it, sort).videos }
+                                        .orEmpty()
                                 }
                                 play(videos, 0)
                             }
@@ -309,3 +317,15 @@ private fun clock(ms: Long): String {
     val s = ms / 1000
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
+
+/** The folder above a location: a path's parent, or a URI without its last part. */
+private fun parentOf(location: String): String? = if (location.startsWith("/")) {
+    File(location).parent
+} else {
+    location.trimEnd('/').substringBeforeLast('/', "").ifEmpty { null }
+}
+
+/** The last part of a location, decoded for a URI. */
+private fun nameOf(location: String): String =
+    if (location.startsWith("/")) File(location).name else Uri.decode(location.trimEnd('/').substringAfterLast('/'))
+
