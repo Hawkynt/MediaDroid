@@ -42,6 +42,7 @@ import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.LibraryQuery
 import com.hawkynt.mediadroid.library.Movie
+import com.hawkynt.mediadroid.library.MovieVersions
 import com.hawkynt.mediadroid.library.Show
 import com.hawkynt.mediadroid.library.StorageVolumes
 import java.io.File
@@ -248,7 +249,10 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
             ?: 0
 
     fun playMovie(movie: Movie, path: String? = null) {
-        val queue = movie.playQueue()
+        // Of several files of one film: the one asked for, else the one with a resume point, else the best.
+        val version = path?.let { p -> movie.versions.firstOrNull { p in it.parts } }
+            ?: MovieVersions.toPlay(movie) { store.resumeFor(it) != null }
+        val queue = version.playQueue()
         // The parts of one movie always run on; binge mode is about episodes.
         screen = Screen.Player(queue, startOf(queue, path), autoAdvance = true)
     }

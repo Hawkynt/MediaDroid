@@ -54,8 +54,18 @@ data class Movie(
     val premiered: String? = null,
     /** The `<name>-trailer.*` beside the film, the Kodi convention; never a title of its own. */
     val trailerPath: String? = null,
+    /** All its files together, in bytes; null when unknown. */
+    val sizeBytes: Long? = null,
+    /**
+     * Every file of the same film — 1080p and 4K, two cuts — best picture first, this one among them;
+     * empty when the film has only the one. See [MovieVersions].
+     */
+    val versions: List<Movie> = emptyList(),
 ) : MediaItem {
     override val key: String get() = "movie:$videoPath"
+
+    /** Every video of every version, so a resume point or a watched mark on any of them is found. */
+    val allParts: List<String> get() = versions.ifEmpty { listOf(this) }.flatMap { it.parts }
 }
 
 data class Show(
