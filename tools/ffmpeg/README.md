@@ -70,7 +70,7 @@ If you want decoders that live in FFmpeg's GPL or nonfree sections, set the
 compile switch before step 2:
 
 ```bash
-FULL=1 tools/ffmpeg/build.sh ~/build/ffmpeg   # → lib-decoder-ffmpeg-full.aar
+FULL=1 tools/ffmpeg/build.sh ~/build/ffmpeg   # → lib-decoder-ffmpeg-full.aar, every decoder, demuxer and parser
 ```
 
 Understand what that costs: a binary configured with `--enable-gpl` (and even

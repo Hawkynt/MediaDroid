@@ -51,7 +51,9 @@ if [ ! -d "$M/jni/libyuv" ]; then
 fi
 
 bash "$M/jni/build_yuv.sh" "$M" "$NDK" 23
-EXTRA_CONFIGURE_FLAGS="$([ "${FULL:-}" = 1 ] && echo "--enable-gpl --enable-nonfree" || true)" \
+# The full build is for your own device only: GPL and nonfree, and every decoder, demuxer and parser.
+EXTRA_CONFIGURE_FLAGS="$([ "${FULL:-}" = 1 ] && \
+  echo "--enable-gpl --enable-nonfree --enable-decoders --enable-demuxers --enable-parsers" || true)" \
 ENABLED_DEMUXERS="$DEMUXERS" ENABLED_PARSERS="$PARSERS" \
   bash "$HERE/build_ffmpeg_extension.sh" "$M" "$NDK" linux-x86_64 23 $AUDIO $VIDEO
 
