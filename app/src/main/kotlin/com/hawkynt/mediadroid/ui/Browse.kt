@@ -1,6 +1,8 @@
 package com.hawkynt.mediadroid.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -47,15 +50,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -79,6 +86,7 @@ import com.hawkynt.mediadroid.library.Show
 import com.hawkynt.mediadroid.library.SortOrder
 import com.hawkynt.mediadroid.ui.theme.focusClickable
 import java.io.File
+import kotlinx.coroutines.launch
 
 /**
  * One section's home, laid out like the streaming apps: a backdrop hero for one title, the
@@ -125,119 +133,224 @@ fun BrowseScreen(
     // Phones get two or three posters across; tablets and TVs as many as fit.
     val compact = LocalConfiguration.current.screenWidthDp < 600
     val gutter = if (compact) 16.dp else 24.dp
-    LazyVerticalGrid(
-        state = gridState,
-        columns = GridCells.Adaptive(
-            minSize = when (mode) {
-                WallMode.POSTERS -> if (compact) 104.dp else 140.dp
-                WallMode.LIST -> 340.dp
-                WallMode.DETAILS -> 480.dp
-            },
-        ),
-        contentPadding = PaddingValues(start = gutter, end = gutter, top = 16.dp, bottom = 32.dp),
-        horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 14.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        if (featured != null && home) {
-            item(span = { GridItemSpan(maxLineSpan) }, key = "hero") {
-                Hero(featured, onPlay = { onPlay(featured, null) }, onInfo = { onOpen(featured) })
+
+    // Long walls in title order get an A–Z rail; a jump lands on the grid item after the home above it.
+    val titleOrder = filter.sort == SortOrder.TITLE || filter.sort == SortOrder.TITLE_DESC
+    val letters = if (titleOrder && (row == null || row == HomeRow.NOT_WATCHED) && items.size >= LETTER_RAIL_MIN) {
+        LibraryQuery.letterIndex(items)
+    } else {
+        emptyList()
+    }
+    val leading = listOf(featured != null && home, continueItems.isNotEmpty() && home, true, items.isEmpty())
+        .count { it } + homeRows.size
+    val scope = rememberCoroutineScope()
+    var railLetter by remember { mutableStateOf<Char?>(null) }
+
+    Box(Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            state = gridState,
+            columns = GridCells.Adaptive(
+                minSize = when (mode) {
+                    WallMode.POSTERS -> if (compact) 104.dp else 140.dp
+                    WallMode.LIST -> 340.dp
+                    WallMode.DETAILS -> 480.dp
+                },
+            ),
+            contentPadding = PaddingValues(
+                start = gutter,
+                end = gutter + if (letters.isEmpty()) 0.dp else LetterRailWidth,
+                top = 16.dp,
+                bottom = 32.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 14.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            if (featured != null && home) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "hero") {
+                    Hero(featured, onPlay = { onPlay(featured, null) }, onInfo = { onOpen(featured) })
+                }
             }
-        }
-        if (continueItems.isNotEmpty() && home) {
-            item(span = { GridItemSpan(maxLineSpan) }, key = "continue") {
-                Column {
-                    RowTitle("Continue watching")
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        items(continueItems, key = { it.playable.videoPath }) { entry ->
-                            ContinueCard(entry, onClick = { onPlay(entry.item, entry.playable.videoPath) })
+            if (continueItems.isNotEmpty() && home) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "continue") {
+                    Column {
+                        RowTitle("Continue watching")
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            items(continueItems, key = { it.playable.videoPath }) { entry ->
+                                ContinueCard(entry, onClick = { onPlay(entry.item, entry.playable.videoPath) })
+                            }
                         }
                     }
                 }
             }
-        }
-        homeRows.forEach { (homeRow, rowItems) ->
-            item(span = { GridItemSpan(maxLineSpan) }, key = "row-${homeRow.name}") {
-                Column {
-                    RowTitle(homeRow.label)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(rowItems.take(HOME_ROW_LENGTH), key = { it.key }) { item ->
-                            PosterCard(
-                                item,
-                                onClick = { onOpen(item) },
-                                watched = isWatched(item, store),
-                                progress = resumeProgress(item, store),
-                                modifier = Modifier.width(if (compact) 112.dp else 140.dp),
-                            )
-                        }
-                        item(key = "see-all") {
-                            SeeAllCard(onClick = { onSeeAll(homeRow) }, width = if (compact) 112.dp else 140.dp)
+            homeRows.forEach { (homeRow, rowItems) ->
+                item(span = { GridItemSpan(maxLineSpan) }, key = "row-${homeRow.name}") {
+                    Column {
+                        RowTitle(homeRow.label)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            items(rowItems.take(HOME_ROW_LENGTH), key = { it.key }) { item ->
+                                PosterCard(
+                                    item,
+                                    onClick = { onOpen(item) },
+                                    watched = isWatched(item, store),
+                                    progress = resumeProgress(item, store),
+                                    modifier = Modifier.width(if (compact) 112.dp else 140.dp),
+                                )
+                            }
+                            item(key = "see-all") {
+                                SeeAllCard(onClick = { onSeeAll(homeRow) }, width = if (compact) 112.dp else 140.dp)
+                            }
                         }
                     }
                 }
             }
-        }
-        item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                RowTitle(
-                    when {
-                        row != null -> "${row.label} · $sectionName"
-                        filtered -> "$sectionName · filtered"
-                        else -> "All $sectionName"
-                    },
-                )
-                Text(
-                    "${items.size}",
-                    fontSize = 18.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 16.dp),
-                )
-                if (filtered) {
-                    Spacer(Modifier.width(16.dp))
-                    AssistChip(
-                        onClick = onClearFilter,
-                        label = { Text("Clear filters", fontSize = 15.sp) },
+            item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                    RowTitle(
+                        when {
+                            row != null -> "${row.label} · $sectionName"
+                            filtered -> "$sectionName · filtered"
+                            else -> "All $sectionName"
+                        },
+                    )
+                    Text(
+                        "${items.size}",
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 16.dp),
+                    )
+                    if (filtered) {
+                        Spacer(Modifier.width(16.dp))
+                        AssistChip(
+                            onClick = onClearFilter,
+                            label = { Text("Clear filters", fontSize = 15.sp) },
+                            modifier = Modifier.padding(top = 16.dp),
+                        )
+                    }
+                    Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
+                    WallModeSwitch(
+                        mode,
+                        onChange = {
+                            mode = it
+                            store.saveWallMode(it)
+                        },
                         modifier = Modifier.padding(top = 16.dp),
                     )
                 }
-                Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
-                WallModeSwitch(
-                    mode,
-                    onChange = {
-                        mode = it
-                        store.saveWallMode(it)
-                    },
-                    modifier = Modifier.padding(top = 16.dp),
-                )
+            }
+            if (items.isEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
+                    Text(
+                        if (filtered) {
+                            "Nothing matches these filters."
+                        } else {
+                            "No ${sectionName.lowercase()} found in $rootPath."
+                        },
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 32.dp),
+                    )
+                }
+            }
+            items(items, key = { it.key }) { item ->
+                val watched = isWatched(item, store)
+                val progress = resumeProgress(item, store)
+                when (mode) {
+                    WallMode.POSTERS -> PosterCard(
+                        item,
+                        onClick = { onOpen(item) },
+                        watched = watched,
+                        progress = progress,
+                    )
+                    else -> WallRow(
+                        item,
+                        watched,
+                        progress,
+                        withPlot = mode == WallMode.DETAILS,
+                        onClick = { onOpen(item) },
+                    )
+                }
             }
         }
-        if (items.isEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
+        if (letters.isNotEmpty()) {
+            LetterRail(
+                letters,
+                onLetter = { letter, index ->
+                    railLetter = letter
+                    if (index != null) scope.launch { gridState.scrollToItem(leading + index) }
+                },
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 16.dp),
+            )
+        }
+        railLetter?.let {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(120.dp)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f), RoundedCornerShape(24.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(it.toString(), fontSize = 72.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/** From how many titles on a wall the A–Z rail shows. */
+private const val LETTER_RAIL_MIN = 30
+
+private val LetterRailWidth = 28.dp
+
+/**
+ * The A–Z rail along a wall's edge. Touching or dragging along it reports the letter under the finger
+ * and the index of its first title; lifting the finger reports null so the big letter goes away.
+ */
+@Composable
+private fun LetterRail(
+    letters: List<Pair<Char, Int>>,
+    onLetter: (letter: Char?, index: Int?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var height by remember { mutableIntStateOf(1) }
+    Column(
+        modifier = modifier
+            .width(LetterRailWidth)
+            .onSizeChanged { height = it.height.coerceAtLeast(1) }
+            .pointerInput(letters) {
+                var last: Char? = null
+                fun pick(y: Float) {
+                    val (letter, index) = letters[(y / height * letters.size).toInt().coerceIn(0, letters.lastIndex)]
+                    if (letter != last) {
+                        last = letter
+                        onLetter(letter, index)
+                    }
+                }
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    pick(down.position.y)
+                    while (true) {
+                        val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) break
+                        change.consume()
+                        pick(change.position.y)
+                    }
+                    last = null
+                    onLetter(null, null)
+                }
+            },
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        letters.forEach { (letter, _) ->
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Text(
-                    if (filtered) {
-                        "Nothing matches these filters."
-                    } else {
-                        "No ${sectionName.lowercase()} found in $rootPath."
-                    },
-                    fontSize = 18.sp,
+                    letter.toString(),
+                    fontSize = 11.sp,
+                    lineHeight = 11.sp,
+                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 32.dp),
-                )
-            }
-        }
-        items(items, key = { it.key }) { item ->
-            val watched = isWatched(item, store)
-            val progress = resumeProgress(item, store)
-            when (mode) {
-                WallMode.POSTERS -> PosterCard(item, onClick = { onOpen(item) }, watched = watched, progress = progress)
-                else -> WallRow(
-                    item,
-                    watched,
-                    progress,
-                    withPlot = mode == WallMode.DETAILS,
-                    onClick = { onOpen(item) },
                 )
             }
         }

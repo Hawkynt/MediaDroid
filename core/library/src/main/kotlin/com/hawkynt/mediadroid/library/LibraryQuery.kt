@@ -110,6 +110,22 @@ object LibraryQuery {
     }
 
     /**
+     * Where each letter starts in a wall sorted by title: the letter (accents folded, `Ä` is `A`; digits
+     * and symbols are `#`) and the index of its first title, in the wall's own order.
+     */
+    fun letterIndex(items: List<MediaItem>): List<Pair<Char, Int>> {
+        val seen = LinkedHashMap<Char, Int>()
+        items.forEachIndexed { i, item -> seen.putIfAbsent(letterOf(item.title), i) }
+        return seen.toList()
+    }
+
+    private fun letterOf(title: String): Char {
+        val first = java.text.Normalizer.normalize(title.trim().take(1), java.text.Normalizer.Form.NFD)
+            .firstOrNull()?.uppercaseChar() ?: return '#'
+        return if (first in 'A'..'Z') first else '#'
+    }
+
+    /**
      * The orders worth offering for [items]: runtime only where some item knows its runtime, recently
      * updated only for shows, rating only where an NFO carries one.
      */
