@@ -43,14 +43,17 @@ object LibraryScanner {
             movies = MovieVersions.merge(movies).sortedBy { it.title.lowercase() },
             // Loose episodes found in a dump folder connect to the show folder
             // living elsewhere under the same name — one show, all its seasons.
-            shows = shows
-                .groupBy { it.title.lowercase() }
-                .map { (_, group) -> if (group.size == 1) group[0] else mergeShows(group) }
-                .sortedBy { it.title.lowercase() },
+            shows = mergeShowsByTitle(shows),
         )
     }
 
-    private fun mergeShows(group: List<Show>): Show {
+    /** One show per title, its seasons gathered from wherever they were found. */
+    internal fun mergeShowsByTitle(shows: List<Show>): List<Show> = shows
+        .groupBy { it.title.lowercase() }
+        .map { (_, group) -> if (group.size == 1) group[0] else mergeShows(group) }
+        .sortedBy { it.title.lowercase() }
+
+    internal fun mergeShows(group: List<Show>): Show {
         val seasons = group.flatMap { it.seasons }
             .groupBy { it.number }
             .map { (number, list) ->

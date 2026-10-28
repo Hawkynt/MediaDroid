@@ -1,9 +1,11 @@
 package com.hawkynt.mediadroid.sources.integration
 
+import com.hawkynt.mediadroid.library.LibraryScanner
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.library.readTextOrNull
 import com.hawkynt.mediadroid.sources.SmbFs
+import com.hawkynt.mediadroid.sources.SourceFiles
 import java.io.File
 import java.net.Socket
 import java.nio.file.Files
@@ -61,6 +63,23 @@ class SmbFsIntegrationTest {
         }
     }
 
+    @Test
+    fun aShareScansIntoALibraryAndItsLocationsLeadBackToTheFiles() {
+        val nas = source("nas", path = "/media")
+        SourceFiles { null }.use { files ->
+            val library = LibraryScanner.scan(files.root(nas)!!)
+            val heat = library.movies.single()
+            assertEquals("Heat", heat.title)
+            assertEquals("smb://127.0.0.1:$PORT/media/Movies/Heat (1995).mkv", heat.videoPath)
+            val dark = library.shows.single()
+            assertEquals(listOf(1, 2), dark.seasons.single().episodes.map { it.number })
+            assertEquals("Secrets", dark.seasons.single().episodes.first().title)
+
+            val video = files.resolve(listOf(nas), heat.videoPath)!!
+            assertEquals("0123456789", video.open().use { String(it.readBytes()) })
+        }
+    }
+
     private fun source(id: String, path: String, user: String = "") =
         Source(id, id, SourceKind.SMB, host = "127.0.0.1", port = PORT, path = path, user = user)
 
@@ -80,6 +99,12 @@ class SmbFsIntegrationTest {
             File(dir, "media/Movies/Heat (1995).mkv").writeText("0123456789")
             File(dir, "media/Movies/movie.nfo").writeText("<movie><title>Heat</title></movie>")
             File(dir, "family/secret.txt").writeText("only for us")
+            File(dir, "media/Shows/Dark/Season 01").mkdirs()
+            File(dir, "media/Shows/Dark/tvshow.nfo").writeText("<tvshow><title>Dark</title></tvshow>")
+            File(dir, "media/Shows/Dark/Season 01/Dark.S01E01.mkv").writeText("e1")
+            File(dir, "media/Shows/Dark/Season 01/Dark.S01E01.nfo")
+                .writeText("<episodedetails><title>Secrets</title></episodedetails>")
+            File(dir, "media/Shows/Dark/Season 01/Dark.S01E02.mkv").writeText("e2")
             val user = System.getProperty("user.name")
             val conf = File(dir, "smb.conf")
             conf.writeText(
