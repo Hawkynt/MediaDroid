@@ -31,10 +31,10 @@ object Mp4Chapters {
         }
     }.getOrDefault(emptyList())
 
-    private class Box(val type: String, val start: Int, val end: Int)
+    internal class Box(val type: String, val start: Int, val end: Int)
 
     /** The body of the top-level `moov` box. */
-    private fun readMoov(raf: RandomAccessFile): Bytes? {
+    internal fun readMoov(raf: RandomAccessFile): Bytes? {
         val length = raf.length()
         var pos = 0L
         val header = ByteArray(16)
@@ -204,7 +204,7 @@ object Mp4Chapters {
 
     private fun u64(b: ByteArray, at: Int): Long = (u32(b, at) shl 32) or u32(b, at + 4)
 
-    private class Bytes(val data: ByteArray) {
+    internal class Bytes(val data: ByteArray) {
         val size: Int get() = data.size
         fun u8(at: Int): Int = data[at].toInt() and 0xFF
         fun u32(at: Int): Long = u32(data, at)

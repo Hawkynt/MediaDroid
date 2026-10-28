@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
+    implementation(libs.media3.session)
     implementation(libs.media3.inspector)
     // FFmpeg audio decoder extension (AC3/E-AC3/DTS/TrueHD and other codecs the
     // device itself cannot decode), built from the androidx/media 1.11.1 sources
