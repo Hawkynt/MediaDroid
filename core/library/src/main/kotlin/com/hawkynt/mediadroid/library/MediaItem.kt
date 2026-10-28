@@ -112,6 +112,8 @@ data class Season(
     val episodes: List<Episode> = emptyList(),
     /** The season's own cover: `folder.jpg` in its folder, or `seasonNN-poster.jpg` beside the show. */
     val posterPath: String? = null,
+    /** What the season is about, from its `season.nfo`; null when it has none. */
+    val plot: String? = null,
 ) {
     private val firstEpisode: Episode? get() = episodes.minByOrNull { it.number }
 
@@ -127,6 +129,8 @@ data class Episode(
     val number: Int,
     val title: String? = null,
     val firstAired: String? = null,
+    /** What the episode is about, from its NFO (its plot, else its outline). */
+    val plot: String? = null,
     val watched: Boolean = false,
     val videoPath: String = "",
     val thumbPath: String? = null,

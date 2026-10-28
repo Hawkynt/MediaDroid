@@ -13,6 +13,7 @@ import com.hawkynt.mediadroid.nfo.findArt
 import com.hawkynt.mediadroid.nfo.minAgeOf
 import com.hawkynt.mediadroid.nfo.parseEpisodeNfo
 import com.hawkynt.mediadroid.nfo.parseMovieNfo
+import com.hawkynt.mediadroid.nfo.parseSeasonNfo
 import com.hawkynt.mediadroid.nfo.parseShowNfo
 import java.io.File
 
@@ -61,6 +62,7 @@ object LibraryScanner {
                     number,
                     list.flatMap { it.episodes }.distinctBy { it.videoPath }.sortedBy { it.number },
                     list.firstNotNullOfOrNull { it.posterPath },
+                    list.firstNotNullOfOrNull { it.plot },
                 )
             }
             .sortedBy { it.number }
@@ -239,7 +241,10 @@ object LibraryScanner {
                 .sortedBy { it.number }
             val poster = findArt(siblings)[ArtKind.Poster]?.let { sub.child(it).path }
                 ?: seasonPoster(dir, showNames, number)
-            if (episodes.isEmpty()) null else Season(number, episodes, poster)
+            val plot = siblings.firstOrNull { it.equals("season.nfo", ignoreCase = true) }
+                ?.let { sub.child(it).readTextSafe() }
+                ?.let { runCatching { parseSeasonNfo(it) }.getOrNull()?.plot }
+            if (episodes.isEmpty()) null else Season(number, episodes, poster, plot)
         }
         // …and virtual seasons from episode-named files sitting loose in the show
         // folder itself: `s02e01.mkv` belongs to season 2 whether or not a folder says so,
@@ -257,7 +262,7 @@ object LibraryScanner {
             .groupBy { it.number }
             .map { (number, list) ->
                 val episodes = list.flatMap { it.episodes }.sortedBy { it.number }
-                Season(number, episodes, list.firstNotNullOfOrNull { it.posterPath })
+                Season(number, episodes, list.firstNotNullOfOrNull { it.posterPath }, list.firstNotNullOfOrNull { it.plot })
             }
             .sortedBy { it.number }
 
@@ -299,6 +304,7 @@ object LibraryScanner {
             number = nfo?.episode ?: ref!!.episode,
             title = nfo?.title ?: ReleaseName.episodeTitle(stem),
             firstAired = nfo?.firstAired,
+            plot = nfo?.plot ?: nfo?.outline,
             watched = (nfo?.playcount ?: 0) > 0,
             videoPath = video.path,
             thumbPath = thumb?.let { video.folder.child(it).path },

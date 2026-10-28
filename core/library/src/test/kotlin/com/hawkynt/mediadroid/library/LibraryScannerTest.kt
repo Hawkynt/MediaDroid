@@ -471,5 +471,28 @@ class LibraryScannerTest {
         assertEquals("Coco (2017)-trailer.mkv", movies.first { it.title == "Coco" }.trailerPath?.let { File(it).name })
         assertNull(movies.first { it.title == "Alien" }.trailerPath)
     }
+
+    @Test
+    fun seasonsAndEpisodesCarryTheirDescriptions() {
+        file("Dark/tvshow.nfo", "<tvshow><title>Dark</title><plot>A town, a cave.</plot></tvshow>")
+        file("Dark/Season 01/season.nfo", "<season><plot>Jonas looks for Mikkel.</plot></season>")
+        file("Dark/Season 01/Dark.S01E01.mkv")
+        file(
+            "Dark/Season 01/Dark.S01E01.nfo",
+            "<episodedetails><title>Secrets</title><plot>A boy goes missing.</plot></episodedetails>",
+        )
+        file("Dark/Season 01/Dark.S01E02.mkv")
+        file(
+            "Dark/Season 01/Dark.S01E02.nfo",
+            "<episodedetails><title>Lies</title><outline>Ulrich searches.</outline></episodedetails>",
+        )
+
+        val dark = LibraryScanner.scan(folder.root).shows.single()
+
+        assertEquals("A town, a cave.", dark.plot)
+        val season = dark.seasons.single()
+        assertEquals("Jonas looks for Mikkel.", season.plot)
+        assertEquals(listOf("A boy goes missing.", "Ulrich searches."), season.episodes.map { it.plot })
+    }
 }
 
