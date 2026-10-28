@@ -8,6 +8,12 @@ plugins {
 }
 
 android {
+    // BouncyCastle's modules (for SMB and SFTP) each carry the same licence file; one copy is kept.
+    packaging {
+        resources {
+            pickFirsts += "META-INF/LICENSE.md"
+        }
+    }
     namespace = "com.hawkynt.mediadroid"
     compileSdk = 37
 

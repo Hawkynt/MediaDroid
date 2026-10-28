@@ -9,7 +9,20 @@ kotlin {
 dependencies {
     api(project(":core:library"))
     implementation(libs.smbj)
+    implementation(libs.commons.net)
+    implementation(libs.sshj)
+    // smbj and sshj pull different BouncyCastle releases; the modules must be one release, or their
+    // provider fails to load (a field missing between bcprov and bcutil).
+    constraints {
+        implementation(libs.bcprov)
+        implementation(libs.bcpkix)
+        implementation(libs.bcutil)
+    }
     testImplementation(libs.junit)
+    // In-process servers for the integration tier.
+    testImplementation(libs.ftpserver.core)
+    testImplementation(libs.sshd.core)
+    testImplementation(libs.sshd.sftp)
 }
 
 // Tests against real servers started on the machine (smbd, …) are the slow tier: `./gradlew test`

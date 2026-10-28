@@ -13,40 +13,44 @@ import java.io.File
  */
 class SourceFiles(private val secrets: Secrets) : AutoCloseable {
 
-    private val smb = HashMap<String, SmbFs>()
+    private val remote = HashMap<String, RemoteFs>()
 
     /** The root of [source]; null for a kind of source that cannot be read yet. */
-    fun root(source: Source): FsFile? = when (source.kind) {
-        SourceKind.LOCAL -> LocalFile(File(source.path))
-        SourceKind.SMB -> smbOf(source).root
-        else -> null
-    }
+    fun root(source: Source): FsFile? =
+        if (source.kind == SourceKind.LOCAL) LocalFile(File(source.path)) else remoteOf(source)?.root
 
     /** The file at [location] on whichever of [sources] holds it; local paths need no source. */
     fun resolve(sources: List<Source>, location: String): FsFile? {
         if (location.startsWith("/")) return LocalFile(File(location))
         val source = Source.owning(sources, location) ?: return null
-        return when (source.kind) {
-            SourceKind.SMB -> smbOf(source).resolve(location)
-            else -> null
-        }
+        return remoteOf(source)?.resolve(location)
     }
 
     @Synchronized
-    private fun smbOf(source: Source): SmbFs {
-        smb[source.id]?.let { return it }
-        return SmbFs(source, secrets).also { smb[source.id] = it }
+    private fun remoteOf(source: Source): RemoteFs? {
+        remote[source.id]?.let { return it }
+        return open(source, secrets)?.also { remote[source.id] = it }
     }
 
     /** Forgets [sourceId]'s connection, after its settings or password changed. */
     @Synchronized
     fun forget(sourceId: String) {
-        smb.remove(sourceId)?.close()
+        remote.remove(sourceId)?.close()
     }
 
     @Synchronized
     override fun close() {
-        smb.values.forEach { it.close() }
-        smb.clear()
+        remote.values.forEach { it.close() }
+        remote.clear()
+    }
+
+    companion object {
+        /** A fresh connection to [source]; null for a kind that cannot be read yet. */
+        fun open(source: Source, secrets: Secrets): RemoteFs? = when (source.kind) {
+            SourceKind.SMB -> SmbFs(source, secrets)
+            SourceKind.FTP, SourceKind.FTPS -> FtpFs(source, secrets)
+            SourceKind.SFTP -> SftpFs(source, secrets)
+            else -> null
+        }
     }
 }
