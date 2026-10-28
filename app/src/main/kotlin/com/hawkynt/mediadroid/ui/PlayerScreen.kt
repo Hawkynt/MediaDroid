@@ -153,6 +153,23 @@ fun PlayerScreen(
     // Past the device's own maximum a volume swipe adds loudness gain and a brightness swipe adds gamma.
     var loudnessBoostDb by remember { mutableFloatStateOf(0f) }
     var nightMode by remember { mutableStateOf(false) }
+
+    // Lip-sync, remembered per audio output: a Bluetooth headset lags differently from the speaker.
+    var audioOutput by remember { mutableStateOf(com.hawkynt.mediadroid.player.currentAudioOutput(context)) }
+    var audioDelayMs by remember { mutableIntStateOf(store.audioDelayFor(audioOutput.key)) }
+    DisposableEffect(Unit) {
+        val audioManager = context.getSystemService(AudioManager::class.java)
+        val callback = object : android.media.AudioDeviceCallback() {
+            fun refresh() {
+                audioOutput = com.hawkynt.mediadroid.player.currentAudioOutput(context)
+                audioDelayMs = store.audioDelayFor(audioOutput.key)
+            }
+            override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>?) = refresh()
+            override fun onAudioDevicesRemoved(removed: Array<out android.media.AudioDeviceInfo>?) = refresh()
+        }
+        audioManager.registerAudioDeviceCallback(callback, null)
+        onDispose { audioManager.unregisterAudioDeviceCallback(callback) }
+    }
     var gammaBoost by remember { mutableFloatStateOf(1f) }
     val player = remember {
         ExoPlayer.Builder(context)
@@ -189,7 +206,7 @@ fun PlayerScreen(
                         context: android.content.Context,
                         enableFloatOutput: Boolean,
                         enableAudioOutputPlaybackParams: Boolean,
-                    ): androidx.media3.exoplayer.audio.AudioSink =
+                    ): androidx.media3.exoplayer.audio.AudioSink = com.hawkynt.mediadroid.player.DelayedAudioSink(
                         DefaultAudioSink.Builder(context)
                             .setEnableFloatOutput(enableFloatOutput)
                             .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
@@ -198,7 +215,9 @@ fun PlayerScreen(
                                     LoudnessAudioProcessor({ settings.loudness + loudnessBoostDb }, { nightMode }),
                                 ),
                             )
-                            .build()
+                            .build(),
+                        { audioDelayMs },
+                    )
                 }
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
             )
@@ -846,6 +865,41 @@ fun PlayerScreen(
                         }
                         androidx.compose.material3.Switch(checked = nightMode, onCheckedChange = { nightMode = it })
                     }
+
+
+                    PanelTitle("Audio delay · ${audioOutput.name}")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        fun nudge(steps: Int) {
+                            audioDelayMs = PlaybackMath.nudgeAudioDelay(audioDelayMs, steps)
+                            store.saveAudioDelay(audioOutput.key, audioDelayMs)
+                        }
+                        androidx.compose.material3.OutlinedButton(onClick = { nudge(-1) }) {
+                            Text("−", fontSize = 20.sp)
+                        }
+                        Text(
+                            if (audioDelayMs == 0) "in sync" else "%+d ms".format(audioDelayMs),
+                            fontSize = 18.sp,
+                            modifier = Modifier.widthIn(min = 90.dp),
+                        )
+                        androidx.compose.material3.OutlinedButton(onClick = { nudge(1) }) {
+                            Text("+", fontSize = 20.sp)
+                        }
+                        if (audioDelayMs != 0) {
+                            androidx.compose.material3.TextButton(
+                                onClick = { nudge(-audioDelayMs / PlaybackMath.AUDIO_DELAY_STEP_MS) },
+                            ) {
+                                Text("Reset")
+                            }
+                        }
+                    }
+                    Text(
+                        "+ when the sound comes too early, − when it comes too late. Kept for this output.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
 
                     PanelTitle("Sleep timer")
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
