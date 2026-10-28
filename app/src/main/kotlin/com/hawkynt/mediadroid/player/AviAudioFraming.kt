@@ -30,12 +30,15 @@ import java.io.EOFException
 @OptIn(UnstableApi::class)
 object AviAudioFraming {
 
-    /** The extractors to play local files with. */
+    /**
+     * The extractors to play local files with; FFmpeg's demuxers come last, for the containers none of
+     * Media3's own recognises (see [FfmpegExtractor]).
+     */
     val extractors: ExtractorsFactory = object : ExtractorsFactory {
         override fun createExtractors(): Array<Extractor> = wrap(DefaultExtractorsFactory().createExtractors())
 
         override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> =
-            wrap(DefaultExtractorsFactory().createExtractors(uri, responseHeaders))
+            wrap(DefaultExtractorsFactory().createExtractors(uri, responseHeaders)) + FfmpegExtractor(uri)
     }
 
     private fun wrap(extractors: Array<Extractor>): Array<Extractor> =

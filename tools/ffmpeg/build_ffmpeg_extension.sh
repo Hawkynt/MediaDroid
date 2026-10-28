@@ -31,6 +31,10 @@ echo "Enabled decoders are ${ENABLED_DECODERS[@]}"
 # A build configured this way is NOT distributable under this repository's LGPL —
 # keep it local. The committed AAR is always the LGPL-only configuration.
 EXTRA_CONFIGURE_FLAGS="${EXTRA_CONFIGURE_FLAGS:-}"
+# MediaDroid: the containers Media3 cannot read, demuxed by FFmpeg through a custom AVIOContext (no
+# protocols), and the parsers those raw streams need. Both lists are space-separated.
+ENABLED_DEMUXERS=(${ENABLED_DEMUXERS:-})
+ENABLED_PARSERS=(${ENABLED_PARSERS:-})
 if [[ -n "$EXTRA_CONFIGURE_FLAGS" ]]
 then
     echo "Extra configure flags: $EXTRA_CONFIGURE_FLAGS"
@@ -45,13 +49,16 @@ COMMON_OPTIONS="
     --disable-programs
     --disable-everything
     --disable-avdevice
-    --disable-avformat
-    --disable-swscale
+    --enable-avformat
+    --enable-swscale
+    --enable-pic
+    --enable-zlib
     --disable-postproc
     --disable-avfilter
     --disable-symver
     --enable-swresample
     --extra-ldexeflags=-pie
+    --extra-ldflags=-Wl,-z,max-page-size=16384
     --disable-v4l2-m2m
     --disable-vulkan
     "
@@ -65,6 +72,14 @@ fi
 for decoder in "${ENABLED_DECODERS[@]}"
 do
     COMMON_OPTIONS="${COMMON_OPTIONS} --enable-decoder=${decoder}"
+done
+for demuxer in "${ENABLED_DEMUXERS[@]}"
+do
+    COMMON_OPTIONS="${COMMON_OPTIONS} --enable-demuxer=${demuxer}"
+done
+for parser in "${ENABLED_PARSERS[@]}"
+do
+    COMMON_OPTIONS="${COMMON_OPTIONS} --enable-parser=${parser}"
 done
 
 ARMV7_CLANG="${TOOLCHAIN_PREFIX}/armv7a-linux-androideabi${ANDROID_ABI}-clang"

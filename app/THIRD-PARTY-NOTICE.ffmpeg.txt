@@ -1,11 +1,26 @@
 libs/lib-decoder-ffmpeg-release.aar
 
-Built from the FFmpeg decoder extension module of androidx/media release 1.11.1
-(https://github.com/androidx/media, Apache License 2.0), statically linking
-FFmpeg 6.0 (https://ffmpeg.org, GNU LGPL version 3 or later) configured with
-only the following decoders enabled:
+Built by tools/ffmpeg/build.sh from these sources, and nothing else:
 
-  h264 hevc mpeg2video vp8 vp9 av1 ac3 eac3 dts truehd mlp alac vorbis opus flac
+- The FFmpeg decoder extension module of androidx/media release 1.11.1
+  (https://github.com/androidx/media), Apache License 2.0.
+
+- Its FFmpeg video renderer from androidx/media pull request #1591
+  "Implement an FfmpegVideoRenderer" by rabbitknight
+  (https://github.com/androidx/media/pull/1591), contributed under the
+  Apache License 2.0 — tools/ffmpeg/patches/0001-*.patch, applied unchanged.
+
+- MediaDroid's own demuxer binding and codec-parameter handover
+  (tools/ffmpeg/mediadroid/, tools/ffmpeg/patches/0002-*.patch),
+  GNU LGPL version 3 or later.
+
+- libyuv (https://chromium.googlesource.com/libyuv/libyuv), BSD 3-Clause
+  License, Copyright 2011 The LibYuv Project Authors; statically linked.
+
+- FFmpeg 6.0 (https://ffmpeg.org), GNU LGPL version 2.1 or later; libavformat,
+  libavcodec, libswscale, libswresample and libavutil, statically linked.
+  Configured --disable-everything, then only the decoders, demuxers and parsers
+  listed in tools/ffmpeg/build.sh; no protocols, no encoders, no muxers.
 
 No GPL-licensed FFmpeg component is configured or linked. The LGPL conditions
 (linked as a library, replaceable, source obtainable from upstream) are met;
