@@ -167,6 +167,7 @@ fun DetailsScreen(
                 credits.forEach {
                     Text(it, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                if (item is Movie) FileSection(item.videoPath)
             }
         }
         if (item is Show) {
@@ -424,4 +425,67 @@ private fun releaseDate(premiered: String): String = runCatching {
     java.time.LocalDate.parse(premiered.take(10))
         .format(java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM))
 }.getOrDefault(premiered)
+
+/**
+ * The file behind a film, folded away until asked for: where it is, its size and container, every
+ * video, audio and subtitle track, and which decoder plays each here.
+ */
+@Composable
+private fun FileSection(location: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var open by remember(location) { mutableStateOf(false) }
+    val shape = RoundedCornerShape(10.dp)
+    Spacer(Modifier.height(16.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(shape)
+            .focusClickable(shape = shape, onClick = { open = !open })
+            .padding(vertical = 6.dp, horizontal = 4.dp),
+    ) {
+        Text("File", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.width(6.dp))
+        Text(if (open) "▲" else "▼", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (!open) return
+    val size by androidx.compose.runtime.produceState<Long?>(null, location) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.hawkynt.mediadroid.data.SourceAccess.resolve(context, location)?.length()
+        }
+    }
+    val tracks by androidx.compose.runtime.produceState<List<com.hawkynt.mediadroid.data.TrackReport>?>(
+        null,
+        location,
+    ) {
+        value = com.hawkynt.mediadroid.data.FileReport.tracks(context, location) ?: emptyList()
+    }
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    Text(location, fontSize = 14.sp, color = dim)
+    Text(
+        listOfNotNull(location.substringAfterLast('.', "").uppercase().ifEmpty { null }, size?.let(::fileSize))
+            .joinToString(" · "),
+        fontSize = 14.sp,
+        color = dim,
+    )
+    val list = tracks
+    if (list == null) {
+        Text("Reading the file…", fontSize = 14.sp, color = dim)
+        return
+    }
+    if (list.isEmpty()) Text("The tracks cannot be read.", fontSize = 14.sp, color = dim)
+    list.forEach { track ->
+        val kind = when (track.type) {
+            androidx.media3.common.C.TRACK_TYPE_VIDEO -> "Video"
+            androidx.media3.common.C.TRACK_TYPE_AUDIO -> "Audio"
+            androidx.media3.common.C.TRACK_TYPE_TEXT -> "Subtitles"
+            else -> "Other"
+        }
+        val playedBy = when {
+            track.type == androidx.media3.common.C.TRACK_TYPE_TEXT -> "shown by the player"
+            track.decoder == null -> "no decoder on this device"
+            else -> decoder(track.decoder)
+        }
+        Text("$kind: ${describe(track.format)} — $playedBy", fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+    }
+}
 
