@@ -118,4 +118,13 @@ class PlaybackMathTest {
         assertEquals(0f to 0f, PlaybackMath.mirrorSafeInset(1920f, 1080f))
         assertEquals(0f to 0f, PlaybackMath.mirrorSafeInset(1600f, 1200f))
     }
+
+    @Test
+    fun `the film ends when what is left has played at the current speed`() {
+        val now = 1_000_000L
+        assertEquals(now + 600_000, PlaybackMath.endsAtMs(now, positionMs = 400_000, durationMs = 1_000_000, speed = 1f))
+        assertEquals(now + 300_000, PlaybackMath.endsAtMs(now, positionMs = 400_000, durationMs = 1_000_000, speed = 2f))
+        assertEquals(null, PlaybackMath.endsAtMs(now, positionMs = 0, durationMs = 0, speed = 1f))
+        assertEquals(now, PlaybackMath.endsAtMs(now, positionMs = 1_200_000, durationMs = 1_000_000, speed = 1f))
+    }
 }

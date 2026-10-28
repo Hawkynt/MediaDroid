@@ -92,4 +92,10 @@ object PlaybackMath {
             else -> 0f to 0f
         }
     }
+
+    /** The wall-clock time (epoch ms) the item ends if it plays on at [speed]; null while its length is unknown. */
+    fun endsAtMs(nowMs: Long, positionMs: Long, durationMs: Long, speed: Float): Long? {
+        if (durationMs <= 0 || speed <= 0f) return null
+        return nowMs + ((durationMs - positionMs).coerceAtLeast(0L) / speed).toLong()
+    }
 }
