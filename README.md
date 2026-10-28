@@ -124,6 +124,23 @@ Specified, not built yet. Prior art: [Nova Video Player](https://github.com/nova
 - **On TV boxes.** Optional switching of the display refresh rate to the film's frame rate (no judder at 23.976 fps), and an audio-passthrough option that hands AC3/E-AC3/DTS/TrueHD untouched to an AV receiver over HDMI.
 - **Rotation.** Auto, landscape or portrait, held for the session, from the gear.
 
+### Navigation and browsing
+
+From the same look at Nova's library side: what it browses, what an item tells about itself, and where.
+
+- **More rows on each home.** Under Continue watching: *Recently added* (by the file's date on disk, newest first), *Not watched yet* and, for shows, *New episodes* (shows whose newest episode is unwatched, newest first). Each row scrolls sideways and ends in a "See all" that opens the full wall in that order.
+- **Resume from anywhere.** The sidebar's foot shows the last thing played — its picture, title and a play button — so a single tap continues it from any screen.
+- **Sort orders.** Next to A–Z, Z–A, newest and oldest: *recently added*, *runtime* (shortest / longest first) and, where NFOs carry it, *rating*. Shows add *recently updated* (newest episode first). The choice is remembered per section.
+- **Display modes.** Posters (today's wall), a compact list (thumbnail, title, year, runtime, badges) and a details list that adds two lines of plot — for remotes and for libraries too big to scan by pictures.
+- **Jump by letter.** Long libraries get an A–Z rail along the edge of the wall; dragging along it jumps to the letter, the letter shows big while dragging.
+- **Browse by genre and year as places.** Besides the filter chips, Genres and Years are entries in the sidebar that open a list of genres / decades with counts and a poster collage each, leading to the wall for one of them.
+- **Folders.** A Folders entry shows the media root as it is on disk — folders first, then videos with their frame, duration and badges — so home videos and anything the scanner did not place as a movie or show are still one tap away.
+- **One title, several files.** The same film twice (1080p and 4K, a German and an English cut) is one card with a small count; its details list every file with resolution, HDR, audio and language badges and size, and Play takes the one last played, else the best picture.
+- **What a card shows.** Every poster and list item carries its resume bar (not only in Continue watching), the watched tick, and — in list mode — runtime and the quality badges the episode rows already have.
+- **Details.** Adds, where the NFO has them, rating, director, studio and the premiered date; a *Trailer* button when a `<name>-trailer.*` sits beside the film (trailers stay off the wall); and a collapsible *File* section with the path, size, container, every video / audio / subtitle track and which decoder plays it.
+
+Considered and left out: network shares (SMB, UPnP, FTP, cloud) and online scraping, playlists, and IMDb/TMDb links — MediaDroid stays a local, offline, account-free player that reads what is already on disk.
+
 ## 🛠️ Building
 
 Requires JDK 21 and an Android SDK with platform 37; `local.properties` must point `sdk.dir` at it.
