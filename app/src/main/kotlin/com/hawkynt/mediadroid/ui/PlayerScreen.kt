@@ -145,6 +145,7 @@ fun PlayerScreen(
     // unless the household chose software decoding in Settings.
     // Past the device's own maximum a volume swipe adds loudness gain and a brightness swipe adds gamma.
     var loudnessBoostDb by remember { mutableFloatStateOf(0f) }
+    var nightMode by remember { mutableStateOf(false) }
     var gammaBoost by remember { mutableFloatStateOf(1f) }
     val player = remember {
         ExoPlayer.Builder(context)
@@ -187,7 +188,7 @@ fun PlayerScreen(
                             .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
                             .setAudioProcessorChain(
                                 DefaultAudioSink.DefaultAudioProcessorChain(
-                                    LoudnessAudioProcessor { settings.loudness + loudnessBoostDb },
+                                    LoudnessAudioProcessor({ settings.loudness + loudnessBoostDb }, { nightMode }),
                                 ),
                             )
                             .build()
@@ -792,6 +793,19 @@ fun PlayerScreen(
                 onSubtitleTrack = { subtitlePicker = true },
                 onClose = { panelOpen = false },
                 sections = {
+                    PanelTitle("Sound")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Night mode", fontSize = 16.sp)
+                            Text(
+                                "Quiet dialogue comes up, loud scenes come down.",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        androidx.compose.material3.Switch(checked = nightMode, onCheckedChange = { nightMode = it })
+                    }
+
                     PanelTitle("Sleep timer")
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                     androidx.compose.foundation.layout.FlowRow(
