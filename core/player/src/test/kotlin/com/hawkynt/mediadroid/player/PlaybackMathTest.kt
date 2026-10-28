@@ -166,4 +166,12 @@ class PlaybackMathTest {
         assertEquals(1, PlaybackMath.sleepMinutesLeft(remainingMs = 1_000))
         assertEquals(0, PlaybackMath.sleepMinutesLeft(remainingMs = 0))
     }
+
+    @Test
+    fun `audio delay moves in 50 ms steps within two and a half seconds either way`() {
+        assertEquals(50, PlaybackMath.nudgeAudioDelay(0, steps = 1))
+        assertEquals(-150, PlaybackMath.nudgeAudioDelay(-100, steps = -1))
+        assertEquals(2500, PlaybackMath.nudgeAudioDelay(2480, steps = 1))
+        assertEquals(-2500, PlaybackMath.nudgeAudioDelay(-2500, steps = -3))
+    }
 }
