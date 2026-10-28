@@ -7,6 +7,9 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
+    <!-- Network sources: SMB, FTP, SFTP and WebDAV shares, and finding SMB servers on the local network. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:allowBackup="true"
@@ -14,7 +17,10 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.MediaDroid">
+        android:theme="@style/Theme.MediaDroid"
+        android:usesCleartextTraffic="true">
+        <!-- Cleartext: a WebDAV share on a home NAS is often plain http:// on the local network; the
+             app talks to no server of its own, only to the sources the household adds. -->
         <!-- The app handles rotation and display changes itself: a recreated activity would
              tear down the playing video, its position and any open panel. -->
         <activity
