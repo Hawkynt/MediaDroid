@@ -94,6 +94,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.filled.Info
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -265,6 +266,33 @@ fun PlayerScreen(
                 ),
             )
             .build()
+    }
+    // Which decoders are at work, as Media3 reports them, for the info sheet.
+    var videoDecoder by remember { mutableStateOf<String?>(null) }
+    var audioDecoder by remember { mutableStateOf<String?>(null) }
+    var infoOpen by remember { mutableStateOf(false) }
+    DisposableEffect(player) {
+        val analytics = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onVideoDecoderInitialized(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) {
+                videoDecoder = decoderName
+            }
+
+            override fun onAudioDecoderInitialized(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) {
+                audioDecoder = decoderName
+            }
+        }
+        player.addAnalyticsListener(analytics)
+        onDispose { player.removeAnalyticsListener(analytics) }
     }
     // A film's sound: other players pause for it, it pauses for a call; spatialized only when switched on.
     LaunchedEffect(spatialAudio) {
@@ -941,6 +969,14 @@ fun PlayerScreen(
                     }
                     IconButton(
                         onClick = {
+                            infoOpen = true
+                            playerView?.hideController()
+                        },
+                    ) {
+                        Icon(Icons.Filled.Info, contentDescription = "What is playing", tint = Color.White)
+                    }
+                    IconButton(
+                        onClick = {
                             panelOpen = true
                             playerView?.hideController()
                         },
@@ -1215,6 +1251,16 @@ fun PlayerScreen(
         }
         if (locked) {
             LockOverlay(stamp = lockHintStamp, onTouch = { lockHintStamp++ }, onUnlock = { locked = false })
+        }
+        if (infoOpen) {
+            PlaybackInfoDialog(
+                videoPath = queue[index].videoPath,
+                tracks = player.currentTracks,
+                videoSize = player.videoSize,
+                videoDecoder = videoDecoder,
+                audioDecoder = audioDecoder,
+                onDismiss = { infoOpen = false },
+            )
         }
         if (audioPicker) {
             TrackDialog(
