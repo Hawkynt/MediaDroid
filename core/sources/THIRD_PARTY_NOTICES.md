@@ -10,6 +10,10 @@ The network sources are read with these libraries, taken as published on Maven C
 | [OkHttp](https://square.github.io/okhttp/) | 5.5.0 | Apache-2.0 | WebDAV |
 | [Bouncy Castle](https://www.bouncycastle.org/) (bcprov, bcpkix, bcutil) | 1.86 | MIT (Bouncy Castle Licence) | cryptography for smbj and sshj |
 
-Tests only (not shipped): [Apache FtpServer](https://mina.apache.org/ftpserver-project/) 1.2.1 and
+NFS is our own NFSv3 / MOUNT / portmap client over ONC RPC, written from RFC 1813, RFC 5531, RFC 1833
+and RFC 4506.
+
+Tests only (not shipped): [dCache nfs4j](https://github.com/dCache/nfs4j) 0.28.5 (LGPL, the NFS server the
+client is checked against), [Apache FtpServer](https://mina.apache.org/ftpserver-project/) 1.2.1 and
 [Apache MINA SSHD](https://mina.apache.org/sshd-project/) 2.20.0, both Apache-2.0, OkHttp's MockWebServer (Apache-2.0), [WsgiDAV](https://github.com/mar10/wsgidav) (MIT) and Samba's `smbd`
 started on the machine running the integration tier.

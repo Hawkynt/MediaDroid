@@ -147,10 +147,15 @@ private fun kindLabel(kind: SourceKind) = when (kind) {
 
 private const val SMB_FOLDER_HINT = "Share and folder — media/movies"
 private const val FOLDER_HINT = "Folder — /media/movies"
+private const val NFS_FOLDER_HINT = "Export — /volume1/video"
+
+/** The kinds that cannot do without a share or export to read. */
+private val FOLDER_REQUIRED = setOf(SourceKind.SMB, SourceKind.NFS)
 private const val WEBDAV_HINT = "Address — https://cloud.example.org/remote.php/dav/files/me/Videos"
 
 /** The kinds of network source the dialog adds. */
-private val NETWORK_KINDS = listOf(SourceKind.SMB, SourceKind.FTP, SourceKind.FTPS, SourceKind.SFTP, SourceKind.WEBDAV)
+private val NETWORK_KINDS =
+    listOf(SourceKind.SMB, SourceKind.NFS, SourceKind.FTP, SourceKind.FTPS, SourceKind.SFTP, SourceKind.WEBDAV)
 
 /**
  * The fields of a network source — a Windows / Samba share, FTP, FTPS or SFTP — with a test that lists
@@ -263,16 +268,33 @@ private fun NetworkSourceDialog(
                 if (kind != SourceKind.WEBDAV) OutlinedTextField(
                     folder,
                     { folder = it },
-                    label = { Text(if (kind == SourceKind.SMB) SMB_FOLDER_HINT else FOLDER_HINT) },
+                    label = {
+                        Text(
+                            when (kind) {
+                                SourceKind.SMB -> SMB_FOLDER_HINT
+                                SourceKind.NFS -> NFS_FOLDER_HINT
+                                else -> FOLDER_HINT
+                            },
+                        )
+                    },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     user,
                     { user = it },
-                    label = { Text(if (kind == SourceKind.SFTP) "User" else "User — empty for a guest") },
+                    label = {
+                        Text(
+                            when (kind) {
+                                SourceKind.SFTP -> "User"
+                                SourceKind.NFS -> "User id — 1000 or 1000:100, empty for nobody"
+                                else -> "User — empty for a guest"
+                            },
+                        )
+                    },
                     singleLine = true,
                 )
-                OutlinedTextField(
+                // NFSv3 signs in by user id alone; there is no password to ask for.
+                if (kind != SourceKind.NFS) OutlinedTextField(
                     secret,
                     { secret = it },
                     label = { Text(if (kind == SourceKind.SFTP) "Password, or a private key" else "Password") },
@@ -296,7 +318,7 @@ private fun NetworkSourceDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = server.isNotBlank() && (kind != SourceKind.SMB || folder.isNotBlank()),
+                enabled = server.isNotBlank() && (kind !in FOLDER_REQUIRED || folder.isNotBlank()),
                 onClick = {
                     // An SFTP server is met once before saving, so its host key is kept from the start.
                     if (kind == SourceKind.SFTP && hostKey.isEmpty()) {

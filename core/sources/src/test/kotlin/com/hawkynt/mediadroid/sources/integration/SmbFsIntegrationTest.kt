@@ -85,7 +85,8 @@ class SmbFsIntegrationTest {
         Source(id, id, SourceKind.SMB, host = "127.0.0.1", port = PORT, path = path, user = user)
 
     companion object {
-        private const val PORT = 44455
+        // A free port of its own, so a Samba already running for something else does not answer.
+        private val PORT = java.net.ServerSocket(0).use { it.localPort }
         private const val PASSWORD = "s3cret-pass"
         private lateinit var dir: File
         private var server: Process? = null
