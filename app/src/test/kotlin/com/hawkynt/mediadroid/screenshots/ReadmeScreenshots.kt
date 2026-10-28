@@ -90,8 +90,9 @@ class ReadmeScreenshots {
     @Test
     fun showDetails() {
         tap(hasContentDescription("TV Shows"))
-        // The hero shows what is being watched, Starlight Bakery; More info opens it.
-        waitFor(hasText("All TV Shows"))
+        // The hero shows what is being watched, Starlight Bakery; More info opens it. (The wall's own
+        // header sits below the home rows, out of the composed part of the grid.)
+        waitFor(hasText("Starlight Bakery"))
         tap(hasText("More info"))
         waitFor(hasText("Play next"))
         tap(hasText("Season 1"))

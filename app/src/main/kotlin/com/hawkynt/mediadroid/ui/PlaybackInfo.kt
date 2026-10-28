@@ -94,7 +94,7 @@ private fun Line(text: String, bold: Boolean = false) {
 }
 
 /** One track as people read it: `HEVC · 3840 × 1606 · 23.976 fps` or `Dolby Digital · 5.1 · German`. */
-private fun describe(format: Format): String {
+internal fun describe(format: Format): String {
     val codec = Quality.codecOf(format.sampleMimeType)
     val parts = mutableListOf<String>()
     val shown = Quality.of(
@@ -122,7 +122,7 @@ private fun describe(format: Format): String {
 }
 
 /** A decoder name with what kind it is: Android's own (hardware or not) or the bundled FFmpeg. */
-private fun decoder(name: String?): String = when {
+internal fun decoder(name: String?): String = when {
     name == null -> "not in use"
     name.startsWith("ffmpeg", ignoreCase = true) || name.contains("Ffmpeg") -> "$name (software, FFmpeg)"
     name.startsWith("c2.android.") || name.startsWith("OMX.google.") -> "$name (software)"
