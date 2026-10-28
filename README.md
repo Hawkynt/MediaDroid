@@ -52,6 +52,7 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - Holding skip forward or back — on screen, or a remote's left/right and its rewind / fast-forward keys — steps 10 s, then 30 s after three seconds of holding, 60 s after six and five minutes after nine; the target time shows while holding and letting go seeks there once. A short tap stays the ordinary skip.
 - Child lock in the gear: once locked, every touch, swipe, Back and button is ignored — only the volume keys still work — and any touch shows a lock symbol for a moment; holding it for two seconds unlocks.
 - Night mode in the gear compresses the dynamic range in the app's own audio stage — quiet dialogue comes up, explosions come down — for late evenings and thin walls; it combines with the loudness gain and the volume boost (soft-knee compressor after Giannoulis, Massberg & Reiss, JAES 2012).
+- An info button in the player's top bar shows what is playing: the file, its container and size, every video / audio / subtitle track with codec, language, channels, resolution and frame rate (the ones playing marked), and which decoders are at work — hardware, Android's software or the bundled FFmpeg.
 - Sleep timer in the gear: off, 15, 30, 45, 60 or 90 minutes, or at the end of this video. While it runs the top bar shows the minutes left; when it runs out the sound fades over ten seconds and playback pauses. It never carries over to the next start.
 - Repeat in the gear: off, this video, or all of it (the show or the folder, round again from the start) — for the film a child wants to see again and again. It lasts for the session.
 - With the controls up, the bar also tells when the film will be over on the clock ("Ends 21:35", in the device's 12/24-hour format), allowing for the playback speed.
@@ -122,7 +123,6 @@ Specified, not built yet. Prior art: [Nova Video Player](https://github.com/nova
 - **Spatial audio.** On Android 13+ a switch in the gear hands multichannel sound to the platform spatializer for headphones that support it.
 - **Picture in picture.** Leaving the app while a video plays keeps it running in a small window; returning brings the full player back where it was.
 - **Media controls everywhere.** A media session puts play/pause, next and previous on the lock screen, in the notification and on headset and Bluetooth buttons.
-- **What is playing.** An info sheet in the player lists the file, container, every video/audio/subtitle track with codec, language and channels, resolution and frame rate, and which decoder is at work (hardware or software).
 - **On TV boxes.** Optional switching of the display refresh rate to the film's frame rate (no judder at 23.976 fps), and an audio-passthrough option that hands AC3/E-AC3/DTS/TrueHD untouched to an AV receiver over HDMI.
 - **Rotation.** Auto, landscape or portrait, held for the session, from the gear.
 
