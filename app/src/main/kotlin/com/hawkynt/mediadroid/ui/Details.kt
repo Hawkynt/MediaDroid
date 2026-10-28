@@ -198,6 +198,7 @@ fun DetailsScreen(
                     season?.posterPath ?: season?.representativeThumb,
                     season?.representativeVideo,
                     watched = season != null && store.marks.isWatched(season),
+                    plot = season?.plot,
                     onToggleWatched = {
                         season?.let {
                             store.setWatched(it.episodes.map { e -> e.videoPath }, !store.marks.isWatched(it))
@@ -357,6 +358,16 @@ private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick
             episode.firstAired?.let {
                 Text(it, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            episode.plot?.let {
+                Text(
+                    it,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
         Spacer(Modifier.width(8.dp))
         WatchedToggle(watched, onToggle = { store.setWatched(listOf(episode.videoPath), !watched) }, size = 48.dp)
@@ -389,32 +400,34 @@ private fun SeasonHeader(
     videoPath: String?,
     watched: Boolean,
     onToggleWatched: () -> Unit,
+    plot: String? = null,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-    ) {
-        if (posterPath != null || videoPath != null) {
-            Box(
-                modifier = Modifier
-                    .width(72.dp)
-                    .aspectRatio(2f / 3f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            ) {
-                PosterImage(posterPath, videoFallback = videoPath, contentScale = ContentScale.Crop)
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            if (posterPath != null || videoPath != null) {
+                Box(
+                    modifier = Modifier
+                        .width(72.dp)
+                        .aspectRatio(2f / 3f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    PosterImage(posterPath, videoFallback = videoPath, contentScale = ContentScale.Crop)
+                }
+                Spacer(Modifier.width(14.dp))
             }
-            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(seasonName(number), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    if (episodeCount == 1) "1 episode" else "$episodeCount episodes",
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (episodeCount > 0) WatchedToggle(watched, onToggle = onToggleWatched)
         }
-        Column(Modifier.weight(1f)) {
-            Text(seasonName(number), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text(
-                if (episodeCount == 1) "1 episode" else "$episodeCount episodes",
-                fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (episodeCount > 0) WatchedToggle(watched, onToggle = onToggleWatched)
+        // What the season is about, from its season.nfo.
+        plot?.let { Text(it, fontSize = 16.sp, modifier = Modifier.padding(top = 10.dp)) }
     }
 }
 

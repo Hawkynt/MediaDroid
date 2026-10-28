@@ -134,6 +134,10 @@ object DemoLibrary {
                 val season = s + 1
                 val seasonDir = File(dir, "Season %02d".format(season)).apply { mkdirs() }
                 poster(File(seasonDir, "folder.jpg"), show.title, null, caption = "Season $season")
+                File(seasonDir, "season.nfo").writeText(
+                    "<season><plot>Season $season of ${xml(show.title)}: new faces, old secrets, " +
+                        "and one more night than anyone planned.</plot></season>",
+                )
                 titles.forEachIndexed { e, title ->
                     val stem = "S%02dE%02d - %s".format(season, e + 1, title)
                     File(seasonDir, "$stem.mkv").writeBytes(ByteArray(0))
@@ -164,6 +168,7 @@ object DemoLibrary {
 
     private fun episodeNfo(title: String, season: Int, episode: Int, year: Int, watched: Boolean): String =
         "<episodedetails><title>${xml(title)}</title><season>$season</season><episode>$episode</episode>" +
+            "<plot>${xml(title)}: a quiet start turns into a long night, and nobody leaves the way they came in.</plot>" +
             "<aired>${year + season - 1}-%02d-%02d</aired>".format(1 + episode % 12, 1 + episode * 2) +
             (if (watched) "<playcount>1</playcount>" else "") +
             streamDetails(listOf("eng", "ger"), listOf("eng")) +
