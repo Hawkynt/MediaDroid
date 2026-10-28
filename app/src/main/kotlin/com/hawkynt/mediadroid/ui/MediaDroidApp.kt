@@ -110,6 +110,7 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
         val app = context.applicationContext
         SourceAccess.sources = { store.sources }
         com.hawkynt.mediadroid.player.AviAudioFraming.remote = { SourceAccess.resolve(app, it) }
+        com.hawkynt.mediadroid.player.ownedLocation = { Source.owning(store.sources, it) != null }
     }
 
     fun storageAccess() = demo || Environment.isExternalStorageManager()

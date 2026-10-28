@@ -144,9 +144,10 @@ private fun kindLabel(kind: SourceKind) = when (kind) {
 
 private const val SMB_FOLDER_HINT = "Share and folder — media/movies"
 private const val FOLDER_HINT = "Folder — /media/movies"
+private const val WEBDAV_HINT = "Address — https://cloud.example.org/remote.php/dav/files/me/Videos"
 
 /** The kinds of network source the dialog adds. */
-private val NETWORK_KINDS = listOf(SourceKind.SMB, SourceKind.FTP, SourceKind.FTPS, SourceKind.SFTP)
+private val NETWORK_KINDS = listOf(SourceKind.SMB, SourceKind.FTP, SourceKind.FTPS, SourceKind.SFTP, SourceKind.WEBDAV)
 
 /**
  * The fields of a network source — a Windows / Samba share, FTP, FTPS or SFTP — with a test that lists
@@ -164,7 +165,7 @@ private fun NetworkSourceDialog(
     val scope = rememberCoroutineScope()
     var kind by remember { mutableStateOf(source.kind) }
     var name by remember { mutableStateOf(source.name) }
-    var server by remember { mutableStateOf(source.host) }
+    var server by remember { mutableStateOf(if (source.kind == SourceKind.WEBDAV) source.url else source.host) }
     var port by remember { mutableStateOf(source.port.takeIf { it > 0 }?.toString().orEmpty()) }
     var folder by remember { mutableStateOf(source.path.trim('/')) }
     var user by remember { mutableStateOf(source.user) }
@@ -172,7 +173,19 @@ private fun NetworkSourceDialog(
     var hostKey by remember { mutableStateOf(source.hostKey) }
     var status by remember { mutableStateOf<String?>(null) }
 
-    fun edited() = source.copy(
+    fun edited() = if (kind == SourceKind.WEBDAV) {
+        val url = server.trim().let { if ("://" in it) it else "https://$it" }.trimEnd('/')
+        source.copy(
+            kind = kind,
+            name = name.trim().ifEmpty { url.substringAfter("://").substringBefore('/') },
+            host = url.substringAfter("://").substringBefore('/'),
+            port = 0,
+            path = "",
+            url = url,
+            user = user.trim(),
+            hostKey = "",
+        )
+    } else source.copy(
         kind = kind,
         name = name.trim().ifEmpty { "${server.trim()}/${folder.trim('/').substringBefore('/')}".trimEnd('/') },
         host = server.trim().substringAfter("://").removePrefix("\\\\").trimEnd('/'),
@@ -215,17 +228,19 @@ private fun NetworkSourceDialog(
                 OutlinedTextField(
                     server,
                     { server = it },
-                    label = { Text("Server — nas.local or 192.168.1.10") },
+                    label = {
+                        Text(if (kind == SourceKind.WEBDAV) WEBDAV_HINT else "Server — nas.local or 192.168.1.10")
+                    },
                     singleLine = true,
                 )
-                OutlinedTextField(
+                if (kind != SourceKind.WEBDAV) OutlinedTextField(
                     port,
                     { port = it.filter(Char::isDigit) },
                     label = { Text("Port — empty for the usual one") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
-                OutlinedTextField(
+                if (kind != SourceKind.WEBDAV) OutlinedTextField(
                     folder,
                     { folder = it },
                     label = { Text(if (kind == SourceKind.SMB) SMB_FOLDER_HINT else FOLDER_HINT) },
