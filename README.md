@@ -17,7 +17,7 @@
 [![Nightly](https://img.shields.io/github/v/release/Hawkynt/MediaDroid?include_prereleases&sort=date&filter=nightly-*&label=nightly&color=FF9800)](https://github.com/Hawkynt/MediaDroid/releases)
 [![Downloads](https://img.shields.io/github/downloads/Hawkynt/MediaDroid/total)](https://github.com/Hawkynt/MediaDroid/releases)
 
-> Your movies and shows are already organized — folders with `.nfo` files and cover art, scraped by Kodi or MediaBrowser over the years. MediaDroid plays that library straight from local storage on any Android box, tablet, or phone: no server, no account, no re-scraping, no re-encoding. It reads what is already on disk and turns it into a browse-and-play app simple enough for a six-year-old and a grandparent.
+> Your movies and shows are already organized — folders with `.nfo` files and cover art, scraped by Kodi or MediaBrowser over the years. MediaDroid plays that library straight from where it lives — local storage, a NAS share, an FTP server or a cloud folder — on any Android box, tablet, or phone: no media server, no account of ours, no re-scraping, no re-encoding. It reads what is already there and turns it into a browse-and-play app simple enough for a six-year-old and a grandparent.
 
 ![The browse wall: what is being watched as the hero, Continue watching, then every movie](screenshots/main.png)
 
@@ -61,7 +61,7 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - Instant search across the whole library.
 - Filter by genre and year, group by decade, facet counts as you browse.
 - Big touch targets and high contrast — usable by kids and older users without glasses-or-guessing.
-- Fully offline: no account, no telemetry, nothing leaves the device.
+- Local libraries work fully offline. No account of ours and no telemetry; a network share or cloud is contacted only once you add it as a source, with the credentials you give it, kept in the device's keystore.
 
 ## 🧩 Support matrix
 
@@ -129,7 +129,7 @@ Specified, not built yet. Prior art: [Nova Video Player](https://github.com/nova
 From the same look at Nova's library side: what it browses, what an item tells about itself, and where.
 
 - **More rows on each home.** Under Continue watching: *Recently added* (by the file's date on disk, newest first), *Not watched yet* and, for shows, *New episodes* (shows whose newest episode is unwatched, newest first). Each row scrolls sideways and ends in a "See all" that opens the full wall in that order.
-- **Resume from anywhere.** The sidebar's foot shows the last thing played — its picture, title and a play button — so a single tap continues it from any screen.
+- **Resume from anywhere.** The bottom of the sidebar menu shows the last thing played — its picture, title, how far in, and a play button — so a single tap resumes it from any screen; collapsed, it is a single play button with the picture behind it.
 - **Sort orders.** Next to A–Z, Z–A, newest and oldest: *recently added*, *runtime* (shortest / longest first) and, where NFOs carry it, *rating*. Shows add *recently updated* (newest episode first). The choice is remembered per section.
 - **Display modes.** Posters (today's wall), a compact list (thumbnail, title, year, runtime, badges) and a details list that adds two lines of plot — for remotes and for libraries too big to scan by pictures.
 - **Jump by letter.** Long libraries get an A–Z rail along the edge of the wall; dragging along it jumps to the letter, the letter shows big while dragging.
@@ -139,7 +139,21 @@ From the same look at Nova's library side: what it browses, what an item tells a
 - **What a card shows.** Every poster and list item carries its resume bar (not only in Continue watching), the watched tick, and — in list mode — runtime and the quality badges the episode rows already have.
 - **Details.** Adds, where the NFO has them, rating, director, studio and the premiered date; a *Trailer* button when a `<name>-trailer.*` sits beside the film (trailers stay off the wall); and a collapsible *File* section with the path, size, container, every video / audio / subtitle track and which decoder plays it.
 
-Considered and left out: network shares (SMB, UPnP, FTP, cloud) and online scraping, playlists, and IMDb/TMDb links — MediaDroid stays a local, offline, account-free player that reads what is already on disk.
+Considered and left out: online scraping, playlists, and IMDb/TMDb links — the metadata stays what is already in the folders.
+
+### Sources
+
+The library may live anywhere a household keeps its folders. Every source below is browsed like the SD card is today, and can be the media root (or one of several roots) the scanner reads, with the same NFO and art conventions.
+
+- **Several roots.** Settings list any number of media roots, each local or remote, each with its own name; the walls merge them, and a title found on two roots is one card with two files (see *One title, several files*).
+- **Windows / Samba shares (SMB 2/3).** Server, share, user and password (or guest); servers on the local network are discovered and offered.
+- **NFS shares.** Server and export path, for NAS boxes that serve Linux clients.
+- **FTP, FTPS and SFTP.** Host, port, user and password or an SSH key; passive mode for FTP.
+- **WebDAV.** URL, user and password — Nextcloud, ownCloud and most NAS web shares.
+- **Online clouds.** Google Drive, OneDrive, Dropbox, Nextcloud and anything else that installs an Android document provider, picked in the system's own picker like a local folder; the app itself stores no cloud passwords.
+- **Saved connections.** Each source is saved once with a name; passwords and keys live in the Android Keystore, never in the state file. A source that is unreachable stays on the walls greyed out with "not reachable right now" instead of vanishing.
+- **Reading a remote library.** The scan of a remote root runs in the background and keeps its result (titles, NFO contents, art) cached on the device, so the wall appears instantly and offline; art is downloaded once and kept small. A rescan picks up changes by size and modification time.
+- **Playing from the network.** Remote videos stream with enough buffer for 4K over Wi-Fi; resume, binge, intro/credits skip, badges and thumbnails work as for local files, and frames and badges are probed once and cached.
 
 ## 🛠️ Building
 
