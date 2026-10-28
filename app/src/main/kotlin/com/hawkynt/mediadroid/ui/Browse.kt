@@ -650,7 +650,7 @@ fun resumeProgress(item: MediaItem, store: StateStore): Float? {
 
 /** A thin bar along the bottom of a picture showing how much of it is watched. */
 @Composable
-private fun ResumeBar(progress: Float, modifier: Modifier = Modifier) {
+internal fun ResumeBar(progress: Float, modifier: Modifier = Modifier) {
     LinearProgressIndicator(
         progress = { progress },
         color = MaterialTheme.colorScheme.primary,
@@ -661,7 +661,7 @@ private fun ResumeBar(progress: Float, modifier: Modifier = Modifier) {
     )
 }
 
-private fun progressOf(positionMs: Long, durationMs: Long): Float =
+internal fun progressOf(positionMs: Long, durationMs: Long): Float =
     if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 
 @Composable

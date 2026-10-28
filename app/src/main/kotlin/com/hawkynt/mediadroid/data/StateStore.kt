@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import com.hawkynt.mediadroid.library.FileSort
 import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.SortOrder
 import com.hawkynt.mediadroid.library.WatchMarks
@@ -78,6 +79,7 @@ data class AppData(
     val audioDelays: MutableMap<String, Int> = mutableMapOf(), // lip-sync per audio output, in ms
     val sorts: MutableMap<String, String> = mutableMapOf(), // SortOrder per LibrarySection, by name
     var wallMode: String = "",                 // WallMode by name; "" is posters
+    var filesSort: String = "",                // FileSort by name; "" is by name
     val subtitles: MutableMap<String, SubtitleOverride> = mutableMapOf(),
     var settings: Settings = Settings(),
 )
@@ -159,6 +161,14 @@ class StateStore(context: Context) {
 
     /** Posters, list or details, as the walls were last laid out. */
     val wallMode: WallMode get() = WallMode.entries.firstOrNull { it.name == data.wallMode } ?: WallMode.POSTERS
+
+    /** How the Files browser orders videos, as last chosen. */
+    val filesSort: FileSort get() = FileSort.entries.firstOrNull { it.name == data.filesSort } ?: FileSort.NAME
+
+    fun saveFilesSort(sort: FileSort) {
+        data.filesSort = sort.name
+        save()
+    }
 
     fun saveWallMode(mode: WallMode) {
         data.wallMode = mode.name

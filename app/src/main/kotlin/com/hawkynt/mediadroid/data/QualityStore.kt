@@ -42,9 +42,11 @@ class QualityStore private constructor(private val context: Context) {
         val videoCodec: String? = null,
         val hdr: String? = null,
         val audio: List<Audio> = emptyList(),
+        val durationMs: Long? = null,
     )
 
-    private val file = File(context.filesDir, "media-info.json")
+    // Version 2 added the duration; the old cache is simply probed again.
+    private val file = File(context.filesDir, "media-info-2.json")
     private val json = Json { ignoreUnknownKeys = true }
     private val serializer = MapSerializer(String.serializer(), Entry.serializer())
     private val lock = Mutex()
@@ -52,15 +54,7 @@ class QualityStore private constructor(private val context: Context) {
 
     /** The stream details of [videoPath] as the file says, or null when it cannot be read. */
     suspend fun detailsFor(videoPath: String): StreamDetails? {
-        val video = File(videoPath)
-        val key = "$videoPath|${video.length()}|${video.lastModified()}"
-        val entry = lock.withLock {
-            val entries = cache ?: withContext(Dispatchers.IO) { load() }.also { cache = it }
-            entries[key] ?: withContext(Dispatchers.IO) { probe(video) }?.also {
-                entries[key] = it
-                withContext(Dispatchers.IO) { save(entries) }
-            }
-        } ?: return null
+        val entry = entryFor(videoPath) ?: return null
         return StreamDetails(
             entry.width,
             entry.height,
@@ -68,6 +62,21 @@ class QualityStore private constructor(private val context: Context) {
             entry.hdr,
             entry.audio.map { AudioStream(it.codec, it.channels, it.language) },
         )
+    }
+
+    /** How long [videoPath] plays, as the file says; null when it cannot be read. */
+    suspend fun durationMsFor(videoPath: String): Long? = entryFor(videoPath)?.durationMs
+
+    private suspend fun entryFor(videoPath: String): Entry? {
+        val video = File(videoPath)
+        val key = "$videoPath|${video.length()}|${video.lastModified()}"
+        return lock.withLock {
+            val entries = cache ?: withContext(Dispatchers.IO) { load() }.also { cache = it }
+            entries[key] ?: withContext(Dispatchers.IO) { probe(video) }?.also {
+                entries[key] = it
+                withContext(Dispatchers.IO) { save(entries) }
+            }
+        }
     }
 
     private fun probe(video: File): Entry? = runCatching {
@@ -95,6 +104,10 @@ class QualityStore private constructor(private val context: Context) {
                     audio = formats.filter { MimeTypes.isAudio(it.sampleMimeType) }.map {
                         Audio(Quality.codecOf(it.sampleMimeType), it.channelCount.takeIf { c -> c > 0 }, it.language)
                     },
+                    durationMs = runCatching { retriever.retrieveDurationUs().get(PROBE_TIMEOUT_S, TimeUnit.SECONDS) }
+                        .getOrNull()
+                        ?.takeIf { it != C.TIME_UNSET && it > 0 }
+                        ?.let { it / 1000 },
                 )
             }
     }.getOrNull()

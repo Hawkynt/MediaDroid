@@ -33,6 +33,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.data.StorageRoot
+import com.hawkynt.mediadroid.data.StorageRoots
 import com.hawkynt.mediadroid.library.BrowseFilter
 import com.hawkynt.mediadroid.library.Episode
 import com.hawkynt.mediadroid.library.HomeRow
@@ -66,6 +68,8 @@ sealed interface Screen {
     /** A wall; with a [row], the full wall of one home row ("See all") instead of the home. */
     data class Browse(val section: LibrarySection, val row: HomeRow? = null) : Screen
     data class Places(val kind: PlaceKind) : Screen
+    /** The Files browser at [dir]; null lists the storage volumes. */
+    data class Files(val dir: String? = null) : Screen
     data object Search : Screen
     data object Filters : Screen
     data object Settings : Screen
@@ -120,6 +124,14 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     val showGrid = rememberLazyGridState()
     val searchGrid = rememberLazyGridState()
     val rowGrid = rememberLazyGridState()
+    // The demo has no real volumes: its library stands in for the internal storage.
+    val storageRoots = remember(demo) {
+        if (demo) {
+            listOf(StorageRoot("Internal storage", store.data.rootPath, removable = false))
+        } else {
+            StorageRoots.list(context)
+        }
+    }
     // Which section the Genres and Years places group; follows the wall last browsed.
     var placeSection by remember { mutableStateOf(LibrarySection.MOVIES) }
     val wide = LocalConfiguration.current.screenWidthDp >= 600
@@ -397,6 +409,20 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
                     onOpen = { section, placeFilter ->
                         filter = placeFilter
                         navigate(Screen.Browse(section))
+                    },
+                )
+                is Screen.Files -> FilesScreen(
+                    store = store,
+                    roots = storageRoots,
+                    dir = s.dir,
+                    onOpen = { screen = Screen.Files(it) },
+                    onPlay = { queue, start ->
+                        screen = Screen.Player(
+                            queue,
+                            start,
+                            autoAdvance = store.data.settings.bingeWatching,
+                            returnTo = s,
+                        )
                     },
                 )
                 Screen.Search -> SearchScreen(
