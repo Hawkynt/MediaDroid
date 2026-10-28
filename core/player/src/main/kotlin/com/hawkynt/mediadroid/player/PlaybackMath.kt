@@ -156,4 +156,16 @@ object PlaybackMath {
     /** An audio delay (ms; positive: sound later) moved by [steps] of [AUDIO_DELAY_STEP_MS], held in range. */
     fun nudgeAudioDelay(currentMs: Int, steps: Int): Int =
         (currentMs + steps * AUDIO_DELAY_STEP_MS).coerceIn(-AUDIO_DELAY_LIMIT_MS, AUDIO_DELAY_LIMIT_MS)
+
+    /**
+     * The display refresh rate to play a [frameRate] film at: the lowest of [available] that is a whole
+     * multiple of it (within 0.1 %), or null when none is — then switching would not remove the judder.
+     */
+    fun matchingRefreshRate(frameRate: Float, available: List<Float>): Float? {
+        if (frameRate <= 0f) return null
+        return available.sorted().firstOrNull { rate ->
+            val multiple = kotlin.math.round(rate / frameRate)
+            multiple >= 1 && kotlin.math.abs(rate - multiple * frameRate) <= rate * 0.001f
+        }
+    }
 }

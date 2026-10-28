@@ -240,6 +240,28 @@ fun PlayerScreen(
                     // Real loudness fix for unnormalized streams: the settings dB
                     // is applied to the decoded PCM and re-read per buffer, so the
                     // slider takes effect mid-playback without rebuilding anything.
+                    // Passthrough for an AV receiver only happens on the device's own audio path, so with it
+                    // switched on the bundled FFmpeg decoder becomes the fallback instead of the first choice.
+                    override fun buildAudioRenderers(
+                        context: android.content.Context,
+                        extensionRendererMode: Int,
+                        mediaCodecSelector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector,
+                        enableDecoderFallback: Boolean,
+                        audioSink: androidx.media3.exoplayer.audio.AudioSink,
+                        eventHandler: android.os.Handler,
+                        eventListener: androidx.media3.exoplayer.audio.AudioRendererEventListener,
+                        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
+                    ) = super.buildAudioRenderers(
+                        context,
+                        if (settings.audioPassthrough) EXTENSION_RENDERER_MODE_ON else extensionRendererMode,
+                        mediaCodecSelector,
+                        enableDecoderFallback,
+                        audioSink,
+                        eventHandler,
+                        eventListener,
+                        out,
+                    )
+
                     override fun buildAudioSink(
                         context: android.content.Context,
                         enableFloatOutput: Boolean,
@@ -266,6 +288,36 @@ fun PlayerScreen(
                 ),
             )
             .build()
+    }
+    // TV boxes: the display switches to a whole multiple of the film's frame rate (no judder), and back.
+    val displayActivity = remember(context) { context.findActivity() }
+    DisposableEffect(player) {
+        fun match() {
+            if (!settings.matchRefreshRate) return
+            val window = displayActivity?.window ?: return
+            val display = window.decorView.display ?: return
+            val frameRate = player.currentTracks.groups
+                .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
+                .firstNotNullOfOrNull { g ->
+                    (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it).frameRate }
+                }
+                ?: return
+            val current = display.mode
+            val sameSize = display.supportedModes.filter {
+                it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight
+            }
+            val rate = PlaybackMath.matchingRefreshRate(frameRate, sameSize.map { it.refreshRate }) ?: return
+            val mode = sameSize.firstOrNull { it.refreshRate == rate } ?: return
+            window.attributes = window.attributes.apply { preferredDisplayModeId = mode.modeId }
+        }
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) = match()
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            displayActivity?.window?.let { it.attributes = it.attributes.apply { preferredDisplayModeId = 0 } }
+        }
     }
     // Which decoders are at work, as Media3 reports them, for the info sheet.
     var videoDecoder by remember { mutableStateOf<String?>(null) }

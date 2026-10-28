@@ -173,6 +173,20 @@ fun SettingsScreen(store: StateStore, rootPath: String, onChangeFolder: () -> Un
             onChange = { c -> update { it.skipIntroCredits = c } },
         )
         Spacer(Modifier.height(8.dp))
+        Text("TV and AV receiver", fontSize = 18.sp)
+        SwitchRow(
+            label = "Match the refresh rate",
+            detail = "The TV switches to the film's frame rate (or a multiple), so camera pans do not judder.",
+            checked = settings.matchRefreshRate,
+            onChange = { c -> update { it.matchRefreshRate = c } },
+        )
+        SwitchRow(
+            label = "Audio passthrough",
+            detail = "Surround sound goes untouched to an AV receiver over HDMI, where the device supports it.",
+            checked = settings.audioPassthrough,
+            onChange = { c -> update { it.audioPassthrough = c } },
+        )
+        Spacer(Modifier.height(8.dp))
         Text("Video decoding", fontSize = 18.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(

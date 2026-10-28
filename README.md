@@ -64,6 +64,7 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - Repeat in the gear: off, this video, or all of it (the show or the folder, round again from the start) — for the film a child wants to see again and again. It lasts for the session.
 - With the controls up, the bar also tells when the film will be over on the clock ("Ends 21:35", in the device's 12/24-hour format), allowing for the playback speed.
 - The player shows nothing but the picture: a tap brings the controls up, a few seconds untouched fade them out, and the status and navigation bars stay hidden while watching.
+- For TV boxes, two guarded settings: matching the display's refresh rate to the film's frame rate (or a whole multiple — no judder at 23.976 fps), and audio passthrough that hands AC3/E-AC3/DTS/TrueHD untouched to an AV receiver over HDMI where the device supports it.
 - Video plays on the device's own hardware decoders; the bundled FFmpeg decoder only steps in for what they cannot play. Settings can put software decoding first, with a warning: it drains the battery fast and is meant for videos that otherwise do not play at all or only with errors.
 - The player's gear holds playback speed from 0.2× to 5× (starting at the default speed), subtitles and track pickers, and brightness/gamma/contrast/color for the video on screen — remembered per video, live as you drag, and the picture size: Fit, Fill (crop to the screen) or Stretch.
 - Touch on the bare picture: double tap left or right jumps 15 s back or ahead, a vertical swipe on the left half sets the screen brightness and on the right half the volume — both run on past the device's maximum up to 800 %, doubling every third of the extra stretch: louder through the app's loudness gain (soft-saturating, so quiet tracks come up without cracking peaks), brighter through a gamma lift — and a pinch zooms up to 4× and pans the zoomed picture.
@@ -127,7 +128,6 @@ Specified, not built yet. Prior art: [Nova Video Player](https://github.com/nova
 - **Title from the file.** Without an NFO title, the title the container itself carries (Matroska / MP4 metadata) comes before the cleaned-up file or folder name.
 - **Spatial audio.** On Android 13+ a switch in the gear hands multichannel sound to the platform spatializer for headphones that support it.
 - **Display cutout.** In Fill mode the picture may extend into the camera notch / punch hole, as a switch next to the picture sizes.
-- **On TV boxes.** Optional switching of the display refresh rate to the film's frame rate (no judder at 23.976 fps), and an audio-passthrough option that hands AC3/E-AC3/DTS/TrueHD untouched to an AV receiver over HDMI.
 
 ### Navigation and browsing
 
