@@ -41,6 +41,7 @@ data class Settings(
     var maxAgeYears: Int = 0,                 // 0 = off, else hide content above
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
+    var askedForNotifications: Boolean = false, // the media notification's permission is asked once
     var softwareVideoDecoding: Boolean = false, // FFmpeg before the device's decoders: last resort, drains the battery
 )
 
