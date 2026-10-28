@@ -58,7 +58,12 @@ fun SearchScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             items(results, key = { it.key }) { item ->
-                PosterCard(item, onClick = { onOpen(item) })
+                PosterCard(
+                    item,
+                    onClick = { onOpen(item) },
+                    watched = isWatched(item, store),
+                    progress = resumeProgress(item, store),
+                )
             }
         }
     }
