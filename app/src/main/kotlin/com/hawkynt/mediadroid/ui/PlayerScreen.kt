@@ -145,6 +145,7 @@ fun PlayerScreen(
     // unless the household chose software decoding in Settings.
     // Past the device's own maximum a volume swipe adds loudness gain and a brightness swipe adds gamma.
     var loudnessBoostDb by remember { mutableFloatStateOf(0f) }
+    var useCutout by remember { mutableStateOf(settings.useCutout) }
     var gammaBoost by remember { mutableFloatStateOf(1f) }
     val player = remember {
         ExoPlayer.Builder(context)
@@ -271,8 +272,13 @@ fun PlayerScreen(
         val insets = window?.let { WindowCompat.getInsetsController(it, hostView) }
         insets?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         insets?.hide(WindowInsetsCompat.Type.systemBars())
+        val cutoutBefore =
+            if (android.os.Build.VERSION.SDK_INT >= 28) window?.attributes?.layoutInDisplayCutoutMode else null
         hostView.keepScreenOn = true
         onDispose {
+            if (android.os.Build.VERSION.SDK_INT >= 28 && cutoutBefore != null) {
+                window?.attributes = window?.attributes?.apply { layoutInDisplayCutoutMode = cutoutBefore }
+            }
             insets?.show(WindowInsetsCompat.Type.systemBars())
             hostView.keepScreenOn = false
         }
@@ -461,6 +467,20 @@ fun PlayerScreen(
                 break
             }
             delay(250)
+        }
+    }
+
+    // The camera cutout: the window may reach into it (short edges) or keep clear of it.
+    LaunchedEffect(useCutout) {
+        val window = hostView.context.findActivity()?.window ?: return@LaunchedEffect
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (useCutout) {
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                } else {
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+                }
+            }
         }
     }
 
@@ -791,6 +811,28 @@ fun PlayerScreen(
                 onAudioTrack = { audioPicker = true },
                 onSubtitleTrack = { subtitlePicker = true },
                 onClose = { panelOpen = false },
+                afterPictureSize = {
+                    if (android.os.Build.VERSION.SDK_INT >= 28) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Use the camera cutout", fontSize = 16.sp)
+                                Text(
+                                    "The picture may reach into the notch or punch hole, mostly useful with Fill.",
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            androidx.compose.material3.Switch(
+                                checked = useCutout,
+                                onCheckedChange = {
+                                    useCutout = it
+                                    store.data.settings.useCutout = it
+                                    store.save()
+                                },
+                            )
+                        }
+                    }
+                },
                 sections = {
                     PanelTitle("Sleep timer")
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -953,6 +995,7 @@ private fun PlayerPanel(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     sections: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
+    afterPictureSize: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -1001,6 +1044,7 @@ private fun PlayerPanel(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
+        afterPictureSize()
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 20.dp)) {
             Text(
