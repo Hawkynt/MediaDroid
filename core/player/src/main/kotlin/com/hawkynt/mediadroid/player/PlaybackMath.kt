@@ -109,4 +109,15 @@ object PlaybackMath {
         heldMs >= 3_000 -> 30_000L
         else -> 10_000L
     }
+
+    /** Repeat in the player: off, this video, or the whole queue (the show or the folder). */
+    enum class Repeat(val label: String) { OFF("Off"), ONE("This video"), ALL("All of it") }
+
+    /** The queue index to play when item [index] of [size] ends, or null when playback is done. */
+    fun afterEnd(index: Int, size: Int, autoAdvance: Boolean, repeat: Repeat): Int? = when {
+        repeat == Repeat.ONE -> index
+        index + 1 < size && (autoAdvance || repeat == Repeat.ALL) -> index + 1
+        repeat == Repeat.ALL && size > 0 -> 0
+        else -> null
+    }
 }

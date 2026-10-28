@@ -358,9 +358,19 @@ fun PlayerScreen(
         )
     }
 
+    var repeat by remember { mutableStateOf(PlaybackMath.Repeat.OFF) }
+
     fun finishCurrent() {
         store.markWatched(queue[index].videoPath)
-        if (autoAdvance && index + 1 < queue.size) index++ else finished = true
+        when (val next = PlaybackMath.afterEnd(index, queue.size, autoAdvance, repeat)) {
+            null -> finished = true
+            index -> {
+                // The same video again: the index does not change, so start it over by hand.
+                player.seekTo(0)
+                player.playWhenReady = true
+            }
+            else -> index = next
+        }
     }
 
     DisposableEffect(player) {
@@ -745,6 +755,18 @@ fun PlayerScreen(
                 onAudioTrack = { audioPicker = true },
                 onSubtitleTrack = { subtitlePicker = true },
                 onClose = { panelOpen = false },
+                sections = {
+                    PanelTitle("Repeat")
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        PlaybackMath.Repeat.entries.forEach { option ->
+                            FilterChip(
+                                selected = repeat == option,
+                                onClick = { repeat = option },
+                                label = { Text(option.label, fontSize = 16.sp) },
+                            )
+                        }
+                    }
+                },
                 modifier = Modifier.align(Alignment.CenterEnd).then(safeArea),
             )
         }
@@ -859,6 +881,7 @@ private fun PlayerPanel(
     onSubtitleTrack: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    sections: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -888,6 +911,8 @@ private fun PlayerPanel(
                 )
             }
         }
+
+        sections()
 
         PanelTitle("Picture size")
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
