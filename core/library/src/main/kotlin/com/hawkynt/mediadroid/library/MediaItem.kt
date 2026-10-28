@@ -44,6 +44,10 @@ data class Movie(
     val subtitleLanguages: List<String> = emptyList(),
     /** Resolution, HDR, video and audio format for the badges; see [Quality]. */
     val quality: Quality = Quality.NONE,
+    /** The NFO's rating on a 0–10 scale; null when unrated. */
+    val rating: Double? = null,
+    /** When it arrived: the NFO's `<dateadded>`, else the video file's time, as epoch milliseconds. */
+    val addedMs: Long? = null,
 ) : MediaItem {
     override val key: String get() = "movie:$videoPath"
 }
@@ -58,8 +62,18 @@ data class Show(
     override val fanartPath: String? = null,
     val plot: String? = null,
     val seasons: List<Season> = emptyList(),
+    /** The NFO's rating on a 0–10 scale; null when unrated. */
+    val rating: Double? = null,
 ) : MediaItem {
     override val key: String get() = "show:$path:${title.lowercase()}"
+
+    private val episodeTimes: List<Long> get() = seasons.flatMap { s -> s.episodes.mapNotNull { it.addedMs } }
+
+    /** When the show arrived: its first episode's time. */
+    val addedMs: Long? get() = episodeTimes.minOrNull()
+
+    /** When it last grew: its newest episode's time. */
+    val updatedMs: Long? get() = episodeTimes.maxOrNull()
 
     /**
      * The video whose frame stands in for missing art: the first episode of the first regular season,
@@ -98,6 +112,8 @@ data class Episode(
     val subtitleLanguages: List<String> = emptyList(),
     /** Resolution, HDR, video and audio format for the badges; see [Quality]. */
     val quality: Quality = Quality.NONE,
+    /** When it arrived: the NFO's `<dateadded>`, else the video file's time, as epoch milliseconds. */
+    val addedMs: Long? = null,
 )
 
 /** The two halves of the library the sidebar switches between. */

@@ -21,6 +21,8 @@ data class EpisodeInfo(
     val subtitleLanguages: List<String> = emptyList(),
     /** Video size, codecs and HDR from `<fileinfo><streamdetails>`; null when the NFO has none. */
     val streamDetails: StreamDetails? = null,
+    /** When the library got it, from `<dateadded>`, as epoch milliseconds. */
+    val dateAddedMs: Long? = null,
 )
 
 /**
@@ -53,5 +55,6 @@ fun parseEpisodeNfo(xml: String): EpisodeInfo {
         audioLanguages = root.streamLanguages("audio"),
         subtitleLanguages = root.streamLanguages("subtitle"),
         streamDetails = root.streamDetails(),
+        dateAddedMs = root.dateAddedMs(),
     )
 }

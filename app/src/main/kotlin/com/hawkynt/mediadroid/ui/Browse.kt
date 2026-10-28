@@ -68,6 +68,7 @@ import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
+import com.hawkynt.mediadroid.library.SortOrder
 import com.hawkynt.mediadroid.ui.theme.focusClickable
 import java.io.File
 
@@ -100,7 +101,7 @@ fun BrowseScreen(
         LibrarySection.MOVIES -> "Movies"
         LibrarySection.SHOWS -> "TV Shows"
     }
-    val filtered = filter != BrowseFilter()
+    val filtered = filter.copy(sort = SortOrder.TITLE) != BrowseFilter()
 
     // Phones get two or three posters across; tablets and TVs as many as fit.
     val compact = LocalConfiguration.current.screenWidthDp < 600

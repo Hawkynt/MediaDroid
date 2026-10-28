@@ -278,6 +278,7 @@ object LibraryScanner {
             fanartPath = art[ArtKind.Fanart]?.let { File(dir, it).absolutePath },
             plot = info?.plot,
             seasons = seasons,
+            rating = info?.rating,
         )
     }
 
@@ -310,6 +311,7 @@ object LibraryScanner {
             audioLanguages = nfo?.audioLanguages ?: emptyList(),
             subtitleLanguages = nfo?.subtitleLanguages ?: emptyList(),
             quality = Quality.of(nfo?.streamDetails),
+            addedMs = nfo?.dateAddedMs ?: video.addedTime(),
         )
     }
 
@@ -373,6 +375,8 @@ object LibraryScanner {
             audioLanguages = info?.audioLanguages ?: emptyList(),
             subtitleLanguages = info?.subtitleLanguages ?: emptyList(),
             quality = Quality.of(info?.streamDetails),
+            rating = info?.rating,
+            addedMs = info?.dateAddedMs ?: video.addedTime(),
         )
     }
 
@@ -411,8 +415,13 @@ object LibraryScanner {
             audioLanguages = info?.audioLanguages ?: emptyList(),
             subtitleLanguages = info?.subtitleLanguages ?: emptyList(),
             quality = Quality.of(info?.streamDetails),
+            rating = info?.rating,
+            addedMs = info?.dateAddedMs ?: video.addedTime(),
         )
     }
+
+    /** The file's modification time, which is when it was copied in for most libraries; null when unknown. */
+    private fun File.addedTime(): Long? = lastModified().takeIf { it > 0 }
 
     /**
      * The title stored inside the video file, for movies without an NFO title. One written like a release

@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.library.BrowseFilter
 import com.hawkynt.mediadroid.library.Library
 import com.hawkynt.mediadroid.library.LibraryQuery
+import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.SortOrder
 
@@ -65,7 +66,13 @@ fun SearchScreen(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun FiltersScreen(library: Library, filter: BrowseFilter, onFilterChange: (BrowseFilter) -> Unit) {
+fun FiltersScreen(
+    library: Library,
+    filter: BrowseFilter,
+    onFilterChange: (BrowseFilter) -> Unit,
+    sorts: Map<LibrarySection, SortOrder>,
+    onSortChange: (LibrarySection, SortOrder) -> Unit,
+) {
     val facets = LibraryQuery.genreFacets(library.items)
     val decades = LibraryQuery.groupByYear(library.items).keys.filter { it >= 0 }
 
@@ -100,23 +107,22 @@ fun FiltersScreen(library: Library, filter: BrowseFilter, onFilterChange: (Brows
             }
         }
 
-        Text("Sort", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 24.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SortOrder.entries.forEach { sort ->
-                FilterChip(
-                    selected = filter.sort == sort,
-                    onClick = { onFilterChange(filter.copy(sort = sort)) },
-                    label = {
-                        Text(
-                            when (sort) {
-                                SortOrder.TITLE -> "Title A–Z"
-                                SortOrder.YEAR_NEW -> "Newest first"
-                                SortOrder.YEAR_OLD -> "Oldest first"
-                            },
-                            fontSize = 16.sp,
-                        )
-                    },
-                )
+        LibrarySection.entries.forEach { section ->
+            val items = library.itemsIn(section)
+            if (items.isEmpty()) return@forEach
+            val heading = when (section) {
+                LibrarySection.MOVIES -> "Sort movies"
+                LibrarySection.SHOWS -> "Sort TV shows"
+            }
+            Text(heading, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 24.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LibraryQuery.sortOrders(items).forEach { sort ->
+                    FilterChip(
+                        selected = sorts[section] == sort,
+                        onClick = { onSortChange(section, sort) },
+                        label = { Text(sortLabel(sort), fontSize = 16.sp) },
+                    )
+                }
             }
         }
 
@@ -127,4 +133,16 @@ fun FiltersScreen(library: Library, filter: BrowseFilter, onFilterChange: (Brows
             modifier = Modifier.padding(top = 24.dp),
         )
     }
+}
+
+private fun sortLabel(sort: SortOrder): String = when (sort) {
+    SortOrder.TITLE -> "Title A–Z"
+    SortOrder.TITLE_DESC -> "Title Z–A"
+    SortOrder.YEAR_NEW -> "Newest first"
+    SortOrder.YEAR_OLD -> "Oldest first"
+    SortOrder.ADDED -> "Recently added"
+    SortOrder.UPDATED -> "Recently updated"
+    SortOrder.RUNTIME_SHORT -> "Shortest first"
+    SortOrder.RUNTIME_LONG -> "Longest first"
+    SortOrder.RATING -> "Best rated"
 }

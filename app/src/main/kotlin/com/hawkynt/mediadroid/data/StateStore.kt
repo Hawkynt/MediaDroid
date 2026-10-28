@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import com.hawkynt.mediadroid.library.LibrarySection
+import com.hawkynt.mediadroid.library.SortOrder
 import com.hawkynt.mediadroid.library.WatchMarks
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.SubtitleLook
@@ -73,7 +75,7 @@ data class AppData(
     val resume: MutableMap<String, ResumeInfo> = mutableMapOf(),
     val picture: MutableMap<String, PictureOverride> = mutableMapOf(),
     val audioDelays: MutableMap<String, Int> = mutableMapOf(), // lip-sync per audio output, in ms
-
+    val sorts: MutableMap<String, String> = mutableMapOf(), // SortOrder per LibrarySection, by name
     val subtitles: MutableMap<String, SubtitleOverride> = mutableMapOf(),
     var settings: Settings = Settings(),
 )
@@ -146,6 +148,15 @@ class StateStore(context: Context) {
 
     fun saveAudioDelay(outputKey: String, delayMs: Int) {
         if (delayMs == 0) data.audioDelays.remove(outputKey) else data.audioDelays[outputKey] = delayMs
+        save()
+    }
+
+    /** The order the [section]'s wall was last sorted by; A–Z until one is chosen. */
+    fun sortFor(section: LibrarySection): SortOrder =
+        data.sorts[section.name]?.let { name -> SortOrder.entries.firstOrNull { it.name == name } } ?: SortOrder.TITLE
+
+    fun saveSort(section: LibrarySection, order: SortOrder) {
+        data.sorts[section.name] = order.name
         save()
     }
 

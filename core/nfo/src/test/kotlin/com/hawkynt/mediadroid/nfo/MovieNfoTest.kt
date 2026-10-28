@@ -103,4 +103,43 @@ class MovieNfoTest {
         assertEquals(emptyList<String>(), info.audioLanguages)
         assertEquals(emptyList<String>(), info.subtitleLanguages)
     }
+
+    @Test
+    fun theDefaultRatingIsReadOnATenPointScale() {
+        val info = parseMovieNfo(
+            """
+            <movie><title>Heat</title>
+              <ratings>
+                <rating name="metacritic" max="100"><value>76</value></rating>
+                <rating name="imdb" max="10" default="true"><value>8.3</value><votes>700000</votes></rating>
+              </ratings>
+            </movie>
+            """.trimIndent(),
+        )
+        assertEquals(8.3, info.rating!!, 1e-9)
+    }
+
+    @Test
+    fun aRatingOutOfAHundredIsScaledAndTheFirstCountsWithoutADefault() {
+        val info = parseMovieNfo(
+            "<movie><title>Heat</title><ratings>" +
+                "<rating name=\"mc\" max=\"100\"><value>76</value></rating>" +
+                "</ratings></movie>",
+        )
+        assertEquals(7.6, info.rating!!, 1e-9)
+    }
+
+    @Test
+    fun theOldFlatRatingStillCountsAndZeroMeansUnrated() {
+        assertEquals(7.1, parseMovieNfo("<movie><title>Heat</title><rating>7.1</rating></movie>").rating!!, 1e-9)
+        assertNull(parseMovieNfo("<movie><title>Heat</title><rating>0</rating></movie>").rating)
+        assertNull(parseMovieNfo("<movie><title>Heat</title></movie>").rating)
+    }
+
+    @Test
+    fun dateAddedIsReadAsEpochMillis() {
+        val info = parseMovieNfo("<movie><title>Heat</title><dateadded>2019-01-02 10:04:20</dateadded></movie>")
+        assertEquals(1546423460000L, info.dateAddedMs)
+        assertNull(parseMovieNfo("<movie><title>Heat</title><dateadded>soon</dateadded></movie>").dateAddedMs)
+    }
 }

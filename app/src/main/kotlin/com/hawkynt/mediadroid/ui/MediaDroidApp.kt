@@ -100,6 +100,8 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     var screen by remember { mutableStateOf<Screen>(Screen.Browse(LibrarySection.MOVIES)) }
     var lastBrowse by remember { mutableStateOf<Screen>(Screen.Browse(LibrarySection.MOVIES)) }
     var filter by remember { mutableStateOf(BrowseFilter()) }
+    // Each wall keeps its own order, remembered across launches.
+    var sorts by remember { mutableStateOf(LibrarySection.entries.associateWith { store.sortFor(it) }) }
     var searchQuery by remember { mutableStateOf("") }
     // Where Back from a title's details leads: the wall or the search it was opened from.
     var detailsReturn by remember { mutableStateOf<Screen>(Screen.Browse(LibrarySection.MOVIES)) }
@@ -343,7 +345,7 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
                     library = lib,
                     section = s.section,
                     store = store,
-                    filter = filter,
+                    filter = filter.copy(sort = sorts.getValue(s.section)),
                     rootPath = rootPath,
                     gridState = if (s.section == LibrarySection.MOVIES) movieGrid else showGrid,
                     onOpen = ::openDetails,
@@ -358,7 +360,16 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
                     gridState = searchGrid,
                     onOpen = ::openDetails,
                 )
-                Screen.Filters -> FiltersScreen(lib, filter, onFilterChange = { filter = it })
+                Screen.Filters -> FiltersScreen(
+                    library = lib,
+                    filter = filter,
+                    onFilterChange = { filter = it },
+                    sorts = sorts,
+                    onSortChange = { section, order ->
+                        sorts = sorts + (section to order)
+                        store.saveSort(section, order)
+                    },
+                )
                 Screen.Settings -> SettingsScreen(store, rootPath = rootPath, onChangeFolder = ::launchPicker)
                 else -> Unit
             }
