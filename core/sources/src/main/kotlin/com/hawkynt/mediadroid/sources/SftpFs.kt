@@ -75,6 +75,7 @@ class SftpFs(private val source: Source, private val secrets: Secrets) : RemoteF
 
     override fun resolve(location: String): FsFile? {
         val prefix = locationOf("")
+        if (location.trimEnd('/') == locationOf(base).trimEnd('/')) return root
         if (!location.startsWith("$prefix/")) return null
         val path = location.removePrefix(prefix)
         return runCatching {

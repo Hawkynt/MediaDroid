@@ -48,6 +48,8 @@ class FtpAndSftpIntegrationTest {
             assertEquals("6789", video.open(6).use { String(it.readBytes()) })
             assertEquals("<movie><title>Heat</title></movie>", movies.child("movie.nfo").readTextOrNull())
             assertEquals(10, fs.resolve("ftp://127.0.0.1:$ftpPort/Movies/Heat (1995).mkv")!!.length())
+            // The root itself is found too, as the Files browser opens a source at its root.
+            assertEquals(2, fs.resolve("ftp://127.0.0.1:$ftpPort")!!.listFiles()!!.size)
         }
         SourceFiles(Secrets { null }).use { files ->
             assertEquals("Heat", LibraryScanner.scan(files.root(source)!!).movies.single().title)
