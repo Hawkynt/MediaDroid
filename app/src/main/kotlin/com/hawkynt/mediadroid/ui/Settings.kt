@@ -1,6 +1,8 @@
 package com.hawkynt.mediadroid.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -11,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -62,66 +63,93 @@ fun PinGate(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            "Settings are for grown-ups — tap these four numbers",
-            fontSize = 22.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(16.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally)) {
-            pin.forEach { digit ->
-                Text(
-                    DigitWords[digit - '0'],
-                    fontSize = 40.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        Text(
-            when {
-                wrong -> "That was not it — try the words again"
-                entered.isEmpty() -> "•".repeat(4)
-                else -> "•".repeat(entered.length) + "○".repeat(4 - entered.length)
-            },
-            fontSize = if (wrong) 18.sp else 28.sp,
-            color = if (wrong) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(16.dp))
-        listOf("123", "456", "789").forEach { rowDigits ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                rowDigits.forEach { d ->
-                    Button(
-                        onClick = {
-                            wrong = false
-                            val next = (entered + d).take(4)
-                            entered = next
-                            if (next.length == 4) submit(next)
-                        },
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.height(72.dp).width(88.dp),
-                    ) { Text(d.toString(), fontSize = 30.sp) }
+    fun press(d: Char) {
+        wrong = false
+        val next = (entered + d).take(4)
+        entered = next
+        if (next.length == 4) submit(next)
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // A phone in landscape has no room for a keypad of four rows: the keys go in one wrapping row.
+        val short = maxHeight < SHORT_SCREEN
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                "Settings are for grown-ups — tap these four numbers",
+                fontSize = 22.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(if (short) 8.dp else 16.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally)) {
+                pin.forEach { digit ->
+                    Text(
+                        DigitWords[digit - '0'],
+                        fontSize = if (short) 32.sp else 40.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
-            Spacer(Modifier.height(12.dp))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(
+            Spacer(Modifier.height(if (short) 4.dp else 12.dp))
+            Text(
+                when {
+                    wrong -> "That was not it — try the words again"
+                    entered.isEmpty() -> "•".repeat(4)
+                    else -> "•".repeat(entered.length) + "○".repeat(4 - entered.length)
+                },
+                fontSize = if (wrong) 18.sp else 28.sp,
+                color = if (wrong) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(if (short) 8.dp else 16.dp))
+            val keyHeight = if (short) 60.dp else 72.dp
+            @Composable
+            fun Key(d: Char) = Button(
+                onClick = { press(d) },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.height(keyHeight).width(88.dp),
+            ) { Text(d.toString(), fontSize = 30.sp) }
+
+            @Composable
+            fun Clear() = OutlinedButton(
                 onClick = { entered = "" },
-                modifier = Modifier.height(72.dp).width(88.dp),
+                modifier = Modifier.height(keyHeight).width(88.dp),
             ) { Text("Clear", fontSize = 18.sp) }
-            Button(
+
+            @Composable
+            fun Back() = Button(
                 onClick = { entered = entered.dropLast(1) },
-                modifier = Modifier.height(72.dp).width(88.dp),
+                modifier = Modifier.height(keyHeight).width(88.dp),
             ) { Text("←", fontSize = 26.sp) }
+
+            if (short) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    "1234567890".forEach { Key(it) }
+                    Clear()
+                    Back()
+                }
+            } else {
+                listOf("123", "456", "789").forEach { rowDigits ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { rowDigits.forEach { Key(it) } }
+                    Spacer(Modifier.height(12.dp))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Clear()
+                    Key('0')
+                    Back()
+                }
+            }
         }
     }
 }
+
+/** Below this height the gate's keypad goes in one wrapping row. */
+private val SHORT_SCREEN = 560.dp
 
 /**
  * The guarded settings: playback defaults, picture and sound, languages, and
