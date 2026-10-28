@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
@@ -59,6 +60,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
@@ -66,6 +68,8 @@ import coil3.compose.AsyncImage
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.data.ThumbnailStore
 import com.hawkynt.mediadroid.library.BrowseFilter
+import com.hawkynt.mediadroid.library.HomeRow
+import com.hawkynt.mediadroid.library.HomeRows
 import com.hawkynt.mediadroid.library.Library
 import com.hawkynt.mediadroid.library.LibraryQuery
 import com.hawkynt.mediadroid.library.LibrarySection
@@ -91,9 +95,12 @@ fun BrowseScreen(
     onOpen: (MediaItem) -> Unit,
     onPlay: (item: MediaItem, path: String?) -> Unit,
     onClearFilter: () -> Unit,
+    row: HomeRow? = null,
+    onSeeAll: (HomeRow) -> Unit = {},
 ) {
     val maxAge = store.data.settings.maxAgeYears
-    val items = LibraryQuery.browse(library.itemsIn(section), filter, maxAge)
+    val wall = LibraryQuery.browse(library.itemsIn(section), filter, maxAge)
+    val items = row?.let { HomeRows.items(it, wall, store.marks) } ?: wall
     val continueItems = rememberContinueItems(library, store).filter {
         when (section) {
             LibrarySection.MOVIES -> it.item is Movie
@@ -106,6 +113,13 @@ fun BrowseScreen(
         LibrarySection.SHOWS -> "TV Shows"
     }
     val filtered = filter.copy(sort = SortOrder.TITLE) != BrowseFilter()
+    // The home — hero, Continue watching and the rows — sits above the full wall only, unfiltered.
+    val home = row == null && !filtered
+    val homeRows = if (home) {
+        HomeRows.rowsFor(section).map { it to HomeRows.items(it, wall, store.marks) }.filter { it.second.isNotEmpty() }
+    } else {
+        emptyList()
+    }
     var mode by remember { mutableStateOf(store.wallMode) }
 
     // Phones get two or three posters across; tablets and TVs as many as fit.
@@ -125,12 +139,12 @@ fun BrowseScreen(
         verticalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        if (featured != null && !filtered) {
+        if (featured != null && home) {
             item(span = { GridItemSpan(maxLineSpan) }, key = "hero") {
                 Hero(featured, onPlay = { onPlay(featured, null) }, onInfo = { onOpen(featured) })
             }
         }
-        if (continueItems.isNotEmpty() && !filtered) {
+        if (continueItems.isNotEmpty() && home) {
             item(span = { GridItemSpan(maxLineSpan) }, key = "continue") {
                 Column {
                     RowTitle("Continue watching")
@@ -144,9 +158,36 @@ fun BrowseScreen(
                 }
             }
         }
+        homeRows.forEach { (homeRow, rowItems) ->
+            item(span = { GridItemSpan(maxLineSpan) }, key = "row-${homeRow.name}") {
+                Column {
+                    RowTitle(homeRow.label)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        items(rowItems.take(HOME_ROW_LENGTH), key = { it.key }) { item ->
+                            PosterCard(
+                                item,
+                                onClick = { onOpen(item) },
+                                watched = isWatched(item, store),
+                                progress = resumeProgress(item, store),
+                                modifier = Modifier.width(if (compact) 112.dp else 140.dp),
+                            )
+                        }
+                        item(key = "see-all") {
+                            SeeAllCard(onClick = { onSeeAll(homeRow) }, width = if (compact) 112.dp else 140.dp)
+                        }
+                    }
+                }
+            }
+        }
         item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                RowTitle(if (filtered) "$sectionName · filtered" else "All $sectionName")
+                RowTitle(
+                    when {
+                        row != null -> "${row.label} · $sectionName"
+                        filtered -> "$sectionName · filtered"
+                        else -> "All $sectionName"
+                    },
+                )
                 Text(
                     "${items.size}",
                     fontSize = 18.sp,
@@ -199,6 +240,33 @@ fun BrowseScreen(
                     onClick = { onOpen(item) },
                 )
             }
+        }
+    }
+}
+
+/** How many titles a home row shows before its "See all". */
+private const val HOME_ROW_LENGTH = 20
+
+/** The last card of a home row: opens the whole row as a wall. */
+@Composable
+private fun SeeAllCard(onClick: () -> Unit, width: Dp) {
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        modifier = Modifier
+            .width(width)
+            .aspectRatio(2f / 3f)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .focusClickable(shape = shape, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                modifier = Modifier.size(36.dp),
+            )
+            Text("See all", fontSize = 16.sp, fontWeight = FontWeight.Medium)
         }
     }
 }

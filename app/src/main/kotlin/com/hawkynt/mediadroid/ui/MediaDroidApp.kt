@@ -35,6 +35,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.library.BrowseFilter
 import com.hawkynt.mediadroid.library.Episode
+import com.hawkynt.mediadroid.library.HomeRow
 import com.hawkynt.mediadroid.library.Library
 import com.hawkynt.mediadroid.library.LibraryScanner
 import com.hawkynt.mediadroid.library.LibrarySection
@@ -61,7 +62,8 @@ data class Playable(
 )
 
 sealed interface Screen {
-    data class Browse(val section: LibrarySection) : Screen
+    /** A wall; with a [row], the full wall of one home row ("See all") instead of the home. */
+    data class Browse(val section: LibrarySection, val row: HomeRow? = null) : Screen
     data object Search : Screen
     data object Filters : Screen
     data object Settings : Screen
@@ -109,6 +111,7 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     val movieGrid = rememberLazyGridState()
     val showGrid = rememberLazyGridState()
     val searchGrid = rememberLazyGridState()
+    val rowGrid = rememberLazyGridState()
     val wide = LocalConfiguration.current.screenWidthDp >= 600
     var sidebarExpanded by remember { mutableStateOf(store.data.sidebarExpanded ?: wide) }
 
@@ -317,7 +320,12 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
         else -> Unit
     }
 
-    if (screen !is Screen.Browse) BackHandler { screen = lastBrowse }
+    val current = screen
+    if (current is Screen.Browse && current.row != null) {
+        BackHandler { navigate(Screen.Browse(current.section)) }
+    } else if (current !is Screen.Browse) {
+        BackHandler { screen = lastBrowse }
+    }
 
     Row(
         modifier = Modifier
@@ -347,10 +355,16 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
                     store = store,
                     filter = filter.copy(sort = sorts.getValue(s.section)),
                     rootPath = rootPath,
-                    gridState = if (s.section == LibrarySection.MOVIES) movieGrid else showGrid,
+                    row = s.row,
+                    gridState = when {
+                        s.row != null -> rowGrid
+                        s.section == LibrarySection.MOVIES -> movieGrid
+                        else -> showGrid
+                    },
                     onOpen = ::openDetails,
                     onPlay = { item, path -> play(item, path) },
                     onClearFilter = { filter = BrowseFilter() },
+                    onSeeAll = { navigate(Screen.Browse(s.section, it)) },
                 )
                 Screen.Search -> SearchScreen(
                     library = lib,
