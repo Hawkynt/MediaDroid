@@ -10,6 +10,8 @@ data class MovieInfo(
     val tagline: String? = null,
     val runtimeMinutes: Int? = null,
     val year: Int? = null,
+    /** The release date as the NFO writes it, `2017-10-06`; null when it gives only a year or nothing. */
+    val premiered: String? = null,
     val mpaa: String? = null,
     val studios: List<String> = emptyList(),
     val genres: List<String> = emptyList(),
@@ -60,6 +62,7 @@ fun parseMovieNfo(xml: String): MovieInfo {
         tagline = root.childText("tagline"),
         runtimeMinutes = root.childInt("runtime"),
         year = root.childInt("premiered") ?: root.childInt("year"),
+        premiered = root.childText("premiered"),
         mpaa = root.childText("mpaa"),
         studios = root.childElements("studio").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
         genres = root.childElements("genre").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },

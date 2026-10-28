@@ -69,7 +69,13 @@ sealed interface Screen {
     data object Filters : Screen
     data object Settings : Screen
     data class Details(val item: MediaItem) : Screen
-    data class Player(val queue: List<Playable>, val startIndex: Int, val autoAdvance: Boolean) : Screen
+    /** The player; leaving it goes to [returnTo], else to the wall last browsed. */
+    data class Player(
+        val queue: List<Playable>,
+        val startIndex: Int,
+        val autoAdvance: Boolean,
+        val returnTo: Screen? = null,
+    ) : Screen
 }
 
 /** Authorities whose tree document ids [StorageVolumes] can turn back into file paths. */
@@ -309,6 +315,12 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
                 onBack = { screen = detailsReturn },
                 onPlayMovie = { playMovie(it) },
                 onPlayShow = { show, episode -> playShow(show, episode) },
+                onPlayTrailer = { movie ->
+                    movie.trailerPath?.let { path ->
+                        val trailer = Playable("${movie.title} · Trailer", null, path, movie.posterPath)
+                        screen = Screen.Player(listOf(trailer), 0, autoAdvance = false, returnTo = s)
+                    }
+                },
             )
             return
         }
@@ -318,7 +330,7 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
                 startIndex = s.startIndex,
                 store = store,
                 autoAdvance = s.autoAdvance,
-                onExit = { screen = lastBrowse },
+                onExit = { screen = s.returnTo ?: lastBrowse },
                 demo = demo,
             )
             return

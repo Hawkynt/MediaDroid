@@ -446,4 +446,30 @@ class LibraryScannerTest {
         assertEquals(1_500_000_000_000L, dark.addedMs)
         assertEquals(1_700_000_000_000L, dark.updatedMs)
     }
+
+    @Test
+    fun aTrailerBesideTheFilmBelongsToItAndStaysOffTheWall() {
+        file("Movies/Heat (1995)/Heat (1995).mkv")
+        file("Movies/Heat (1995)/Heat (1995)-trailer.mp4")
+        file(
+            "Movies/Heat (1995)/movie.nfo",
+            "<movie><title>Heat</title><premiered>1995-12-15</premiered><director>Michael Mann</director>" +
+                "<studio>Warner Bros.</studio></movie>",
+        )
+        file("Movies/Coco (2017).mkv")
+        file("Movies/Coco (2017)-trailer.mkv")
+        file("Movies/Alien (1979).mkv")
+
+        val movies = LibraryScanner.scan(File(folder.root, "Movies")).movies
+
+        assertEquals(listOf("Alien", "Coco", "Heat"), movies.map { it.title }.sorted())
+        val heat = movies.first { it.title == "Heat" }
+        assertEquals("Heat (1995)-trailer.mp4", heat.trailerPath?.let { File(it).name })
+        assertEquals("1995-12-15", heat.premiered)
+        assertEquals(listOf("Michael Mann"), heat.directors)
+        assertEquals(listOf("Warner Bros."), heat.studios)
+        assertEquals("Coco (2017)-trailer.mkv", movies.first { it.title == "Coco" }.trailerPath?.let { File(it).name })
+        assertNull(movies.first { it.title == "Alien" }.trailerPath)
+    }
 }
+

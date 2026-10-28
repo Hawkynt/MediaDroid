@@ -142,4 +142,11 @@ class MovieNfoTest {
         assertEquals(1546423460000L, info.dateAddedMs)
         assertNull(parseMovieNfo("<movie><title>Heat</title><dateadded>soon</dateadded></movie>").dateAddedMs)
     }
+
+    @Test
+    fun thePremieredDateIsKeptWhole() {
+        assertEquals("2017-10-06", parseMovieNfo(bigNfo).premiered)
+        assertNull(parseMovieNfo("<movie><title>Heat</title><year>1995</year></movie>").premiered)
+    }
 }
+
