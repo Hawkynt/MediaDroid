@@ -82,6 +82,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.ui.PlayerView
 import com.hawkynt.mediadroid.R
+import com.hawkynt.mediadroid.player.PlayerWindow
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.library.SkipRules
 import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
@@ -152,12 +153,65 @@ fun PlayerScreen(
     // unless the household chose software decoding in Settings.
     // Past the device's own maximum a volume swipe adds loudness gain and a brightness swipe adds gamma.
     var loudnessBoostDb by remember { mutableFloatStateOf(0f) }
+    // Rotation for this session: following the sensor, or held in landscape or portrait.
+    var rotation by remember { mutableStateOf(Rotation.AUTO) }
+    val rotationActivity = remember(context) { context.findActivity() }
+    DisposableEffect(rotation) {
+        rotationActivity?.requestedOrientation = rotation.orientation
+        onDispose { }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            rotationActivity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+    var subtitleLook by remember { mutableStateOf(store.subtitleLookFor(queue[startIndex].videoPath)) }
     var nightMode by remember { mutableStateOf(false) }
+
+    // Lip-sync, remembered per audio output: a Bluetooth headset lags differently from the speaker.
+    var audioOutput by remember { mutableStateOf(com.hawkynt.mediadroid.player.currentAudioOutput(context)) }
+    var audioDelayMs by remember { mutableIntStateOf(store.audioDelayFor(audioOutput.key)) }
+    DisposableEffect(Unit) {
+        val audioManager = context.getSystemService(AudioManager::class.java)
+        val callback = object : android.media.AudioDeviceCallback() {
+            fun refresh() {
+                audioOutput = com.hawkynt.mediadroid.player.currentAudioOutput(context)
+                audioDelayMs = store.audioDelayFor(audioOutput.key)
+            }
+            override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>?) = refresh()
+            override fun onAudioDevicesRemoved(removed: Array<out android.media.AudioDeviceInfo>?) = refresh()
+        }
+        audioManager.registerAudioDeviceCallback(callback, null)
+        onDispose { audioManager.unregisterAudioDeviceCallback(callback) }
+    }
+
+    var useCutout by remember { mutableStateOf(settings.useCutout) }
+
+    var spatialAudio by remember { mutableStateOf(settings.spatialAudio) }
+    val spatializerAvailable = remember {
+        android.os.Build.VERSION.SDK_INT >= 33 &&
+            context.getSystemService(AudioManager::class.java).spatializer.immersiveAudioLevel !=
+            android.media.Spatializer.SPATIALIZER_IMMERSIVE_LEVEL_NONE
+    }
     var gammaBoost by remember { mutableFloatStateOf(1f) }
     val player = remember {
         ExoPlayer.Builder(context)
             .setRenderersFactory(
                 object : DefaultRenderersFactory(context) {
+                    override fun buildTextRenderers(
+                        context: android.content.Context,
+                        output: androidx.media3.exoplayer.text.TextOutput,
+                        outputLooper: android.os.Looper,
+                        extensionRendererMode: Int,
+                        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
+                    ) {
+                        val built = java.util.ArrayList<androidx.media3.exoplayer.Renderer>()
+                        super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, built)
+                        built.mapTo(out) {
+                            com.hawkynt.mediadroid.player.DelayedTextRenderer(it) { subtitleLook.delayMs }
+                        }
+                    }
+
                     override fun buildVideoRenderers(
                         context: android.content.Context,
                         extensionRendererMode: Int,
@@ -189,7 +243,7 @@ fun PlayerScreen(
                         context: android.content.Context,
                         enableFloatOutput: Boolean,
                         enableAudioOutputPlaybackParams: Boolean,
-                    ): androidx.media3.exoplayer.audio.AudioSink =
+                    ): androidx.media3.exoplayer.audio.AudioSink = com.hawkynt.mediadroid.player.DelayedAudioSink(
                         DefaultAudioSink.Builder(context)
                             .setEnableFloatOutput(enableFloatOutput)
                             .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
@@ -198,7 +252,9 @@ fun PlayerScreen(
                                     LoudnessAudioProcessor({ settings.loudness + loudnessBoostDb }, { nightMode }),
                                 ),
                             )
-                            .build()
+                            .build(),
+                        { audioDelayMs },
+                    )
                 }
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
             )
@@ -210,6 +266,53 @@ fun PlayerScreen(
             )
             .build()
     }
+    // A film's sound: other players pause for it, it pauses for a call; spatialized only when switched on.
+    LaunchedEffect(spatialAudio) {
+        player.setAudioAttributes(
+            androidx.media3.common.AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .setSpatializationBehavior(
+                    if (spatialAudio) C.SPATIALIZATION_BEHAVIOR_AUTO else C.SPATIALIZATION_BEHAVIOR_NEVER,
+                )
+                .build(),
+            true,
+        )
+    }
+    // Picture in picture: leaving the app mid-film shrinks it into a small window; once the app is out of
+    // sight (or that window is closed) the film pauses.
+    val pipActivity = remember(context) { context.findActivity() }
+    DisposableEffect(player) {
+        fun publish() {
+            PlayerWindow.playing = player.isPlaying
+            val size = player.videoSize
+            PlayerWindow.aspect = PlaybackMath.pipAspect(size.width, size.height, size.pixelWidthHeightRatio)
+                ?.let { (w, h) -> android.util.Rational(w, h) }
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                runCatching { pipActivity?.setPictureInPictureParams(PlayerWindow.params()) }
+            }
+        }
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) = publish()
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) = publish()
+        }
+        player.addListener(listener)
+        val lifecycle = (pipActivity as? androidx.lifecycle.LifecycleOwner)?.lifecycle
+        val stopObserver = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) player.pause()
+        }
+        lifecycle?.addObserver(stopObserver)
+        onDispose {
+            player.removeListener(listener)
+            lifecycle?.removeObserver(stopObserver)
+            PlayerWindow.playing = false
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                runCatching { pipActivity?.setPictureInPictureParams(PlayerWindow.params()) }
+            }
+        }
+    }
+    val inPip = PlayerWindow.inPictureInPicture
+
     var index by remember { mutableStateOf(startIndex) }
     var finished by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf<String?>(null) }
@@ -224,6 +327,13 @@ fun PlayerScreen(
     // Per video: its own picture if one was saved, else the household default.
     var picture by remember { mutableStateOf(store.pictureFor(queue[startIndex].videoPath)) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    LaunchedEffect(inPip) {
+        if (inPip) {
+            panelOpen = false
+            playerView?.hideController()
+        }
+        playerView?.useController = !inPip
+    }
     var fit by remember { mutableStateOf(VideoFit.FIT) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
@@ -279,8 +389,13 @@ fun PlayerScreen(
         val insets = window?.let { WindowCompat.getInsetsController(it, hostView) }
         insets?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         insets?.hide(WindowInsetsCompat.Type.systemBars())
+        val cutoutBefore =
+            if (android.os.Build.VERSION.SDK_INT >= 28) window?.attributes?.layoutInDisplayCutoutMode else null
         hostView.keepScreenOn = true
         onDispose {
+            if (android.os.Build.VERSION.SDK_INT >= 28 && cutoutBefore != null) {
+                window?.attributes = window?.attributes?.apply { layoutInDisplayCutoutMode = cutoutBefore }
+            }
             insets?.show(WindowInsetsCompat.Type.systemBars())
             hostView.keepScreenOn = false
         }
@@ -300,6 +415,7 @@ fun PlayerScreen(
         val playable = queue[index]
         manualTrackPick = false
         picture = store.pictureFor(playable.videoPath)
+        subtitleLook = store.subtitleLookFor(playable.videoPath)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguage(settings.audioLanguage.ifEmpty { null })
             .build()
@@ -509,6 +625,20 @@ fun PlayerScreen(
         }
     }
 
+    // The camera cutout: the window may reach into it (short edges) or keep clear of it.
+    LaunchedEffect(useCutout) {
+        val window = hostView.context.findActivity()?.window ?: return@LaunchedEffect
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (useCutout) {
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                } else {
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+                }
+            }
+        }
+    }
+
     val activityWindow = remember(hostView) { hostView.context.findActivity()?.window }
     val audio = remember { context.getSystemService(AudioManager::class.java) }
     val maxVolume = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
@@ -671,6 +801,7 @@ fun PlayerScreen(
                 }
             },
             update = { view ->
+                view.subtitleView?.applyLook(subtitleLook)
                 // While the picture is on the other screen the phone's surface would keep showing the
                 // last frame it got; it is hidden so the phone stays black behind the controls.
                 val elsewhere = presentation?.isShowing == true
@@ -697,7 +828,7 @@ fun PlayerScreen(
             )
         }
         // The bare picture listens for gestures; with the controls up, touches go to the controls.
-        if (!controlsVisible && !panelOpen) {
+        if (!controlsVisible && !panelOpen && !inPip) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -722,7 +853,7 @@ fun PlayerScreen(
                     ),
             )
         }
-        feedback?.let {
+        feedback?.takeIf { !inPip }?.let {
             Text(
                 it,
                 color = Color.White,
@@ -734,7 +865,7 @@ fun PlayerScreen(
             )
         }
         // When the film will be over on the clock, on the free right end of Media3's time row.
-        if (controlsVisible) {
+        if (controlsVisible && !inPip) {
             var endsAt by remember { mutableStateOf<Long?>(null) }
             LaunchedEffect(Unit) {
                 while (true) {
@@ -761,7 +892,7 @@ fun PlayerScreen(
         }
         // Our controls ride on top, in the band Media3 leaves free, and come and go with its own.
         AnimatedVisibility(
-            visible = controlsVisible,
+            visible = controlsVisible && !inPip,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.TopCenter).then(safeArea),
@@ -847,6 +978,28 @@ fun PlayerScreen(
                 onAudioTrack = { audioPicker = true },
                 onSubtitleTrack = { subtitlePicker = true },
                 onClose = { panelOpen = false },
+                afterPictureSize = {
+                    if (android.os.Build.VERSION.SDK_INT >= 28) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Use the camera cutout", fontSize = 16.sp)
+                                Text(
+                                    "The picture may reach into the notch or punch hole, mostly useful with Fill.",
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            androidx.compose.material3.Switch(
+                                checked = useCutout,
+                                onCheckedChange = {
+                                    useCutout = it
+                                    store.data.settings.useCutout = it
+                                    store.save()
+                                },
+                            )
+                        }
+                    }
+                },
                 sections = {
                     androidx.compose.material3.OutlinedButton(
                         onClick = {
@@ -879,6 +1032,136 @@ fun PlayerScreen(
                             )
                         }
                         androidx.compose.material3.Switch(checked = nightMode, onCheckedChange = { nightMode = it })
+                    }
+
+
+                    PanelTitle("Audio delay · ${audioOutput.name}")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        fun nudge(steps: Int) {
+                            audioDelayMs = PlaybackMath.nudgeAudioDelay(audioDelayMs, steps)
+                            store.saveAudioDelay(audioOutput.key, audioDelayMs)
+                        }
+                        androidx.compose.material3.OutlinedButton(onClick = { nudge(-1) }) {
+                            Text("−", fontSize = 20.sp)
+                        }
+                        Text(
+                            if (audioDelayMs == 0) "in sync" else "%+d ms".format(audioDelayMs),
+                            fontSize = 18.sp,
+                            modifier = Modifier.widthIn(min = 90.dp),
+                        )
+                        androidx.compose.material3.OutlinedButton(onClick = { nudge(1) }) {
+                            Text("+", fontSize = 20.sp)
+                        }
+                        if (audioDelayMs != 0) {
+                            androidx.compose.material3.TextButton(
+                                onClick = { nudge(-audioDelayMs / PlaybackMath.AUDIO_DELAY_STEP_MS) },
+                            ) {
+                                Text("Reset")
+                            }
+                        }
+                    }
+                    Text(
+                        "+ when the sound comes too early, − when it comes too late. Kept for this output.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    PanelTitle("Subtitles")
+                    fun changeLook(look: com.hawkynt.mediadroid.player.SubtitleLook) {
+                        subtitleLook = look
+                        store.saveSubtitleLook(queue[index].videoPath, look)
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Delay", fontSize = 16.sp, modifier = Modifier.widthIn(min = 56.dp))
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { changeLook(subtitleLook.nudgeDelay(-1)) },
+                        ) {
+                            Text("−", fontSize = 20.sp)
+                        }
+                        Text(
+                            if (subtitleLook.delayMs == 0) {
+                                "in sync"
+                            } else {
+                                "%+.1f s".format(subtitleLook.delayMs / 1000f)
+                            },
+                            fontSize = 18.sp,
+                            modifier = Modifier.widthIn(min = 80.dp),
+                        )
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { changeLook(subtitleLook.nudgeDelay(1)) },
+                        ) {
+                            Text("+", fontSize = 20.sp)
+                        }
+                    }
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 6.dp),
+                    ) {
+                        com.hawkynt.mediadroid.player.SubtitleLook.Size.entries.forEach { size ->
+                            FilterChip(
+                                selected = subtitleLook.size == size,
+                                onClick = { changeLook(subtitleLook.copy(size = size)) },
+                                label = { Text(size.label, fontSize = 16.sp) },
+                            )
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Raised above burned-in text", fontSize = 16.sp, modifier = Modifier.weight(1f))
+                        androidx.compose.material3.Switch(
+                            checked = subtitleLook.raised,
+                            onCheckedChange = { changeLook(subtitleLook.copy(raised = it)) },
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Dark box behind the text", fontSize = 16.sp, modifier = Modifier.weight(1f))
+                        androidx.compose.material3.Switch(
+                            checked = subtitleLook.box,
+                            onCheckedChange = { changeLook(subtitleLook.copy(box = it)) },
+                        )
+                    }
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            store.saveSubtitleLook(queue[index].videoPath, null)
+                            subtitleLook = store.subtitleLookFor(queue[index].videoPath)
+                        },
+                    ) { Text("Back to the household's look") }
+
+                    if (spatializerAvailable) {
+                        PanelTitle("Spatial audio")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Surround sound through the system's spatializer, for headphones that support it.",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
+                            )
+                            androidx.compose.material3.Switch(
+                                checked = spatialAudio,
+                                onCheckedChange = {
+                                    spatialAudio = it
+                                    store.data.settings.spatialAudio = it
+                                    store.save()
+                                },
+                            )
+                        }
+                    }
+
+                    PanelTitle("Rotation")
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Rotation.entries.forEach { option ->
+                            FilterChip(
+                                selected = rotation == option,
+                                onClick = { rotation = option },
+                                label = { Text(option.label, fontSize = 16.sp) },
+                            )
+                        }
                     }
 
                     PanelTitle("Sleep timer")
@@ -1045,6 +1328,7 @@ private fun PlayerPanel(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     sections: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
+    afterPictureSize: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -1093,6 +1377,7 @@ private fun PlayerPanel(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
+        afterPictureSize()
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 20.dp)) {
             Text(
@@ -1226,4 +1511,28 @@ private fun LockOverlay(stamp: Int, onTouch: () -> Unit, onUnlock: () -> Unit) {
             }
         }
     }
+}
+
+/** Size, position and backing of the subtitles as [look] has them. */
+private fun androidx.media3.ui.SubtitleView.applyLook(look: com.hawkynt.mediadroid.player.SubtitleLook) {
+    setFractionalTextSize(look.textSizeFraction)
+    setBottomPaddingFraction(look.bottomPaddingFraction)
+    setStyle(
+        androidx.media3.ui.CaptionStyleCompat(
+            android.graphics.Color.WHITE,
+            if (look.box) 0xB0000000.toInt() else android.graphics.Color.TRANSPARENT,
+            android.graphics.Color.TRANSPARENT,
+            if (look.box) androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
+            else androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+            android.graphics.Color.BLACK,
+            null,
+        ),
+    )
+}
+
+/** How the player screen turns: with the device, or held in one orientation (sensor-flipped either way). */
+private enum class Rotation(val label: String, val orientation: Int) {
+    AUTO("Auto", android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_USER),
+    LANDSCAPE("Landscape", android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE),
+    PORTRAIT("Portrait", android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT),
 }
