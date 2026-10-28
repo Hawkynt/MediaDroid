@@ -51,6 +51,7 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - Subtitles on/off with a preferred language, and a picker for every audio and subtitle track a file carries.
 - Holding skip forward or back — on screen, or a remote's left/right and its rewind / fast-forward keys — steps 10 s, then 30 s after three seconds of holding, 60 s after six and five minutes after nine; the target time shows while holding and letting go seeks there once. A short tap stays the ordinary skip.
 - Child lock in the gear: once locked, every touch, swipe, Back and button is ignored — only the volume keys still work — and any touch shows a lock symbol for a moment; holding it for two seconds unlocks.
+- Rotation in the gear: auto, landscape or portrait, held for the session; leaving the player hands rotation back to the system.
 - Night mode in the gear compresses the dynamic range in the app's own audio stage — quiet dialogue comes up, explosions come down — for late evenings and thin walls; it combines with the loudness gain and the volume boost (soft-knee compressor after Giannoulis, Massberg & Reiss, JAES 2012).
 - Audio delay in the gear, −2.5 s … +2.5 s in 50 ms steps, fixes lip-sync; it is remembered per audio output — the phone's speaker, each Bluetooth headset, USB, HDMI — since each has its own latency, and follows the output when it changes.
 - Subtitles in the gear: a delay of −10 … +10 s in tenths of a second, four sizes, a raised position above burned-in text and an optional dark box behind the text. The household sets the look in the guarded settings; each video can keep its own look and delay.
@@ -127,7 +128,6 @@ Specified, not built yet. Prior art: [Nova Video Player](https://github.com/nova
 - **Media controls everywhere.** A media session puts play/pause, next and previous on the lock screen, in the notification and on headset and Bluetooth buttons.
 - **What is playing.** An info sheet in the player lists the file, container, every video/audio/subtitle track with codec, language and channels, resolution and frame rate, and which decoder is at work (hardware or software).
 - **On TV boxes.** Optional switching of the display refresh rate to the film's frame rate (no judder at 23.976 fps), and an audio-passthrough option that hands AC3/E-AC3/DTS/TrueHD untouched to an AV receiver over HDMI.
-- **Rotation.** Auto, landscape or portrait, held for the session, from the gear.
 
 ### Navigation and browsing
 
