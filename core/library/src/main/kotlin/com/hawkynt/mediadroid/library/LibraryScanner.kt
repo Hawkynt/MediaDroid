@@ -279,6 +279,8 @@ object LibraryScanner {
             plot = info?.plot,
             seasons = seasons,
             rating = info?.rating,
+            studios = info?.studios ?: emptyList(),
+            premiered = info?.premiered,
         )
     }
 
@@ -377,6 +379,10 @@ object LibraryScanner {
             quality = Quality.of(info?.streamDetails),
             rating = info?.rating,
             addedMs = info?.dateAddedMs ?: video.addedTime(),
+            directors = info?.directors ?: emptyList(),
+            studios = info?.studios ?: emptyList(),
+            premiered = info?.premiered,
+            trailerPath = trailerOf(stem, files, wholeFolder = true),
         )
     }
 
@@ -417,7 +423,23 @@ object LibraryScanner {
             quality = Quality.of(info?.streamDetails),
             rating = info?.rating,
             addedMs = info?.dateAddedMs ?: video.addedTime(),
+            directors = info?.directors ?: emptyList(),
+            studios = info?.studios ?: emptyList(),
+            premiered = info?.premiered,
+            trailerPath = trailerOf(stem, siblings, wholeFolder = false),
         )
+    }
+
+    /**
+     * The trailer for the film named [stem]: `<stem>-trailer.*`, or — in a folder that is one film —
+     * any `*-trailer.*` video there.
+     */
+    private fun trailerOf(stem: String, files: List<File>, wholeFolder: Boolean): String? {
+        val trailers = files.filter { isVideo(it) && it.nameWithoutExtension.lowercase().endsWith("-trailer") }
+        return (
+            trailers.firstOrNull { it.nameWithoutExtension.equals("$stem-trailer", ignoreCase = true) }
+                ?: trailers.firstOrNull()?.takeIf { wholeFolder }
+            )?.absolutePath
     }
 
     /** The file's modification time, which is when it was copied in for most libraries; null when unknown. */

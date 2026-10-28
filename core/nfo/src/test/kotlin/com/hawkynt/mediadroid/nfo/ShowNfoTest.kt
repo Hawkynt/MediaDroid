@@ -30,4 +30,19 @@ class ShowNfoTest {
         assertEquals(listOf("Crime", "Drama"), show.genres)
         assertEquals("tt0903747", show.imdbId)
     }
+
+    @Test
+    fun aShowKeepsItsPremieredDateStudiosAndRating() {
+        val info = parseShowNfo(
+            """
+            <tvshow><title>Dark</title><premiered>2017-12-01</premiered><studio>Netflix</studio>
+              <ratings><rating name="tmdb" max="10" default="true"><value>8.4</value></rating></ratings>
+            </tvshow>
+            """.trimIndent(),
+        )
+        assertEquals("2017-12-01", info.premiered)
+        assertEquals(listOf("Netflix"), info.studios)
+        assertEquals(8.4, info.rating!!, 1e-9)
+    }
 }
+

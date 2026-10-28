@@ -48,6 +48,12 @@ data class Movie(
     val rating: Double? = null,
     /** When it arrived: the NFO's `<dateadded>`, else the video file's time, as epoch milliseconds. */
     val addedMs: Long? = null,
+    val directors: List<String> = emptyList(),
+    val studios: List<String> = emptyList(),
+    /** The release date as the NFO writes it, `2017-10-06`. */
+    val premiered: String? = null,
+    /** The `<name>-trailer.*` beside the film, the Kodi convention; never a title of its own. */
+    val trailerPath: String? = null,
 ) : MediaItem {
     override val key: String get() = "movie:$videoPath"
 }
@@ -64,6 +70,9 @@ data class Show(
     val seasons: List<Season> = emptyList(),
     /** The NFO's rating on a 0–10 scale; null when unrated. */
     val rating: Double? = null,
+    val studios: List<String> = emptyList(),
+    /** The first air date as the NFO writes it, `2017-12-01`. */
+    val premiered: String? = null,
 ) : MediaItem {
     override val key: String get() = "show:$path:${title.lowercase()}"
 

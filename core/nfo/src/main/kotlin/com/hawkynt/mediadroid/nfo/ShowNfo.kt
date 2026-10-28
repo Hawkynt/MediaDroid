@@ -10,6 +10,8 @@ data class ShowInfo(
     val mpaa: String? = null,
     val status: String? = null,
     val firstAiredYear: Int? = null,
+    /** The first air date as the NFO writes it, `2017-12-01`. */
+    val premiered: String? = null,
     val studios: List<String> = emptyList(),
     val genres: List<String> = emptyList(),
     val tags: List<String> = emptyList(),
@@ -35,6 +37,7 @@ fun parseShowNfo(xml: String): ShowInfo {
         mpaa = root.childText("mpaa"),
         status = root.childText("status"),
         firstAiredYear = root.childInt("premiered") ?: root.childInt("year") ?: root.childInt("firstaired"),
+        premiered = root.childText("premiered"),
         studios = root.childElements("studio").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
         genres = root.childElements("genre").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
         tags = root.childElements("tag").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },

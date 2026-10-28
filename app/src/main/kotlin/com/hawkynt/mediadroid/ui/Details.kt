@@ -1,8 +1,8 @@
 package com.hawkynt.mediadroid.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,6 +63,7 @@ fun DetailsScreen(
     onBack: () -> Unit,
     onPlayMovie: (Movie) -> Unit,
     onPlayShow: (Show, Episode?) -> Unit,
+    onPlayTrailer: (Movie) -> Unit = {},
 ) {
     val seasons = if (item is Show) item.seasons.sortedBy { it.number } else emptyList()
     var selected by remember { mutableStateOf(seasons.lastOrNull()?.number ?: 1) }
@@ -113,13 +115,33 @@ fun DetailsScreen(
                         Text(subtitle, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+                val rating = when (item) {
+                    is Movie -> item.rating
+                    is Show -> item.rating
+                }
+                val premiered = when (item) {
+                    is Movie -> item.premiered
+                    is Show -> item.premiered
+                }
+                val dates = listOfNotNull(
+                    rating?.let { "★ %.1f".format(it) },
+                    premiered?.let { releaseDate(it) },
+                )
+                if (dates.isNotEmpty()) {
+                    Text(
+                        dates.joinToString("  ·  "),
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
                 if (item is Movie) {
                     LanguageFlags(item.audioLanguages, item.subtitleLanguages, Modifier.padding(top = 8.dp))
                 }
                 Spacer(Modifier.height(16.dp))
 
                 when (item) {
-                    is Movie -> MovieActions(item, store, onPlayMovie)
+                    is Movie -> MovieActions(item, store, onPlayMovie, onPlayTrailer)
                     is Show -> ShowHeaderActions(item, store, onPlayShow)
                 }
 
@@ -131,13 +153,17 @@ fun DetailsScreen(
                     Spacer(Modifier.height(16.dp))
                     Text(it, fontSize = 17.sp)
                 }
-                if (item is Movie && item.cast.isNotEmpty()) {
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        "Cast: ${item.cast.take(8).joinToString(", ")}",
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                val credits = listOfNotNull(
+                    (item as? Movie)?.directors?.ifEmpty { null }?.let { "Director: ${it.joinToString(", ")}" },
+                    (item as? Movie)?.cast?.ifEmpty { null }?.let { "Cast: ${it.take(8).joinToString(", ")}" },
+                    when (item) {
+                        is Movie -> item.studios
+                        is Show -> item.studios
+                    }.ifEmpty { null }?.let { "Studio: ${it.joinToString(", ")}" },
+                )
+                if (credits.isNotEmpty()) Spacer(Modifier.height(16.dp))
+                credits.forEach {
+                    Text(it, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -189,7 +215,7 @@ fun DetailsScreen(
 }
 
 @Composable
-private fun MovieActions(movie: Movie, store: StateStore, onPlay: (Movie) -> Unit) {
+private fun MovieActions(movie: Movie, store: StateStore, onPlay: (Movie) -> Unit, onTrailer: (Movie) -> Unit) {
     val watched = store.marks.isWatched(movie)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Button(
@@ -199,6 +225,12 @@ private fun MovieActions(movie: Movie, store: StateStore, onPlay: (Movie) -> Uni
             Icon(Icons.Filled.PlayArrow, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text(if (store.resumeFor(movie.videoPath) != null) "Resume" else "Play", fontSize = 22.sp)
+        }
+        if (movie.trailerPath != null) {
+            Spacer(Modifier.width(12.dp))
+            FilledTonalButton(onClick = { onTrailer(movie) }, modifier = Modifier.height(64.dp)) {
+                Text("Trailer", fontSize = 18.sp)
+            }
         }
         Spacer(Modifier.width(16.dp))
         WatchedToggle(watched, onToggle = { store.setWatched(movie.parts, !watched) })
@@ -344,3 +376,10 @@ private fun SeasonHeader(
 
 /** Season 0 holds the specials, the Kodi convention. */
 private fun seasonName(number: Int): String = if (number == 0) "Specials" else "Season $number"
+
+/** `2017-10-06` in the device's own date style; the text as it stands when it is no full date. */
+private fun releaseDate(premiered: String): String = runCatching {
+    java.time.LocalDate.parse(premiered.take(10))
+        .format(java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM))
+}.getOrDefault(premiered)
+
