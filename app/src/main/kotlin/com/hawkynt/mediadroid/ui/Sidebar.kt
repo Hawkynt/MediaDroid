@@ -25,9 +25,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -110,6 +112,20 @@ fun Sidebar(
             expanded = expanded,
             selected = (current as? Screen.Browse)?.section == LibrarySection.SHOWS,
             onClick = { onNavigate(Screen.Browse(LibrarySection.SHOWS)) },
+        )
+        SidebarItem(
+            painter = rememberVectorPainter(Icons.Filled.Star),
+            label = "Genres",
+            expanded = expanded,
+            selected = current == Screen.Places(PlaceKind.GENRES),
+            onClick = { onNavigate(Screen.Places(PlaceKind.GENRES)) },
+        )
+        SidebarItem(
+            painter = rememberVectorPainter(Icons.Filled.DateRange),
+            label = "Years",
+            expanded = expanded,
+            selected = current == Screen.Places(PlaceKind.YEARS),
+            onClick = { onNavigate(Screen.Places(PlaceKind.YEARS)) },
         )
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline)
