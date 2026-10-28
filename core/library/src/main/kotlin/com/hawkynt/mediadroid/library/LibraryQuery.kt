@@ -26,6 +26,12 @@ data class BrowseFilter(
     val sort: SortOrder = SortOrder.TITLE,
 )
 
+/** A genre or a decade as a place to go: its [key], how many titles it holds, a few posters for a collage. */
+data class Place<K>(val key: K, val count: Int, val preview: List<MediaItem>)
+
+/** How many posters a [Place]'s collage shows. */
+const val PLACE_PREVIEW = 4
+
 /**
  * The filtering and grouping the browse screens run on. Everything here is pure so
  * it stays fast on a shelf tablet and testable without a device.
@@ -69,6 +75,22 @@ object LibraryQuery {
     fun groupByYear(items: List<MediaItem>): Map<Int, List<MediaItem>> =
         items.groupBy { item -> item.year?.let { it / 10 * 10 } ?: UNDATED }
             .toSortedMap(compareByDescending { it })
+
+    /** Every genre as a place to go, most common first; see [Place]. */
+    fun genrePlaces(items: List<MediaItem>, previewSize: Int = PLACE_PREVIEW): List<Place<String>> =
+        genreFacets(items).map { (genre, count) ->
+            Place(genre, count, preview(filterByGenres(items, setOf(genre)), previewSize))
+        }
+
+    /** Every decade with dated titles as a place to go, newest first; undated titles have none. */
+    fun decadePlaces(items: List<MediaItem>, previewSize: Int = PLACE_PREVIEW): List<Place<Int>> =
+        groupByYear(items).filterKeys { it != UNDATED }.map { (decade, list) ->
+            Place(decade, list.size, preview(list, previewSize))
+        }
+
+    /** The titles with a poster, in title order, for a place's collage. */
+    private fun preview(items: List<MediaItem>, size: Int): List<MediaItem> =
+        items.filter { it.posterPath != null }.sortedBy { it.title.lowercase() }.take(size)
 
     /** Every genre present, each with how many items carry it, most common first. */
     fun genreFacets(items: List<MediaItem>): List<Pair<String, Int>> =

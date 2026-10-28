@@ -64,6 +64,7 @@ data class Playable(
 sealed interface Screen {
     /** A wall; with a [row], the full wall of one home row ("See all") instead of the home. */
     data class Browse(val section: LibrarySection, val row: HomeRow? = null) : Screen
+    data class Places(val kind: PlaceKind) : Screen
     data object Search : Screen
     data object Filters : Screen
     data object Settings : Screen
@@ -112,6 +113,8 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     val showGrid = rememberLazyGridState()
     val searchGrid = rememberLazyGridState()
     val rowGrid = rememberLazyGridState()
+    // Which section the Genres and Years places group; follows the wall last browsed.
+    var placeSection by remember { mutableStateOf(LibrarySection.MOVIES) }
     val wide = LocalConfiguration.current.screenWidthDp >= 600
     var sidebarExpanded by remember { mutableStateOf(store.data.sidebarExpanded ?: wide) }
 
@@ -291,7 +294,10 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     }
     fun navigate(target: Screen) {
         screen = target
-        if (target is Screen.Browse) lastBrowse = target
+        if (target is Screen.Browse) {
+            lastBrowse = target
+            placeSection = target.section
+        }
     }
 
     when (val s = screen) {
@@ -365,6 +371,17 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
                     onPlay = { item, path -> play(item, path) },
                     onClearFilter = { filter = BrowseFilter() },
                     onSeeAll = { navigate(Screen.Browse(s.section, it)) },
+                )
+                is Screen.Places -> PlacesScreen(
+                    library = lib,
+                    store = store,
+                    kind = s.kind,
+                    section = placeSection,
+                    onSectionChange = { placeSection = it },
+                    onOpen = { section, placeFilter ->
+                        filter = placeFilter
+                        navigate(Screen.Browse(section))
+                    },
                 )
                 Screen.Search -> SearchScreen(
                     library = lib,

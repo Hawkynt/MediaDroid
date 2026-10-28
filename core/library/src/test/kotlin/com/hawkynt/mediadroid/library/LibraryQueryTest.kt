@@ -200,5 +200,34 @@ class LibraryQueryTest {
         val wall = listOf("Coco", "Alien", "Aliens").map(::movie)
         assertEquals(listOf('C' to 0, 'A' to 1), LibraryQuery.letterIndex(wall))
     }
+
+    @Test
+    fun genrePlacesCountTitlesAndPreviewThePostersInTitleOrder() {
+        fun movie(title: String, year: Int?, poster: Boolean, vararg genres: String) = Movie(
+            title = title,
+            year = year,
+            genres = genres.toList(),
+            path = "/m/$title",
+            videoPath = "/m/$title.mkv",
+            posterPath = if (poster) "/m/$title.jpg" else null,
+        )
+        val wall = listOf(
+            movie("Heat", 1995, true, "Crime", "Drama"),
+            movie("Coco", 2017, true, "Animation"),
+            movie("Alien", 1979, false, "Horror", "Drama"),
+            movie("Blow", 2001, true, "Crime", "Drama"),
+            movie("Undated", null, true, "Drama"),
+        )
+        val genres = LibraryQuery.genrePlaces(wall, previewSize = 2)
+        assertEquals(listOf("Drama", "Crime", "Animation", "Horror"), genres.map { it.key })
+        val drama = genres.first()
+        assertEquals(4, drama.count)
+        assertEquals(listOf("Blow", "Heat"), drama.preview.map { it.title })
+
+        val decades = LibraryQuery.decadePlaces(wall)
+        assertEquals(listOf(2010, 2000, 1990, 1970), decades.map { it.key })
+        assertEquals(listOf(1, 1, 1, 1), decades.map { it.count })
+        assertEquals(emptyList<String>(), decades.last().preview.map { it.title })
+    }
 }
 
