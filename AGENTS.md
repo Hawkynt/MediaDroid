@@ -7,8 +7,10 @@ house standard; the "What this is" section is written for this project and the r
 ## What this is
 
 An Android media player: Kotlin, Jetpack Compose, Gradle (wrapper 9.6.0). It plays movies and shows
-straight from local storage, reading the Kodi-convention `.nfo` sidecars for titles, plots and art and
-`folder.jpg` / `poster.jpg` for covers — no server, no account, no re-scraping, no re-encoding. The
+straight from local storage — and, as the roadmap grows, from network shares (SMB, NFS, FTP/SFTP,
+WebDAV) and cloud folders — reading the Kodi-convention `.nfo` sidecars for titles, plots and art and
+`folder.jpg` / `poster.jpg` for covers — no media server, no account of ours, no re-scraping, no
+re-encoding. The
 Gradle modules are `:app` (the Compose app: onboarding, browse wall, details, search, filters,
 player with resume and binge) and four plain-JVM cores: `:core:imaging` (decoders for the picture formats
 Android cannot read: TIFF, TGA, PCX), `:core:nfo` (NFO XML parsing,
