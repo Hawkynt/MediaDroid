@@ -1,7 +1,6 @@
 package com.hawkynt.mediadroid.library
 
 import java.io.File
-import java.io.RandomAccessFile
 
 /**
  * Chapters of an MP4 / QuickTime file, in either of the two forms muxers write: Nero's `moov/udta/chpl`
@@ -24,8 +23,10 @@ object Mp4Chapters {
     /** Whether [head], the first bytes of a file, look like an MP4 / QuickTime box. */
     fun accepts(head: ByteArray): Boolean = head.size >= 8 && String(head, 4, 4, Charsets.ISO_8859_1) in topLevelTypes
 
-    fun parse(file: File): List<Chapter> = runCatching {
-        RandomAccessFile(file, "r").use { raf ->
+    fun parse(file: File): List<Chapter> = parse(LocalFile(file))
+
+    fun parse(file: FsFile): List<Chapter> = runCatching {
+        SeekableFile(file).use { raf ->
             val moov = readMoov(raf) ?: return@use emptyList()
             nero(moov).ifEmpty { quickTime(moov, raf) }
         }
@@ -34,7 +35,7 @@ object Mp4Chapters {
     internal class Box(val type: String, val start: Int, val end: Int)
 
     /** The body of the top-level `moov` box. */
-    internal fun readMoov(raf: RandomAccessFile): Bytes? {
+    internal fun readMoov(raf: SeekableFile): Bytes? {
         val length = raf.length()
         var pos = 0L
         val header = ByteArray(16)
@@ -89,7 +90,7 @@ object Mp4Chapters {
 
     // ----- QuickTime chapter track ------------------------------------------------------------------
 
-    private fun quickTime(moov: Bytes, raf: RandomAccessFile): List<Chapter> {
+    private fun quickTime(moov: Bytes, raf: SeekableFile): List<Chapter> {
         val tracks = moov.children(0, moov.size).filter { it.type == "trak" }
         val chapterIds = tracks.flatMap { trak ->
             val tref = moov.child(trak, "tref") ?: return@flatMap emptyList()
@@ -172,7 +173,7 @@ object Mp4Chapters {
     }
 
     /** A text sample: a 16-bit length, then the title in UTF-8 or, after a byte-order mark, UTF-16. */
-    private fun readTitle(raf: RandomAccessFile, offset: Long): String? {
+    private fun readTitle(raf: SeekableFile, offset: Long): String? {
         if (offset < 0 || offset + 2 > raf.length()) return null
         raf.seek(offset)
         val length = raf.readUnsignedShort()

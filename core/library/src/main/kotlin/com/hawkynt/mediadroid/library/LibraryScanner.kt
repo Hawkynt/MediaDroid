@@ -446,8 +446,7 @@ object LibraryScanner {
      * name (`Coco.2017.1080p.x264-GRP`, no spaces) gets the same clean-up as a file name.
      */
     private fun containerTitle(video: FsFile): String? {
-        // Container titles are read from local files for now; remote ones need random-access reads.
-        val raw = (video as? LocalFile)?.let { ContainerTitle.read(it.file) } ?: return null
+        val raw = ContainerTitle.read(video) ?: return null
         return if (' ' in raw) raw else ReleaseName.parse(raw).title.ifEmpty { null }
     }
 
