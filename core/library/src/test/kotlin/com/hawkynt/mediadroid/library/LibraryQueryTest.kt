@@ -183,4 +183,22 @@ class LibraryQueryTest {
             LibraryQuery.sortOrders(unrated),
         )
     }
+
+    @Test
+    fun theLetterIndexPointsAtTheFirstTitleOfEachLetterFoldingAccentsAndDigitsToHash() {
+        fun movie(title: String) = Movie(title = title, path = "/m/$title", videoPath = "/m/$title.mkv")
+        val wall = listOf("2012", "9", "Alien", "Ärger", "Big", "Coco", "Écoute").map(::movie)
+        assertEquals(
+            listOf('#' to 0, 'A' to 2, 'B' to 4, 'C' to 5, 'E' to 6),
+            LibraryQuery.letterIndex(wall),
+        )
+    }
+
+    @Test
+    fun theLetterIndexFollowsTheWallsOrderWhenItRunsZToA() {
+        fun movie(title: String) = Movie(title = title, path = "/m/$title", videoPath = "/m/$title.mkv")
+        val wall = listOf("Coco", "Alien", "Aliens").map(::movie)
+        assertEquals(listOf('C' to 0, 'A' to 1), LibraryQuery.letterIndex(wall))
+    }
 }
+
