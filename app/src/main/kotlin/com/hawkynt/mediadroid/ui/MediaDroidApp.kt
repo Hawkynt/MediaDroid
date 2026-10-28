@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.hawkynt.mediadroid.data.LibraryStore
 import com.hawkynt.mediadroid.data.SourceAccess
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.data.StorageRoot
@@ -121,6 +123,7 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     var scanError by remember { mutableStateOf<String?>(null) }
     // Sources that could not be read on the last scan, by id: their titles are missing until they are back.
     var unreachable by remember { mutableStateOf(emptySet<String>()) }
+    val libraries = remember { LibraryStore(context) }
     var scanGeneration by remember { mutableIntStateOf(0) }
     var choosingFolder by remember { mutableStateOf(false) }
     var screen by remember { mutableStateOf<Screen>(Screen.Browse(LibrarySection.MOVIES)) }
@@ -154,35 +157,53 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
         scanError = null
         scanning = true
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
+            // The chosen folder first, with every other source's last scan, so the walls show at once.
+            val local = withContext(Dispatchers.IO) {
                 runCatching {
                     val root = File(path)
                     require(root.isDirectory) { "the folder is not there — is the SD card or USB drive plugged in?" }
-                    // The chosen folder first, then every other saved source; one that cannot be read
-                    // is left out of this scan rather than failing it.
-                    val others = store.sources.filter { it.kind != SourceKind.LOCAL || it.path != path }
-                    val files = SourceAccess.of(context)
-                    val scans = others.associate { source ->
-                        source.id to runCatching { files.root(source)?.let { LibraryScanner.scan(it) } }.getOrNull()
-                    }
-                    Library.merge(listOf(LibraryScanner.scan(root)) + scans.values.filterNotNull()) to
-                        scans.filterValues { it == null }.keys
+                    LibraryScanner.scan(root)
                 }
             }
             if (generation != scanGeneration) return@launch
-            scanning = false
-            result.onSuccess { (scanned, missing) ->
-                library = scanned
-                unreachable = missing
-                if (adopt) {
-                    rootPath = path
-                    store.data.rootPath = path
-                    store.save()
-                    choosingFolder = false
-                    screen = Screen.Browse(LibrarySection.MOVIES)
-                    lastBrowse = screen
+            val others = store.sources.filter { it.kind != SourceKind.LOCAL || it.path != path }
+            local.onFailure {
+                scanning = false
+                scanError = "Could not read $path: ${it.message}"
+                return@launch
+            }
+            val main = local.getOrThrow()
+            val cached = withContext(Dispatchers.IO) { others.mapNotNull { libraries.load(it.id) } }
+            library = Library.merge(listOf(main) + cached)
+            if (adopt) {
+                rootPath = path
+                store.data.rootPath = path
+                store.save()
+                choosingFolder = false
+                screen = Screen.Browse(LibrarySection.MOVIES)
+                lastBrowse = screen
+            }
+            // Then every other source live: one that answers is scanned and kept, one that does not
+            // stays on the walls with its last scan, marked as not reachable.
+            val (scanned, away) = withContext(Dispatchers.IO) {
+                val files = SourceAccess.of(context)
+                val scans = others.associate { source ->
+                    source.id to runCatching {
+                        val root = files.root(source) ?: return@runCatching null
+                        val sidecars = libraries.sidecars(source.id)
+                        LibraryScanner.scan(sidecars.wrap(root)).also {
+                            libraries.save(source.id, it)
+                            libraries.saveSidecars(source.id, sidecars)
+                        }
+                    }.getOrNull()
                 }
-            }.onFailure { scanError = "Could not read $path: ${it.message}" }
+                val away = scans.filterValues { it == null }.keys
+                (scans.values.filterNotNull() + away.mapNotNull { libraries.load(it) }) to away
+            }
+            if (generation != scanGeneration) return@launch
+            scanning = false
+            library = Library.merge(listOf(main) + scanned)
+            unreachable = away
         }
     }
 
@@ -415,97 +436,105 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
         BackHandler { screen = lastBrowse }
     }
 
-    Row(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .safeDrawingPadding(),
-    ) {
-        Sidebar(
-            expanded = sidebarExpanded,
-            current = screen,
-            scanning = scanning,
-            onToggle = {
-                sidebarExpanded = !sidebarExpanded
-                store.data.sidebarExpanded = sidebarExpanded
-                store.save()
-            },
-            onNavigate = ::navigate,
-            onRefresh = { scan(rootPath) },
-            modifier = Modifier.fillMaxHeight(),
-            resume = resumeSpot(lib),
-        )
-        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-            when (val s = screen) {
-                is Screen.Browse -> BrowseScreen(
-                    library = lib,
-                    section = s.section,
-                    store = store,
-                    filter = filter.copy(sort = sorts.getValue(s.section)),
-                    rootPath = rootPath,
-                    row = s.row,
-                    gridState = when {
-                        s.row != null -> rowGrid
-                        s.section == LibrarySection.MOVIES -> movieGrid
-                        else -> showGrid
-                    },
-                    onOpen = ::openDetails,
-                    onPlay = { item, path -> play(item, path) },
-                    onClearFilter = { filter = BrowseFilter() },
-                    onSeeAll = { navigate(Screen.Browse(s.section, it)) },
-                )
-                is Screen.Places -> PlacesScreen(
-                    library = lib,
-                    store = store,
-                    kind = s.kind,
-                    section = placeSection,
-                    onSectionChange = { placeSection = it },
-                    onOpen = { section, placeFilter ->
-                        filter = placeFilter
-                        navigate(Screen.Browse(section))
-                    },
-                )
-                is Screen.Files -> FilesScreen(
-                    store = store,
-                    roots = storageRoots,
-                    dir = s.dir,
-                    onOpen = { screen = Screen.Files(it) },
-                    onPlay = { queue, start ->
-                        screen = Screen.Player(
-                            queue,
-                            start,
-                            autoAdvance = store.data.settings.bingeWatching,
-                            returnTo = s,
-                        )
-                    },
-                )
-                Screen.Search -> SearchScreen(
-                    library = lib,
-                    store = store,
-                    query = searchQuery,
-                    onQueryChange = { searchQuery = it },
-                    gridState = searchGrid,
-                    onOpen = ::openDetails,
-                )
-                Screen.Filters -> FiltersScreen(
-                    library = lib,
-                    filter = filter,
-                    onFilterChange = { filter = it },
-                    sorts = sorts,
-                    onSortChange = { section, order ->
-                        sorts = sorts + (section to order)
-                        store.saveSort(section, order)
-                    },
-                )
-                Screen.Settings -> SettingsScreen(
-                    store,
-                    rootPath = rootPath,
-                    onChangeFolder = ::launchPicker,
-                    unreachable = unreachable,
-                    onAddDeviceFolder = { addFolder.launch(null) },
-                    onSourcesChanged = { scan(rootPath) },
-                )
-                else -> Unit
+    // Titles whose every file lies on a source that cannot be reached right now are shown greyed out.
+    val away: (MediaItem) -> Boolean = remember(unreachable, store.sources) {
+        val sources = store.sources
+        val gone = unreachable
+        { item -> gone.isNotEmpty() && locationsOf(item).all { Source.owning(sources, it)?.id in gone } }
+    }
+    CompositionLocalProvider(LocalAway provides away) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .safeDrawingPadding(),
+        ) {
+            Sidebar(
+                expanded = sidebarExpanded,
+                current = screen,
+                scanning = scanning,
+                onToggle = {
+                    sidebarExpanded = !sidebarExpanded
+                    store.data.sidebarExpanded = sidebarExpanded
+                    store.save()
+                },
+                onNavigate = ::navigate,
+                onRefresh = { scan(rootPath) },
+                modifier = Modifier.fillMaxHeight(),
+                resume = resumeSpot(lib),
+            )
+            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                when (val s = screen) {
+                    is Screen.Browse -> BrowseScreen(
+                        library = lib,
+                        section = s.section,
+                        store = store,
+                        filter = filter.copy(sort = sorts.getValue(s.section)),
+                        rootPath = rootPath,
+                        row = s.row,
+                        gridState = when {
+                            s.row != null -> rowGrid
+                            s.section == LibrarySection.MOVIES -> movieGrid
+                            else -> showGrid
+                        },
+                        onOpen = ::openDetails,
+                        onPlay = { item, path -> play(item, path) },
+                        onClearFilter = { filter = BrowseFilter() },
+                        onSeeAll = { navigate(Screen.Browse(s.section, it)) },
+                    )
+                    is Screen.Places -> PlacesScreen(
+                        library = lib,
+                        store = store,
+                        kind = s.kind,
+                        section = placeSection,
+                        onSectionChange = { placeSection = it },
+                        onOpen = { section, placeFilter ->
+                            filter = placeFilter
+                            navigate(Screen.Browse(section))
+                        },
+                    )
+                    is Screen.Files -> FilesScreen(
+                        store = store,
+                        roots = storageRoots,
+                        dir = s.dir,
+                        onOpen = { screen = Screen.Files(it) },
+                        onPlay = { queue, start ->
+                            screen = Screen.Player(
+                                queue,
+                                start,
+                                autoAdvance = store.data.settings.bingeWatching,
+                                returnTo = s,
+                            )
+                        },
+                    )
+                    Screen.Search -> SearchScreen(
+                        library = lib,
+                        store = store,
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        gridState = searchGrid,
+                        onOpen = ::openDetails,
+                    )
+                    Screen.Filters -> FiltersScreen(
+                        library = lib,
+                        filter = filter,
+                        onFilterChange = { filter = it },
+                        sorts = sorts,
+                        onSortChange = { section, order ->
+                            sorts = sorts + (section to order)
+                            store.saveSort(section, order)
+                        },
+                    )
+                    Screen.Settings -> SettingsScreen(
+                        store,
+                        rootPath = rootPath,
+                        onChangeFolder = ::launchPicker,
+                        unreachable = unreachable,
+                        onAddDeviceFolder = { addFolder.launch(null) },
+                        onSourcesChanged = { scan(rootPath) },
+                    )
+                    else -> Unit
+                }
             }
         }
     }
@@ -551,4 +580,10 @@ private fun cloudFolderName(context: android.content.Context, tree: Uri): String
         null,
     )?.use { if (it.moveToFirst()) it.getString(0) else null }
 }.getOrNull() ?: tree.authority.orEmpty()
+
+/** Every video an item plays from. */
+private fun locationsOf(item: MediaItem): List<String> = when (item) {
+    is Movie -> item.allParts
+    is Show -> item.seasons.flatMap { s -> s.episodes.map { it.videoPath } }
+}
 

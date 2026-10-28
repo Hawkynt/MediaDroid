@@ -1,6 +1,7 @@
 package com.hawkynt.mediadroid.library
 
 import com.hawkynt.mediadroid.nfo.StreamDetails
+import kotlinx.serialization.Serializable
 
 /**
  * What a file is, in the words a player shows on its badges: resolution class (`480p` … `8K`), HDR
@@ -10,6 +11,7 @@ import com.hawkynt.mediadroid.nfo.StreamDetails
  * or, when that fails, from the NFO's stream details. File names are never trusted for it. Codec
  * names are Kodi's `<streamdetails>` values; [codecOf] turns a probed Media3 MIME type into one.
  */
+@Serializable
 data class Quality(
     val resolution: String? = null,
     val hdr: String? = null,

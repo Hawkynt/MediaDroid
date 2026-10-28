@@ -1,6 +1,7 @@
 package com.hawkynt.mediadroid.library
 
 import com.hawkynt.mediadroid.nfo.TimeRange
+import kotlinx.serialization.Serializable
 
 /** One playable entry in the library — the folder-level view of a movie or a show. */
 sealed interface MediaItem {
@@ -23,6 +24,7 @@ sealed interface MediaItem {
     val key: String
 }
 
+@Serializable
 data class Movie(
     override val title: String,
     override val year: Int? = null,
@@ -68,6 +70,7 @@ data class Movie(
     val allParts: List<String> get() = versions.ifEmpty { listOf(this) }.flatMap { it.parts }
 }
 
+@Serializable
 data class Show(
     override val title: String,
     override val year: Int? = null,
@@ -103,6 +106,7 @@ data class Show(
             ?.representativeVideo
 }
 
+@Serializable
 data class Season(
     val number: Int,
     val episodes: List<Episode> = emptyList(),
@@ -118,6 +122,7 @@ data class Season(
     val representativeThumb: String? get() = firstEpisode?.thumbPath
 }
 
+@Serializable
 data class Episode(
     val number: Int,
     val title: String? = null,
@@ -139,6 +144,7 @@ data class Episode(
 enum class LibrarySection { MOVIES, SHOWS }
 
 /** Everything one scan of one library root produced — or of several, [merge]d. */
+@Serializable
 data class Library(val movies: List<Movie>, val shows: List<Show>) {
     val items: List<MediaItem> get() = movies + shows
 

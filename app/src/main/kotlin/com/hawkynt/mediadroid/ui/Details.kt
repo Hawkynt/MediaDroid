@@ -104,6 +104,7 @@ fun DetailsScreen(
         item {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(item.title, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                AwayNote(item)
                 val subtitle = buildString {
                     item.year?.let { append("$it  ·  ") }
                     append(item.genres.joinToString(" · "))
