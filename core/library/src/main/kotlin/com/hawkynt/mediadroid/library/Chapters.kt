@@ -11,8 +11,11 @@ object Chapters {
 
     private val EBML_MAGIC = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte())
 
-    fun read(file: File): List<Chapter> {
-        val head = runCatching { file.inputStream().use { it.readNBytes(12) } }.getOrNull() ?: return emptyList()
+    fun read(file: File): List<Chapter> = read(LocalFile(file))
+
+    /** The chapters of a video on any source. */
+    fun read(file: FsFile): List<Chapter> {
+        val head = runCatching { file.open().use { it.readNBytes(12) } }.getOrNull() ?: return emptyList()
         return when {
             head.size >= 4 && head.copyOf(4).contentEquals(EBML_MAGIC) -> MatroskaChapters.parse(file)
             OggChapters.accepts(head) -> OggChapters.parse(file)

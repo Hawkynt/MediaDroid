@@ -197,6 +197,13 @@ fun PlayerScreen(
     var gammaBoost by remember { mutableFloatStateOf(1f) }
     val player = remember {
         ExoPlayer.Builder(context)
+            // Two minutes ahead where memory allows, and a longer start after a stall: a 4K file over
+            // Wi-Fi rides out the dips. The byte limit stays Media3's own, which fits any heap.
+            .setLoadControl(
+                androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(BUFFER_MIN_MS, BUFFER_MAX_MS, BUFFER_START_MS, BUFFER_RESTART_MS)
+                    .build(),
+            )
             .setRenderersFactory(
                 object : DefaultRenderersFactory(context) {
                     override fun buildTextRenderers(
@@ -507,7 +514,10 @@ fun PlayerScreen(
             .setPreferredAudioLanguage(settings.audioLanguage.ifEmpty { null })
             .build()
         val chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            com.hawkynt.mediadroid.library.Chapters.read(File(playable.videoPath))
+            // Chapters mark intros and credits for videos on network sources as for local ones.
+            com.hawkynt.mediadroid.data.SourceAccess.resolve(context, playable.videoPath)
+                ?.let { com.hawkynt.mediadroid.library.Chapters.read(it) }
+                .orEmpty()
         }
         introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, playable.intro) else null
         creditsStartMs = SkipRules.creditsStartMs(chapters, playable.credits)
@@ -1641,3 +1651,12 @@ private enum class Rotation(val label: String, val orientation: Int) {
     LANDSCAPE("Landscape", android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE),
     PORTRAIT("Portrait", android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT),
 }
+
+/** At least half a minute of video buffered, two minutes at most, as memory allows. */
+private const val BUFFER_MIN_MS = 30_000
+private const val BUFFER_MAX_MS = 120_000
+
+/** Playback starts with 2.5 s buffered, and again after a stall with 5 s. */
+private const val BUFFER_START_MS = 2_500
+private const val BUFFER_RESTART_MS = 5_000
+

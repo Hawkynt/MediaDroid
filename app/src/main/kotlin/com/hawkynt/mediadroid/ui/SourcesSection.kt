@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.data.LibraryStore
 import com.hawkynt.mediadroid.data.PRIMARY_SOURCE
+import com.hawkynt.mediadroid.data.rememberSmbServers
 import com.hawkynt.mediadroid.data.SecretStore
 import com.hawkynt.mediadroid.data.SourceAccess
 import com.hawkynt.mediadroid.data.StateStore
@@ -227,6 +228,23 @@ private fun NetworkSourceDialog(
                     }
                 }
                 OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
+                // Servers announcing SMB on the local network, one tap to fill in.
+                val lan by rememberSmbServers(active = kind == SourceKind.SMB)
+                if (kind == SourceKind.SMB && lan.isNotEmpty()) {
+                    Text("On this network", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        lan.forEach { found ->
+                            FilterChip(
+                                selected = server == found.host,
+                                onClick = {
+                                    server = found.host
+                                    if (name.isBlank()) name = found.name
+                                },
+                                label = { Text(found.name) },
+                            )
+                        }
+                    }
+                }
                 OutlinedTextField(
                     server,
                     { server = it },

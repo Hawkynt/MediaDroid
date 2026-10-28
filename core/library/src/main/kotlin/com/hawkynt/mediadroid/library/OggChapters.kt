@@ -17,8 +17,10 @@ object OggChapters {
     /** Whether [head], the first bytes of a file, are an Ogg page. */
     fun accepts(head: ByteArray): Boolean = head.size >= 4 && String(head, 0, 4, Charsets.ISO_8859_1) == "OggS"
 
-    fun parse(file: File): List<Chapter> = runCatching {
-        val bytes = file.inputStream().use { it.readNBytes(HEAD_BYTES) }
+    fun parse(file: File): List<Chapter> = parse(LocalFile(file))
+
+    fun parse(file: FsFile): List<Chapter> = runCatching {
+        val bytes = file.open().use { it.readNBytes(HEAD_BYTES) }
         parse(bytes)
     }.getOrDefault(emptyList())
 

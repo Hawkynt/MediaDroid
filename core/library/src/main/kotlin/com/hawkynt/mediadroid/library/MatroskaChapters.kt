@@ -30,10 +30,12 @@ object MatroskaChapters {
     private const val ID_CHAPTER_DISPLAY = 0x80L
     private const val ID_CHAP_STRING = 0x85L
 
-    fun parse(file: File): List<Chapter> = runCatching {
+    fun parse(file: File): List<Chapter> = parse(LocalFile(file))
+
+    fun parse(file: FsFile): List<Chapter> = runCatching {
         val size = minOf(file.length(), HEAD_BYTES.toLong()).toInt()
         val bytes = ByteArray(size)
-        file.inputStream().use { input ->
+        file.open().use { input ->
             var read = 0
             while (read < size) {
                 val n = input.read(bytes, read, size - read)

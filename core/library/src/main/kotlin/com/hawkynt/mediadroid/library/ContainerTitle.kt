@@ -1,7 +1,6 @@
 package com.hawkynt.mediadroid.library
 
 import java.io.File
-import java.io.RandomAccessFile
 
 /**
  * The title a video file carries inside its container: Matroska's `Segment/Info/Title` (element ids from
@@ -15,8 +14,11 @@ object ContainerTitle {
     private const val ID_INFO = 0x1549A966L
     private const val ID_TITLE = 0x7BA9L
 
-    fun read(file: File): String? = runCatching {
-        val head = file.inputStream().use { it.readNBytes(12) }
+    fun read(file: File): String? = read(LocalFile(file))
+
+    /** The title a video on any source carries. */
+    fun read(file: FsFile): String? = runCatching {
+        val head = file.open().use { it.readNBytes(12) }
         val title = when {
             head.size >= 4 && head[0] == 0x1A.toByte() && head[1] == 0x45.toByte() -> matroska(file)
             Mp4Chapters.accepts(head) -> mp4(file)
@@ -25,8 +27,8 @@ object ContainerTitle {
         title?.trim()?.takeIf { it.isNotEmpty() }
     }.getOrNull()
 
-    private fun matroska(file: File): String? {
-        val bytes = file.inputStream().use { it.readNBytes(HEAD_BYTES) }
+    private fun matroska(file: FsFile): String? {
+        val bytes = file.open().use { it.readNBytes(HEAD_BYTES) }
         val reader = MatroskaChapters.Ebml(bytes)
         while (reader.hasRoom) {
             val id = reader.readId() ?: return null
@@ -55,7 +57,7 @@ object ContainerTitle {
         return null
     }
 
-    private fun mp4(file: File): String? = RandomAccessFile(file, "r").use { raf ->
+    private fun mp4(file: FsFile): String? = SeekableFile(file).use { raf ->
         val moov = Mp4Chapters.readMoov(raf) ?: return null
         val udta = moov.children(0, moov.size).firstOrNull { it.type == "udta" } ?: return null
         val meta = moov.children(udta.start, udta.end).firstOrNull { it.type == "meta" } ?: return null
