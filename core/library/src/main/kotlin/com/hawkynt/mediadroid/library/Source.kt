@@ -46,6 +46,11 @@ data class Source(
     val user: String = "",
     /** The whole location for WebDAV and document providers, which are addressed by URL. */
     val url: String = "",
+    /**
+     * SFTP: the server's host key fingerprint, taken on the first connection and checked on every
+     * later one, so a server that changed its key is refused rather than trusted.
+     */
+    val hostKey: String = "",
 ) {
     /** Where the source's root is: an absolute local path, or a URI every location below it starts with. */
     val rootUri: String

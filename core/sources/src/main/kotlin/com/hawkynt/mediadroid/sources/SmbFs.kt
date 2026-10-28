@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
  * `smb://host[:port]/share/folder/…`. One connection per source, opened on first use and opened again
  * when the server dropped it.
  */
-class SmbFs(private val source: Source, private val secrets: Secrets) : AutoCloseable {
+class SmbFs(private val source: Source, private val secrets: Secrets) : RemoteFs {
 
     private val client = SMBClient(
         SmbConfig.builder()
@@ -37,8 +37,7 @@ class SmbFs(private val source: Source, private val secrets: Secrets) : AutoClos
     private val shareName: String = source.path.trim('/').substringBefore('/')
     private val base: String = source.path.trim('/').substringAfter('/', "")
 
-    /** The source's root folder. */
-    val root: FsFile get() = SmbFile(this, base, isDirectory = true, size = 0, modified = 0)
+    override val root: FsFile get() = SmbFile(this, base, isDirectory = true, size = 0, modified = 0)
 
     @Synchronized
     internal fun share(): DiskShare {
@@ -75,8 +74,7 @@ class SmbFs(private val source: Source, private val secrets: Secrets) : AutoClos
     /** [inner] as smbj wants it: backslashes, no leading separator. */
     internal fun smbPath(inner: String): String = inner.replace('/', '\\')
 
-    /** The entry at [location] — one of [locationOf]'s — or null when it lies outside this share. */
-    fun resolve(location: String): FsFile? {
+    override fun resolve(location: String): FsFile? {
         val prefix = locationOf("")
         if (location != prefix && !location.startsWith("$prefix/")) return null
         val inner = location.removePrefix(prefix).trim('/')

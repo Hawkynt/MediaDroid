@@ -13,6 +13,9 @@ smbj = "0.15.0"
 commonsNet = "3.13.0"
 sshj = "0.41.2"
 nfsClient = "1.1.0"
+ftpserver = "1.2.1"
+mina-sshd = "2.20.0"
+bouncycastle = "1.86"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -33,6 +36,12 @@ smbj = { group = "com.hierynomus", name = "smbj", version.ref = "smbj" }
 commons-net = { group = "commons-net", name = "commons-net", version.ref = "commonsNet" }
 sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
 nfs-client = { group = "com.emc.ecs", name = "nfs-client", version.ref = "nfsClient" }
+ftpserver-core = { group = "org.apache.ftpserver", name = "ftpserver-core", version.ref = "ftpserver" }
+sshd-core = { group = "org.apache.sshd", name = "sshd-core", version.ref = "mina-sshd" }
+sshd-sftp = { group = "org.apache.sshd", name = "sshd-sftp", version.ref = "mina-sshd" }
+bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
+bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", version.ref = "bouncycastle" }
+bcutil = { group = "org.bouncycastle", name = "bcutil-jdk18on", version.ref = "bouncycastle" }
 compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }

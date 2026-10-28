@@ -2,14 +2,19 @@ package com.hawkynt.mediadroid.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -35,7 +40,8 @@ import com.hawkynt.mediadroid.data.SourceAccess
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
-import com.hawkynt.mediadroid.sources.SmbFs
+import com.hawkynt.mediadroid.sources.SftpFs
+import com.hawkynt.mediadroid.sources.SourceFiles
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -83,7 +89,7 @@ fun SourcesSection(
             }
             when {
                 source.id == PRIMARY_SOURCE -> OutlinedButton(onClick = onChangeMainFolder) { Text("Change") }
-                source.kind == SourceKind.SMB -> TextButton(onClick = { editing = source }) { Text("Edit") }
+                source.kind in NETWORK_KINDS -> TextButton(onClick = { editing = source }) { Text("Edit") }
             }
             if (source.id != PRIMARY_SOURCE) {
                 TextButton(onClick = {
@@ -100,11 +106,11 @@ fun SourcesSection(
         OutlinedButton(onClick = onAddDeviceFolder) { Text("Add a folder", fontSize = 16.sp) }
         OutlinedButton(onClick = {
             editing = Source(UUID.randomUUID().toString(), "", SourceKind.SMB)
-        }) { Text("Add a network share", fontSize = 16.sp) }
+        }) { Text("Add a network source", fontSize = 16.sp) }
     }
 
     editing?.let { source ->
-        SmbDialog(
+        NetworkSourceDialog(
             source = source,
             password = SecretStore.of(context).secretFor(source.id).orEmpty(),
             onDismiss = { editing = null },
@@ -136,34 +142,75 @@ private fun kindLabel(kind: SourceKind) = when (kind) {
     SourceKind.DOCUMENTS -> "Cloud"
 }
 
-/** The fields of a Windows / Samba share, with a test that lists the share before it is saved. */
+private const val SMB_FOLDER_HINT = "Share and folder — media/movies"
+private const val FOLDER_HINT = "Folder — /media/movies"
+
+/** The kinds of network source the dialog adds. */
+private val NETWORK_KINDS = listOf(SourceKind.SMB, SourceKind.FTP, SourceKind.FTPS, SourceKind.SFTP)
+
+/**
+ * The fields of a network source — a Windows / Samba share, FTP, FTPS or SFTP — with a test that lists
+ * it before it is saved. For SFTP the server's host key seen on the test (or on saving) is kept with
+ * the source and checked on every later connection.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SmbDialog(
+private fun NetworkSourceDialog(
     source: Source,
     password: String,
     onDismiss: () -> Unit,
     onSave: (Source, String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    var kind by remember { mutableStateOf(source.kind) }
     var name by remember { mutableStateOf(source.name) }
     var server by remember { mutableStateOf(source.host) }
+    var port by remember { mutableStateOf(source.port.takeIf { it > 0 }?.toString().orEmpty()) }
     var folder by remember { mutableStateOf(source.path.trim('/')) }
     var user by remember { mutableStateOf(source.user) }
     var secret by remember { mutableStateOf(password) }
+    var hostKey by remember { mutableStateOf(source.hostKey) }
     var status by remember { mutableStateOf<String?>(null) }
 
     fun edited() = source.copy(
-        name = name.trim().ifEmpty { "${server.trim()}/${folder.trim('/').substringBefore('/')}" },
-        host = server.trim().removePrefix("smb://").removePrefix("\\\\").trimEnd('/'),
+        kind = kind,
+        name = name.trim().ifEmpty { "${server.trim()}/${folder.trim('/').substringBefore('/')}".trimEnd('/') },
+        host = server.trim().substringAfter("://").removePrefix("\\\\").trimEnd('/'),
+        port = port.trim().toIntOrNull() ?: 0,
         path = "/" + folder.trim().replace('\\', '/').trim('/'),
         user = user.trim(),
+        hostKey = if (kind == SourceKind.SFTP) hostKey else "",
     )
+
+    /** Connects with the fields as they stand; returns what to say, and keeps an SFTP host key. */
+    suspend fun test(candidate: Source): String = withContext(Dispatchers.IO) {
+        runCatching {
+            val fs = SourceFiles.open(candidate) { secret } ?: error("this kind cannot be read yet")
+            fs.use {
+                val entries = it.root.listFiles() ?: error("the folder cannot be read")
+                (it as? SftpFs)?.hostKey?.let { key -> hostKey = key }
+                "Connected: ${entries.size} entries in ${candidate.rootUri}"
+            }
+        }.getOrElse { "Not reachable: ${it.message ?: it.javaClass.simpleName}" }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Windows / Samba share") },
+        title = { Text("Network source") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    NETWORK_KINDS.forEach { option ->
+                        FilterChip(
+                            selected = kind == option,
+                            onClick = { kind = option },
+                            label = { Text(kindLabel(option)) },
+                        )
+                    }
+                }
                 OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
                 OutlinedTextField(
                     server,
@@ -172,39 +219,40 @@ private fun SmbDialog(
                     singleLine = true,
                 )
                 OutlinedTextField(
+                    port,
+                    { port = it.filter(Char::isDigit) },
+                    label = { Text("Port — empty for the usual one") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                OutlinedTextField(
                     folder,
                     { folder = it },
-                    label = { Text("Share and folder — media/movies") },
+                    label = { Text(if (kind == SourceKind.SMB) SMB_FOLDER_HINT else FOLDER_HINT) },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     user,
                     { user = it },
-                    label = { Text("User — empty for a guest share") },
+                    label = { Text(if (kind == SourceKind.SFTP) "User" else "User — empty for a guest") },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     secret,
                     { secret = it },
-                    label = { Text("Password") },
-                    singleLine = true,
+                    label = { Text(if (kind == SourceKind.SFTP) "Password, or a private key" else "Password") },
+                    singleLine = kind != SourceKind.SFTP,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 )
+                if (kind == SourceKind.SFTP && hostKey.isNotEmpty()) {
+                    Text("Host key: $hostKey", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = {
                         status = "Connecting…"
                         val candidate = edited()
-                        scope.launch {
-                            status = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    SmbFs(candidate) { secret }.use { fs ->
-                                        val entries = fs.root.listFiles() ?: error("the share or folder cannot be read")
-                                        "Connected: ${entries.size} entries in ${candidate.rootUri}"
-                                    }
-                                }.getOrElse { "Not reachable: ${it.message ?: it.javaClass.simpleName}" }
-                            }
-                        }
+                        scope.launch { status = test(candidate) }
                     }) { Text("Test") }
                     Spacer(Modifier.width(12.dp))
                     status?.let { Text(it, fontSize = 14.sp) }
@@ -213,8 +261,19 @@ private fun SmbDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = server.isNotBlank() && folder.isNotBlank(),
-                onClick = { onSave(edited(), secret) },
+                enabled = server.isNotBlank() && (kind != SourceKind.SMB || folder.isNotBlank()),
+                onClick = {
+                    // An SFTP server is met once before saving, so its host key is kept from the start.
+                    if (kind == SourceKind.SFTP && hostKey.isEmpty()) {
+                        val candidate = edited()
+                        scope.launch {
+                            status = test(candidate)
+                            if (hostKey.isNotEmpty()) onSave(edited(), secret)
+                        }
+                    } else {
+                        onSave(edited(), secret)
+                    }
+                },
             ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
