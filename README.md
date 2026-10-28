@@ -51,9 +51,21 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - Dark cinema theme and its own launcher icon, adaptive and themed-icon ready.
 - Subtitles on/off with a preferred language, and a picker for every audio and subtitle track a file carries.
 - Holding skip forward or back — on screen, or a remote's left/right and its rewind / fast-forward keys — steps 10 s, then 30 s after three seconds of holding, 60 s after six and five minutes after nine; the target time shows while holding and letting go seeks there once. A short tap stays the ordinary skip.
+- Child lock in the gear: once locked, every touch, swipe, Back and button is ignored — only the volume keys still work — and any touch shows a lock symbol for a moment; holding it for two seconds unlocks.
+- Picture in picture: leaving the app while a film plays shrinks it into a small window in the picture's own shape; tapping it brings the full player back where it was. Leaving while paused — or closing the small window — pauses the film instead of letting it play on unseen.
+- An info button in the player's top bar shows what is playing: the file, its container and size, every video / audio / subtitle track with codec, language, channels, resolution and frame rate (the ones playing marked), and which decoders are at work — hardware, Android's software or the bundled FFmpeg.
+- Media controls everywhere: play/pause, next and previous work from headset and Bluetooth buttons, the media notification and the lock screen while the player is open; next and previous follow the episodes or the parts of a movie. Android 13+ asks once for the notification.
+- Rotation in the gear: auto, landscape or portrait, held for the session; leaving the player hands rotation back to the system.
+- Night mode in the gear compresses the dynamic range in the app's own audio stage — quiet dialogue comes up, explosions come down — for late evenings and thin walls; it combines with the loudness gain and the volume boost (soft-knee compressor after Giannoulis, Massberg & Reiss, JAES 2012).
+- Audio delay in the gear, −2.5 s … +2.5 s in 50 ms steps, fixes lip-sync; it is remembered per audio output — the phone's speaker, each Bluetooth headset, USB, HDMI — since each has its own latency, and follows the output when it changes.
+- Subtitles in the gear: a delay of −10 … +10 s in tenths of a second, four sizes, a raised position above burned-in text and an optional dark box behind the text. The household sets the look in the guarded settings; each video can keep its own look and delay.
+- On phones with a notch or punch hole (Android 9+), a switch under the picture sizes lets the picture reach into the camera cutout — mostly useful with Fill; it is remembered.
+- Spatial audio: on Android 13+ devices with a spatializer, a remembered switch in the gear hands multichannel sound to it for headphones that support it. The player takes audio focus like any film player: other apps pause, a call pauses the film.
+- Sleep timer in the gear: off, 15, 30, 45, 60 or 90 minutes, or at the end of this video. While it runs the top bar shows the minutes left; when it runs out the sound fades over ten seconds and playback pauses. It never carries over to the next start.
 - Repeat in the gear: off, this video, or all of it (the show or the folder, round again from the start) — for the film a child wants to see again and again. It lasts for the session.
 - With the controls up, the bar also tells when the film will be over on the clock ("Ends 21:35", in the device's 12/24-hour format), allowing for the playback speed.
 - The player shows nothing but the picture: a tap brings the controls up, a few seconds untouched fade them out, and the status and navigation bars stay hidden while watching.
+- For TV boxes, two guarded settings: matching the display's refresh rate to the film's frame rate (or a whole multiple — no judder at 23.976 fps), and audio passthrough that hands AC3/E-AC3/DTS/TrueHD untouched to an AV receiver over HDMI where the device supports it.
 - Video plays on the device's own hardware decoders; the bundled FFmpeg decoder only steps in for what they cannot play. Settings can put software decoding first, with a warning: it drains the battery fast and is meant for videos that otherwise do not play at all or only with errors.
 - The player's gear holds playback speed from 0.2× to 5× (starting at the default speed), subtitles and track pickers, and brightness/gamma/contrast/color for the video on screen — remembered per video, live as you drag, and the picture size: Fit, Fill (crop to the screen) or Stretch.
 - Touch on the bare picture: double tap left or right jumps 15 s back or ahead, a vertical swipe on the left half sets the screen brightness and on the right half the volume — both run on past the device's maximum up to 800 %, doubling every third of the extra stretch: louder through the app's loudness gain (soft-saturating, so quiet tracks come up without cracking peaks), brighter through a gamma lift — and a pinch zooms up to 4× and pans the zoomed picture.
@@ -111,18 +123,11 @@ thumbs are painted from the titles themselves, and commits whatever changed back
 
 Specified, not built yet. Prior art: [Nova Video Player](https://github.com/nova-video-player/aos-Video) (Apache-2.0), looked at as a user would and read for its menus; only what fits a household player without accounts or a network made it here.
 
-- **Sleep timer.** In the gear: off, 15, 30, 45, 60 or 90 minutes, or "at the end of this episode / film". When it runs out the sound fades over ten seconds, playback pauses and the screen may sleep; while it runs, the bar shows the minutes left. It never carries over to the next start.
-- **Child lock.** A lock in the gear freezes the player: every touch and swipe is ignored, a small lock symbol shows briefly on any touch, and only holding that symbol for two seconds unlocks. Volume keys keep working.
 - **Night mode.** A switch in the gear compresses the dynamic range in the app's audio stage: quiet dialogue comes up, explosions come down, for late evenings and thin walls. It combines with the loudness gain and the volume boost.
+- **Child lock.** A lock in the gear freezes the player: every touch and swipe is ignored, a small lock symbol shows briefly on any touch, and only holding that symbol for two seconds unlocks. Volume keys keep working.
 - **Audio delay.** In the gear, −2.5 s … +2.5 s in 50 ms steps to fix lip-sync; remembered per audio output (the phone's speaker, each Bluetooth headset, HDMI), since each has its own latency.
-- **Subtitle delay and look.** Delay −10 s … +10 s per video; size (small … extra large), a raised position for films with burned-in text at the bottom, and an optional dark box behind the text. The look is a guarded default with a per-video override, like the picture.
-- **Display cutout.** In Fill mode the picture may extend into the camera notch / punch hole, as a switch next to the picture sizes.
 - **Spatial audio.** On Android 13+ a switch in the gear hands multichannel sound to the platform spatializer for headphones that support it.
-- **Picture in picture.** Leaving the app while a video plays keeps it running in a small window; returning brings the full player back where it was.
-- **Media controls everywhere.** A media session puts play/pause, next and previous on the lock screen, in the notification and on headset and Bluetooth buttons.
-- **What is playing.** An info sheet in the player lists the file, container, every video/audio/subtitle track with codec, language and channels, resolution and frame rate, and which decoder is at work (hardware or software).
-- **On TV boxes.** Optional switching of the display refresh rate to the film's frame rate (no judder at 23.976 fps), and an audio-passthrough option that hands AC3/E-AC3/DTS/TrueHD untouched to an AV receiver over HDMI.
-- **Rotation.** Auto, landscape or portrait, held for the session, from the gear.
+- **Display cutout.** In Fill mode the picture may extend into the camera notch / punch hole, as a switch next to the picture sizes.
 
 ### Navigation and browsing
 

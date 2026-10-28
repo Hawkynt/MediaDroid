@@ -102,7 +102,7 @@ object PlaybackMath {
     /** How often a held skip button steps. */
     const val HOLD_REPEAT_MS = 250L
 
-    /** How far a held skip button steps once it has been held [heldMs]: 10 s, 30 s after 3 s, 60 s after 6, 5 min after 9. */
+    /** How far a held skip button steps after [heldMs]: 10 s, 30 s after 3 s, 60 s after 6, 5 min after 9. */
     fun holdStepMs(heldMs: Long): Long = when {
         heldMs >= 9_000 -> 300_000L
         heldMs >= 6_000 -> 60_000L
@@ -119,5 +119,53 @@ object PlaybackMath {
         index + 1 < size && (autoAdvance || repeat == Repeat.ALL) -> index + 1
         repeat == Repeat.ALL && size > 0 -> 0
         else -> null
+    }
+
+    /** The sleep timer's choices in minutes; "at the end of this video" is a choice of its own. */
+    val SLEEP_MINUTES = listOf(15, 30, 45, 60, 90)
+
+    /** How long before the timer runs out the sound starts fading. */
+    const val SLEEP_FADE_MS = 10_000L
+
+    /** The volume factor while a sleep timer runs out: 1 until its last [SLEEP_FADE_MS], then down to 0. */
+    fun sleepFade(remainingMs: Long): Float =
+        (remainingMs.toFloat() / SLEEP_FADE_MS).coerceIn(0f, 1f)
+
+    /** The whole minutes a sleep timer shows, rounding up so it never claims 0 while still running. */
+    fun sleepMinutesLeft(remainingMs: Long): Int =
+        if (remainingMs <= 0) 0 else ((remainingMs + 59_999) / 60_000).toInt()
+
+    /**
+     * The picture-in-picture window's aspect ratio for a video of [width] × [height] with [pixelRatio]:
+     * the picture's own shape, held within the 1:2.39 … 2.39:1 Android accepts. Null while unknown.
+     */
+    fun pipAspect(width: Int, height: Int, pixelRatio: Float): Pair<Int, Int>? {
+        if (width <= 0 || height <= 0) return null
+        val shownWidth = (width * pixelRatio).toInt()
+        val ratio = shownWidth.toFloat() / height
+        return when {
+            ratio > 2.39f -> 239 to 100
+            ratio < 1f / 2.39f -> 100 to 239
+            else -> shownWidth to height
+        }
+    }
+
+    const val AUDIO_DELAY_STEP_MS = 50
+    const val AUDIO_DELAY_LIMIT_MS = 2500
+
+    /** An audio delay (ms; positive: sound later) moved by [steps] of [AUDIO_DELAY_STEP_MS], held in range. */
+    fun nudgeAudioDelay(currentMs: Int, steps: Int): Int =
+        (currentMs + steps * AUDIO_DELAY_STEP_MS).coerceIn(-AUDIO_DELAY_LIMIT_MS, AUDIO_DELAY_LIMIT_MS)
+
+    /**
+     * The display refresh rate to play a [frameRate] film at: the lowest of [available] that is a whole
+     * multiple of it (within 0.1 %), or null when none is — then switching would not remove the judder.
+     */
+    fun matchingRefreshRate(frameRate: Float, available: List<Float>): Float? {
+        if (frameRate <= 0f) return null
+        return available.sorted().firstOrNull { rate ->
+            val multiple = kotlin.math.round(rate / frameRate)
+            multiple >= 1 && kotlin.math.abs(rate - multiple * frameRate) <= rate * 0.001f
+        }
     }
 }
