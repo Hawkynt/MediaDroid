@@ -55,6 +55,8 @@ data class Settings(
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
     var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout
+
+    var spatialAudio: Boolean = false,        // hand multichannel sound to the platform spatializer (Android 13+)
     var softwareVideoDecoding: Boolean = false, // FFmpeg before the device's decoders: last resort, drains the battery
 )
 
