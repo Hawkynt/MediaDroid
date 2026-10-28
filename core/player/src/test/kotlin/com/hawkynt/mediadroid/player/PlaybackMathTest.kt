@@ -176,6 +176,17 @@ class PlaybackMathTest {
     }
 
     @Test
+    fun `the small window keeps the picture's shape within what Android allows`() {
+        assertEquals(1920 to 1080, PlaybackMath.pipAspect(1920, 1080, pixelRatio = 1f))
+        // Anamorphic DVD: 720x576 shown 16:9.
+        assertEquals(1024 to 576, PlaybackMath.pipAspect(720, 576, pixelRatio = 1024f / 720f))
+        // Wider than 2.39:1 or taller than 1:2.39 is held at the limit.
+        assertEquals(239 to 100, PlaybackMath.pipAspect(3000, 1000, pixelRatio = 1f))
+        assertEquals(100 to 239, PlaybackMath.pipAspect(500, 2000, pixelRatio = 1f))
+        assertEquals(null, PlaybackMath.pipAspect(0, 0, pixelRatio = 1f))
+    }
+
+    @Test
     fun `the display rate is the lowest whole multiple of the film's frame rate the screen offers`() {
         val tv = listOf(23.976f, 24f, 25f, 29.97f, 50f, 59.94f, 60f)
         assertEquals(23.976f, PlaybackMath.matchingRefreshRate(23.976f, tv)!!, 1e-3f)

@@ -264,6 +264,28 @@ fun SettingsScreen(store: StateStore, rootPath: String, onChangeFolder: () -> Un
             Spacer(Modifier.width(12.dp))
             Text("Subtitles on by default", fontSize = 18.sp)
         }
+        Text("Subtitle size", fontSize = 18.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            com.hawkynt.mediadroid.player.SubtitleLook.Size.entries.forEach { size ->
+                FilterChip(
+                    selected = settings.subtitleSize == size.name,
+                    onClick = { update { it.subtitleSize = size.name } },
+                    label = { Text(size.label, fontSize = 16.sp) },
+                )
+            }
+        }
+        SwitchRow(
+            label = "Subtitles raised",
+            detail = "Above burned-in text at the bottom of the picture.",
+            checked = settings.subtitleRaised,
+            onChange = { c -> update { it.subtitleRaised = c } },
+        )
+        SwitchRow(
+            label = "Dark box behind subtitles",
+            detail = "Easier to read on bright pictures.",
+            checked = settings.subtitleBox,
+            onChange = { c -> update { it.subtitleBox = c } },
+        )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = settings.audioLanguage,
