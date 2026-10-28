@@ -359,9 +359,19 @@ fun PlayerScreen(
     }
 
     var repeat by remember { mutableStateOf(PlaybackMath.Repeat.OFF) }
+    // Sleep timer: a moment on the clock (elapsedRealtime) or "at the end of this video"; never kept.
+    var sleepAt by remember { mutableStateOf<Long?>(null) }
+    var sleepAtEnd by remember { mutableStateOf(false) }
+    var sleepLeftMs by remember { mutableStateOf(0L) }
+    var sleepChoice by remember { mutableStateOf<Int?>(null) }
 
     fun finishCurrent() {
         store.markWatched(queue[index].videoPath)
+        if (sleepAtEnd) {
+            sleepAtEnd = false
+            finished = true
+            return
+        }
         when (val next = PlaybackMath.afterEnd(index, queue.size, autoAdvance, repeat)) {
             null -> finished = true
             index -> {
@@ -431,6 +441,26 @@ fun PlayerScreen(
                 continue
             }
             if (++tick % 6 == 0) saveProgress(position)
+        }
+    }
+
+    LaunchedEffect(sleepAt) {
+        val at = sleepAt ?: run {
+            player.volume = 1f
+            return@LaunchedEffect
+        }
+        while (true) {
+            val left = at - android.os.SystemClock.elapsedRealtime()
+            sleepLeftMs = left
+            player.volume = PlaybackMath.sleepFade(left)
+            if (left <= 0) {
+                player.pause()
+                player.volume = 1f
+                sleepAt = null
+                show("Sleep timer: paused")
+                break
+            }
+            delay(250)
         }
     }
 
@@ -701,6 +731,12 @@ fun PlayerScreen(
                         maxLines = 1,
                         modifier = Modifier.weight(1f),
                     )
+                    val sleepNote = when {
+                        sleepAtEnd -> "Sleep at the end"
+                        sleepAt != null -> "Sleep in ${PlaybackMath.sleepMinutesLeft(sleepLeftMs)} min"
+                        else -> null
+                    }
+                    sleepNote?.let { Text(it, color = Color.White, fontSize = 15.sp, maxLines = 1) }
                     if (externalDisplay != null) {
                         IconButton(
                             onClick = {
@@ -756,6 +792,41 @@ fun PlayerScreen(
                 onSubtitleTrack = { subtitlePicker = true },
                 onClose = { panelOpen = false },
                 sections = {
+                    PanelTitle("Sleep timer")
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        FilterChip(
+                            selected = sleepAt == null && !sleepAtEnd,
+                            onClick = {
+                                sleepAt = null
+                                sleepAtEnd = false
+                            },
+                            label = { Text("Off", fontSize = 16.sp) },
+                        )
+                        PlaybackMath.SLEEP_MINUTES.forEach { minutes ->
+                            FilterChip(
+                                selected = sleepAt != null && sleepChoice == minutes,
+                                onClick = {
+                                    sleepAtEnd = false
+                                    sleepChoice = minutes
+                                    sleepLeftMs = minutes * 60_000L
+                                    sleepAt = android.os.SystemClock.elapsedRealtime() + minutes * 60_000L
+                                },
+                                label = { Text("$minutes min", fontSize = 16.sp) },
+                            )
+                        }
+                        FilterChip(
+                            selected = sleepAtEnd,
+                            onClick = {
+                                sleepAt = null
+                                sleepAtEnd = true
+                            },
+                            label = { Text("End of this video", fontSize = 16.sp) },
+                        )
+                    }
+
                     PanelTitle("Repeat")
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         PlaybackMath.Repeat.entries.forEach { option ->

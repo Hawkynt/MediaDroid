@@ -150,4 +150,20 @@ class PlaybackMathTest {
         assertEquals(0, PlaybackMath.afterEnd(index = 2, size = 3, autoAdvance = false, repeat = PlaybackMath.Repeat.ALL))
         assertEquals(2, PlaybackMath.afterEnd(index = 1, size = 3, autoAdvance = false, repeat = PlaybackMath.Repeat.ALL))
     }
+
+    @Test
+    fun `a running-out sleep timer fades the sound over its last ten seconds`() {
+        assertEquals(1f, PlaybackMath.sleepFade(remainingMs = 60_000), 1e-6f)
+        assertEquals(1f, PlaybackMath.sleepFade(remainingMs = 10_000), 1e-6f)
+        assertEquals(0.5f, PlaybackMath.sleepFade(remainingMs = 5_000), 1e-6f)
+        assertEquals(0f, PlaybackMath.sleepFade(remainingMs = 0), 1e-6f)
+        assertEquals(0f, PlaybackMath.sleepFade(remainingMs = -3_000), 1e-6f)
+    }
+
+    @Test
+    fun `the sleep timer shows whole minutes, rounding up`() {
+        assertEquals(30, PlaybackMath.sleepMinutesLeft(remainingMs = 30 * 60_000L))
+        assertEquals(1, PlaybackMath.sleepMinutesLeft(remainingMs = 1_000))
+        assertEquals(0, PlaybackMath.sleepMinutesLeft(remainingMs = 0))
+    }
 }

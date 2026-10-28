@@ -120,4 +120,18 @@ object PlaybackMath {
         repeat == Repeat.ALL && size > 0 -> 0
         else -> null
     }
+
+    /** The sleep timer's choices in minutes; "at the end of this video" is a choice of its own. */
+    val SLEEP_MINUTES = listOf(15, 30, 45, 60, 90)
+
+    /** How long before the timer runs out the sound starts fading. */
+    const val SLEEP_FADE_MS = 10_000L
+
+    /** The volume factor while a sleep timer runs out: 1 until its last [SLEEP_FADE_MS], then down to 0. */
+    fun sleepFade(remainingMs: Long): Float =
+        (remainingMs.toFloat() / SLEEP_FADE_MS).coerceIn(0f, 1f)
+
+    /** The whole minutes a sleep timer shows, rounding up so it never claims 0 while still running. */
+    fun sleepMinutesLeft(remainingMs: Long): Int =
+        if (remainingMs <= 0) 0 else ((remainingMs + 59_999) / 60_000).toInt()
 }
