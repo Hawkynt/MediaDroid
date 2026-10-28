@@ -17,7 +17,6 @@ import kotlinx.serialization.json.Json
 @Serializable
 data class ResumeInfo(val positionMs: Long = 0, val durationMs: Long = 0)
 
-/** A picture correction stored for one video; see [PictureAdjustment] for the ranges. */
 /** A subtitle look stored for one video; see [SubtitleLook]. */
 @Serializable
 data class SubtitleOverride(
@@ -27,6 +26,7 @@ data class SubtitleOverride(
     val box: Boolean = false,
 )
 
+/** A picture correction stored for one video; see [PictureAdjustment] for the ranges. */
 @Serializable
 data class PictureOverride(
     val brightness: Float = 0f,
