@@ -103,7 +103,7 @@ fun SourcesSection(
     }
     Spacer(Modifier.height(8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = onAddDeviceFolder) { Text("Add a folder", fontSize = 16.sp) }
+        OutlinedButton(onClick = onAddDeviceFolder) { Text("Add a folder or cloud folder", fontSize = 16.sp) }
         OutlinedButton(onClick = {
             editing = Source(UUID.randomUUID().toString(), "", SourceKind.SMB)
         }) { Text("Add a network source", fontSize = 16.sp) }

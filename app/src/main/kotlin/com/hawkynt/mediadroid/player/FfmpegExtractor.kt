@@ -93,7 +93,8 @@ class FfmpegExtractor(
     private fun open(): Boolean {
         if (!FfmpegDemuxer.isAvailable()) return false
         val uri = uri ?: return false
-        if (isNetworkLocation(uri)) return openRemote(uri)
+        // Anything but a plain file — a share, a WebDAV folder, a cloud document — is read through its source.
+        if (uri.scheme != null && uri.scheme != "file") return openRemote(uri)
         val path = uri.takeIf { it.scheme == null || it.scheme == "file" }?.path ?: return false
         val raf = runCatching { RandomAccessFile(File(path), "r") }.getOrNull() ?: return false
         val opened = FfmpegDemuxer.open(object : FfmpegDemuxer.Input {

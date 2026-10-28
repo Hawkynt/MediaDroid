@@ -232,8 +232,23 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
         } else {
             null
         }
-        if (path != null && store.sources.none { it.kind == SourceKind.LOCAL && it.path == path }) {
-            val added = Source.local(java.util.UUID.randomUUID().toString(), File(path).name.ifEmpty { path }, path)
+        val added = when {
+            path != null && store.sources.none { it.kind == SourceKind.LOCAL && it.path == path } ->
+                Source.local(java.util.UUID.randomUUID().toString(), File(path).name.ifEmpty { path }, path)
+            path == null && store.sources.none { it.url == uri.toString() } -> {
+                // A cloud folder through its document provider: keep the permission across restarts.
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                Source(
+                    java.util.UUID.randomUUID().toString(),
+                    cloudFolderName(context, uri),
+                    SourceKind.DOCUMENTS,
+                    host = uri.authority.orEmpty(),
+                    url = uri.toString(),
+                )
+            }
+            else -> null
+        }
+        if (added != null) {
             store.saveSources(store.sources + added)
             scan(rootPath)
         }
@@ -524,3 +539,16 @@ fun Show.playQueue(): List<Playable> =
             )
         }
     }
+
+/** A cloud folder's name as its provider shows it, else the provider's own name. */
+private fun cloudFolderName(context: android.content.Context, tree: Uri): String = runCatching {
+    val document = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+    context.contentResolver.query(
+        document,
+        arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+        null,
+        null,
+        null,
+    )?.use { if (it.moveToFirst()) it.getString(0) else null }
+}.getOrNull() ?: tree.authority.orEmpty()
+

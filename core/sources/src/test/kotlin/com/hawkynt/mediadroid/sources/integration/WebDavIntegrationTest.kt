@@ -4,6 +4,7 @@ import com.hawkynt.mediadroid.library.LibraryScanner
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.library.readTextOrNull
+import com.hawkynt.mediadroid.sources.Secrets
 import com.hawkynt.mediadroid.sources.SourceFiles
 import com.hawkynt.mediadroid.sources.WebDavFs
 import java.io.File
@@ -33,7 +34,7 @@ class WebDavIntegrationTest {
             assertEquals("<movie><title>Heat</title></movie>", movies.child("movie.nfo").readTextOrNull())
             assertEquals(10, fs.resolve(video.path)!!.length())
         }
-        SourceFiles { PASSWORD }.use { files ->
+        SourceFiles(Secrets { PASSWORD }).use { files ->
             assertEquals("Heat", LibraryScanner.scan(files.root(source())!!).movies.single().title)
         }
     }
