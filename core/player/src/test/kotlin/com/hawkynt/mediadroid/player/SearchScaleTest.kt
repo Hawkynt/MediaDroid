@@ -55,4 +55,28 @@ class SearchScaleTest {
         // 720 / 8 = 90 and 480 / 8 = 60 hold two 16-pixel blocks each way; 480 / 16 = 30 would not.
         assertEquals(8, coarse.scale)
     }
+
+    @Test
+    fun `a finer step that goes coarse again soon after waits twice as long before the next try`() {
+        val pace = SearchScale(720, 480)
+        repeat(SearchScale.CALM_FRAMES) { pace.report(2_000_000L, frame, late = false) }
+        assertEquals(1, pace.scale)
+        pace.report(2_000_000L, frame, late = true)
+        assertEquals(2, pace.scale)
+        repeat(SearchScale.CALM_FRAMES) { pace.report(2_000_000L, frame, late = false) }
+        assertEquals("not yet: the last try bounced", 2, pace.scale)
+        repeat(SearchScale.CALM_FRAMES) { pace.report(2_000_000L, frame, late = false) }
+        assertEquals(1, pace.scale)
+    }
+
+    @Test
+    fun `a long steady stretch lets the wait shrink back`() {
+        val pace = SearchScale(720, 480)
+        repeat(SearchScale.CALM_FRAMES) { pace.report(2_000_000L, frame, late = false) }
+        pace.report(2_000_000L, frame, late = true)
+        // Steady at 2 for a long while (no headroom, no lateness), then calm again.
+        repeat(200) { pace.report(8_000_000L, frame, late = false) }
+        repeat(SearchScale.CALM_FRAMES) { pace.report(2_000_000L, frame, late = false) }
+        assertEquals(1, pace.scale)
+    }
 }
