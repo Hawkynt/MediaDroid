@@ -1,0 +1,37 @@
+1/5 frame drop:
+#1: totdiff=7fffffffffffffff maxbdiff=7fffffffffffffff sc
+#2: totdiff=00056e9a maxbdiff=0000d299
+#3: totdiff=00000000 maxbdiff=00000000 dup lowest [DROP]
+#4: totdiff=00057371 maxbdiff=0000d565
+#5: totdiff=00057e69 maxbdiff=0000d557
+1/5 frame drop:
+#1: totdiff=000585b0 maxbdiff=0000d75b
+#2: totdiff=0005917b maxbdiff=0000d64b
+#3: totdiff=00000000 maxbdiff=00000000 dup lowest [DROP]
+#4: totdiff=000586b5 maxbdiff=0000d2e9
+#5: totdiff=00057f14 maxbdiff=0000d3e6
+1/5 frame drop:
+#1: totdiff=0005772b maxbdiff=0000eaa7
+#2: totdiff=0005404c maxbdiff=0000d3e9
+#3: totdiff=00000000 maxbdiff=00000000 dup lowest [DROP]
+#4: totdiff=00051fbc maxbdiff=0000ca70
+#5: totdiff=00050850 maxbdiff=0000d57f
+1/5 frame drop:
+#1: totdiff=000ee9dd maxbdiff=00017a47
+#2: totdiff=0007f9ca maxbdiff=0000ec2c
+#3: totdiff=00000000 maxbdiff=00000000 dup lowest [DROP]
+#4: totdiff=00079592 maxbdiff=0000ec53
+#5: totdiff=00079ee5 maxbdiff=0000ec30 sc
+1/5 frame drop:
+#1: totdiff=00079efd maxbdiff=0000ec5d
+#2: totdiff=00079590 maxbdiff=0000ec3a
+#3: totdiff=00000000 maxbdiff=00000000 dup lowest [DROP]
+#4: totdiff=0007f9d3 maxbdiff=0000ec3c
+#5: totdiff=0007f9eb maxbdiff=0000ec37 sc
+1/5 frame drop:
+#1: totdiff=000756ed maxbdiff=0000bf55 sc
+#2: totdiff=00000000 maxbdiff=00000000 dup lowest [DROP]
+#3: totdiff=00000000 maxbdiff=00000000
+#4: totdiff=00000000 maxbdiff=00000000
+#5: totdiff=00000000 maxbdiff=00000000
+1/5 frame drop:
