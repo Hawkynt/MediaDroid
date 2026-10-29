@@ -65,6 +65,10 @@ object PlaybackChain {
         val colorSpace: String? = null,
         val transfer: String? = null,
         val range: String? = null,
+        /** The film's frames per second, or 0 when unknown. */
+        val frameRate: Float = 0f,
+        /** How much faster (above 1) or slower the film plays so its frames fall evenly on the screen. */
+        val speedFactor: Float = 1f,
     )
 
     /** The sound's way from the decoder to the output. */
@@ -185,10 +189,23 @@ object PlaybackChain {
                 Node("Conversion", conversion),
                 Node("Pixels", pixels),
                 Node("Filters", "$adjustments · $framing"),
+            ) + timing(video) + listOf(
                 Node("Renderer", if (ffmpeg) "FFmpeg video renderer" else "Media3 MediaCodec video renderer"),
             ),
             Node("Screen", screen),
         )
+    }
+
+    /** The Timing node: the frame rate, and the one it is played at where that differs. */
+    private fun timing(video: Video): List<Node> {
+        if (video.frameRate <= 0f) return emptyList()
+        val on = if (video.refreshHz > 0) " on ${number(video.refreshHz)} Hz" else ""
+        if (video.speedFactor == 1f) return listOf(Node("Timing", "${number(video.frameRate)} fps$on"))
+        val change = (video.speedFactor - 1f) * 100f
+        val percent = String.format(Locale.ROOT, "%.1f", kotlin.math.abs(change)) + " %"
+        val played = number(kotlin.math.round(video.frameRate * video.speedFactor * 1000f) / 1000f)
+        val sign = if (change > 0) "+" else "−"
+        return listOf(Node("Timing", "${number(video.frameRate)} fps played at $played fps ($sign$percent)$on"))
     }
 
     private fun pictureOf(picture: PictureAdjustment): List<String> = buildList {

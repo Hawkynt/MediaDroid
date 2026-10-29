@@ -193,6 +193,7 @@ internal fun playbackFacts(
     spatial: Boolean,
     device: String,
     subtitleDelayMs: Int,
+    speedFactor: Float = 1f,
     sidecars: List<Pair<com.hawkynt.mediadroid.library.Sidecars.Sidecar, String>> = emptyList(),
 ): PlaybackChain.Facts {
     val subtitleFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.SUBTITLES }
@@ -251,6 +252,8 @@ internal fun playbackFacts(
                     C.COLOR_TRANSFER_HLG -> "HLG"
                     else -> null
                 },
+                frameRate = it.frameRate.takeIf { rate -> rate > 0f } ?: 0f,
+                speedFactor = speedFactor,
                 range = when (it.colorInfo?.colorRange) {
                     C.COLOR_RANGE_LIMITED -> "limited range"
                     C.COLOR_RANGE_FULL -> "full range"
