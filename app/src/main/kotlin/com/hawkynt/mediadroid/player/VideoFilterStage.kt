@@ -43,9 +43,10 @@ class VideoFilterStage {
     private val identity = FloatArray(16).also { android.opengl.Matrix.setIdentityM(it, 0) }
 
     private var copyProgram = 0
+    private var deinterlaceProgram = 0
     private var denoiseProgram = 0
     private var sharpenProgram = 0
-    private val frames = arrayOf(Frame(), Frame())
+    private val frames = arrayOf(Frame(), Frame(), Frame())
 
     /** Where the decoder draws. */
     lateinit var inputSurface: Surface
@@ -98,6 +99,7 @@ class VideoFilterStage {
         onThread {
             releaseWindow()
             GLES20.glDeleteProgram(copyProgram)
+            GLES20.glDeleteProgram(deinterlaceProgram)
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(sharpenProgram)
             frames.forEach { it.release() }
@@ -165,6 +167,7 @@ class VideoFilterStage {
         inputSurface = Surface(surfaceTexture)
 
         copyProgram = program(VERTEX, COPY)
+        deinterlaceProgram = program(VERTEX, DEINTERLACE)
         denoiseProgram = program(VERTEX, DENOISE)
         sharpenProgram = program(VERTEX, SHARPEN)
     }
@@ -197,12 +200,23 @@ class VideoFilterStage {
         GLES20.glViewport(0, 0, width, height)
         run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, texMatrix) {}
 
-        // 2: denoise, edge-preserving.
+        // 2: deinterlace, first, so the other filters see whole frames.
         var source = copied
+        if (picture.deinterlace != PictureAdjustment.Deinterlace.OFF) {
+            val woven = frames[2].ensure(width, height)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, woven.framebuffer)
+            run(deinterlaceProgram, GLES20.GL_TEXTURE_2D, copied.texture, identity) { p ->
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMode"), picture.deinterlace.ordinal)
+            }
+            source = woven
+        }
+
+        // 3: denoise, edge-preserving.
         if (picture.denoise > 0) {
             val denoised = frames[1].ensure(width, height)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, denoised.framebuffer)
-            run(denoiseProgram, GLES20.GL_TEXTURE_2D, copied.texture, identity) { p ->
+            run(denoiseProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
                 val (radius, sigmaR) = DENOISE_LEVELS[picture.denoise.coerceIn(1, DENOISE_LEVELS.size) - 1]
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), radius)
@@ -212,7 +226,7 @@ class VideoFilterStage {
             source = denoised
         }
 
-        // 3: sharpness and clarity, drawn onto the screen at its size.
+        // 4: sharpness and clarity, drawn onto the screen at its size.
         EGL14.eglMakeCurrent(display, window, window, context)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
         GLES20.glViewport(0, 0, query(EGL14.EGL_WIDTH), query(EGL14.EGL_HEIGHT))
@@ -341,6 +355,33 @@ class VideoFilterStage {
             uniform samplerExternalOES uTex;
             varying vec2 vTex;
             void main() { gl_FragColor = vec4(texture2D(uTex, vTex).rgb, 1.0); }
+        """
+
+        // Deinterlacing; uMode is Deinterlace's ordinal. Blend: every line with half of each neighbour. Bob:
+        // the odd lines — the second field — rebuilt from the lines above and below. Auto: the same, but
+        // only where a pixel combs — it differs from both neighbours in the same direction (their
+        // luma-weighted product is positive beyond noise), the motion artefact of two fields woven
+        // together; the first field always stays, or the comb would only be turned over.
+        const val DEINTERLACE = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform vec2 uTexel;
+            uniform int uMode;
+            varying vec2 vTex;
+            void main() {
+                vec3 c = texture2D(uTex, vTex).rgb;
+                vec3 up = texture2D(uTex, vTex + vec2(0.0, uTexel.y)).rgb;
+                vec3 down = texture2D(uTex, vTex - vec2(0.0, uTexel.y)).rgb;
+                vec3 rebuilt = (up + down) * 0.5;
+                if (uMode == 2) {
+                    gl_FragColor = vec4((2.0 * c + up + down) * 0.25, 1.0);
+                } else {
+                    bool second = mod(floor(gl_FragCoord.y), 2.0) >= 1.0;
+                    float comb = dot((c - up) * (c - down), vec3(0.2126, 0.7152, 0.0722));
+                    bool rebuild = second && (uMode == 3 || comb > 0.003);
+                    gl_FragColor = vec4(rebuild ? rebuilt : c, 1.0);
+                }
+            }
         """
 
         // Bilateral filter (Tomasi & Manduchi, ICCV 1998): neighbours weigh by distance and by how alike

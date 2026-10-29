@@ -19,7 +19,22 @@ data class PictureAdjustment(
     val clarity: Float = 0f,
     /** Noise and MPEG block reduction, 0 (off) to 3: an edge-preserving bilateral filter of growing reach. */
     val denoise: Int = 0,
+    /** How interlaced pictures lose their combing. */
+    val deinterlace: Deinterlace = Deinterlace.OFF,
 ) {
+    /**
+     * Deinterlacing, as the GL stage does it on each frame: [BLEND] averages every line with its
+     * neighbours (no combing ever, a little softness); [BOB] keeps one field and rebuilds the other's
+     * lines from their neighbours; [AUTO] does that only where a pixel combs — it differs from the lines
+     * above and below in the same direction — so progressive pictures pass untouched.
+     */
+    enum class Deinterlace(val label: String) {
+        OFF("Off"),
+        AUTO("Auto"),
+        BLEND("Blend"),
+        BOB("Bob"),
+    }
+
     val isNeutral: Boolean get() = this == Neutral
 
     /** No colour correction: brightness, gamma, contrast and saturation all neutral. */
@@ -27,7 +42,8 @@ data class PictureAdjustment(
         get() = brightness == 0f && gamma == 1f && contrast == 1f && saturation == 1f
 
     /** A filter is set that only the GL stage can run (see the app's VideoFilterStage). */
-    val hasFilters: Boolean get() = sharpness > 0f || clarity > 0f || denoise > 0
+    val hasFilters: Boolean
+        get() = sharpness > 0f || clarity > 0f || denoise > 0 || deinterlace != Deinterlace.OFF
 
     /** The correction as a GPU shader applies it: saturation, contrast, brightness, then the true gamma curve. */
     data class ShaderUniforms(
