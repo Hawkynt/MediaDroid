@@ -76,7 +76,7 @@ class VideoFilterStage {
     // Film (3:2 pulldown removed, see Telecine): each frame's fields matched, woven into one of two banks
     // of five slots (frames[11] on), and once a bank's cycle is judged its four kept frames shown evenly.
     private var fieldMatch = Telecine.FieldMatch()
-    private var decimate = Telecine.Decimate(mixed = true)
+    private var decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
     private val filmLumas = arrayOfNulls<Deinterlacer.Plane>(3)
     private var filmBank = 0
     private var filmPosition = 0
@@ -410,7 +410,7 @@ class VideoFilterStage {
         if (remember(width, height)) {
             handler.removeCallbacksAndMessages(filmToken)
             fieldMatch = Telecine.FieldMatch(fieldOrder.topFieldFirst)
-            decimate = Telecine.Decimate(mixed = true)
+            decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
             filmLumas.fill(null)
             filmPosition = 0
         }
@@ -544,6 +544,9 @@ class VideoFilterStage {
         GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
         val columns = width / columnStep
         val luma = IntArray(columns * height)
+        // The weights the decoder's colour went through: BT.601 for standard definition, BT.709 above, so no
+        // chroma noise leaks into the luma the verdicts judge.
+        val sd = height <= SD_HEIGHT
         for (y in 0 until height) {
             // The framebuffer's rows run from the bottom.
             val row = (height - 1 - y) * width * 4
@@ -552,7 +555,7 @@ class VideoFilterStage {
                 val r = bytes.get(i).toInt() and 0xFF
                 val g = bytes.get(i + 1).toInt() and 0xFF
                 val b = bytes.get(i + 2).toInt() and 0xFF
-                luma[y * columns + x] = (54 * r + 183 * g + 19 * b) shr 8
+                luma[y * columns + x] = if (sd) (77 * r + 150 * g + 29 * b) shr 8 else (54 * r + 183 * g + 19 * b) shr 8
             }
         }
         return Deinterlacer.Plane(columns, height, luma)
@@ -785,8 +788,18 @@ class VideoFilterStage {
 
         private const val MAX_LATENCY_MS = 100
 
+        /** The tallest picture taken as standard definition, coloured by BT.601: PAL's 576 lines. */
+        private const val SD_HEIGHT = 576
+
         /** Film runs about five frames behind: a sixth of a second for NTSC. */
         private const val MAX_FILM_LATENCY_MS = 250
+
+        /**
+         * How unlike its predecessor a frame may be and still count as Film's repeated one, in FFmpeg's terms
+         * (dupthresh, its default 1.1): the luma read back from the graphics chip carries the colour
+         * conversion's rounding, so a repeated MPEG-2 frame measured about 1.7 % here, real motion over 25 %.
+         */
+        private const val FILM_DUPLICATE_PERCENT = 3.0
 
         /** Where Film's two banks of matched frames start in the frames. */
         private const val FILM_SLOTS = 11

@@ -386,9 +386,10 @@ object Telecine {
      * FFmpeg's decimate with a cycle of five: [add] takes each matched frame; once five have come it
      * says which of them to drop — the one most like the frame before it, or a scene change's. [mixed]
      * is FFmpeg's `mixed=1`, for video that is only partly film: a cycle with no repeated frame drops none
-     * (its [Cycle.drop] is -1).
+     * (its [Cycle.drop] is -1). [duplicatePercent] is FFmpeg's `dupthresh`: how unlike its predecessor a
+     * frame may be, in percent of full scale over a 32 × 32 block, and still count as repeated.
      */
-    class Decimate(private val mixed: Boolean = false) {
+    class Decimate(private val mixed: Boolean = false, private val duplicatePercent: Double = DUPTHRESH) {
         data class Metrics(val totDiff: Long, val maxBlockDiff: Long)
 
         data class Cycle(
@@ -422,7 +423,7 @@ object Telecine {
             var lowest = 0
             var sceneChange = -1
             val sceneThreshold = (255L * frame.width * frame.height * DECIMATE_SCTHRESH / 100).toLong()
-            val dupThreshold = (255L * DECIMATE_BLOCK * DECIMATE_BLOCK * DUPTHRESH / 100).toLong()
+            val dupThreshold = (255L * DECIMATE_BLOCK * DECIMATE_BLOCK * duplicatePercent / 100).toLong()
             for (i in 0 until CYCLE) {
                 if (queue[i].second.totDiff > sceneThreshold) sceneChange = i
                 if (queue[i].second.maxBlockDiff < queue[lowest].second.maxBlockDiff) lowest = i
