@@ -56,12 +56,14 @@ data class PictureAdjustment(
     /**
      * Enlarging a picture smaller than the screen: [STANDARD] is the screen's own bilinear scaling;
      * [LANCZOS] a Lanczos-3 filter (sharper, a little ringing held back); [FSR] AMD FidelityFX Super
-     * Resolution 1 — edge-adaptive upscaling (EASU) and robust contrast-adaptive sharpening (RCAS).
+     * Resolution 1 — edge-adaptive upscaling (EASU) and robust contrast-adaptive sharpening (RCAS); [EWA]
+     * a sharpened Jinc over a circle (see [Ewa]), alike at every angle, so diagonals keep no staircase.
      */
     enum class Upscaler(val label: String) {
         STANDARD("Standard"),
         LANCZOS("Lanczos"),
         FSR("FSR"),
+        EWA("EWA"),
     }
 
     /**

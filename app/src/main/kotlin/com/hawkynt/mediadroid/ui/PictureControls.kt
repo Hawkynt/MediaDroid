@@ -121,7 +121,7 @@ fun PictureSliders(
             }
         }
         Text("Upscaling", fontSize = 16.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PictureAdjustment.Upscaler.entries.forEach { upscaler ->
                 FilterChip(
                     selected = picture.upscaler == upscaler,
