@@ -79,6 +79,10 @@ object LibraryScanner {
             fanartPath = group.firstNotNullOfOrNull { it.fanartPath },
             plot = group.firstNotNullOfOrNull { it.plot },
             seasons = seasons,
+            rating = group.firstNotNullOfOrNull { it.rating },
+            studios = group.firstNotNullOfOrNull { it.studios.ifEmpty { null } } ?: emptyList(),
+            premiered = group.firstNotNullOfOrNull { it.premiered },
+            cast = group.firstNotNullOfOrNull { it.cast.ifEmpty { null } } ?: emptyList(),
         )
     }
 
@@ -280,6 +284,7 @@ object LibraryScanner {
             rating = info?.rating,
             studios = info?.studios ?: emptyList(),
             premiered = info?.premiered,
+            cast = info?.cast?.map { it.name } ?: emptyList(),
         )
     }
 
