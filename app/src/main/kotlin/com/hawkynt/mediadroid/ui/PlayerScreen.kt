@@ -694,6 +694,10 @@ fun PlayerScreen(
     var sleepAtEnd by remember { mutableStateOf(false) }
     var sleepLeftMs by remember { mutableStateOf(0L) }
     var sleepChoice by remember { mutableStateOf<Int?>(null) }
+    // A device decoder that cannot attach to the picture's surface gets a fresh one, once per item until a
+    // frame shows (see routeVideo below for how); the item it was tried for.
+    val freshSurface = remember { arrayOfNulls<() -> Unit>(1) }
+    val freshSurfaceFor = remember { arrayOfNulls<String>(1) }
 
     fun finishCurrent() {
         store.markWatched(queue[index].videoPath)
@@ -729,9 +733,24 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                val item = player.currentMediaItem
+                // After a file the bundled FFmpeg decoded, its software renderer still holds the surface as a
+                // CPU producer, and the device's decoder for the next file cannot attach: a fresh surface over
+                // the same picture, and the item loaded afresh — which lets the software decoder go, and the
+                // old surface with it — to play on from where it was.
+                val renew = freshSurface[0]
+                if (error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED &&
+                    item != null && freshSurfaceFor[0] != item.mediaId && renew != null
+                ) {
+                    freshSurfaceFor[0] = item.mediaId
+                    val position = player.currentPosition
+                    renew()
+                    player.setMediaItem(item, position)
+                    player.prepare()
+                    return
+                }
                 // An audio file beside the video that cannot go along with it (one that cannot seek, say)
                 // must not stop the film: it plays again without them, from where it was.
-                val item = player.currentMediaItem
                 val audio = item?.localConfiguration?.tag as? com.hawkynt.mediadroid.player.SidecarAudio
                 if (item != null && audio != null && audio.locations.isNotEmpty()) {
                     val position = player.currentPosition
@@ -741,6 +760,10 @@ fun PlayerScreen(
                     return
                 }
                 playError = error.errorCodeName
+            }
+
+            override fun onRenderedFirstFrame() {
+                freshSurfaceFor[0] = null
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -970,6 +993,18 @@ fun PlayerScreen(
             stage?.setOutput(null)
             routedTo[0] = null
             target?.let { player.setVideoTextureView(it) }
+        }
+    }
+    freshSurface[0] = {
+        val stage = filterStage[0]
+        val view = routedTo[0] ?: ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)
+            ?.videoSurfaceView as? android.view.TextureView)
+        if (stage != null && routedTo[0] != null) {
+            stage.renewInput { player.setVideoSurface(it) }
+        } else if (view != null) {
+            // The player makes its own surface over the view's, and lets the old one go.
+            player.clearVideoTextureView(view)
+            player.setVideoTextureView(view)
         }
     }
     androidx.compose.runtime.SideEffect { filterStage[0]?.filters = shownPicture }
