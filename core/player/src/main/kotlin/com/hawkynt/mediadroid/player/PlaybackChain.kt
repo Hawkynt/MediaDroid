@@ -3,29 +3,44 @@ package com.hawkynt.mediadroid.player
 import java.util.Locale
 
 /**
- * How a video is being played, step by step, for the player's info sheet: where the file is read from,
- * which demuxer splits it, and for the picture and the sound every stage between the file and the
- * screen or the speaker — decoder, conversion, filters, resampling, mixing, sink, output.
+ * How a video is being played, as a graph for the player's info sheet: every file read is an input —
+ * where it is read from, which demuxer splits it — and from the inputs a lane each for picture, sound
+ * and subtitles runs through its stages (decoder, conversion, filters, resampling, mixing, renderer …)
+ * to its output, the screen or the speaker. A sidecar subtitle or audio file is one more input.
  */
 object PlaybackChain {
 
-    /** One step of the chain: its [section] (`Source`, `Video`, `Audio`, `Player`), its name, what it does. */
-    data class Stage(val section: String, val step: String, val detail: String)
+    /** What a lane carries. */
+    enum class Lane { PICTURE, SOUND, SUBTITLES }
+
+    /** One stage of a lane, or its end: what it is and what it does here. */
+    data class Node(val title: String, val detail: String)
+
+    /** A file read: its name, how it is reached and the demuxer that splits it. */
+    data class Input(val name: String, val readFrom: String, val demuxer: String)
+
+    /** One lane from the input at [input] (an index into [Graph.inputs]) through [nodes] to [output]. */
+    data class Path(val lane: Lane, val input: Int, val nodes: List<Node>, val output: Node)
+
+    data class Graph(val inputs: List<Input>, val paths: List<Path>, val engine: String)
+
+    /** A file the player reads: its path or location URI, and the demuxer that took it (see [Facts]). */
+    data class Source(val location: String, val demuxer: String?)
 
     /** What the player and the platform report about the playing video. */
     data class Facts(
-        /** The file's path or location URI. */
-        val location: String,
-        /** The extractor Media3 chose (its class name), or `ffmpeg:<format>` for FFmpeg's demuxer. */
-        val demuxer: String?,
+        /** Every file read; the tracks name theirs by index. */
+        val inputs: List<Source>,
         val video: Video?,
         val audio: Audio?,
+        val subtitles: Subtitles?,
         /** The playback engine and its version. */
         val player: String,
     )
 
     /** The picture's way from the decoder to the screen. */
     data class Video(
+        val input: Int,
         val decoder: String?,
         val width: Int,
         val height: Int,
@@ -44,6 +59,7 @@ object PlaybackChain {
 
     /** The sound's way from the decoder to the output. */
     data class Audio(
+        val input: Int,
         val decoder: String?,
         val inputSampleRate: Int,
         val inputChannels: Int,
@@ -62,13 +78,26 @@ object PlaybackChain {
         val device: String,
     )
 
-    fun of(facts: Facts): List<Stage> = buildList {
-        add(Stage(SOURCE, "Read from", sourceOf(facts.location)))
-        add(Stage(SOURCE, "Demuxer", demuxerOf(facts.demuxer)))
-        facts.video?.let { addAll(videoStages(it)) }
-        facts.audio?.let { addAll(audioStages(it)) }
-        add(Stage(PLAYER, "Engine", facts.player))
-    }
+    /** The subtitles shown: their format (a MIME type), language, shift, and the screen they are drawn on. */
+    data class Subtitles(
+        val input: Int,
+        val mimeType: String?,
+        val language: String?,
+        /** Positive shows them later, negative earlier. */
+        val delayMs: Int,
+        val screen: String,
+    )
+
+    /** The fact sheet's graph. Media3 parts are named as Media3 calls them; the codecs as people do. */
+    fun of(facts: Facts): Graph = Graph(
+        inputs = facts.inputs.map { Input(nameOf(it.location), sourceOf(it.location), demuxerOf(it.demuxer)) },
+        paths = listOfNotNull(
+            facts.video?.let(::picture),
+            facts.audio?.let(::sound),
+            facts.subtitles?.let(::subtitles),
+        ),
+        engine = facts.player,
+    )
 
     /** A decoder's name with what kind it is: the device's own (hardware or software) or the bundled FFmpeg. */
     fun decoderKind(name: String?): String = when {
@@ -98,7 +127,10 @@ object PlaybackChain {
         else -> "Media3 " + (MEDIA3_DEMUXERS[name] ?: name.removeSuffix("Extractor"))
     }
 
-    private fun videoStages(video: Video): List<Stage> {
+    private fun nameOf(location: String): String =
+        location.trimEnd('/').substringAfterLast('/').ifEmpty { location }
+
+    private fun picture(video: Video): Path {
         val ffmpeg = video.decoder?.let(::isFfmpeg) == true
         val shownWidth = (video.width * video.pixelRatio).toInt()
         val pixels = when {
@@ -108,18 +140,22 @@ object PlaybackChain {
         }
         val adjustments = pictureOf(video.picture).ifEmpty { listOf("none") }.joinToString(", ")
         val framing = if (video.zoom != 1f) "${video.fit}, zoom ${number(video.zoom)}×" else video.fit
-        val output = buildList {
+        val screen = buildList {
             add(video.screen)
             if (video.screenWidth > 0) add("${video.screenWidth} × ${video.screenHeight}")
             if (video.refreshHz > 0) add("${number(video.refreshHz)} Hz")
         }.joinToString(" · ")
-        return listOf(
-            Stage(VIDEO, "Decoder", decoderKind(video.decoder)),
-            Stage(VIDEO, "Conversion", if (ffmpeg) FFMPEG_CONVERSION else DIRECT_CONVERSION),
-            Stage(VIDEO, "Pixels", pixels),
-            Stage(VIDEO, "Filters", "$adjustments · $framing"),
-            Stage(VIDEO, "Renderer", if (ffmpeg) "FFmpeg video renderer" else "Media3 MediaCodec video renderer"),
-            Stage(VIDEO, "Output", output),
+        return Path(
+            Lane.PICTURE,
+            video.input,
+            listOf(
+                Node("Decoder", decoderKind(video.decoder)),
+                Node("Conversion", if (ffmpeg) FFMPEG_CONVERSION else DIRECT_CONVERSION),
+                Node("Pixels", pixels),
+                Node("Filters", "$adjustments · $framing"),
+                Node("Renderer", if (ffmpeg) "FFmpeg video renderer" else "Media3 MediaCodec video renderer"),
+            ),
+            Node("Screen", screen),
         )
     }
 
@@ -130,7 +166,7 @@ object PlaybackChain {
         if (picture.gamma != 1f) add("gamma ${number(picture.gamma)}")
     }
 
-    private fun audioStages(audio: Audio): List<Stage> {
+    private fun sound(audio: Audio): Path {
         val processing = buildList {
             if (audio.loudnessDb != 0f) add("loudness ${signed(audio.loudnessDb)} dB")
             if (audio.nightMode) add("night mode")
@@ -164,13 +200,36 @@ object PlaybackChain {
                 if (audio.offload) add("offloaded")
             }.joinToString(" · ")
         }
-        return listOf(
-            Stage(AUDIO, "Decoder", decoderKind(audio.decoder)),
-            Stage(AUDIO, "Processing", processing),
-            Stage(AUDIO, "Resampling", resampling),
-            Stage(AUDIO, "Mixing", mixing),
-            Stage(AUDIO, "Sink", sink),
-            Stage(AUDIO, "Output", audio.device),
+        return Path(
+            Lane.SOUND,
+            audio.input,
+            listOf(
+                Node("Decoder", decoderKind(audio.decoder)),
+                Node("Processing", processing),
+                Node("Resampling", resampling),
+                Node("Mixing", mixing),
+                Node("Sink", sink),
+            ),
+            Node("Output", audio.device),
+        )
+    }
+
+    private fun subtitles(subtitles: Subtitles): Path {
+        val format = SUBTITLE_FORMATS[subtitles.mimeType] ?: subtitles.mimeType ?: "not known yet"
+        val timing = when {
+            subtitles.delayMs > 0 -> "${subtitles.delayMs} ms later"
+            subtitles.delayMs < 0 -> "${-subtitles.delayMs} ms earlier"
+            else -> "in sync"
+        }
+        return Path(
+            Lane.SUBTITLES,
+            subtitles.input,
+            listOf(
+                Node("Parser", listOfNotNull(format, subtitles.language).joinToString(" · ")),
+                Node("Timing", timing),
+                Node("Renderer", "Media3 text renderer"),
+            ),
+            Node("Screen", "over the picture on ${subtitles.screen}"),
         )
     }
 
@@ -185,10 +244,19 @@ object PlaybackChain {
 
     private const val FFMPEG_CONVERSION = "YUV to the surface's format by libyuv"
     private const val DIRECT_CONVERSION = "none — the decoder draws straight onto the surface"
-    private const val SOURCE = "Source"
-    private const val VIDEO = "Video"
-    private const val AUDIO = "Audio"
-    private const val PLAYER = "Player"
+    /** Subtitle formats by MIME type, as they are called; the picture-based ones say so. */
+    private val SUBTITLE_FORMATS = mapOf(
+        "application/x-subrip" to "SubRip",
+        "text/x-ssa" to "SSA / ASS",
+        "text/vtt" to "WebVTT",
+        "application/ttml+xml" to "TTML",
+        "application/x-quicktime-tx3g" to "3GPP timed text",
+        "application/pgs" to "PGS (pictures)",
+        "application/vobsub" to "VobSub (pictures)",
+        "application/dvbsubs" to "DVB (pictures)",
+        "application/cea-608" to "CEA-608 captions",
+        "application/cea-708" to "CEA-708 captions",
+    )
 
     /** Media3's extractors by class name, as their container is called. */
     private val MEDIA3_DEMUXERS = mapOf(
