@@ -52,7 +52,7 @@ class VideoFilterStage {
     private var blendProgram = 0
     private var temporalProgram = 0
     private var weaveProgram = 0
-    private val frames = Array(KEPT_THIRD + 1) { Frame() }
+    private val frames = Array(PACKED_LUMA + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -105,6 +105,8 @@ class VideoFilterStage {
     private var gridWidth = 0
     private var gridHeight = 0
     private var motionProgram = 0
+    private var packProgram = 0
+    private var packed: ByteBuffer? = null
     private var obmcTexture = 0
     private val onVsync = android.view.Choreographer.FrameCallback { blend(it) }
 
@@ -184,6 +186,7 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(rcasProgram)
             GLES20.glDeleteProgram(blendProgram)
             GLES20.glDeleteProgram(motionProgram)
+            GLES20.glDeleteProgram(packProgram)
             GLES20.glDeleteTextures(3, intArrayOf(vectorTextures[0], vectorTextures[1], obmcTexture), 0)
             motionSearch.shutdownNow()
             GLES20.glDeleteProgram(temporalProgram)
@@ -265,6 +268,7 @@ class VideoFilterStage {
         rcasProgram = program(VERTEX, FSR_RCAS)
         blendProgram = program(VERTEX, BLEND)
         motionProgram = program(VERTEX, MOTION)
+        packProgram = program(VERTEX, PACK_LUMA)
         for (k in 0 until 2) vectorTextures[k] = byteTexture(1, 1, ByteArray(4))
         obmcTexture = byteTexture(
             32, 32, ByteArray(32 * 32 * 4) { if (it % 4 == 0) MotionInterpolation.obmcWeight(it / 4).toByte() else 0 },
@@ -643,7 +647,7 @@ class VideoFilterStage {
      * once done — the one not holding the pair on screen — named by the later frame's arrival.
      */
     private fun searchMotion(width: Int, height: Int) {
-        val luma = MotionInterpolation.halve(readLuma(width, height, 1))
+        val luma = halfLuma(frames[keptRing[2]], width, height)
         val prev = motionLumas[1]
         motionLumas[0] = prev
         motionLumas[1] = luma
@@ -676,6 +680,35 @@ class VideoFilterStage {
                 vectorsCut[slot] = cut
             }
         }
+    }
+
+    /**
+     * [from]'s luma at half size — every other row and column, as [MotionInterpolation.halve] takes it —
+     * worked out on the graphics chip four pixels to a texel, so the read back is a sixteenth of the picture.
+     */
+    private fun halfLuma(from: Frame, width: Int, height: Int): Deinterlacer.Plane {
+        val halfWidth = width / 2
+        val halfHeight = height / 2
+        val texels = (halfWidth + 3) / 4
+        val target = frames[PACKED_LUMA].ensure(texels, halfHeight)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
+        GLES20.glViewport(0, 0, texels, halfHeight)
+        run(packProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSd"), if (height <= SD_HEIGHT) 1 else 0)
+        }
+        val size = texels * halfHeight * 4
+        val bytes = packed?.takeIf { it.capacity() == size }
+            ?: ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder()).also { packed = it }
+        bytes.rewind()
+        GLES20.glReadPixels(0, 0, texels, halfHeight, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
+        // The pass wrote half-size row v at framebuffer row v, so the rows come back from the top.
+        val luma = IntArray(halfWidth * halfHeight) { k ->
+            val x = k % halfWidth
+            val y = k / halfWidth
+            bytes.get((y * texels + x / 4) * 4 + x % 4).toInt() and 0xFF
+        }
+        return Deinterlacer.Plane(halfWidth, halfHeight, luma)
     }
 
     /** A texture of [width] × [height] RGBA bytes, read texel by texel. */
@@ -927,6 +960,29 @@ class VideoFilterStage {
 
         /** The third kept frame for blending and Motion, after Film's banks. */
         private const val KEPT_THIRD = FILM_SLOTS + 2 * Telecine.CYCLE
+
+        /** Where Motion's half-size luma is packed four pixels to a texel for reading back. */
+        private const val PACKED_LUMA = KEPT_THIRD + 1
+
+        // Motion's half-size luma, four pixels to a texel: texel (u, v) holds the pixels at columns 8u, 8u + 2,
+        // 8u + 4, 8u + 6 of row 2v, rows counted from the top, with the weights the decoder's colour went
+        // through (BT.601 up to 576 lines, BT.709 above).
+        private const val PACK_LUMA = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform vec2 uSize;
+            uniform bool uSd;
+            varying vec2 vTex;
+            float luma(float x, float y) {
+                vec3 c = texture2D(uTex, vec2(x + 0.5, uSize.y - y - 0.5) / uSize).rgb;
+                return uSd ? dot(c, vec3(0.299, 0.587, 0.114)) : dot(c, vec3(0.2126, 0.7152, 0.0722));
+            }
+            void main() {
+                float x = floor(gl_FragCoord.x) * 8.0;
+                float y = floor(gl_FragCoord.y) * 2.0;
+                gl_FragColor = vec4(luma(x, y), luma(x + 2.0, y), luma(x + 4.0, y), luma(x + 6.0, y));
+            }
+        """
 
         /** Motion runs two frames behind: a twelfth of a second at 24 frames a second. */
         private const val MAX_MOTION_LATENCY_MS = 250
