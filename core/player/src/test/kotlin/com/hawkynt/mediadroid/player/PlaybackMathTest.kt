@@ -237,6 +237,21 @@ class PlaybackMathTest {
     }
 
     @Test
+    fun `the speed slider runs from 0_2x to 5x on a log scale in steps of 0_05`() {
+        assertEquals(0.2f, PlaybackMath.speedAt(0f), 1e-6f)
+        assertEquals(5f, PlaybackMath.speedAt(1f), 1e-6f)
+        // 1x sits in the middle of the log scale between 0.2 and 5.
+        assertEquals(1f, PlaybackMath.speedAt(0.5f), 1e-6f)
+        // Every speed comes back to itself, 1.75x among them.
+        for (speed in listOf(0.2f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 3f, 5f)) {
+            assertEquals(speed, PlaybackMath.speedAt(PlaybackMath.speedPosition(speed)), 1e-6f)
+        }
+        // In between, a speed snaps to the nearest 0.05.
+        assertEquals(1.75f, PlaybackMath.speedAt(PlaybackMath.speedPosition(1.76f)), 1e-6f)
+        assertEquals(0f, PlaybackMath.speedPosition(0.1f), 1e-6f)
+    }
+
+    @Test
     fun `the display rate is the lowest whole multiple of the film's frame rate the screen offers`() {
         val tv = listOf(23.976f, 24f, 25f, 29.97f, 50f, 59.94f, 60f)
         assertEquals(23.976f, PlaybackMath.matchingRefreshRate(23.976f, tv)!!, 1e-3f)
