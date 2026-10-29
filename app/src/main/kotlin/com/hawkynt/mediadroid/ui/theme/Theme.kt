@@ -2,7 +2,8 @@ package com.hawkynt.mediadroid.ui.theme
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -101,11 +102,14 @@ fun MediaDroidTheme(content: @Composable () -> Unit) {
 
 /**
  * Clickable that also reads well from a sofa with a TV remote: the focused element grows a little
- * and gets an amber ring, the way Kodi and the streaming apps mark the D-pad cursor.
+ * and gets an amber ring, the way Kodi and the streaming apps mark the D-pad cursor. A long press — or
+ * holding a remote's OK — calls [onLongClick] where there is one.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Modifier.focusClickable(
     shape: Shape = RoundedCornerShape(10.dp),
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ): Modifier {
     val source = remember { MutableInteractionSource() }
@@ -117,5 +121,10 @@ fun Modifier.focusClickable(
             scaleY = scale
         }
         .border(3.dp, if (focused) MaterialTheme.colorScheme.primary else Color.Transparent, shape)
-        .clickable(interactionSource = source, indication = ripple(), onClick = onClick)
+        .combinedClickable(
+            interactionSource = source,
+            indication = ripple(),
+            onLongClick = onLongClick,
+            onClick = onClick,
+        )
 }

@@ -307,6 +307,8 @@ fun PlayerScreen(
     }
     // TV boxes: the display switches to a whole multiple of the film's frame rate (no judder), and back.
     val displayActivity = remember(context) { context.findActivity() }
+    // Where it cannot, the speed changes a little so the frames fall evenly (see PlaybackMath.judderSpeed).
+    var judderFactor by remember { mutableFloatStateOf(1f) }
     DisposableEffect(player) {
         fun match() {
             if (!settings.matchRefreshRate) return
@@ -333,6 +335,20 @@ fun PlayerScreen(
         onDispose {
             player.removeListener(listener)
             displayActivity?.window?.let { it.attributes = it.attributes.apply { preferredDisplayModeId = 0 } }
+        }
+    }
+    // The frame rate against the refresh rate of the screen the picture is on, checked every few seconds:
+    // a display that switched modes, or a second screen, changes it.
+    LaunchedEffect(player) {
+        while (true) {
+            val frameRate = player.videoFormat?.frameRate ?: 0f
+            val refresh = PlayerWindow.displayRefreshHz
+                ?: displayActivity?.window?.decorView?.display?.refreshRate
+                ?: 0f
+            val direction = runCatching { PlaybackMath.JudderDirection.valueOf(settings.judderDirection) }
+                .getOrDefault(PlaybackMath.JudderDirection.NEAREST)
+            judderFactor = PlaybackMath.judderSpeed(frameRate, refresh, settings.judderLimitPercent / 100f, direction)
+            delay(3000)
         }
     }
     // Which decoders are at work, as Media3 reports them, for the info sheet.
@@ -580,8 +596,8 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(speed, subtitlesOn) {
-        player.setPlaybackSpeed(speed)
+    LaunchedEffect(speed, subtitlesOn, judderFactor) {
+        player.setPlaybackSpeed(speed * judderFactor)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesOn)
             .build()
@@ -844,6 +860,7 @@ fun PlayerScreen(
         if (onSecondScreen && display != null) {
             presentation = VideoPresentation(context, display, player).also { it.show() }
             PlayerWindow.elsewhere = true
+            PlayerWindow.displayRefreshHz = display.refreshRate
             com.hawkynt.mediadroid.player.PlaybackService.start(context)
         } else if (onSecondScreen) {
             onSecondScreen = false
@@ -852,6 +869,7 @@ fun PlayerScreen(
             runCatching { pipActivity?.setPictureInPictureParams(PlayerWindow.params()) }
         }
         onDispose {
+            PlayerWindow.displayRefreshHz = null
             if (PlayerWindow.elsewhere) com.hawkynt.mediadroid.player.PlaybackService.stop(context)
             PlayerWindow.elsewhere = false
             if (android.os.Build.VERSION.SDK_INT >= 31) {
@@ -1396,6 +1414,8 @@ fun PlayerScreen(
         }
         if (infoOpen) {
             PlaybackInfoDialog(
+                playing = queue[index],
+                fileTags = player.mediaMetadata,
                 videoPath = queue[index].videoPath,
                 tracks = player.currentTracks,
                 videoSize = player.videoSize,

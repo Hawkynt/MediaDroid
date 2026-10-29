@@ -49,6 +49,8 @@ data class Settings(
     var loudness: Float = 0f,                 // dB-ish -10..10, mapped to volume
     var matchRefreshRate: Boolean = false,    // TV boxes: switch the display to a multiple of the film's frame rate
     var audioPassthrough: Boolean = false,    // TV boxes: compressed surround untouched to an AV receiver
+    var judderLimitPercent: Int = 0,          // judder reduction: how far the speed may change, 0 = off
+    var judderDirection: String = "NEAREST",  // PlaybackMath.JudderDirection name
     var askedForNotifications: Boolean = false, // the media notification's permission is asked once
     var brightness: Float = 0f,               // -1..1
     var gamma: Float = 1.0f,                  // 0.5..2
