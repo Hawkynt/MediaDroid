@@ -9,6 +9,8 @@ import android.view.View
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -29,6 +31,7 @@ import com.hawkynt.mediadroid.player.PictureControl
  * upwards, and noise from removed to added grain. [onChange] fires while dragging so the picture follows live; [onDone]
  * when a slider is let go or a step is picked, the moment to save.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PictureSliders(
     picture: PictureAdjustment,
@@ -94,7 +97,7 @@ fun PictureSliders(
             onValueChangeFinished = onDone,
         )
         Text("Deinterlace", fontSize = 16.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PictureAdjustment.Deinterlace.entries.forEach { mode ->
                 FilterChip(
                     selected = picture.deinterlace == mode,
@@ -103,6 +106,17 @@ fun PictureSliders(
                         onDone()
                     },
                     label = { Text(mode.label, fontSize = 15.sp) },
+                )
+            }
+            // YADIF and BWDIF can show both fields of a frame, each as a picture of its own.
+            if (picture.deinterlace.isTemporal) {
+                FilterChip(
+                    selected = picture.fieldRate,
+                    onClick = {
+                        onChange(picture.copy(fieldRate = !picture.fieldRate))
+                        onDone()
+                    },
+                    label = { Text("Every field", fontSize = 15.sp) },
                 )
             }
         }

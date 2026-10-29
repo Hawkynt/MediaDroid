@@ -44,6 +44,7 @@ data class PictureOverride(
     val deinterlace: String = "OFF",
     val upscaler: String = "STANDARD",
     val interpolation: String = "OFF",
+    val fieldRate: Boolean = false,
 )
 
 /**
@@ -71,6 +72,7 @@ data class Settings(
     var deinterlace: String = "OFF",          // PictureAdjustment.Deinterlace name
     var upscaler: String = "STANDARD",        // PictureAdjustment.Upscaler name
     var interpolation: String = "OFF",        // PictureAdjustment.Interpolation name
+    var fieldRate: Boolean = false,           // YADIF/BWDIF show every field
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -223,7 +225,7 @@ class StateStore(context: Context) {
         PictureAdjustment(
             brightness, gamma, contrast, saturation, sharpness, clarity,
             noise ?: PictureAdjustment.noiseOfLevel(denoise), deinterlaceOf(deinterlace),
-            upscalerOf(upscaler), interpolationOf(interpolation),
+            upscalerOf(upscaler), interpolationOf(interpolation), fieldRate,
         )
     }
 
@@ -250,6 +252,7 @@ class StateStore(context: Context) {
                 deinterlaceOf(it.deinterlace),
                 upscalerOf(it.upscaler),
                 interpolationOf(it.interpolation),
+                it.fieldRate,
             )
         }
             ?: defaultPicture()
@@ -271,6 +274,7 @@ class StateStore(context: Context) {
                 picture.deinterlace.name,
                 picture.upscaler.name,
                 picture.interpolation.name,
+                picture.fieldRate,
             )
         }
         save()

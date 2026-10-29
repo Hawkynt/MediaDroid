@@ -29,6 +29,8 @@ data class PictureAdjustment(
     val upscaler: Upscaler = Upscaler.STANDARD,
     /** Smoother motion by blending each frame into the next. */
     val interpolation: Interpolation = Interpolation.OFF,
+    /** A temporal [deinterlace] shows each field as a picture of its own, see [isFieldRate]. */
+    val fieldRate: Boolean = false,
 ) {
     /**
      * Frame blending: between two frames the screen shows a mix of both, weighted by how far the clock
@@ -66,14 +68,25 @@ data class PictureAdjustment(
      * Deinterlacing, as the GL stage does it on each frame: [BLEND] averages every line with its
      * neighbours (no combing ever, a little softness); [BOB] keeps one field and rebuilds the other's
      * lines from their neighbours; [AUTO] does that only where a pixel combs — it differs from the lines
-     * above and below in the same direction — so progressive pictures pass untouched.
+     * above and below in the same direction — so progressive pictures pass untouched. [YADIF] and
+     * [BWDIF] are temporal (see [Deinterlacer]): they look at the frames before and after too, so still
+     * parts keep their full detail, and the picture runs one frame behind, the sound waiting as long.
      */
     enum class Deinterlace(val label: String) {
         OFF("Off"),
         AUTO("Auto"),
         BLEND("Blend"),
         BOB("Bob"),
+        YADIF("YADIF"),
+        BWDIF("BWDIF"),
+        ;
+
+        /** Whether it needs the neighbouring frames, and so can show every field as a picture of its own. */
+        val isTemporal: Boolean get() = this == YADIF || this == BWDIF
     }
+
+    /** Both fields of every frame shown as pictures of their own: 50 or 60 a second, as the camera saw them. */
+    val isFieldRate: Boolean get() = fieldRate && deinterlace.isTemporal
 
     val isNeutral: Boolean get() = this == Neutral
 
