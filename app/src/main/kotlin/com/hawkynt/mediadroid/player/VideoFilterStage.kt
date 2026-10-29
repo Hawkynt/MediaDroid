@@ -51,7 +51,8 @@ class VideoFilterStage {
     private var rcasProgram = 0
     private var blendProgram = 0
     private var temporalProgram = 0
-    private val frames = Array(11) { Frame() }
+    private var weaveProgram = 0
+    private val frames = Array(FILM_SLOTS + 2 * Telecine.CYCLE) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -71,6 +72,16 @@ class VideoFilterStage {
     private val lumas = arrayOfNulls<Deinterlacer.Plane>(3)
     private var framesToJudge = 0
     private var readBack: ByteBuffer? = null
+
+    // Film (3:2 pulldown removed, see Telecine): each frame's fields matched, woven into one of two banks
+    // of five slots (frames[11] on), and once a bank's cycle is judged its four kept frames shown evenly.
+    private var fieldMatch = Telecine.FieldMatch()
+    private var decimate = Telecine.Decimate()
+    private val filmLumas = arrayOfNulls<Deinterlacer.Plane>(3)
+    private var filmBank = 0
+    private var filmPosition = 0
+    private var filmShown = -1
+    private val filmToken = Any()
 
     // Frame blending: the last two filtered frames (frames[5] and frames[6], taking turns), when each
     // arrived, and whether the screen still has a blend to show.
@@ -158,6 +169,8 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(rcasProgram)
             GLES20.glDeleteProgram(blendProgram)
             GLES20.glDeleteProgram(temporalProgram)
+            GLES20.glDeleteProgram(weaveProgram)
+            handler.removeCallbacksAndMessages(filmToken)
             handler.removeCallbacks(secondField)
             vsync.removeFrameCallback(onVsync)
             latencyMs = 0
@@ -234,6 +247,7 @@ class VideoFilterStage {
         rcasProgram = program(VERTEX, FSR_RCAS)
         blendProgram = program(VERTEX, BLEND)
         temporalProgram = program(VERTEX, TEMPORAL)
+        weaveProgram = program(VERTEX, WEAVE)
     }
 
     private fun releaseWindow() {
@@ -255,6 +269,11 @@ class VideoFilterStage {
         }
         if (window == EGL14.EGL_NO_SURFACE) return
         val picture = filters
+        if (picture.deinterlace == PictureAdjustment.Deinterlace.FILM) {
+            if (!redraw) film() else if (filmShown >= 0) showFilm(filmShown)
+            return
+        }
+        handler.removeCallbacksAndMessages(filmToken)
         if (picture.interpolation != PictureAdjustment.Interpolation.OFF) {
             if (!redraw) keep(picture)
             startBlending()
@@ -332,35 +351,7 @@ class VideoFilterStage {
         secondField: Boolean,
     ): Frame {
         if (fresh || historyCount == 0) {
-            // After a seek or a stall the frames before it are no neighbours.
-            val step = surfaceTexture.timestamp - historyAt[2]
-            if (step <= 0 || step > MAX_FRAME_STEP_NS) {
-                historyCount = 0
-                frameIntervalNs = 0L
-            } else {
-                frameIntervalNs = if (frameIntervalNs == 0L) step else (frameIntervalNs * 7 + step) / 8
-            }
-            val oldest = history[0]
-            history[0] = history[1]
-            history[1] = history[2]
-            history[2] = oldest
-            historyAt[0] = historyAt[1]
-            historyAt[1] = historyAt[2]
-            historyAt[2] = surfaceTexture.timestamp
-            val newest = frames[history[2]]
-            if (frames[history[1]].width != width || frames[history[1]].height != height) {
-                if (historyCount > 0) fieldOrder.reset()
-                historyCount = 0
-            }
-            if (historyCount == 0) {
-                lumas.fill(null)
-                framesToJudge = FRAMES_TO_JUDGE
-            }
-            newest.ensure(width, height)
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, newest.framebuffer)
-            GLES20.glViewport(0, 0, width, height)
-            run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, texMatrix) {}
-            historyCount = minOf(historyCount + 1, 3)
+            remember(width, height)
             if (framesToJudge > 0) judge(width, height)
         }
         val next = frames[history[2]]
@@ -370,8 +361,21 @@ class VideoFilterStage {
         val intervalMs = if (historyCount >= 2) frameIntervalNs / 1_000_000L else 0L
         deinterlaceLatencyMs = intervalMs.toInt().coerceIn(0, MAX_LATENCY_MS)
         val woven = frames[2].ensure(width, height)
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, woven.framebuffer)
-        GLES20.glViewport(0, 0, width, height)
+        rebuildField(woven, prev, cur, next, secondField, picture.deinterlace == PictureAdjustment.Deinterlace.BWDIF)
+        return denoised(picture, woven, width, height)
+    }
+
+    /** YADIF or BWDIF into [target]: [cur] with a field rebuilt from its neighbours. */
+    private fun rebuildField(
+        target: Frame,
+        prev: Frame,
+        cur: Frame,
+        next: Frame,
+        secondField: Boolean,
+        bwdif: Boolean,
+    ) {
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
+        GLES20.glViewport(0, 0, target.width, target.height)
         GLES20.glUseProgram(temporalProgram)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prev.texture)
@@ -380,47 +384,175 @@ class VideoFilterStage {
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, next.texture)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(temporalProgram, "uNext"), 2)
         run(temporalProgram, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), target.width.toFloat(), target.height.toFloat())
             GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSecond"), if (secondField) 1 else 0)
             GLES20.glUniform1f(
                 GLES20.glGetUniformLocation(p, "uParity"),
                 Deinterlacer.rebuiltParity(secondField, fieldOrder.topFieldFirst).toFloat(),
             )
-            GLES20.glUniform1i(
-                GLES20.glGetUniformLocation(p, "uBwdif"),
-                if (picture.deinterlace == PictureAdjustment.Deinterlace.BWDIF) 1 else 0,
-            )
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uBwdif"), if (bwdif) 1 else 0)
         }
-        return denoised(picture, woven, width, height)
+    }
+
+    /**
+     * Film: a decoded frame joins the history, and the one before it is matched with its neighbours'
+     * fields (see Telecine) into the bank being filled — or, still combed after matching, deinterlaced by
+     * YADIF. Once a bank holds a cycle of five, the one repeated frame is dropped and the other four are
+     * shown evenly over the five frames' time, starting now: the film's own 24 a second from 30, about
+     * five frames behind, which the sound is told to wait.
+     */
+    private fun film() {
+        val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
+        val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
+        grainNow = 0f
+        EGL14.eglMakeCurrent(display, idle, idle, context)
+        if (remember(width, height)) {
+            handler.removeCallbacksAndMessages(filmToken)
+            fieldMatch = Telecine.FieldMatch(fieldOrder.topFieldFirst)
+            decimate = Telecine.Decimate()
+            filmLumas.fill(null)
+            filmPosition = 0
+        }
+        val luma = readLuma(width, height, if (width > MAX_FULL_FILM_WIDTH) 2 else 1)
+        if (framesToJudge > 0) {
+            framesToJudge--
+            filmLumas[2]?.let { newest -> filmLumas[1]?.let { fieldOrder.add(it, newest, luma) } }
+        }
+        filmLumas[0] = filmLumas[1]
+        filmLumas[1] = filmLumas[2]
+        filmLumas[2] = luma
+        if (historyCount < 2) return
+        if (fieldMatch.field != (if (fieldOrder.topFieldFirst) 1 else 0)) {
+            fieldMatch = Telecine.FieldMatch(fieldOrder.topFieldFirst)
+        }
+        val next = frames[history[2]]
+        val cur = frames[history[1]]
+        val prev = if (historyCount >= 3) frames[history[0]] else cur
+        val (matched, woven) = fieldMatch.add(filmLumas[0] ?: filmLumas[1]!!, filmLumas[1]!!, luma)
+
+        val slot = frames[FILM_SLOTS + filmBank * Telecine.CYCLE + filmPosition].ensure(width, height)
+        if (matched.combed) {
+            rebuildField(slot, prev, cur, next, secondField = false, bwdif = false)
+        } else {
+            val (other, rows) = when (matched.match) {
+                Telecine.Match.PREVIOUS -> prev to fieldMatch.field
+                Telecine.Match.NEXT -> next to fieldMatch.field
+                Telecine.Match.BOTTOM -> prev to 1 - fieldMatch.field
+                Telecine.Match.UPPER -> next to 1 - fieldMatch.field
+                Telecine.Match.CURRENT -> cur to -1
+            }
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, slot.framebuffer)
+            GLES20.glViewport(0, 0, width, height)
+            GLES20.glUseProgram(weaveProgram)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, other.texture)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(weaveProgram, "uOther"), 1)
+            run(weaveProgram, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRows"), rows.toFloat())
+            }
+        }
+
+        val cycle = decimate.add(woven)
+        if (cycle == null) {
+            filmPosition++
+            return
+        }
+        val base = FILM_SLOTS + filmBank * Telecine.CYCLE
+        val stepNs = frameIntervalNs * Telecine.CYCLE / (Telecine.CYCLE - 1)
+        val start = android.os.SystemClock.uptimeMillis()
+        (0 until Telecine.CYCLE).filter { it != cycle.drop }.forEachIndexed { j, position ->
+            handler.postAtTime({ showFilm(base + position) }, filmToken, start + j * stepNs / 1_000_000L)
+        }
+        latencyMs = (frameIntervalNs * Telecine.CYCLE / 1_000_000L).toInt().coerceIn(0, MAX_FILM_LATENCY_MS)
+        filmBank = 1 - filmBank
+        filmPosition = 0
+    }
+
+    /** One of Film's kept frames onto the screen, through the rest of the filters. */
+    private fun showFilm(slot: Int) {
+        val picture = filters
+        if (window == EGL14.EGL_NO_SURFACE || picture.deinterlace != PictureAdjustment.Deinterlace.FILM) return
+        val frame = frames[slot]
+        if (frame.texture == 0) return
+        filmShown = slot
+        grainNow = 0f
+        EGL14.eglMakeCurrent(display, idle, idle, context)
+        val source = denoised(picture, frame, frame.width, frame.height)
+        output(source, frame.width, frame.height, picture)
+        EGL14.eglSwapBuffers(display, window)
+    }
+
+    /**
+     * A fresh decoded frame joins the last three, with when it was due; returns whether the history
+     * started afresh — after a seek, a stall or a new size the frames before are no neighbours.
+     * Leaves the newest frame's framebuffer bound.
+     */
+    private fun remember(width: Int, height: Int): Boolean {
+        val step = surfaceTexture.timestamp - historyAt[2]
+        if (step <= 0 || step > MAX_FRAME_STEP_NS) {
+            historyCount = 0
+            frameIntervalNs = 0L
+        } else {
+            frameIntervalNs = if (frameIntervalNs == 0L) step else (frameIntervalNs * 7 + step) / 8
+        }
+        val oldest = history[0]
+        history[0] = history[1]
+        history[1] = history[2]
+        history[2] = oldest
+        historyAt[0] = historyAt[1]
+        historyAt[1] = historyAt[2]
+        historyAt[2] = surfaceTexture.timestamp
+        val newest = frames[history[2]]
+        if (frames[history[1]].width != width || frames[history[1]].height != height) {
+            if (historyCount > 0) fieldOrder.reset()
+            historyCount = 0
+        }
+        val afresh = historyCount == 0
+        if (afresh) {
+            lumas.fill(null)
+            framesToJudge = FRAMES_TO_JUDGE
+        }
+        newest.ensure(width, height)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, newest.framebuffer)
+        GLES20.glViewport(0, 0, width, height)
+        run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, texMatrix) {}
+        historyCount = minOf(historyCount + 1, 3)
+        return afresh
     }
 
     /** The newest frame's luma, read back from the framebuffer still bound, into the field-order verdict. */
     private fun judge(width: Int, height: Int) {
         framesToJudge--
+        lumas[0] = lumas[1]
+        lumas[1] = lumas[2]
+        lumas[2] = readLuma(width, height, JUDGED_COLUMN_STEP)
+        val prev = lumas[0] ?: return
+        val cur = lumas[1] ?: return
+        fieldOrder.add(prev, cur, lumas[2]!!)
+    }
+
+    /** The bound framebuffer's luma, rows from the top, every [columnStep]th column. */
+    private fun readLuma(width: Int, height: Int, columnStep: Int): Deinterlacer.Plane {
         val size = width * height * 4
         val bytes = readBack?.takeIf { it.capacity() == size }
             ?: ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder()).also { readBack = it }
         bytes.rewind()
         GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
-        val columns = width / JUDGED_COLUMN_STEP
+        val columns = width / columnStep
         val luma = IntArray(columns * height)
         for (y in 0 until height) {
             // The framebuffer's rows run from the bottom.
             val row = (height - 1 - y) * width * 4
             for (x in 0 until columns) {
-                val i = row + x * JUDGED_COLUMN_STEP * 4
+                val i = row + x * columnStep * 4
                 val r = bytes.get(i).toInt() and 0xFF
                 val g = bytes.get(i + 1).toInt() and 0xFF
                 val b = bytes.get(i + 2).toInt() and 0xFF
                 luma[y * columns + x] = (54 * r + 183 * g + 19 * b) shr 8
             }
         }
-        lumas[0] = lumas[1]
-        lumas[1] = lumas[2]
-        lumas[2] = Deinterlacer.Plane(columns, height, luma)
-        val prev = lumas[0] ?: return
-        val cur = lumas[1] ?: return
-        fieldOrder.add(prev, cur, lumas[2]!!)
+        return Deinterlacer.Plane(columns, height, luma)
     }
 
     /** Step 3: the denoise filter [picture] asks for, if any, over [from]. */
@@ -650,6 +782,15 @@ class VideoFilterStage {
 
         private const val MAX_LATENCY_MS = 100
 
+        /** Film runs about five frames behind: a sixth of a second for NTSC. */
+        private const val MAX_FILM_LATENCY_MS = 250
+
+        /** Where Film's two banks of matched frames start in the frames. */
+        private const val FILM_SLOTS = 11
+
+        /** Above this width Film judges every other column, to keep the work on the processor in bounds. */
+        private const val MAX_FULL_FILM_WIDTH = 1024
+
         /** The longest gap between two frames that still play on from each other: a 4 fps slide show. */
         private const val MAX_FRAME_STEP_NS = 250_000_000L
 
@@ -771,6 +912,23 @@ class VideoFilterStage {
                     v = uBwdif ? bwdif(x, y) : yadif(x, y);
                 }
                 gl_FragColor = vec4(v / 255.0, 1.0);
+            }
+        """
+
+        // Film's weave: the matched frame with the rows uRows (0 even, 1 odd, from the top; -1 none) taken
+        // from the frame its other field comes from.
+        private const val WEAVE = """
+            precision mediump float;
+            uniform sampler2D uTex;
+            uniform sampler2D uOther;
+            uniform vec2 uSize;
+            uniform float uRows;
+            varying vec2 vTex;
+            void main() {
+                vec2 p = gl_FragCoord.xy / uSize;
+                float y = uSize.y - 1.0 - floor(gl_FragCoord.y);
+                bool other = abs(mod(y, 2.0) - uRows) < 0.5;
+                gl_FragColor = vec4((other ? texture2D(uOther, p) : texture2D(uTex, p)).rgb, 1.0);
             }
         """
 
