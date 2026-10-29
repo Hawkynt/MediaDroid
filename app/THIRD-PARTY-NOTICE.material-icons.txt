@@ -1,5 +1,5 @@
 src/main/res/drawable/ic_movie.xml, ic_tv.xml, ic_menu.xml, ic_menu_open.xml,
-ic_folder_open.xml, ic_filter_list.xml, ic_video_library.xml
+ic_folder_open.xml, ic_filter_list.xml, ic_video_library.xml, ic_phonelink_lock.xml
 
 Path data copied verbatim from Material Icons (filled style, 24px) in
 google/material-design-icons (https://github.com/google/material-design-icons),

@@ -19,6 +19,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.widthIn
@@ -372,6 +373,14 @@ fun PlayerScreen(
     // Picture in picture: leaving the app mid-film shrinks it into a small window; once the app is out of
     // sight (or that window is closed) the film pauses. On a second screen it plays on instead.
     val pipActivity = remember(context) { context.findActivity() }
+    // The phone darkened while the film plays on a second screen; leaving the player then locks it.
+    val darkPhone = remember { com.hawkynt.mediadroid.player.DarkPhone() }
+    var phoneDark by remember { mutableStateOf(false) }
+    var askingToLock by remember { mutableStateOf(false) }
+    fun leavePlayer() {
+        if (darkPhone.leave()) com.hawkynt.mediadroid.player.PhoneLock.lockNow(context)
+        phoneDark = false
+    }
     DisposableEffect(player) {
         fun publish() {
             PlayerWindow.playing = player.isPlaying
@@ -389,7 +398,11 @@ fun PlayerScreen(
         player.addListener(listener)
         val lifecycle = (pipActivity as? androidx.lifecycle.LifecycleOwner)?.lifecycle
         val stopObserver = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && !PlayerWindow.elsewhere) player.pause()
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                // Android's own screen asking to allow locking is not leaving the player.
+                if (!askingToLock) leavePlayer()
+                if (!PlayerWindow.elsewhere) player.pause()
+            }
         }
         lifecycle?.addObserver(stopObserver)
         onDispose {
@@ -797,6 +810,8 @@ fun PlayerScreen(
             runCatching { pipActivity?.setPictureInPictureParams(PlayerWindow.params()) }
         }
         onDispose {
+            darkPhone.secondScreenGone()
+            phoneDark = false
             if (PlayerWindow.elsewhere) com.hawkynt.mediadroid.player.PlaybackService.stop(context)
             PlayerWindow.elsewhere = false
             if (android.os.Build.VERSION.SDK_INT >= 31) {
@@ -818,11 +833,40 @@ fun PlayerScreen(
         feedback = null
     }
 
+    // Darkening asks once for permission to lock the phone; it darkens whatever the answer, locking only
+    // when allowed.
+    val askToLock = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) {
+        askingToLock = false
+        darkPhone.darken()
+        phoneDark = true
+    }
+    DisposableEffect(phoneDark) {
+        val window = pipActivity?.window
+        if (phoneDark) playerView?.hideController()
+        window?.attributes = window?.attributes?.apply {
+            screenBrightness = if (phoneDark) {
+                0f
+            } else {
+                android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+        }
+        onDispose {
+            window?.attributes = window?.attributes?.apply {
+                screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+        }
+    }
+
     BackHandler {
         when {
             locked -> lockHintStamp++
             panelOpen -> panelOpen = false
-            else -> onExit()
+            else -> {
+                leavePlayer()
+                onExit()
+            }
         }
     }
 
@@ -1011,7 +1055,7 @@ fun PlayerScreen(
                     .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 24.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onExit) {
+                    IconButton(onClick = { leavePlayer(); onExit() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                     }
                     Spacer(Modifier.width(8.dp))
@@ -1043,6 +1087,25 @@ fun PlayerScreen(
                                 contentDescription =
                                     if (onSecondScreen) "Back to this screen" else "Play on the other screen",
                                 tint = if (onSecondScreen) MaterialTheme.colorScheme.primary else Color.White,
+                            )
+                        }
+                    }
+                    if (onSecondScreen) {
+                        IconButton(
+                            onClick = {
+                                if (com.hawkynt.mediadroid.player.PhoneLock.allowed(context)) {
+                                    darkPhone.darken()
+                                    phoneDark = true
+                                } else {
+                                    askingToLock = true
+                                    askToLock.launch(com.hawkynt.mediadroid.player.PhoneLock.askIntent(context))
+                                }
+                            },
+                        ) {
+                            Icon(
+                                painterResource(R.drawable.ic_phonelink_lock),
+                                contentDescription = "Darken this phone",
+                                tint = Color.White,
                             )
                         }
                     }
@@ -1375,17 +1438,32 @@ fun PlayerScreen(
         }
         if (finished) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Button(onClick = onExit) {
+                Button(onClick = { leavePlayer(); onExit() }) {
                     Text("All done — back to the library", fontSize = 22.sp)
                 }
             }
         }
         playError?.let { code ->
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Button(onClick = onExit) {
+                Button(onClick = { leavePlayer(); onExit() }) {
                     Text("Cannot play this file ($code) — back to the library", fontSize = 22.sp)
                 }
             }
+        }
+        // The darkened phone: black over everything; a touch lights it up and brings the controls back.
+        if (phoneDark) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .pointerInput(Unit) {
+                        detectTapGestures {
+                            darkPhone.touch()
+                            phoneDark = false
+                            playerView?.showController()
+                        }
+                    },
+            )
         }
     }
 }
