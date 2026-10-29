@@ -332,6 +332,7 @@ fun PlayerScreen(
     // Which decoders are at work, as Media3 reports them, for the info sheet.
     var videoDecoder by remember { mutableStateOf<String?>(null) }
     var audioDecoder by remember { mutableStateOf<String?>(null) }
+    var audioTrack by remember { mutableStateOf<androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig?>(null) }
     var infoOpen by remember { mutableStateOf(false) }
     DisposableEffect(player) {
         val analytics = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
@@ -351,6 +352,13 @@ fun PlayerScreen(
                 initializationDurationMs: Long,
             ) {
                 audioDecoder = decoderName
+            }
+
+            override fun onAudioTrackInitialized(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig,
+            ) {
+                audioTrack = audioTrackConfig
             }
         }
         player.addAnalyticsListener(analytics)
@@ -1326,8 +1334,30 @@ fun PlayerScreen(
                 videoPath = queue[index].videoPath,
                 tracks = player.currentTracks,
                 videoSize = player.videoSize,
-                videoDecoder = videoDecoder,
-                audioDecoder = audioDecoder,
+                chain = com.hawkynt.mediadroid.player.PlaybackChain.of(
+                    playbackFacts(
+                        location = queue[index].videoPath,
+                        player = player,
+                        videoDecoder = videoDecoder,
+                        audioDecoder = audioDecoder,
+                        audioTrack = audioTrack,
+                        picture = shownPicture,
+                        fit = fit.label,
+                        zoom = zoom,
+                        screen = presentation?.takeIf { it.isShowing }?.display ?: hostView.display,
+                        screenName = if (presentation?.isShowing == true) {
+                            externalDisplay?.name ?: "the other screen"
+                        } else {
+                            "this screen"
+                        },
+                        loudnessDb = settings.loudness + loudnessBoostDb,
+                        nightMode = nightMode,
+                        speed = speed,
+                        delayMs = audioDelayMs,
+                        spatial = spatialAudio,
+                        device = audioOutput.name,
+                    ),
+                ),
                 onDismiss = { infoOpen = false },
             )
         }

@@ -36,18 +36,39 @@ object AviAudioFraming {
      * Media3's own recognises (see [FfmpegExtractor]).
      */
     val extractors: ExtractorsFactory = object : ExtractorsFactory {
-        override fun createExtractors(): Array<Extractor> = wrap(DefaultExtractorsFactory().createExtractors())
+        override fun createExtractors(): Array<Extractor> = wrap(DefaultExtractorsFactory().createExtractors(), null)
 
         override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> =
-            wrap(DefaultExtractorsFactory().createExtractors(uri, responseHeaders)) + FfmpegExtractor(uri, remote)
+            wrap(DefaultExtractorsFactory().createExtractors(uri, responseHeaders), uri) +
+                FfmpegExtractor(uri, remote)
     }
 
     /** The file behind a network location, for FFmpeg's demuxers; the app points this at its sources. */
     @Volatile
     var remote: (String) -> FsFile? = { null }
 
-    private fun wrap(extractors: Array<Extractor>): Array<Extractor> =
-        extractors.map { if (it is AviExtractor) FramingExtractor(it) else it }.toTypedArray()
+    private fun wrap(extractors: Array<Extractor>, uri: Uri?): Array<Extractor> = extractors.map {
+        val framed = if (it is AviExtractor) FramingExtractor(it) else it
+        if (uri != null) RecordingExtractor(framed, uri.toString()) else framed
+    }.toTypedArray()
+
+    /** Notes in [DemuxerLog] which extractor took the file: the one Media3 initialises is the one it chose. */
+    private class RecordingExtractor(private val inner: Extractor, private val location: String) : Extractor {
+        override fun sniff(input: ExtractorInput): Boolean = inner.sniff(input)
+
+        override fun init(output: ExtractorOutput) {
+            DemuxerLog.record(location, inner.underlyingImplementation.javaClass.simpleName)
+            inner.init(output)
+        }
+
+        override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int = inner.read(input, seekPosition)
+
+        override fun seek(position: Long, timeUs: Long) = inner.seek(position, timeUs)
+
+        override fun release() = inner.release()
+
+        override fun getUnderlyingImplementation(): Extractor = inner.underlyingImplementation
+    }
 
     private class FramingExtractor(private val inner: Extractor) : Extractor {
         private val tracks = ArrayList<FramingTrackOutput>()
