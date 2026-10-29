@@ -216,6 +216,35 @@ fun SettingsScreen(
             checked = settings.matchRefreshRate,
             onChange = { c -> update { it.matchRefreshRate = c } },
         )
+        Text("Even frames", fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
+        Text(
+            "Where the screen cannot switch, the film runs a little faster or slower so every frame stays " +
+                "on screen equally long — 24 fps on 120 Hz, 30 or 20 fps on 60 Hz. The sound keeps its pitch.",
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(0 to "Off", 5 to "Slight, up to 5 %", 25 to "Strong, up to 25 %").forEach { (percent, label) ->
+                FilterChip(
+                    selected = settings.judderLimitPercent == percent,
+                    onClick = { update { it.judderLimitPercent = percent } },
+                    label = { Text(label, fontSize = 16.sp) },
+                )
+            }
+        }
+        if (settings.judderLimitPercent > 0) {
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                com.hawkynt.mediadroid.player.PlaybackMath.JudderDirection.entries.forEach { direction ->
+                    FilterChip(
+                        selected = settings.judderDirection == direction.name,
+                        onClick = { update { it.judderDirection = direction.name } },
+                        label = { Text(direction.label, fontSize = 16.sp) },
+                    )
+                }
+            }
+        }
         SwitchRow(
             label = "Audio passthrough",
             detail = "Surround sound goes untouched to an AV receiver over HDMI, where the device supports it.",
@@ -253,18 +282,7 @@ fun SettingsScreen(
         )
         Spacer(Modifier.height(8.dp))
         Text("Default speed", fontSize = 18.sp)
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Speeds.forEach { s ->
-                FilterChip(
-                    selected = settings.defaultSpeed == s,
-                    onClick = { update { it.defaultSpeed = s } },
-                    label = { Text(if (s == 1.0f) "1×" else "${s}×", fontSize = 16.sp) },
-                )
-            }
-        }
+        SpeedSlider(settings.defaultSpeed, { s -> update { it.defaultSpeed = s } }, Modifier.fillMaxWidth())
         SliderRow(
             label = "Loudness",
             value = settings.loudness,
@@ -289,6 +307,11 @@ fun SettingsScreen(
                     it.gamma = defaultPicture.gamma
                     it.contrast = defaultPicture.contrast
                     it.saturation = defaultPicture.saturation
+                    it.sharpness = defaultPicture.sharpness
+                    it.clarity = defaultPicture.clarity
+                    it.denoise = defaultPicture.denoise
+                    it.deinterlace = defaultPicture.deinterlace.name
+                    it.upscaler = defaultPicture.upscaler.name
                 }
             },
         )

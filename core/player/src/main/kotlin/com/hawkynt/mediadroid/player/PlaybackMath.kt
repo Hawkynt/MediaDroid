@@ -136,6 +136,22 @@ object PlaybackMath {
         if (remainingMs <= 0) 0 else ((remainingMs + 59_999) / 60_000).toInt()
 
     /**
+     * A sound or subtitle delay in words, relative to the picture: positive is after it, negative before
+     * it — `sound 150 ms after the picture`, `subtitles 2 s before the picture`. Under a second in
+     * milliseconds, from a second on in seconds.
+     */
+    fun syncText(what: String, delayMs: Int): String {
+        if (delayMs == 0) return "in sync with the picture"
+        val amount = kotlin.math.abs(delayMs)
+        val shown = if (amount < 1000) {
+            "$amount ms"
+        } else {
+            String.format(java.util.Locale.ROOT, "%.1f", amount / 1000f).removeSuffix(".0") + " s"
+        }
+        return "$what $shown ${if (delayMs > 0) "after" else "before"} the picture"
+    }
+
+    /**
      * The pixel shape to show a video with: what the decoder [reported], unless it reported square pixels
      * while the container [declared] another shape — software decoders report every picture as 1:1.
      */
@@ -163,6 +179,59 @@ object PlaybackMath {
     /** An audio delay (ms; positive: sound later) moved by [steps] of [AUDIO_DELAY_STEP_MS], held in range. */
     fun nudgeAudioDelay(currentMs: Int, steps: Int): Int =
         (currentMs + steps * AUDIO_DELAY_STEP_MS).coerceIn(-AUDIO_DELAY_LIMIT_MS, AUDIO_DELAY_LIMIT_MS)
+
+    /** The slowest and fastest speed the player offers. */
+    const val SPEED_MIN = 0.2f
+    const val SPEED_MAX = 5f
+
+    /**
+     * The speed at slider [position] (0..1): logarithmic from [SPEED_MIN] to [SPEED_MAX], so 1× sits in
+     * the middle and the speeds around it get the most travel, snapped to steps of 0.05×.
+     */
+    fun speedAt(position: Float): Float {
+        val p = position.coerceIn(0f, 1f)
+        val speed = SPEED_MIN * (SPEED_MAX / SPEED_MIN).pow(p)
+        return (kotlin.math.round(speed * 20f) / 20f).coerceIn(SPEED_MIN, SPEED_MAX)
+    }
+
+    /** The slider position (0..1) showing [speed]. */
+    fun speedPosition(speed: Float): Float =
+        (kotlin.math.ln(speed.coerceIn(SPEED_MIN, SPEED_MAX) / SPEED_MIN) / kotlin.math.ln(SPEED_MAX / SPEED_MIN))
+
+    /** Which way judder reduction may change the speed. */
+    enum class JudderDirection(val label: String) {
+        NEAREST("Nearest"),
+        FASTER("Only faster"),
+        SLOWER("Only slower"),
+    }
+
+    /**
+     * The speed factor that makes a [frameRate] film's frames fall evenly on a [refreshHz] display, so
+     * every frame stays on screen equally long: the frame rate nearest to the film's (in [direction])
+     * that goes into the refresh rate a whole number of times — 24 fps on 120 Hz, 30 or 20 on 60 Hz, 25
+     * on 50 Hz. 1 when the film already fits (within 0.1 %), or when the change would exceed
+     * [maxChange] (0.05 is 5 %); on a tie the faster rate wins. The sound keeps its pitch (time-stretch).
+     */
+    fun judderSpeed(frameRate: Float, refreshHz: Float, maxChange: Float, direction: JudderDirection): Float {
+        if (frameRate <= 0f || refreshHz <= 0f || maxChange <= 0f) return 1f
+        val even = (1..12).map { refreshHz / it }.filter { it >= MIN_EVEN_RATE }
+        if (even.any { kotlin.math.abs(it / frameRate - 1f) <= FITS }) return 1f
+        val allowed = even.map { it / frameRate }.filter { factor ->
+            kotlin.math.abs(factor - 1f) <= maxChange + FITS &&
+                when (direction) {
+                    JudderDirection.NEAREST -> true
+                    JudderDirection.FASTER -> factor > 1f
+                    JudderDirection.SLOWER -> factor < 1f
+                }
+        }
+        return allowed.minWithOrNull(
+            compareBy<Float> { kotlin.math.abs(it - 1f) - if (it > 1f) TIE else 0f },
+        ) ?: 1f
+    }
+
+    private const val MIN_EVEN_RATE = 10f
+    private const val FITS = 0.001f
+    private const val TIE = 1e-4f
 
     /**
      * The display refresh rate to play a [frameRate] film at: the lowest of [available] that is a whole

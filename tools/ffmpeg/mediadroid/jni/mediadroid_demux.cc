@@ -14,9 +14,12 @@
 
 extern "C" {
 #define __STDC_CONSTANT_MACROS
+#include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/display.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/pixdesc.h>
+#include <libswscale/swscale.h>
 }
 
 #include "mediadroid_codecpar.h"
@@ -248,6 +251,21 @@ JNIEXPORT jstring JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nStre
   return decoder ? env->NewStringUTF(decoder->name) : nullptr;
 }
 
+// The stream's pixel format (video, as yuv420p or yuv422p10le) or sample format (audio, as fltp or
+// s16), as FFmpeg names it; null when unknown.
+JNIEXPORT jstring JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nStreamFormat(
+    JNIEnv* env, jclass, jlong handle, jint index) {
+  AVStream* stream = streamOf(demuxerOf(env, handle), index);
+  if (!stream || stream->codecpar->format < 0) return nullptr;
+  const char* name = nullptr;
+  if (stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+    name = av_get_pix_fmt_name((AVPixelFormat)stream->codecpar->format);
+  } else if (stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+    name = av_get_sample_fmt_name((AVSampleFormat)stream->codecpar->format);
+  }
+  return name ? env->NewStringUTF(name) : nullptr;
+}
+
 JNIEXPORT jstring JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nStreamLanguage(
     JNIEnv* env, jclass, jlong handle, jint index) {
   AVStream* stream = streamOf(demuxerOf(env, handle), index);
@@ -316,6 +334,79 @@ JNIEXPORT jboolean JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nSee
   // The keyframe at or before the target, else whatever the container can reach.
   if (av_seek_frame(d->format, -1, target, AVSEEK_FLAG_BACKWARD) >= 0) return JNI_TRUE;
   return avformat_seek_file(d->format, -1, INT64_MIN, target, INT64_MAX, 0) >= 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+// The first picture of the main video stream from the keyframe at or before timeUs, scaled to at
+// most maxWidth wide with the pixel aspect applied, as BGRA — in memory the ARGB_8888 ints Android's
+// Bitmap takes. size receives width and height. Null without a picture.
+JNIEXPORT jintArray JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nFrame(
+    JNIEnv* env, jclass clazz, jlong handle, jlong timeUs, jint maxWidth, jintArray size) {
+  Demuxer* d = demuxerOf(env, handle);
+  if (!d || maxWidth <= 0) return nullptr;
+  const int index = av_find_best_stream(d->format, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+  if (index < 0) return nullptr;
+  AVStream* stream = d->format->streams[index];
+  const AVCodec* codec = avcodec_find_decoder(stream->codecpar->codec_id);
+  if (!codec) return nullptr;
+  AVCodecContext* context = avcodec_alloc_context3(codec);
+  AVFrame* frame = av_frame_alloc();
+  AVPacket* packet = av_packet_alloc();
+  jintArray pixels = nullptr;
+  bool decoded = false;
+  if (context && frame && packet && avcodec_parameters_to_context(context, stream->codecpar) >= 0 &&
+      avcodec_open2(context, codec, nullptr) >= 0) {
+    if (timeUs > 0) {
+      int64_t target = timeUs;
+      if (d->format->start_time != AV_NOPTS_VALUE) target += d->format->start_time;
+      // The keyframe closest before the target, as ffmpeg's own -ss seeks; an index-only seek
+      // (nSeek's) can land far earlier in ASF and WTV.
+      if (avformat_seek_file(d->format, -1, INT64_MIN, target, target, 0) < 0) {
+        Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nSeek(env, clazz, handle, timeUs);
+      }
+    }
+    // A keyframe-only seek can land a long way before the picture: give up after this many packets.
+    for (int packets = 0; !decoded && packets < 4096; packets++) {
+      const int read = av_read_frame(d->format, packet);
+      if (read < 0) {
+        avcodec_send_packet(context, nullptr);
+        decoded = avcodec_receive_frame(context, frame) == 0;
+        break;
+      }
+      if (packet->stream_index == index && avcodec_send_packet(context, packet) >= 0) {
+        decoded = avcodec_receive_frame(context, frame) == 0;
+      }
+      av_packet_unref(packet);
+    }
+  }
+  if (decoded && frame->width > 0 && frame->height > 0) {
+    const AVRational aspect = av_guess_sample_aspect_ratio(d->format, stream, frame);
+    double shownWidth = frame->width;
+    if (aspect.num > 0 && aspect.den > 0) shownWidth = frame->width * av_q2d(aspect);
+    const int width = shownWidth > maxWidth ? maxWidth : (int)(shownWidth + 0.5);
+    int height = (int)(frame->height * (double)width / shownWidth + 0.5);
+    if (height < 1) height = 1;
+    SwsContext* scaler = sws_getContext(frame->width, frame->height, (AVPixelFormat)frame->format, width,
+                                        height, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (scaler) {
+      pixels = env->NewIntArray(width * height);
+      jint* out = pixels ? env->GetIntArrayElements(pixels, nullptr) : nullptr;
+      if (out) {
+        uint8_t* planes[4] = {reinterpret_cast<uint8_t*>(out), nullptr, nullptr, nullptr};
+        int strides[4] = {width * 4, 0, 0, 0};
+        sws_scale(scaler, frame->data, frame->linesize, 0, frame->height, planes, strides);
+        env->ReleaseIntArrayElements(pixels, out, 0);
+        const jint dimensions[2] = {width, height};
+        env->SetIntArrayRegion(size, 0, 2, dimensions);
+      } else {
+        pixels = nullptr;
+      }
+      sws_freeContext(scaler);
+    }
+  }
+  av_packet_free(&packet);
+  av_frame_free(&frame);
+  avcodec_free_context(&context);
+  return pixels;
 }
 
 JNIEXPORT void JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nClose(

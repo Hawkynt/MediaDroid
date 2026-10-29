@@ -67,6 +67,10 @@ data class Playable(
     val credits: com.hawkynt.mediadroid.nfo.TimeRange? = null,
     /** What the NFO says: watched unless the household unticked it. */
     val nfoWatched: Boolean = false,
+    /** What it is about, from the NFO or the file's own tags; null when nothing says. */
+    val plot: String? = null,
+    /** The NFO's facts beyond the plot: year, length, genres, director, cast. */
+    val facts: List<String> = emptyList(),
 )
 
 sealed interface Screen {
@@ -553,6 +557,8 @@ fun Movie.playQueue(): List<Playable> = parts.mapIndexed { i, part ->
         intro = intro.takeIf { i == 0 },
         credits = credits.takeIf { i == parts.lastIndex },
         nfoWatched = playcount > 0,
+        plot = plot,
+        facts = aboutOf(this).let { listOfNotNull(it.line) + it.facts },
     )
 }
 
@@ -568,6 +574,8 @@ fun Show.playQueue(): List<Playable> =
                 intro = episode.intro,
                 credits = episode.credits,
                 nfoWatched = episode.watched,
+                plot = episode.plot,
+                facts = listOf(title),
             )
         }
     }

@@ -36,6 +36,11 @@ data class PictureOverride(
     val gamma: Float = 1f,
     val contrast: Float = 1f,
     val saturation: Float = 1f,
+    val sharpness: Float = 0f,
+    val clarity: Float = 0f,
+    val denoise: Int = 0,
+    val deinterlace: String = "OFF",
+    val upscaler: String = "STANDARD",
 )
 
 /**
@@ -49,11 +54,18 @@ data class Settings(
     var loudness: Float = 0f,                 // dB-ish -10..10, mapped to volume
     var matchRefreshRate: Boolean = false,    // TV boxes: switch the display to a multiple of the film's frame rate
     var audioPassthrough: Boolean = false,    // TV boxes: compressed surround untouched to an AV receiver
+    var judderLimitPercent: Int = 0,          // judder reduction: how far the speed may change, 0 = off
+    var judderDirection: String = "NEAREST",  // PlaybackMath.JudderDirection name
     var askedForNotifications: Boolean = false, // the media notification's permission is asked once
     var brightness: Float = 0f,               // -1..1
     var gamma: Float = 1.0f,                  // 0.5..2
     var contrast: Float = 1.0f,               // 0.5..2
     var saturation: Float = 1.0f,             // 0..2
+    var sharpness: Float = 0f,                // 0..1, the picture filters' household default
+    var clarity: Float = 0f,                  // 0..1
+    var denoise: Int = 0,                     // 0..3
+    var deinterlace: String = "OFF",          // PictureAdjustment.Deinterlace name
+    var upscaler: String = "STANDARD",        // PictureAdjustment.Upscaler name
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -203,12 +215,33 @@ class StateStore(context: Context) {
 
     /** The household's default picture, from the guarded settings. */
     fun defaultPicture(): PictureAdjustment = with(data.settings) {
-        PictureAdjustment(brightness, gamma, contrast, saturation)
+        PictureAdjustment(
+            brightness, gamma, contrast, saturation, sharpness, clarity, denoise, deinterlaceOf(deinterlace),
+            upscalerOf(upscaler),
+        )
     }
+
+    private fun upscalerOf(name: String) =
+        runCatching { PictureAdjustment.Upscaler.valueOf(name) }.getOrDefault(PictureAdjustment.Upscaler.STANDARD)
+
+    private fun deinterlaceOf(name: String) =
+        runCatching { PictureAdjustment.Deinterlace.valueOf(name) }.getOrDefault(PictureAdjustment.Deinterlace.OFF)
 
     /** The picture for [videoPath]: its own correction if one was set, else the default. */
     fun pictureFor(videoPath: String): PictureAdjustment =
-        data.picture[videoPath]?.let { PictureAdjustment(it.brightness, it.gamma, it.contrast, it.saturation) }
+        data.picture[videoPath]?.let {
+            PictureAdjustment(
+                it.brightness,
+                it.gamma,
+                it.contrast,
+                it.saturation,
+                it.sharpness,
+                it.clarity,
+                it.denoise,
+                deinterlaceOf(it.deinterlace),
+                upscalerOf(it.upscaler),
+            )
+        }
             ?: defaultPicture()
 
     /** Remembers [picture] for [videoPath]; the default (or null) drops the video's own entry. */
@@ -216,8 +249,17 @@ class StateStore(context: Context) {
         if (picture == null || picture == defaultPicture()) {
             data.picture.remove(videoPath)
         } else {
-            data.picture[videoPath] =
-                PictureOverride(picture.brightness, picture.gamma, picture.contrast, picture.saturation)
+            data.picture[videoPath] = PictureOverride(
+                picture.brightness,
+                picture.gamma,
+                picture.contrast,
+                picture.saturation,
+                picture.sharpness,
+                picture.clarity,
+                picture.denoise,
+                picture.deinterlace.name,
+                picture.upscaler.name,
+            )
         }
         save()
     }

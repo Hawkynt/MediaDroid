@@ -1,7 +1,7 @@
 package com.hawkynt.mediadroid.ui
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -20,19 +21,23 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.library.Quality
+import com.hawkynt.mediadroid.player.PlaybackChain
 import java.io.File
 
 /**
  * What is playing: the file, its container and size, every video / audio / subtitle track with codec,
- * language, channels, resolution and frame rate (the one playing marked), and the decoders at work.
+ * language, channels, resolution and frame rate (the one playing marked), and how it plays — as a graph
+ * (see [ChainGraph]): the files read, and a lane each for picture, sound and subtitles from them to the
+ * screen and the speaker.
  */
 @Composable
 fun PlaybackInfoDialog(
+    playing: Playable,
+    fileTags: androidx.media3.common.MediaMetadata,
     videoPath: String,
     tracks: Tracks,
     videoSize: VideoSize,
-    videoDecoder: String?,
-    audioDecoder: String?,
+    graph: PlaybackChain.Graph,
     onDismiss: () -> Unit,
 ) {
     val file = File(videoPath)
@@ -40,8 +45,32 @@ fun PlaybackInfoDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         title = { Text("What is playing") },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.fillMaxWidth(0.94f),
         text = {
-            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Section("About")
+                Line(playing.title, bold = true)
+                playing.subtitle?.let { Line(it) }
+                playing.facts.forEach { Line(it) }
+                Line(playing.plot ?: "Nothing is written about it yet.")
+                // What the file's own tags say, as Media3 read them.
+                val tags = listOfNotNull(
+                    fileTags.title?.let { "Title: $it" },
+                    fileTags.displayTitle?.let { "Shown as: $it" },
+                    fileTags.subtitle?.let { "Subtitle: $it" },
+                    fileTags.artist?.let { "Artist: $it" },
+                    fileTags.albumTitle?.let { "Album: $it" },
+                    fileTags.genre?.let { "Genre: $it" },
+                    (fileTags.recordingYear ?: fileTags.releaseYear)?.let { "Year: $it" },
+                    fileTags.writer?.let { "Writer: $it" },
+                    fileTags.description?.let { "Description: $it" },
+                )
+                if (tags.isNotEmpty()) {
+                    Section("Tags in the file")
+                    tags.forEach { Line(it) }
+                }
+
                 Section("File")
                 Line(file.name)
                 Line(file.parent ?: "")
@@ -65,9 +94,8 @@ fun PlaybackInfoDialog(
                     }
                 }
 
-                Section("Decoders")
-                Line("Video: ${decoder(videoDecoder)}")
-                Line("Audio: ${decoder(audioDecoder)}")
+                Section("How it plays")
+                ChainGraph(graph)
             }
         },
     )
@@ -98,6 +126,20 @@ private fun Line(text: String, bold: Boolean = false) {
  * `Dolby Digital · 5.1 · German` — the codec and its profile, never the decoder that plays it.
  */
 internal fun describe(format: Format): String {
+    // Subtitles Media3 parses while extracting are cues by then; codecs keeps their format.
+    val subtitleMime = if (format.sampleMimeType == androidx.media3.common.MimeTypes.APPLICATION_MEDIA3_CUES) {
+        format.codecs
+    } else {
+        format.sampleMimeType?.takeIf(androidx.media3.common.MimeTypes::isText)
+    }
+    if (subtitleMime != null) {
+        val language = format.language?.let(Languages::label)
+        return listOfNotNull(
+            PlaybackChain.subtitleFormat(subtitleMime),
+            language,
+            format.label?.takeIf { it != language },
+        ).joinToString(" · ")
+    }
     val codec = Quality.codecOf(format.sampleMimeType, format.codecs)
     val parts = mutableListOf<String>()
     val shown = Quality.of(
@@ -125,17 +167,194 @@ internal fun describe(format: Format): String {
     return parts.joinToString(" · ")
 }
 
-/** A decoder name with what kind it is: Android's own (hardware or not) or the bundled FFmpeg. */
-internal fun decoder(name: String?): String = when {
-    name == null -> "not in use"
-    name.startsWith("ffmpeg", ignoreCase = true) || name.contains("Ffmpeg") -> "$name (software, FFmpeg)"
-    name.startsWith("c2.android.") || name.startsWith("OMX.google.") -> "$name (software)"
-    name.contains("sw", ignoreCase = true) && name.startsWith("OMX.") -> "$name (software)"
-    else -> "$name (hardware)"
-}
-
 private fun size(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.2f GB".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%.0f MB".format(bytes / (1L shl 20).toDouble())
     else -> "$bytes bytes"
+}
+
+/** What the player and the platform report, gathered into [PlaybackChain.Facts]. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun playbackFacts(
+    location: String,
+    player: androidx.media3.exoplayer.ExoPlayer,
+    videoDecoder: String?,
+    audioDecoder: String?,
+    audioTrack: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig?,
+    picture: com.hawkynt.mediadroid.player.PictureAdjustment,
+    fit: String,
+    zoom: Float,
+    screen: android.view.Display?,
+    screenName: String,
+    loudnessDb: Float,
+    nightMode: Boolean,
+    speed: Float,
+    delayMs: Int,
+    spatial: Boolean,
+    device: String,
+    subtitleDelayMs: Int,
+    speedFactor: Float = 1f,
+    sidecars: List<Pair<com.hawkynt.mediadroid.library.Sidecars.Sidecar, String>> = emptyList(),
+): PlaybackChain.Facts {
+    val subtitleFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.SUBTITLES }
+    val audioFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
+    val inputOf = { groupId: String? -> inputOf(groupId, subtitleFiles.size, audioFiles.size) }
+    val videoFormat = player.videoFormat
+    val profile = com.hawkynt.mediadroid.library.CodecProfile.of(videoFormat?.codecs)
+    val audioFormat = player.audioFormat
+    val size = player.videoSize
+    val mode = screen?.mode
+    val encoding = audioTrack?.encoding
+    val passthrough = encoding != null && !androidx.media3.common.util.Util.isEncodingLinearPcm(encoding)
+    val playing = { type: Int ->
+        player.currentTracks.groups.firstOrNull { it.type == type && it.isSelected }
+    }
+    val textGroup = playing(C.TRACK_TYPE_TEXT)
+    val textFormat = textGroup?.let { group ->
+        (0 until group.length).firstOrNull(group::isTrackSelected)?.let(group::getTrackFormat)
+    }
+    return PlaybackChain.Facts(
+        // The file itself, then its subtitle files and its audio files, in the order they are merged in.
+        inputs = (listOf(location) + (subtitleFiles + audioFiles).map { it.second }).mapIndexed { i, file ->
+            PlaybackChain.Source(
+                file,
+                com.hawkynt.mediadroid.player.DemuxerLog.of(com.hawkynt.mediadroid.player.playableUri(file).toString())
+                    ?: if (i in 1..subtitleFiles.size) "SubtitleExtractor" else null,
+            )
+        },
+        video = videoFormat?.let {
+            PlaybackChain.Video(
+                input = inputOf(playing(C.TRACK_TYPE_VIDEO)?.mediaTrackGroup?.id),
+                decoder = videoDecoder,
+                width = size.width.takeIf { w -> w > 0 } ?: it.width,
+                height = size.height.takeIf { h -> h > 0 } ?: it.height,
+                pixelRatio = size.pixelWidthHeightRatio,
+                picture = picture,
+                fit = fit,
+                zoom = zoom,
+                screen = screenName,
+                screenWidth = mode?.physicalWidth ?: 0,
+                screenHeight = mode?.physicalHeight ?: 0,
+                refreshHz = mode?.refreshRate ?: 0f,
+                decodedFormat = ffmpegFormat(videoDecoder, location, "video"),
+                chroma = chromaOf(profile),
+                bitDepth = it.colorInfo?.lumaBitdepth?.takeIf { d -> d > 0 }
+                    ?: if (profile?.contains("10") == true) 10 else 8,
+                colorSpace = when (it.colorInfo?.colorSpace) {
+                    C.COLOR_SPACE_BT709 -> "BT.709"
+                    C.COLOR_SPACE_BT601 -> "BT.601"
+                    C.COLOR_SPACE_BT2020 -> "BT.2020"
+                    else -> null
+                },
+                transfer = when (it.colorInfo?.colorTransfer) {
+                    C.COLOR_TRANSFER_SDR, C.COLOR_TRANSFER_GAMMA_2_2 -> "SDR"
+                    C.COLOR_TRANSFER_ST2084 -> "PQ (HDR10)"
+                    C.COLOR_TRANSFER_HLG -> "HLG"
+                    else -> null
+                },
+                frameRate = it.frameRate.takeIf { rate -> rate > 0f } ?: 0f,
+                speedFactor = speedFactor,
+                range = when (it.colorInfo?.colorRange) {
+                    C.COLOR_RANGE_LIMITED -> "limited range"
+                    C.COLOR_RANGE_FULL -> "full range"
+                    else -> null
+                },
+            )
+        },
+        audio = audioFormat?.let {
+            PlaybackChain.Audio(
+                input = inputOf(playing(C.TRACK_TYPE_AUDIO)?.mediaTrackGroup?.id),
+                decoder = audioDecoder,
+                inputSampleRate = it.sampleRate,
+                inputChannels = it.channelCount,
+                sinkEncoding = encoding?.let(::encodingName),
+                sinkSampleRate = audioTrack?.sampleRate ?: 0,
+                sinkChannels = audioTrack?.let { t -> Integer.bitCount(t.channelConfig) } ?: 0,
+                passthrough = passthrough,
+                offload = audioTrack?.offload == true,
+                loudnessDb = loudnessDb,
+                nightMode = nightMode,
+                speed = speed,
+                delayMs = delayMs,
+                spatial = spatial,
+                device = device,
+                decodedFormat = ffmpegFormat(audioDecoder, location, "audio"),
+                pcmFormat = com.hawkynt.mediadroid.player.DelayedAudioSink.lastInput?.pcmEncoding
+                    ?.takeIf { e -> e != Format.NO_VALUE }
+                    ?.let(::encodingName),
+            )
+        },
+        subtitles = textFormat?.let {
+            PlaybackChain.Subtitles(
+                input = inputOf(textGroup.mediaTrackGroup.id),
+                // Subtitles Media3 parses while extracting reach the renderer as cues; codecs keeps their format.
+                mimeType = if (it.sampleMimeType == androidx.media3.common.MimeTypes.APPLICATION_MEDIA3_CUES) {
+                    it.codecs
+                } else {
+                    it.sampleMimeType
+                },
+                language = it.language?.let(Languages::label),
+                delayMs = subtitleDelayMs,
+                screen = screenName,
+            )
+        },
+        player = "Media3 ExoPlayer ${androidx.media3.common.MediaLibraryInfo.VERSION}",
+    )
+}
+
+/**
+ * FFmpeg's own pixel or sample format of the [kind] stream at [location], when FFmpeg both demuxed and
+ * decodes it; other decoders do not say what they decode to.
+ */
+private fun ffmpegFormat(decoder: String?, location: String, kind: String): String? {
+    if (decoder == null || !(decoder.startsWith("ffmpeg", ignoreCase = true) || decoder.contains("Ffmpeg"))) return null
+    return com.hawkynt.mediadroid.player.DemuxerLog.formatOf(
+        com.hawkynt.mediadroid.player.playableUri(location).toString(),
+        kind,
+    )
+}
+
+/** The chroma subsampling a profile implies: 4:2:2 or 4:4:4 where it says so, else 4:2:0. */
+private fun chromaOf(profile: String?): String = when {
+    profile == null -> "4:2:0"
+    "4:4:4" in profile -> "4:4:4"
+    "4:2:2" in profile -> "4:2:2"
+    else -> "4:2:0"
+}
+
+/**
+ * The input a track group comes from, by the prefixes Media3 gives merged sources' group ids: with
+ * [subtitles] subtitle files the video is `0:` and subtitle file k `k:`; with [audio] audio files merged
+ * around that, the video is `0:0:`, subtitle file k `0:k:` and audio file j `j:`.
+ */
+private fun inputOf(groupId: String?, subtitles: Int, audio: Int): Int {
+    val prefixes = groupId?.split(':')?.dropLast(1)?.map { it.toIntOrNull() ?: return 0 } ?: return 0
+    return when {
+        audio > 0 -> {
+            val outer = prefixes.getOrNull(0) ?: return 0
+            if (outer > 0) subtitles + outer else if (subtitles > 0) prefixes.getOrNull(1) ?: 0 else 0
+        }
+        subtitles > 0 -> prefixes.getOrNull(0) ?: 0
+        else -> 0
+    }
+}
+
+/** A `C.ENCODING_*` as people call it. */
+private fun encodingName(encoding: Int): String = when (encoding) {
+    C.ENCODING_PCM_8BIT -> "8-bit PCM"
+    C.ENCODING_PCM_16BIT, C.ENCODING_PCM_16BIT_BIG_ENDIAN -> "16-bit PCM"
+    C.ENCODING_PCM_24BIT, C.ENCODING_PCM_24BIT_BIG_ENDIAN -> "24-bit PCM"
+    C.ENCODING_PCM_32BIT, C.ENCODING_PCM_32BIT_BIG_ENDIAN -> "32-bit PCM"
+    C.ENCODING_PCM_FLOAT -> "float PCM"
+    C.ENCODING_AC3 -> "Dolby Digital"
+    C.ENCODING_E_AC3 -> "Dolby Digital Plus"
+    C.ENCODING_E_AC3_JOC -> "Dolby Digital Plus with Atmos"
+    C.ENCODING_AC4 -> "Dolby AC-4"
+    C.ENCODING_DOLBY_TRUEHD -> "Dolby TrueHD"
+    C.ENCODING_DTS -> "DTS"
+    C.ENCODING_DTS_HD -> "DTS-HD"
+    C.ENCODING_MP3 -> "MP3"
+    C.ENCODING_AAC_LC -> "AAC"
+    C.ENCODING_OPUS -> "Opus"
+    else -> "encoding $encoding"
 }

@@ -198,6 +198,60 @@ class PlaybackMathTest {
     }
 
     @Test
+    fun `a film is sped up or slowed down a little so its frames fall evenly on the display`() {
+        val nearest = PlaybackMath.JudderDirection.NEAREST
+        // 23.976 fps on 120 Hz: 24 fps divides it five times, 0.1 % faster.
+        assertEquals(24f / 23.976f, PlaybackMath.judderSpeed(23.976f, 120f, 0.05f, nearest), 1e-5f)
+        // Already even: 25 fps on 50 Hz, 29.97 on 59.94 Hz.
+        assertEquals(1f, PlaybackMath.judderSpeed(25f, 50f, 0.25f, nearest), 0f)
+        assertEquals(1f, PlaybackMath.judderSpeed(29.97f, 59.94f, 0.25f, nearest), 0f)
+        // 23.976 on 60 Hz: the nearest even rate is 20 fps, 16.6 % slower — too much for a slight change.
+        assertEquals(1f, PlaybackMath.judderSpeed(23.976f, 60f, 0.05f, nearest), 0f)
+        assertEquals(20f / 23.976f, PlaybackMath.judderSpeed(23.976f, 60f, 0.25f, nearest), 1e-5f)
+        // Only faster: 30 fps, 25 % faster; only slower: 20 fps.
+        assertEquals(
+            30f / 23.976f,
+            PlaybackMath.judderSpeed(23.976f, 60f, 0.26f, PlaybackMath.JudderDirection.FASTER),
+            1e-5f,
+        )
+        assertEquals(
+            20f / 23.976f,
+            PlaybackMath.judderSpeed(23.976f, 60f, 0.25f, PlaybackMath.JudderDirection.SLOWER),
+            1e-5f,
+        )
+        // 25 fps on 60 Hz: 30 and 20 are equally far; faster wins the tie.
+        assertEquals(30f / 25f, PlaybackMath.judderSpeed(25f, 60f, 0.25f, nearest), 1e-5f)
+        // Off, or nothing known.
+        assertEquals(1f, PlaybackMath.judderSpeed(23.976f, 120f, 0f, nearest), 0f)
+        assertEquals(1f, PlaybackMath.judderSpeed(0f, 120f, 0.25f, nearest), 0f)
+        assertEquals(1f, PlaybackMath.judderSpeed(23.976f, 0f, 0.25f, nearest), 0f)
+    }
+
+    @Test
+    fun `a delay says whether the sound or the subtitles come before or after the picture`() {
+        assertEquals("in sync with the picture", PlaybackMath.syncText("sound", 0))
+        assertEquals("sound 150 ms after the picture", PlaybackMath.syncText("sound", 150))
+        assertEquals("sound 2 s before the picture", PlaybackMath.syncText("sound", -2000))
+        assertEquals("subtitles 500 ms after the picture", PlaybackMath.syncText("subtitles", 500))
+        assertEquals("subtitles 1.2 s before the picture", PlaybackMath.syncText("subtitles", -1200))
+    }
+
+    @Test
+    fun `the speed slider runs from 0_2x to 5x on a log scale in steps of 0_05`() {
+        assertEquals(0.2f, PlaybackMath.speedAt(0f), 1e-6f)
+        assertEquals(5f, PlaybackMath.speedAt(1f), 1e-6f)
+        // 1x sits in the middle of the log scale between 0.2 and 5.
+        assertEquals(1f, PlaybackMath.speedAt(0.5f), 1e-6f)
+        // Every speed comes back to itself, 1.75x among them.
+        for (speed in listOf(0.2f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 3f, 5f)) {
+            assertEquals(speed, PlaybackMath.speedAt(PlaybackMath.speedPosition(speed)), 1e-6f)
+        }
+        // In between, a speed snaps to the nearest 0.05.
+        assertEquals(1.75f, PlaybackMath.speedAt(PlaybackMath.speedPosition(1.76f)), 1e-6f)
+        assertEquals(0f, PlaybackMath.speedPosition(0.1f), 1e-6f)
+    }
+
+    @Test
     fun `the display rate is the lowest whole multiple of the film's frame rate the screen offers`() {
         val tv = listOf(23.976f, 24f, 25f, 29.97f, 50f, 59.94f, 60f)
         assertEquals(23.976f, PlaybackMath.matchingRefreshRate(23.976f, tv)!!, 1e-3f)

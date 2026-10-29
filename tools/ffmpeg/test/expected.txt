@@ -1,71 +1,92 @@
 == DemuxCheck (FfmpegDemuxer over JNI)
 sample-144.rm format=rm streams=2
-  #0 kind=0 codec=rv10 decoder=rv10 320x240 0Hz 0ch params=56B
-  #1 kind=1 codec=ra_144 decoder=real_144 0x0 8000Hz 1ch params=48B
+  #0 kind=0 codec=rv10 decoder=rv10 format=yuv420p 320x240 0Hz 0ch params=56B
+  #1 kind=1 codec=ra_144 decoder=real_144 format=s16 0x0 8000Hz 1ch params=48B
   #0 packets=50 keyframes=5
   #1 packets=101 keyframes=101
   seek 1000ms ok=true next=960ms key=true
+  frame 160x120 at 1000000us
 sample.asf format=asf streams=2
-  #0 kind=0 codec=msmpeg4v3 decoder=msmpeg4 320x240 0Hz 0ch params=48B
-  #1 kind=1 codec=wmav1 decoder=wmav1 0x0 44100Hz 1ch params=52B
+  #0 kind=0 codec=msmpeg4v3 decoder=msmpeg4 format=yuv420p 320x240 0Hz 0ch params=48B
+  #1 kind=1 codec=wmav1 decoder=wmav1 format=fltp 0x0 44100Hz 1ch params=52B
   #0 packets=50 keyframes=5
   #1 packets=44 keyframes=44
   seek 1046ms ok=true next=510ms key=true
+  frame 160x120 at 1046000us
 sample.dv format=dv streams=2
-  #0 kind=0 codec=dvvideo decoder=dvvideo 720x576 0Hz 0ch params=48B pixel=1.0667
-  #1 kind=1 codec=pcm_s16le decoder=pcm_s16le 0x0 48000Hz 2ch params=48B
+  #0 kind=0 codec=dvvideo decoder=dvvideo format=yuv420p 720x576 0Hz 0ch params=48B pixel=1.0667
+  #1 kind=1 codec=pcm_s16le decoder=pcm_s16le format=s16 0x0 48000Hz 2ch params=48B
   #0 packets=50 keyframes=50
   #1 packets=50 keyframes=50
   seek 1000ms ok=true next=1000ms key=true
+  frame 160x120 at 1000000us
 sample.m2v format=mpegvideo streams=1
-  #0 kind=0 codec=mpeg2video decoder=mpeg2video 320x240 0Hz 0ch params=70B
+  #0 kind=0 codec=mpeg2video decoder=mpeg2video format=yuv420p 320x240 0Hz 0ch params=70B
   #0 packets=50 keyframes=5
   duration unknown: not seekable
+  frame 160x120 at 0us
 sample.mxf format=mxf streams=2
-  #0 kind=0 codec=mpeg2video decoder=mpeg2video 320x240 0Hz 0ch params=70B
-  #1 kind=1 codec=pcm_s16le decoder=pcm_s16le 0x0 48000Hz 1ch params=48B
+  #0 kind=0 codec=mpeg2video decoder=mpeg2video format=yuv420p 320x240 0Hz 0ch params=70B
+  #1 kind=1 codec=pcm_s16le decoder=pcm_s16le format=s16 0x0 48000Hz 1ch params=48B
   #0 packets=50 keyframes=5
   #1 packets=50 keyframes=50
   seek 1000ms ok=true next=960ms key=true
+  frame 160x120 at 1000000us
 sample.nut format=nut streams=2
-  #0 kind=0 codec=mpeg4 decoder=mpeg4 320x240 0Hz 0ch params=94B
-  #1 kind=1 codec=mp2 decoder=mp2 0x0 48000Hz 1ch params=48B
+  #0 kind=0 codec=mpeg4 decoder=mpeg4 format=yuv420p 320x240 0Hz 0ch params=94B
+  #1 kind=1 codec=mp2 decoder=mp2 format=s16p 0x0 48000Hz 1ch params=48B
   #0 packets=50 keyframes=5
   #1 packets=84 keyframes=84
   seek 996ms ok=true next=960ms key=true
+  frame 160x120 at 996000us
 sample.rm format=rm streams=2
-  #0 kind=0 codec=rv20 decoder=rv20 320x240 0Hz 0ch params=56B
-  #1 kind=1 codec=ac3 decoder=ac3 0x0 48000Hz 1ch params=48B
+  #0 kind=0 codec=rv20 decoder=rv20 format=yuv420p 320x240 0Hz 0ch params=56B
+  #1 kind=1 codec=ac3 decoder=ac3 format=fltp 0x0 48000Hz 1ch params=48B
   #0 packets=50 keyframes=5
   #1 packets=63 keyframes=63
   seek 1008ms ok=true next=960ms key=true
+  frame 160x120 at 1008000us
 sample.wmv format=asf streams=2
-  #0 kind=0 codec=wmv2 decoder=wmv2 320x240 0Hz 0ch params=52B
-  #1 kind=1 codec=wmav2 decoder=wmav2 0x0 44100Hz 1ch params=58B
+  #0 kind=0 codec=wmv2 decoder=wmv2 format=yuv420p 320x240 0Hz 0ch params=52B
+  #1 kind=1 codec=wmav2 decoder=wmav2 format=fltp 0x0 44100Hz 1ch params=58B
   #0 packets=50 keyframes=5
   #1 packets=44 keyframes=44
   seek 1046ms ok=true next=418ms key=true
+  frame 160x120 at 1046000us
 sample.wtv format=wtv streams=2
-  #0 kind=0 codec=mpeg2video decoder=mpeg2video 320x240 0Hz 0ch params=70B
-  #1 kind=1 codec=mp2 decoder=mp2 0x0 48000Hz 1ch params=70B
+  #0 kind=0 codec=mpeg2video decoder=mpeg2video format=yuv420p 320x240 0Hz 0ch params=70B
+  #1 kind=1 codec=mp2 decoder=mp2 format=s16p 0x0 48000Hz 1ch params=70B
   #0 packets=50 keyframes=5
   #1 packets=84 keyframes=84
   seek 1016ms ok=true next=0ms key=true
+  frame 160x120 at 1016000us
 sample.y4m format=yuv4mpegpipe streams=1
-  #0 kind=0 codec=rawvideo decoder=rawvideo 320x240 0Hz 0ch params=48B
+  #0 kind=0 codec=rawvideo decoder=rawvideo format=yuv420p 320x240 0Hz 0ch params=48B
   #0 packets=50 keyframes=50
   seek 1000ms ok=true next=960ms key=true
+  frame 160x120 at 1000000us
 == ffprobe packet counts (oracle)
-sample-144.rm 0,rv10,50 1,ra_144,101 
-sample.asf 0,msmpeg4v3,50 1,wmav1,44 
-sample.dv 0,dvvideo,50 1,pcm_s16le,50 
-sample.m2v 0,mpeg2video,50,  
-sample.mxf 0,mpeg2video,50,  1,pcm_s16le,50 
-sample.nut 0,mpeg4,50 1,mp2,84 
-sample.rm 0,rv20,50 1,ac3,63 
-sample.wmv 0,wmv2,50 1,wmav2,44 
-sample.wtv 0,mpeg2video,50,  1,mp2,84 
-sample.y4m 0,rawvideo,50 
+sample-144.rm 0,rv10,yuv420p,50 1,ra_144,s16,101 
+sample.asf 0,msmpeg4v3,yuv420p,50 1,wmav1,fltp,44 
+sample.dv 0,dvvideo,yuv420p,50 1,pcm_s16le,s16,50 
+sample.m2v 0,mpeg2video,yuv420p,50,  
+sample.mxf 0,mpeg2video,yuv420p,50,  1,pcm_s16le,s16,50 
+sample.nut 0,mpeg4,yuv420p,50 1,mp2,s16p,84 
+sample.rm 0,rv20,yuv420p,50 1,ac3,fltp,63 
+sample.wmv 0,wmv2,yuv420p,50 1,wmav2,fltp,44 
+sample.wtv 0,mpeg2video,yuv420p,50,  1,mp2,s16p,84 
+sample.y4m 0,rawvideo,yuv420p,50 
+== thumbnails: which frame of ffmpeg's own decode at the same size (oracle) each one is, byte for byte
+sample-144.rm 160x120 is decoded frame 24
+sample.asf 160x120 is decoded frame 13
+sample.dv 160x120 is decoded frame 25
+sample.m2v 160x120 is decoded frame 0
+sample.mxf 160x120 is decoded frame 24
+sample.nut 160x120 is decoded frame 24
+sample.rm 160x120 is decoded frame 24
+sample.wmv 160x120 is decoded frame 13
+sample.wtv 160x120 is decoded frame 0
+sample.y4m 160x120 is decoded frame 24
 == codecpar_check (decoding from the blob alone)
 sample-144.rm #0 ffmpeg rv10 frames=50 320x240 0Hz 0ch
 sample-144.rm #1 ffmpeg ra_144 frames=101 0x0 8000Hz 1ch

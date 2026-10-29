@@ -3,7 +3,10 @@ package com.hawkynt.mediadroid.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
+import com.hawkynt.mediadroid.ffmpeg.FfmpegDemuxer
+import com.hawkynt.mediadroid.player.FfmpegInputs
 import java.io.File
+import java.io.RandomAccessFile
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -45,6 +48,19 @@ class ThumbnailStore private constructor(private val context: Context) {
     }
 
     private fun extract(videoPath: String, target: File): File? = runCatching {
+        // Android's own retriever first; FFmpeg for what it cannot read (DV, RealMedia, …).
+        val frame = runCatching { androidFrame(videoPath) }.getOrNull() ?: ffmpegFrame(videoPath) ?: return null
+        val scaled = scaleDown(frame)
+        target.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 80, it) }
+        if (scaled !== frame) scaled.recycle()
+        frame.recycle()
+        target
+    }.getOrElse {
+        target.delete()
+        null
+    }
+
+    private fun androidFrame(videoPath: String): Bitmap? {
         val retriever = MediaMetadataRetriever()
         try {
             if (videoPath.startsWith("/")) {
@@ -54,25 +70,45 @@ class ThumbnailStore private constructor(private val context: Context) {
                 retriever.setDataSource(FsMediaDataSource(SourceAccess.resolve(context, videoPath) ?: return null))
             }
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-            // A tenth of the way in skips black or logo intros without landing
-            // in the closing credits of short clips.
-            val atUs = 1000L * (if (durationMs != null && durationMs > 0) durationMs / 10 else 1_000L)
-            val frame = retriever.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST) ?: return null
-            val scaled = scaleDown(frame)
-            target.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 80, it) }
-            if (scaled !== frame) scaled.recycle()
-            frame.recycle()
-            target
+            return retriever.getFrameAtTime(pickUs(durationMs?.times(1000)), MediaMetadataRetriever.OPTION_CLOSEST)
         } finally {
             retriever.release()
         }
-    }.getOrElse {
-        target.delete()
-        null
     }
 
+    /** The picture by the bundled FFmpeg: its demuxer and decoder, the keyframe before the same point. */
+    private fun ffmpegFrame(videoPath: String): Bitmap? {
+        if (!FfmpegDemuxer.isAvailable()) return null
+        val local = if (videoPath.startsWith("/")) RandomAccessFile(videoPath, "r") else null
+        try {
+            val input = if (local != null) {
+                FfmpegInputs.local(local)
+            } else {
+                FfmpegInputs.remote(SourceAccess.resolve(context, videoPath) ?: return null)
+            }
+            val demuxer = FfmpegDemuxer.open(input) ?: return null
+            try {
+                val durationUs = demuxer.durationUs().takeIf { it != FfmpegDemuxer.TIME_UNSET }
+                val size = IntArray(2)
+                val pixels = demuxer.frame(pickUs(durationUs), MAX_SIDE, size) ?: return null
+                return Bitmap.createBitmap(pixels, size[0], size[1], Bitmap.Config.ARGB_8888)
+            } finally {
+                demuxer.close()
+            }
+        } finally {
+            local?.close()
+        }
+    }
+
+    /**
+     * Where to take the picture: a tenth of the way in skips black or logo intros without landing in
+     * the closing credits of short clips; a second in when the length is unknown.
+     */
+    private fun pickUs(durationUs: Long?): Long =
+        if (durationUs != null && durationUs > 0) durationUs / 10 else 1_000_000L
+
     private fun scaleDown(frame: Bitmap): Bitmap {
-        val max = 480
+        val max = MAX_SIDE
         if (frame.width <= max && frame.height <= max) return frame
         val factor = max.toFloat() / maxOf(frame.width, frame.height)
         return Bitmap.createScaledBitmap(
@@ -84,6 +120,8 @@ class ThumbnailStore private constructor(private val context: Context) {
     }
 
     companion object {
+        private const val MAX_SIDE = 480
+
         @Volatile
         private var instance: ThumbnailStore? = null
 

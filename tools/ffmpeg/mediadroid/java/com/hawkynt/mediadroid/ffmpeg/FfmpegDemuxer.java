@@ -46,6 +46,11 @@ public final class FfmpegDemuxer implements AutoCloseable {
     @Nullable public final String codecName;
     /** The decoder this build has for it — {@code dca} for DTS; null when there is none. */
     @Nullable public final String decoderName;
+    /**
+     * The pixel format (video: {@code yuv420p}, {@code yuv411p}, {@code yuv422p10le}) or sample format
+     * (audio: {@code fltp}, {@code s16}) as FFmpeg names it; null when unknown.
+     */
+    @Nullable public final String rawFormat;
     @Nullable public final String language;
     public final int sampleRate;
     public final int channels;
@@ -67,12 +72,14 @@ public final class FfmpegDemuxer implements AutoCloseable {
         long[] n,
         @Nullable String codecName,
         @Nullable String decoderName,
+        @Nullable String rawFormat,
         @Nullable String language,
         byte[] parameters) {
       this.index = index;
       this.kind = (int) n[0];
       this.codecName = codecName;
       this.decoderName = decoderName;
+      this.rawFormat = rawFormat;
       this.language = language;
       this.sampleRate = (int) n[1];
       this.channels = (int) n[2];
@@ -114,6 +121,7 @@ public final class FfmpegDemuxer implements AutoCloseable {
               numbers.clone(),
               codec,
               nStreamDecoder(handle, i),
+              nStreamFormat(handle, i),
               nStreamLanguage(handle, i),
               nStreamParameters(handle, i));
     }
@@ -176,6 +184,17 @@ public final class FfmpegDemuxer implements AutoCloseable {
     return nSeek(handle, timeUs);
   }
 
+  /**
+   * The picture at about {@code timeUs} — the first one decoded from the keyframe at or before it —
+   * at most {@code maxWidth} wide with the pixel aspect applied, as ARGB_8888 pixels; {@code size}
+   * receives its width and height. Null when there is no picture. Moves the read position: meant for a
+   * demuxer opened just for this.
+   */
+  @Nullable
+  public int[] frame(long timeUs, int maxWidth, int[] size) {
+    return nFrame(handle, timeUs, maxWidth, size);
+  }
+
   @Override
   public void close() {
     nClose(handle);
@@ -193,6 +212,8 @@ public final class FfmpegDemuxer implements AutoCloseable {
 
   private static native String nStreamDecoder(long handle, int index);
 
+  private static native String nStreamFormat(long handle, int index);
+
   private static native String nStreamLanguage(long handle, int index);
 
   private static native byte[] nStreamParameters(long handle, int index);
@@ -200,6 +221,8 @@ public final class FfmpegDemuxer implements AutoCloseable {
   private static native int nReadPacket(long handle, ByteBuffer buffer, long[] out);
 
   private static native boolean nSeek(long handle, long timeUs);
+
+  private static native int[] nFrame(long handle, long timeUs, int maxWidth, int[] size);
 
   private static native void nClose(long handle);
 }

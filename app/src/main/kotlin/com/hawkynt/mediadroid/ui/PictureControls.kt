@@ -7,22 +7,27 @@ import android.graphics.RuntimeShader
 import android.os.Build
 import android.view.View
 import androidx.annotation.RequiresApi
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureControl
 
 /**
- * The four picture sliders, neutral in the middle. [onChange] fires while dragging so the picture
- * follows live; [onDone] when a slider is let go, the moment to save.
+ * The four picture sliders, neutral in the middle, then the filters: sharpness and clarity from off
+ * upwards, and denoise in steps. [onChange] fires while dragging so the picture follows live; [onDone]
+ * when a slider is let go or a step is picked, the moment to save.
  */
 @Composable
 fun PictureSliders(
@@ -49,6 +54,70 @@ fun PictureSliders(
                 onValueChangeFinished = onDone,
             )
         }
+        Text(
+            "Filters",
+            fontSize = 16.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        listOf(
+            Triple("Sharpness", picture.sharpness) { v: Float -> picture.copy(sharpness = v) },
+            Triple("Clarity", picture.clarity) { v: Float -> picture.copy(clarity = v) },
+        ).forEach { (label, value, set) ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(label, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                Text(
+                    if (value == 0f) "off" else "%.0f %%".format(value * 100),
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Slider(value = value, onValueChange = { onChange(set(it)) }, onValueChangeFinished = onDone)
+        }
+        Text("Denoise", fontSize = 16.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("Off", "Low", "Medium", "High").forEachIndexed { level, label ->
+                FilterChip(
+                    selected = picture.denoise == level,
+                    onClick = {
+                        onChange(picture.copy(denoise = level))
+                        onDone()
+                    },
+                    label = { Text(label, fontSize = 15.sp) },
+                )
+            }
+        }
+        Text("Deinterlace", fontSize = 16.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PictureAdjustment.Deinterlace.entries.forEach { mode ->
+                FilterChip(
+                    selected = picture.deinterlace == mode,
+                    onClick = {
+                        onChange(picture.copy(deinterlace = mode))
+                        onDone()
+                    },
+                    label = { Text(mode.label, fontSize = 15.sp) },
+                )
+            }
+        }
+        Text("Upscaling", fontSize = 16.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PictureAdjustment.Upscaler.entries.forEach { upscaler ->
+                FilterChip(
+                    selected = picture.upscaler == upscaler,
+                    onClick = {
+                        onChange(picture.copy(upscaler = upscaler))
+                        onDone()
+                    },
+                    label = { Text(upscaler.label, fontSize = 15.sp) },
+                )
+            }
+        }
+        Text(
+            "Filters run on the graphics chip; HDR videos skip them.",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -59,8 +128,8 @@ fun PictureSliders(
  */
 fun View.applyPicture(picture: PictureAdjustment) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        setRenderEffect(if (picture.isNeutral) null else PictureShader.effect(picture))
-    } else if (picture.isNeutral) {
+        setRenderEffect(if (picture.isColorNeutral) null else PictureShader.effect(picture))
+    } else if (picture.isColorNeutral) {
         setLayerType(View.LAYER_TYPE_NONE, null)
     } else {
         val paint = Paint().apply { colorFilter = ColorMatrixColorFilter(picture.colorMatrix()) }
