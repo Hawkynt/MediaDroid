@@ -47,6 +47,8 @@ class VideoFilterStage {
     private var denoiseProgram = 0
     private var sharpenProgram = 0
     private var lanczosProgram = 0
+    private var ewaProgram = 0
+    private var ewaTable = 0
     private var easuProgram = 0
     private var rcasProgram = 0
     private var blendProgram = 0
@@ -171,6 +173,8 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(sharpenProgram)
             GLES20.glDeleteProgram(lanczosProgram)
+            GLES20.glDeleteProgram(ewaProgram)
+            GLES20.glDeleteTextures(1, intArrayOf(ewaTable), 0)
             GLES20.glDeleteProgram(easuProgram)
             GLES20.glDeleteProgram(rcasProgram)
             GLES20.glDeleteProgram(blendProgram)
@@ -251,6 +255,8 @@ class VideoFilterStage {
         denoiseProgram = program(VERTEX, DENOISE)
         sharpenProgram = program(VERTEX, SHARPEN)
         lanczosProgram = program(VERTEX, LANCZOS)
+        ewaProgram = program(VERTEX, EWA)
+        ewaTable = ewaTable()
         easuProgram = program(VERTEX, FSR_EASU)
         rcasProgram = program(VERTEX, FSR_RCAS)
         blendProgram = program(VERTEX, BLEND)
@@ -744,6 +750,28 @@ class VideoFilterStage {
             if (picture.upscaler == PictureAdjustment.Upscaler.LANCZOS) {
                 onWindow(outWidth, outHeight)
                 run(lanczosProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
+            } else if (picture.upscaler == PictureAdjustment.Upscaler.EWA) {
+                // EWA to at most twice the picture's size — its 8 × 8 taps stay affordable — and the screen's
+                // own bilinear scaling for whatever is left.
+                val midWidth = minOf(outWidth, width * 2)
+                val midHeight = minOf(outHeight, height * 2)
+                val enlarged = frames[4].ensure(midWidth, midHeight)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
+                GLES20.glViewport(0, 0, midWidth, midHeight)
+                GLES20.glUseProgram(ewaProgram)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ewaTable)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(ewaProgram, "uTable"), 1)
+                run(ewaProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                    inSize(p)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), Ewa.RADIUS.toFloat())
+                }
+                onWindow(outWidth, outHeight)
+                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / midWidth, 1f / midHeight)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
+                }
             } else {
                 // FSR 1: edge-adaptive upscaling to the screen's size, then contrast-adaptive sharpening on it.
                 val enlarged = frames[4].ensure(outWidth, outHeight)
@@ -757,6 +785,32 @@ class VideoFilterStage {
                 }
             }
         }
+    }
+
+    /**
+     * The EWA weights by distance (see [Ewa]) as a texture of [EWA_TABLE_SIZE] × 1: each weight shifted
+     * and scaled into 0..1 and kept to 16 bits over the red and green channels.
+     */
+    private fun ewaTable(): Int {
+        val weights = Ewa.table(EWA_TABLE_SIZE)
+        val bytes = ByteBuffer.allocateDirect(EWA_TABLE_SIZE * 4).order(ByteOrder.nativeOrder())
+        for (w in weights) {
+            val v = (((w + EWA_OFFSET) / EWA_SPAN) * 65535f).toInt().coerceIn(0, 65535)
+            bytes.put((v shr 8).toByte()).put((v and 0xFF).toByte()).put(0).put(0)
+        }
+        bytes.position(0)
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, EWA_TABLE_SIZE, 1, 0, GLES20.GL_RGBA,
+            GLES20.GL_UNSIGNED_BYTE, bytes,
+        )
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        return ids[0]
     }
 
     /** Draws onto the screen from here on. */
@@ -1154,6 +1208,54 @@ class VideoFilterStage {
                     }
                 }
                 gl_FragColor = vec4(sum / weights, 1.0);
+            }
+        """
+
+        /** How many distances the EWA table holds, and how its weights (-0.25..1) map into 0..1. */
+        private const val EWA_TABLE_SIZE = 512
+        private const val EWA_OFFSET = 0.25f
+        private const val EWA_SPAN = 1.25f
+
+        // EWA Lanczos-sharp (see Ewa): the source pixels in a circle of uRadius around the position weigh by
+        // their distance, read from uTable; the result is pulled halfway into the four nearest pixels' range,
+        // as the Lanczos pass does.
+        private const val EWA = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform sampler2D uTable;
+            uniform vec2 uInSize;
+            uniform float uRadius;
+            varying vec2 vTex;
+            float weight(float d) {
+                if (d >= uRadius) return 0.0;
+                float i = floor(d / uRadius * 511.0 + 0.5);
+                vec4 t = texture2D(uTable, vec2((i + 0.5) / 512.0, 0.5));
+                return (t.r * 255.0 * 256.0 + t.g * 255.0) / 65535.0 * 1.25 - 0.25;
+            }
+            void main() {
+                vec2 pos = vTex * uInSize - 0.5;
+                vec2 f = fract(pos);
+                vec2 base = floor(pos);
+                vec3 sum = vec3(0.0);
+                float weights = 0.0;
+                vec3 lo = vec3(1.0);
+                vec3 hi = vec3(0.0);
+                for (int j = -3; j <= 4; j++) {
+                    for (int i = -3; i <= 4; i++) {
+                        vec2 offset = vec2(float(i), float(j));
+                        float w = weight(length(offset - f));
+                        if (w == 0.0) continue;
+                        vec3 c = texture2D(uTex, (base + offset + 0.5) / uInSize).rgb;
+                        sum += c * w;
+                        weights += w;
+                        if (i >= 0 && i <= 1 && j >= 0 && j <= 1) {
+                            lo = min(lo, c);
+                            hi = max(hi, c);
+                        }
+                    }
+                }
+                vec3 c = sum / weights;
+                gl_FragColor = vec4(mix(c, clamp(c, lo, hi), 0.5), 1.0);
             }
         """
 
