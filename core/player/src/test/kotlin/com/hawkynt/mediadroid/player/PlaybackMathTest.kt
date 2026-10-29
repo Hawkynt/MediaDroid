@@ -225,6 +225,9 @@ class PlaybackMathTest {
         assertEquals(1f, PlaybackMath.judderSpeed(23.976f, 120f, 0f, nearest), 0f)
         assertEquals(1f, PlaybackMath.judderSpeed(0f, 120f, 0.25f, nearest), 0f)
         assertEquals(1f, PlaybackMath.judderSpeed(23.976f, 0f, 0.25f, nearest), 0f)
+    }
+
+    @Test
     fun `a delay says whether the sound or the subtitles come before or after the picture`() {
         assertEquals("in sync with the picture", PlaybackMath.syncText("sound", 0))
         assertEquals("sound 150 ms after the picture", PlaybackMath.syncText("sound", 150))
