@@ -1349,6 +1349,8 @@ fun PlayerScreen(
         }
         if (infoOpen) {
             PlaybackInfoDialog(
+                playing = queue[index],
+                fileTags = player.mediaMetadata,
                 videoPath = queue[index].videoPath,
                 tracks = player.currentTracks,
                 videoSize = player.videoSize,

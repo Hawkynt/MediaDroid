@@ -32,6 +32,8 @@ import java.io.File
  */
 @Composable
 fun PlaybackInfoDialog(
+    playing: Playable,
+    fileTags: androidx.media3.common.MediaMetadata,
     videoPath: String,
     tracks: Tracks,
     videoSize: VideoSize,
@@ -47,6 +49,28 @@ fun PlaybackInfoDialog(
         modifier = Modifier.fillMaxWidth(0.94f),
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                Section("About")
+                Line(playing.title, bold = true)
+                playing.subtitle?.let { Line(it) }
+                playing.facts.forEach { Line(it) }
+                Line(playing.plot ?: "Nothing is written about it yet.")
+                // What the file's own tags say, as Media3 read them.
+                val tags = listOfNotNull(
+                    fileTags.title?.let { "Title: $it" },
+                    fileTags.displayTitle?.let { "Shown as: $it" },
+                    fileTags.subtitle?.let { "Subtitle: $it" },
+                    fileTags.artist?.let { "Artist: $it" },
+                    fileTags.albumTitle?.let { "Album: $it" },
+                    fileTags.genre?.let { "Genre: $it" },
+                    (fileTags.recordingYear ?: fileTags.releaseYear)?.let { "Year: $it" },
+                    fileTags.writer?.let { "Writer: $it" },
+                    fileTags.description?.let { "Description: $it" },
+                )
+                if (tags.isNotEmpty()) {
+                    Section("Tags in the file")
+                    tags.forEach { Line(it) }
+                }
+
                 Section("File")
                 Line(file.name)
                 Line(file.parent ?: "")
