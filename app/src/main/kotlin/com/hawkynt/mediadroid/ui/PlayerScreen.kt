@@ -289,18 +289,26 @@ fun PlayerScreen(
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
             )
             .setMediaSourceFactory(
-                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                    // Videos on a network source stream through it; local ones as before.
-                    com.hawkynt.mediadroid.player.SourceDataSource.Factory(context) {
-                        com.hawkynt.mediadroid.data.SourceAccess.resolve(context, it)
-                    },
-                    com.hawkynt.mediadroid.player.AviAudioFraming.extractors,
-                ),
+                // Videos on a network source stream through it; local ones as before. Audio files beside
+                // the video are merged in (see SidecarAudio).
+                com.hawkynt.mediadroid.player.SourceDataSource.Factory(context) {
+                    com.hawkynt.mediadroid.data.SourceAccess.resolve(context, it)
+                }.let { files ->
+                    com.hawkynt.mediadroid.player.SidecarAudioSourceFactory(
+                        androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                            files,
+                            com.hawkynt.mediadroid.player.AviAudioFraming.extractors,
+                        ),
+                        files,
+                    )
+                },
             )
             .build()
     }
     // TV boxes: the display switches to a whole multiple of the film's frame rate (no judder), and back.
     val displayActivity = remember(context) { context.findActivity() }
+    // Where it cannot, the speed changes a little so the frames fall evenly (see PlaybackMath.judderSpeed).
+    var judderFactor by remember { mutableFloatStateOf(1f) }
     DisposableEffect(player) {
         fun match() {
             if (!settings.matchRefreshRate) return
@@ -327,6 +335,20 @@ fun PlayerScreen(
         onDispose {
             player.removeListener(listener)
             displayActivity?.window?.let { it.attributes = it.attributes.apply { preferredDisplayModeId = 0 } }
+        }
+    }
+    // The frame rate against the refresh rate of the screen the picture is on, checked every few seconds:
+    // a display that switched modes, or a second screen, changes it.
+    LaunchedEffect(player) {
+        while (true) {
+            val frameRate = player.videoFormat?.frameRate ?: 0f
+            val refresh = PlayerWindow.displayRefreshHz
+                ?: displayActivity?.window?.decorView?.display?.refreshRate
+                ?: 0f
+            val direction = runCatching { PlaybackMath.JudderDirection.valueOf(settings.judderDirection) }
+                .getOrDefault(PlaybackMath.JudderDirection.NEAREST)
+            judderFactor = PlaybackMath.judderSpeed(frameRate, refresh, settings.judderLimitPercent / 100f, direction)
+            delay(3000)
         }
     }
     // Which decoders are at work, as Media3 reports them, for the info sheet.
@@ -412,6 +434,10 @@ fun PlayerScreen(
     val inPip = PlayerWindow.inPictureInPicture
 
     var index by remember { mutableStateOf(startIndex) }
+    // The current video's subtitle and audio files, with their locations, in the order they are merged in.
+    var sidecars by remember {
+        mutableStateOf(emptyList<Pair<com.hawkynt.mediadroid.library.Sidecars.Sidecar, String>>())
+    }
     var finished by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf<String?>(null) }
     var speed by remember { mutableStateOf(settings.defaultSpeed) }
@@ -527,11 +553,37 @@ fun PlayerScreen(
                 ?.let { com.hawkynt.mediadroid.library.Chapters.read(it) }
                 .orEmpty()
         }
+        // Subtitle and audio files beside it, named after it (see Sidecars).
+        sidecars = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val video = com.hawkynt.mediadroid.data.SourceAccess.resolve(context, playable.videoPath)
+            val folder = video?.parentFile
+            val names = folder?.listFiles()?.map { it.name }.orEmpty()
+            com.hawkynt.mediadroid.library.Sidecars.of(video?.name.orEmpty(), names)
+                .map { it to folder!!.child(it.name).path }
+        }
         introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, playable.intro) else null
         creditsStartMs = SkipRules.creditsStartMs(chapters, playable.credits)
         // Back on the main thread before touching the player: ExoPlayer only answers the thread it was built on.
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
-            player.setMediaItem(MediaItem.fromUri(com.hawkynt.mediadroid.player.playableUri(playable.videoPath)))
+            val (subtitleFiles, audioFiles) = sidecars.partition { (sidecar, _) ->
+                sidecar.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.SUBTITLES
+            }
+            player.setMediaItem(
+                MediaItem.Builder()
+                    .setUri(com.hawkynt.mediadroid.player.playableUri(playable.videoPath))
+                    .setSubtitleConfigurations(
+                        subtitleFiles.map { (sidecar, path) ->
+                            MediaItem.SubtitleConfiguration.Builder(com.hawkynt.mediadroid.player.playableUri(path))
+                                .setMimeType(sidecar.mimeType)
+                                .setLanguage(sidecar.language)
+                                .setLabel(sidecar.describe())
+                                .setSelectionFlags(if (sidecar.forced) C.SELECTION_FLAG_FORCED else 0)
+                                .build()
+                        },
+                    )
+                    .setTag(com.hawkynt.mediadroid.player.SidecarAudio(audioFiles.map { it.second }))
+                    .build(),
+            )
             val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
             // Resume where you left off — but never back into a known intro.
             val startPos = SkipRules.skipTarget(resumePos, introSpanMs) ?: resumePos
@@ -544,8 +596,8 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(speed, subtitlesOn) {
-        player.setPlaybackSpeed(speed)
+    LaunchedEffect(speed, subtitlesOn, judderFactor) {
+        player.setPlaybackSpeed(speed * judderFactor)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesOn)
             .build()
@@ -665,6 +717,17 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // An audio file beside the video that cannot go along with it (one that cannot seek, say)
+                // must not stop the film: it plays again without them, from where it was.
+                val item = player.currentMediaItem
+                val audio = item?.localConfiguration?.tag as? com.hawkynt.mediadroid.player.SidecarAudio
+                if (item != null && audio != null && audio.locations.isNotEmpty()) {
+                    val position = player.currentPosition
+                    sidecars = sidecars.filter { it.first.kind != com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
+                    player.setMediaItem(item.buildUpon().setTag(null).build(), position)
+                    player.prepare()
+                    return
+                }
                 playError = error.errorCodeName
             }
 
@@ -797,6 +860,7 @@ fun PlayerScreen(
         if (onSecondScreen && display != null) {
             presentation = VideoPresentation(context, display, player).also { it.show() }
             PlayerWindow.elsewhere = true
+            PlayerWindow.displayRefreshHz = display.refreshRate
             com.hawkynt.mediadroid.player.PlaybackService.start(context)
         } else if (onSecondScreen) {
             onSecondScreen = false
@@ -805,6 +869,7 @@ fun PlayerScreen(
             runCatching { pipActivity?.setPictureInPictureParams(PlayerWindow.params()) }
         }
         onDispose {
+            PlayerWindow.displayRefreshHz = null
             if (PlayerWindow.elsewhere) com.hawkynt.mediadroid.player.PlaybackService.stop(context)
             PlayerWindow.elsewhere = false
             if (android.os.Build.VERSION.SDK_INT >= 31) {
@@ -1393,6 +1458,8 @@ fun PlayerScreen(
         }
         if (infoOpen) {
             PlaybackInfoDialog(
+                playing = queue[index],
+                fileTags = player.mediaMetadata,
                 videoPath = queue[index].videoPath,
                 tracks = player.currentTracks,
                 videoSize = player.videoSize,
@@ -1419,15 +1486,23 @@ fun PlayerScreen(
                         spatial = spatialAudio,
                         device = audioOutput.name,
                         subtitleDelayMs = subtitleLook.delayMs,
+                        sidecars = sidecars,
                     ),
                 ),
                 onDismiss = { infoOpen = false },
             )
         }
         if (audioPicker) {
+            // Audio files beside the video are merged in as sources 1, 2 …: their names say what they are.
+            val audioFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
             TrackDialog(
                 player = player,
                 trackType = C.TRACK_TYPE_AUDIO,
+                labelFor = { groupId ->
+                    groupId.substringBefore(':', "").toIntOrNull()
+                        ?.takeIf { audioFiles.isNotEmpty() && it >= 1 }
+                        ?.let { audioFiles.getOrNull(it - 1)?.first?.describe() }
+                },
                 onDismiss = { audioPicker = false },
                 onPick = { picked ->
                     manualTrackPick = true
@@ -1478,6 +1553,7 @@ fun PlayerScreen(
 private fun TrackDialog(
     player: Player,
     trackType: @C.TrackType Int,
+    labelFor: (String) -> String? = { null },
     onDismiss: () -> Unit,
     onPick: (TrackSelectionOverride?) -> Unit,
 ) {
@@ -1491,7 +1567,10 @@ private fun TrackDialog(
                 groups.forEach { group ->
                     for (i in 0 until group.length) {
                         val format = group.getTrackFormat(i)
-                        val label = format.label ?: format.language ?: "Track ${i + 1}"
+                        val label = labelFor(group.mediaTrackGroup.id)
+                            ?: format.label
+                            ?: format.language
+                            ?: "Track ${i + 1}"
                         TextButton(onClick = { onPick(TrackSelectionOverride(group.mediaTrackGroup, i)) }) {
                             Text(
                                 buildString {

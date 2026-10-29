@@ -180,6 +180,41 @@ object PlaybackMath {
     fun nudgeAudioDelay(currentMs: Int, steps: Int): Int =
         (currentMs + steps * AUDIO_DELAY_STEP_MS).coerceIn(-AUDIO_DELAY_LIMIT_MS, AUDIO_DELAY_LIMIT_MS)
 
+    /** Which way judder reduction may change the speed. */
+    enum class JudderDirection(val label: String) {
+        NEAREST("Nearest"),
+        FASTER("Only faster"),
+        SLOWER("Only slower"),
+    }
+
+    /**
+     * The speed factor that makes a [frameRate] film's frames fall evenly on a [refreshHz] display, so
+     * every frame stays on screen equally long: the frame rate nearest to the film's (in [direction])
+     * that goes into the refresh rate a whole number of times — 24 fps on 120 Hz, 30 or 20 on 60 Hz, 25
+     * on 50 Hz. 1 when the film already fits (within 0.1 %), or when the change would exceed
+     * [maxChange] (0.05 is 5 %); on a tie the faster rate wins. The sound keeps its pitch (time-stretch).
+     */
+    fun judderSpeed(frameRate: Float, refreshHz: Float, maxChange: Float, direction: JudderDirection): Float {
+        if (frameRate <= 0f || refreshHz <= 0f || maxChange <= 0f) return 1f
+        val even = (1..12).map { refreshHz / it }.filter { it >= MIN_EVEN_RATE }
+        if (even.any { kotlin.math.abs(it / frameRate - 1f) <= FITS }) return 1f
+        val allowed = even.map { it / frameRate }.filter { factor ->
+            kotlin.math.abs(factor - 1f) <= maxChange + FITS &&
+                when (direction) {
+                    JudderDirection.NEAREST -> true
+                    JudderDirection.FASTER -> factor > 1f
+                    JudderDirection.SLOWER -> factor < 1f
+                }
+        }
+        return allowed.minWithOrNull(
+            compareBy<Float> { kotlin.math.abs(it - 1f) - if (it > 1f) TIE else 0f },
+        ) ?: 1f
+    }
+
+    private const val MIN_EVEN_RATE = 10f
+    private const val FITS = 0.001f
+    private const val TIE = 1e-4f
+
     /**
      * The display refresh rate to play a [frameRate] film at: the lowest of [available] that is a whole
      * multiple of it (within 0.1 %), or null when none is — then switching would not remove the judder.

@@ -120,6 +120,7 @@ class PlaybackChainTest {
         assertEquals("Media3 AVI", demuxer("AviExtractor"))
         assertEquals("Media3 Midi", demuxer("MidiExtractor"))
         assertEquals("FFmpeg (asf)", demuxer("ffmpeg:asf"))
+        assertEquals("Media3 subtitle parser", demuxer("SubtitleExtractor"))
         assertEquals("not known yet", demuxer(null))
     }
 
