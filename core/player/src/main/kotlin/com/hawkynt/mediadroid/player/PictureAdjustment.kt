@@ -23,7 +23,30 @@ data class PictureAdjustment(
     val deinterlace: Deinterlace = Deinterlace.OFF,
     /** How a picture smaller than the screen is enlarged. */
     val upscaler: Upscaler = Upscaler.STANDARD,
+    /** Smoother motion by blending each frame into the next. */
+    val interpolation: Interpolation = Interpolation.OFF,
 ) {
+    /**
+     * Frame blending: between two frames the screen shows a mix of both, weighted by how far the clock
+     * is between them — the screen's refresh rate instead of the film's frame rate, so motion steps
+     * less. The strength is how much of the interval blends, centred on the change: [LOW] a quarter,
+     * [MEDIUM] half, [HIGH] all of it. A blend, not motion-compensated interpolation: moving edges
+     * soften rather than move.
+     */
+    enum class Interpolation(val label: String, private val window: Float) {
+        OFF("Off", 0f),
+        LOW("Low", 0.25f),
+        MEDIUM("Medium", 0.5f),
+        HIGH("High", 1f),
+        ;
+
+        /** How much of the next frame to show at [phase] (0 at the earlier frame's time, 1 at the next's). */
+        fun weight(phase: Float): Float {
+            if (window == 0f) return if (phase < 0.5f) 0f else 1f
+            return ((phase - (0.5f - window / 2f)) / window).coerceIn(0f, 1f)
+        }
+    }
+
     /**
      * Enlarging a picture smaller than the screen: [STANDARD] is the screen's own bilinear scaling;
      * [LANCZOS] a Lanczos-3 filter (sharper, a little ringing held back); [FSR] AMD FidelityFX Super
@@ -57,7 +80,7 @@ data class PictureAdjustment(
     /** A filter is set that only the GL stage can run (see the app's VideoFilterStage). */
     val hasFilters: Boolean
         get() = sharpness > 0f || clarity > 0f || denoise > 0 || deinterlace != Deinterlace.OFF ||
-            upscaler != Upscaler.STANDARD
+            upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF
 
     /** The correction as a GPU shader applies it: saturation, contrast, brightness, then the true gamma curve. */
     data class ShaderUniforms(

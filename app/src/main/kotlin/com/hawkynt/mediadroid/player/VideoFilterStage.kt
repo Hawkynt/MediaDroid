@@ -49,7 +49,18 @@ class VideoFilterStage {
     private var lanczosProgram = 0
     private var easuProgram = 0
     private var rcasProgram = 0
-    private val frames = arrayOf(Frame(), Frame(), Frame(), Frame(), Frame())
+    private var blendProgram = 0
+    private val frames = Array(8) { Frame() }
+
+    // Frame blending: the last two filtered frames (frames[5] and frames[6], taking turns), when each
+    // arrived, and whether the screen still has a blend to show.
+    private var current = 5
+    private var currentAt = 0L
+    private var previousAt = 0L
+    private var kept = 0
+    private var blending = false
+    private val vsync by lazy { android.view.Choreographer.getInstance() }
+    private val onVsync = android.view.Choreographer.FrameCallback { blend(it) }
 
     /** Where the decoder draws. */
     lateinit var inputSurface: Surface
@@ -108,6 +119,9 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(lanczosProgram)
             GLES20.glDeleteProgram(easuProgram)
             GLES20.glDeleteProgram(rcasProgram)
+            GLES20.glDeleteProgram(blendProgram)
+            vsync.removeFrameCallback(onVsync)
+            latencyMs = 0
             frames.forEach { it.release() }
             surfaceTexture.release()
             inputSurface.release()
@@ -179,6 +193,7 @@ class VideoFilterStage {
         lanczosProgram = program(VERTEX, LANCZOS)
         easuProgram = program(VERTEX, FSR_EASU)
         rcasProgram = program(VERTEX, FSR_RCAS)
+        blendProgram = program(VERTEX, BLEND)
     }
 
     private fun releaseWindow() {
@@ -199,17 +214,27 @@ class VideoFilterStage {
         }
         if (window == EGL14.EGL_NO_SURFACE) return
         val picture = filters
+        if (picture.interpolation != PictureAdjustment.Interpolation.OFF) {
+            if (!redraw) keep(picture)
+            startBlending()
+            return
+        }
+        latencyMs = 0
         val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
         val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
-        EGL14.eglMakeCurrent(display, idle, idle, context)
+        val source = filtered(picture, width, height)
+        output(source, width, height, picture)
+        if (!redraw) EGLExt.eglPresentationTimeANDROID(display, window, surfaceTexture.timestamp)
+        EGL14.eglSwapBuffers(display, window)
+    }
 
-        // 1: the decoder's picture into a plain texture of its own size, upright.
+    /** Steps 1 to 3: the decoder's picture, deinterlaced and denoised, at its own size. */
+    private fun filtered(picture: PictureAdjustment, width: Int, height: Int): Frame {
+        EGL14.eglMakeCurrent(display, idle, idle, context)
         val copied = frames[0].ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, copied.framebuffer)
         GLES20.glViewport(0, 0, width, height)
         run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, texMatrix) {}
-
-        // 2: deinterlace, first, so the other filters see whole frames.
         var source = copied
         if (picture.deinterlace != PictureAdjustment.Deinterlace.OFF) {
             val woven = frames[2].ensure(width, height)
@@ -220,8 +245,6 @@ class VideoFilterStage {
             }
             source = woven
         }
-
-        // 3: denoise, edge-preserving.
         if (picture.denoise > 0) {
             val denoised = frames[1].ensure(width, height)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, denoised.framebuffer)
@@ -234,7 +257,72 @@ class VideoFilterStage {
             }
             source = denoised
         }
+        return source
+    }
 
+    /** A new frame for blending: filtered and sharpened at its own size, kept with when it arrived. */
+    private fun keep(picture: PictureAdjustment) {
+        val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
+        val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
+        val source = filtered(picture, width, height)
+        current = if (current == 5) 6 else 5
+        val target = frames[current].ensure(width, height)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
+        run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), picture.sharpness)
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), picture.clarity)
+        }
+        previousAt = currentAt
+        currentAt = System.nanoTime()
+        kept = minOf(kept + 1, 2)
+        // The picture runs half a frame behind; the sound is told to wait as long.
+        if (kept == 2) latencyMs = ((currentAt - previousAt) / 2_000_000L).toInt().coerceIn(0, MAX_LATENCY_MS)
+    }
+
+    private fun startBlending() {
+        if (blending) return
+        blending = true
+        vsync.postFrameCallback(onVsync)
+    }
+
+    /**
+     * One screen refresh while blending: the previous and the current frame mixed by how far the clock
+     * is between them (see [PictureAdjustment.Interpolation.weight]), shown one frame late. Stops once
+     * the current frame shows whole, until the next arrives.
+     */
+    private fun blend(frameTimeNanos: Long) {
+        blending = false
+        val picture = filters
+        if (window == EGL14.EGL_NO_SURFACE || kept == 0 ||
+            picture.interpolation == PictureAdjustment.Interpolation.OFF
+        ) {
+            return
+        }
+        val width = frames[current].width
+        val height = frames[current].height
+        val interval = (currentAt - previousAt).takeIf { kept == 2 && it > 0 } ?: 1L
+        val phase = (frameTimeNanos - currentAt).toFloat() / interval
+        val weight = if (kept < 2) 1f else picture.interpolation.weight(phase)
+        EGL14.eglMakeCurrent(display, idle, idle, context)
+        val mixed = frames[7].ensure(width, height)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mixed.framebuffer)
+        GLES20.glViewport(0, 0, width, height)
+        GLES20.glUseProgram(blendProgram)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, frames[if (current == 5) 6 else 5].texture)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(blendProgram, "uPrevious"), 1)
+        run(blendProgram, GLES20.GL_TEXTURE_2D, frames[current].texture, identity) { p ->
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWeight"), weight)
+        }
+        output(mixed, width, height, picture.copy(sharpness = 0f, clarity = 0f))
+        EGL14.eglSwapBuffers(display, window)
+        if (weight < 1f) startBlending()
+    }
+
+    /** Steps 4 and 5: sharpness and clarity, and the picture onto the screen, enlarged as chosen. */
+    private fun output(from: Frame, width: Int, height: Int, picture: PictureAdjustment) {
+        var source = from
         val outWidth = query(EGL14.EGL_WIDTH)
         val outHeight = query(EGL14.EGL_HEIGHT)
         val upscaling = picture.upscaler != PictureAdjustment.Upscaler.STANDARD && outWidth > width
@@ -274,8 +362,6 @@ class VideoFilterStage {
                 }
             }
         }
-        if (!redraw) EGLExt.eglPresentationTimeANDROID(display, window, surfaceTexture.timestamp)
-        EGL14.eglSwapBuffers(display, window)
     }
 
     /** Draws onto the screen from here on. */
@@ -318,8 +404,10 @@ class VideoFilterStage {
     private class Frame {
         var texture = 0
         var framebuffer = 0
-        private var width = 0
-        private var height = 0
+        var width = 0
+            private set
+        var height = 0
+            private set
 
         fun ensure(w: Int, h: Int): Frame {
             if (w == width && h == height && texture != 0) return this
@@ -356,23 +444,45 @@ class VideoFilterStage {
         }
     }
 
-    private companion object {
+    companion object {
+        /**
+         * How far the picture runs behind while frames blend, for the sound to wait as long: half a frame,
+         * as the change shows half-way to the next frame. 0 without blending.
+         */
+        @Volatile
+        var latencyMs = 0
+            private set
+
+        private const val MAX_LATENCY_MS = 100
+
+        // Frame blending: the current frame over the previous one by the weight.
+        private const val BLEND = """
+            precision mediump float;
+            uniform sampler2D uTex;
+            uniform sampler2D uPrevious;
+            uniform float uWeight;
+            varying vec2 vTex;
+            void main() {
+                gl_FragColor = vec4(mix(texture2D(uPrevious, vTex).rgb, texture2D(uTex, vTex).rgb, uWeight), 1.0);
+            }
+        """
+
         /** RCAS strength on AMD's scale of stops below full sharpness (FsrRcasCon): 0.2 stops, exp2(-0.2). */
-        const val RCAS_SHARPNESS = 0.8705506f
+        private const val RCAS_SHARPNESS = 0.8705506f
 
         /** Denoise strengths: reach in pixels, and how different a neighbour may be and still count. */
-        val DENOISE_LEVELS = listOf(1f to 0.06f, 2f to 0.09f, 2f to 0.15f)
+        private val DENOISE_LEVELS = listOf(1f to 0.06f, 2f to 0.09f, 2f to 0.15f)
 
-        val QUAD: FloatBuffer = floats(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
-        val QUAD_TEX: FloatBuffer = floats(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
+        private val QUAD: FloatBuffer = floats(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
+        private val QUAD_TEX: FloatBuffer = floats(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
 
-        fun floats(vararg values: Float): FloatBuffer =
+        private fun floats(vararg values: Float): FloatBuffer =
             ByteBuffer.allocateDirect(values.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
                 put(values)
                 position(0)
             }
 
-        fun program(vertex: String, fragment: String): Int {
+        private fun program(vertex: String, fragment: String): Int {
             fun shader(type: Int, source: String): Int = GLES20.glCreateShader(type).also {
                 GLES20.glShaderSource(it, source)
                 GLES20.glCompileShader(it)
@@ -387,7 +497,7 @@ class VideoFilterStage {
             }
         }
 
-        const val VERTEX = """
+        private const val VERTEX = """
             attribute vec4 aPosition;
             attribute vec4 aTexCoord;
             uniform mat4 uTexMatrix;
@@ -398,7 +508,7 @@ class VideoFilterStage {
             }
         """
 
-        const val COPY = """
+        private const val COPY = """
             #extension GL_OES_EGL_image_external : require
             precision mediump float;
             uniform samplerExternalOES uTex;
@@ -411,7 +521,7 @@ class VideoFilterStage {
         // only where a pixel combs — it differs from both neighbours in the same direction (their
         // luma-weighted product is positive beyond noise), the motion artefact of two fields woven
         // together; the first field always stays, or the comb would only be turned over.
-        const val DEINTERLACE = """
+        private const val DEINTERLACE = """
             precision highp float;
             uniform sampler2D uTex;
             uniform vec2 uTexel;
@@ -435,7 +545,7 @@ class VideoFilterStage {
 
         // Bilateral filter (Tomasi & Manduchi, ICCV 1998): neighbours weigh by distance and by how alike
         // they are, so flat areas and block edges smooth while real edges stay.
-        const val DENOISE = """
+        private const val DENOISE = """
             precision mediump float;
             uniform sampler2D uTex;
             uniform vec2 uTexel;
@@ -464,7 +574,7 @@ class VideoFilterStage {
 
         // Lanczos-3 (a = 3), 6 × 6 taps around the position; the result is pulled halfway back into the range
         // of the four nearest pixels, which holds back most of the ringing Lanczos leaves at hard edges.
-        const val LANCZOS = """
+        private const val LANCZOS = """
             precision highp float;
             uniform sampler2D uTex;
             uniform vec2 uInSize;
@@ -509,7 +619,7 @@ class VideoFilterStage {
         //   e f g h
         //   i j k l
         //     n o
-        const val FSR_EASU = """
+        private const val FSR_EASU = """
             precision highp float;
             uniform sampler2D uTex;
             uniform vec2 uInSize;
@@ -599,7 +709,7 @@ class VideoFilterStage {
         // AMD FidelityFX Super Resolution 1, RCAS (robust contrast-adaptive sharpening), from ffx_fsr1.h
         // (MIT): the strongest negative lobe that cannot clip, limited to FSR_RCAS_LIMIT = 0.25 - 1/16,
         // times the strength; divisions guarded where AMD's reciprocals would meet zero.
-        const val FSR_RCAS = """
+        private const val FSR_RCAS = """
             precision highp float;
             uniform sampler2D uTex;
             uniform vec2 uTexel;
@@ -625,7 +735,7 @@ class VideoFilterStage {
         // Unsharp masking on the luma: the picture plus its difference from a blurred copy. Sharpness
         // uses the eight nearest neighbours; clarity a ring six pixels out, which lifts texture and
         // local contrast rather than edges. Rec. 709 luma weights.
-        const val SHARPEN = """
+        private const val SHARPEN = """
             precision mediump float;
             uniform sampler2D uTex;
             uniform vec2 uTexel;

@@ -42,6 +42,28 @@ class PictureAdjustmentTest {
     }
 
     @Test
+    fun `frame blending weighs the next frame by how far the clock is between the two`() {
+        val off = PictureAdjustment.Interpolation.OFF
+        val high = PictureAdjustment.Interpolation.HIGH
+        val low = PictureAdjustment.Interpolation.LOW
+        assertEquals(true, PictureAdjustment(interpolation = high).hasFilters)
+        // Off: the frame changes at once, half-way.
+        assertEquals(0f, off.weight(0.4f), 0f)
+        assertEquals(1f, off.weight(0.6f), 0f)
+        // High: a blend across the whole interval, even at its middle.
+        assertEquals(0f, high.weight(0f), 1e-6f)
+        assertEquals(0.5f, high.weight(0.5f), 1e-6f)
+        assertEquals(1f, high.weight(1f), 1e-6f)
+        // Low: only a quarter of the interval around the change blends.
+        assertEquals(0f, low.weight(0.3f), 1e-6f)
+        assertEquals(0.5f, low.weight(0.5f), 1e-6f)
+        assertEquals(1f, low.weight(0.7f), 1e-6f)
+        // Outside the interval, the frames themselves.
+        assertEquals(0f, high.weight(-1f), 0f)
+        assertEquals(1f, high.weight(2f), 0f)
+    }
+
+    @Test
     fun `zero saturation turns every row into the same luma weights`() {
         val m = PictureAdjustment(saturation = 0f).colorMatrix()
         val luma = floatArrayOf(0.213f, 0.715f, 0.072f)

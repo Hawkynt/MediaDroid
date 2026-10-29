@@ -312,6 +312,7 @@ fun SettingsScreen(
                     it.denoise = defaultPicture.denoise
                     it.deinterlace = defaultPicture.deinterlace.name
                     it.upscaler = defaultPicture.upscaler.name
+                    it.interpolation = defaultPicture.interpolation.name
                 }
             },
         )
