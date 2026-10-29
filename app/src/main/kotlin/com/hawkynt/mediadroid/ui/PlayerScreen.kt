@@ -289,13 +289,19 @@ fun PlayerScreen(
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
             )
             .setMediaSourceFactory(
-                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                    // Videos on a network source stream through it; local ones as before.
-                    com.hawkynt.mediadroid.player.SourceDataSource.Factory(context) {
-                        com.hawkynt.mediadroid.data.SourceAccess.resolve(context, it)
-                    },
-                    com.hawkynt.mediadroid.player.AviAudioFraming.extractors,
-                ),
+                // Videos on a network source stream through it; local ones as before. Audio files beside
+                // the video are merged in (see SidecarAudio).
+                com.hawkynt.mediadroid.player.SourceDataSource.Factory(context) {
+                    com.hawkynt.mediadroid.data.SourceAccess.resolve(context, it)
+                }.let { files ->
+                    com.hawkynt.mediadroid.player.SidecarAudioSourceFactory(
+                        androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                            files,
+                            com.hawkynt.mediadroid.player.AviAudioFraming.extractors,
+                        ),
+                        files,
+                    )
+                },
             )
             .build()
     }
@@ -428,6 +434,10 @@ fun PlayerScreen(
     val inPip = PlayerWindow.inPictureInPicture
 
     var index by remember { mutableStateOf(startIndex) }
+    // The current video's subtitle and audio files, with their locations, in the order they are merged in.
+    var sidecars by remember {
+        mutableStateOf(emptyList<Pair<com.hawkynt.mediadroid.library.Sidecars.Sidecar, String>>())
+    }
     var finished by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf<String?>(null) }
     var speed by remember { mutableStateOf(settings.defaultSpeed) }
@@ -543,11 +553,37 @@ fun PlayerScreen(
                 ?.let { com.hawkynt.mediadroid.library.Chapters.read(it) }
                 .orEmpty()
         }
+        // Subtitle and audio files beside it, named after it (see Sidecars).
+        sidecars = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val video = com.hawkynt.mediadroid.data.SourceAccess.resolve(context, playable.videoPath)
+            val folder = video?.parentFile
+            val names = folder?.listFiles()?.map { it.name }.orEmpty()
+            com.hawkynt.mediadroid.library.Sidecars.of(video?.name.orEmpty(), names)
+                .map { it to folder!!.child(it.name).path }
+        }
         introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, playable.intro) else null
         creditsStartMs = SkipRules.creditsStartMs(chapters, playable.credits)
         // Back on the main thread before touching the player: ExoPlayer only answers the thread it was built on.
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
-            player.setMediaItem(MediaItem.fromUri(com.hawkynt.mediadroid.player.playableUri(playable.videoPath)))
+            val (subtitleFiles, audioFiles) = sidecars.partition { (sidecar, _) ->
+                sidecar.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.SUBTITLES
+            }
+            player.setMediaItem(
+                MediaItem.Builder()
+                    .setUri(com.hawkynt.mediadroid.player.playableUri(playable.videoPath))
+                    .setSubtitleConfigurations(
+                        subtitleFiles.map { (sidecar, path) ->
+                            MediaItem.SubtitleConfiguration.Builder(com.hawkynt.mediadroid.player.playableUri(path))
+                                .setMimeType(sidecar.mimeType)
+                                .setLanguage(sidecar.language)
+                                .setLabel(sidecar.describe())
+                                .setSelectionFlags(if (sidecar.forced) C.SELECTION_FLAG_FORCED else 0)
+                                .build()
+                        },
+                    )
+                    .setTag(com.hawkynt.mediadroid.player.SidecarAudio(audioFiles.map { it.second }))
+                    .build(),
+            )
             val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
             // Resume where you left off — but never back into a known intro.
             val startPos = SkipRules.skipTarget(resumePos, introSpanMs) ?: resumePos
@@ -681,6 +717,17 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // An audio file beside the video that cannot go along with it (one that cannot seek, say)
+                // must not stop the film: it plays again without them, from where it was.
+                val item = player.currentMediaItem
+                val audio = item?.localConfiguration?.tag as? com.hawkynt.mediadroid.player.SidecarAudio
+                if (item != null && audio != null && audio.locations.isNotEmpty()) {
+                    val position = player.currentPosition
+                    sidecars = sidecars.filter { it.first.kind != com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
+                    player.setMediaItem(item.buildUpon().setTag(null).build(), position)
+                    player.prepare()
+                    return
+                }
                 playError = error.errorCodeName
             }
 
@@ -855,6 +902,50 @@ fun PlayerScreen(
     val current = queue[index]
     // The video's own picture correction, with the brightness swipe's gamma on top once past the maximum.
     val shownPicture = picture.copy(gamma = picture.gamma * gammaBoost)
+    // The picture filters' GL stage (see VideoFilterStage): the player draws into it while a filter is
+    // set — not for HDR, which it would flatten — and it draws into the view that shows the picture,
+    // on the phone or the second screen; otherwise the player draws straight into that view.
+    val filterStage = remember { arrayOfNulls<com.hawkynt.mediadroid.player.VideoFilterStage>(1) }
+    val routedTo = remember { arrayOfNulls<android.view.TextureView>(1) }
+    fun routeVideo() {
+        val target = ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.videoSurfaceView)
+            as? android.view.TextureView
+        val transfer = player.videoFormat?.colorInfo?.colorTransfer
+        val hdr = transfer == C.COLOR_TRANSFER_ST2084 || transfer == C.COLOR_TRANSFER_HLG
+        val wanted = shownPicture.hasFilters && !hdr && target != null && target.isAvailable
+        val stage = filterStage[0]
+        if (wanted) {
+            val active = stage ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { filterStage[0] = it }
+            active.filters = shownPicture
+            active.setVideoSize(player.videoSize.width, player.videoSize.height)
+            if (routedTo[0] !== target) {
+                player.setVideoSurface(active.inputSurface)
+                // Taken on a later round when the view's surface is not free yet.
+                if (active.setOutput(android.view.Surface(target!!.surfaceTexture))) routedTo[0] = target
+            }
+        } else if (routedTo[0] != null) {
+            stage?.setOutput(null)
+            routedTo[0] = null
+            target?.let { player.setVideoTextureView(it) }
+        }
+    }
+    androidx.compose.runtime.SideEffect { filterStage[0]?.filters = shownPicture }
+    // The loop asks the latest composition's routing, with the picture and screens as they are now.
+    val routeNow by androidx.compose.runtime.rememberUpdatedState({ routeVideo() })
+    LaunchedEffect(player) {
+        while (true) {
+            routeNow()
+            delay(400)
+        }
+    }
+    DisposableEffect(player) {
+        onDispose {
+            filterStage[0]?.setOutput(null)
+            filterStage[0]?.release()
+            filterStage[0] = null
+        }
+    }
+
     // While the phone's own screen is mirrored to a TV (Smart View and friends show up as a presentation
     // display we are not using), the TV crops a long phone screen to 16:9: overlays stay inside that part.
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
@@ -1395,15 +1486,23 @@ fun PlayerScreen(
                         spatial = spatialAudio,
                         device = audioOutput.name,
                         subtitleDelayMs = subtitleLook.delayMs,
+                        sidecars = sidecars,
                     ),
                 ),
                 onDismiss = { infoOpen = false },
             )
         }
         if (audioPicker) {
+            // Audio files beside the video are merged in as sources 1, 2 …: their names say what they are.
+            val audioFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
             TrackDialog(
                 player = player,
                 trackType = C.TRACK_TYPE_AUDIO,
+                labelFor = { groupId ->
+                    groupId.substringBefore(':', "").toIntOrNull()
+                        ?.takeIf { audioFiles.isNotEmpty() && it >= 1 }
+                        ?.let { audioFiles.getOrNull(it - 1)?.first?.describe() }
+                },
                 onDismiss = { audioPicker = false },
                 onPick = { picked ->
                     manualTrackPick = true
@@ -1454,6 +1553,7 @@ fun PlayerScreen(
 private fun TrackDialog(
     player: Player,
     trackType: @C.TrackType Int,
+    labelFor: (String) -> String? = { null },
     onDismiss: () -> Unit,
     onPick: (TrackSelectionOverride?) -> Unit,
 ) {
@@ -1467,7 +1567,10 @@ private fun TrackDialog(
                 groups.forEach { group ->
                     for (i in 0 until group.length) {
                         val format = group.getTrackFormat(i)
-                        val label = format.label ?: format.language ?: "Track ${i + 1}"
+                        val label = labelFor(group.mediaTrackGroup.id)
+                            ?: format.label
+                            ?: format.language
+                            ?: "Track ${i + 1}"
                         TextButton(onClick = { onPick(TrackSelectionOverride(group.mediaTrackGroup, i)) }) {
                             Text(
                                 buildString {

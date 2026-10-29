@@ -126,6 +126,20 @@ private fun Line(text: String, bold: Boolean = false) {
  * `Dolby Digital · 5.1 · German` — the codec and its profile, never the decoder that plays it.
  */
 internal fun describe(format: Format): String {
+    // Subtitles Media3 parses while extracting are cues by then; codecs keeps their format.
+    val subtitleMime = if (format.sampleMimeType == androidx.media3.common.MimeTypes.APPLICATION_MEDIA3_CUES) {
+        format.codecs
+    } else {
+        format.sampleMimeType?.takeIf(androidx.media3.common.MimeTypes::isText)
+    }
+    if (subtitleMime != null) {
+        val language = format.language?.let(Languages::label)
+        return listOfNotNull(
+            PlaybackChain.subtitleFormat(subtitleMime),
+            language,
+            format.label?.takeIf { it != language },
+        ).joinToString(" · ")
+    }
     val codec = Quality.codecOf(format.sampleMimeType, format.codecs)
     val parts = mutableListOf<String>()
     val shown = Quality.of(
@@ -179,7 +193,11 @@ internal fun playbackFacts(
     spatial: Boolean,
     device: String,
     subtitleDelayMs: Int,
+    sidecars: List<Pair<com.hawkynt.mediadroid.library.Sidecars.Sidecar, String>> = emptyList(),
 ): PlaybackChain.Facts {
+    val subtitleFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.SUBTITLES }
+    val audioFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
+    val inputOf = { groupId: String? -> inputOf(groupId, subtitleFiles.size, audioFiles.size) }
     val videoFormat = player.videoFormat
     val profile = com.hawkynt.mediadroid.library.CodecProfile.of(videoFormat?.codecs)
     val audioFormat = player.audioFormat
@@ -195,15 +213,14 @@ internal fun playbackFacts(
         (0 until group.length).firstOrNull(group::isTrackSelected)?.let(group::getTrackFormat)
     }
     return PlaybackChain.Facts(
-        // The file itself; sidecar files, when the player merges them in, follow in their order.
-        inputs = listOf(
+        // The file itself, then its subtitle files and its audio files, in the order they are merged in.
+        inputs = (listOf(location) + (subtitleFiles + audioFiles).map { it.second }).mapIndexed { i, file ->
             PlaybackChain.Source(
-                location,
-                com.hawkynt.mediadroid.player.DemuxerLog.of(
-                    com.hawkynt.mediadroid.player.playableUri(location).toString(),
-                ),
-            ),
-        ),
+                file,
+                com.hawkynt.mediadroid.player.DemuxerLog.of(com.hawkynt.mediadroid.player.playableUri(file).toString())
+                    ?: if (i in 1..subtitleFiles.size) "SubtitleExtractor" else null,
+            )
+        },
         video = videoFormat?.let {
             PlaybackChain.Video(
                 input = inputOf(playing(C.TRACK_TYPE_VIDEO)?.mediaTrackGroup?.id),
@@ -302,9 +319,22 @@ private fun chromaOf(profile: String?): String = when {
     else -> "4:2:0"
 }
 
-/** The input a track group comes from: Media3 prefixes the ids of merged sources' groups with their index. */
-private fun inputOf(groupId: String?): Int =
-    groupId?.let { Regex("^(\\d+):").find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
+/**
+ * The input a track group comes from, by the prefixes Media3 gives merged sources' group ids: with
+ * [subtitles] subtitle files the video is `0:` and subtitle file k `k:`; with [audio] audio files merged
+ * around that, the video is `0:0:`, subtitle file k `0:k:` and audio file j `j:`.
+ */
+private fun inputOf(groupId: String?, subtitles: Int, audio: Int): Int {
+    val prefixes = groupId?.split(':')?.dropLast(1)?.map { it.toIntOrNull() ?: return 0 } ?: return 0
+    return when {
+        audio > 0 -> {
+            val outer = prefixes.getOrNull(0) ?: return 0
+            if (outer > 0) subtitles + outer else if (subtitles > 0) prefixes.getOrNull(1) ?: 0 else 0
+        }
+        subtitles > 0 -> prefixes.getOrNull(0) ?: 0
+        else -> 0
+    }
+}
 
 /** A `C.ENCODING_*` as people call it. */
 private fun encodingName(encoding: Int): String = when (encoding) {
