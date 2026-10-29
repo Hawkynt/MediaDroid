@@ -370,7 +370,7 @@ fun PlayerScreen(
         )
     }
     // Picture in picture: leaving the app mid-film shrinks it into a small window; once the app is out of
-    // sight (or that window is closed) the film pauses.
+    // sight (or that window is closed) the film pauses. On a second screen it plays on instead.
     val pipActivity = remember(context) { context.findActivity() }
     DisposableEffect(player) {
         fun publish() {
@@ -389,7 +389,7 @@ fun PlayerScreen(
         player.addListener(listener)
         val lifecycle = (pipActivity as? androidx.lifecycle.LifecycleOwner)?.lifecycle
         val stopObserver = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) player.pause()
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && !PlayerWindow.elsewhere) player.pause()
         }
         lifecycle?.addObserver(stopObserver)
         onDispose {
@@ -788,10 +788,20 @@ fun PlayerScreen(
         val display = externalDisplay
         if (onSecondScreen && display != null) {
             presentation = VideoPresentation(context, display, player).also { it.show() }
+            PlayerWindow.elsewhere = true
+            com.hawkynt.mediadroid.player.PlaybackService.start(context)
         } else if (onSecondScreen) {
             onSecondScreen = false
         }
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            runCatching { pipActivity?.setPictureInPictureParams(PlayerWindow.params()) }
+        }
         onDispose {
+            if (PlayerWindow.elsewhere) com.hawkynt.mediadroid.player.PlaybackService.stop(context)
+            PlayerWindow.elsewhere = false
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                runCatching { pipActivity?.setPictureInPictureParams(PlayerWindow.params()) }
+            }
             presentation?.let {
                 it.release()
                 presentation = null
@@ -917,7 +927,7 @@ fun PlayerScreen(
 
         presentation?.let { shown ->
             if (shown.isShowing) shown.playerView.applyVideoLook(fit, zoom, pan, shownPicture)
-            Text(
+            if (!controlsVisible) Text(
                 "Playing on ${externalDisplay?.name ?: "the other screen"}",
                 color = Color.White,
                 fontSize = 20.sp,
