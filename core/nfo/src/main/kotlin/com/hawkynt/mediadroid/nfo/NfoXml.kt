@@ -10,15 +10,26 @@ import org.xml.sax.InputSource
 /**
  * Parses NFO XML text into a DOM. External entities are resolved to nothing, so a
  * hostile or offline DTD reference can never make the parser reach for the network.
+ * Secure processing is asked for where the parser has it; Android's knows no features
+ * beyond namespaces and validation and refuses it — that must not cost the NFO.
  */
 internal fun parseNfoXml(xml: String): Document {
     val factory = DocumentBuilderFactory.newInstance()
-    factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+    runCatching { factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true) }
     factory.setNamespaceAware(false)
     val builder = factory.newDocumentBuilder()
     builder.setEntityResolver { _, _ -> InputSource(StringReader("")) }
     return builder.parse(InputSource(StringReader(xml)))
 }
+
+/**
+ * The actors an NFO names: every `<actor>` straight under [this] root, as Kodi writes them, and those
+ * inside any [wrappers] (`<cast>`, `<gueststars>`) other tools use. Nameless ones are left out.
+ */
+internal fun Element.actors(vararg wrappers: String): List<CastMember> =
+    (childElements("actor") + wrappers.flatMap { childElements(it) }.flatMap { it.childElements("actor") })
+        .map { actor -> CastMember(name = actor.childText("name") ?: "", role = actor.childText("role")) }
+        .filter { it.name.isNotEmpty() }
 
 /** The document's root element, failing with a clear message when the file is empty. */
 internal fun Document.rootElement(): Element {

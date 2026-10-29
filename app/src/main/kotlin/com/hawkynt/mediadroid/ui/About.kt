@@ -57,6 +57,7 @@ fun aboutOf(item: MediaItem): About = when (item) {
         ).joinToString(" · "),
         plot = item.plot,
         facts = listOfNotNull(
+            item.cast.takeIf { it.isNotEmpty() }?.let { "With ${it.take(5).joinToString(", ")}" },
             item.studios.takeIf { it.isNotEmpty() }?.joinToString(", "),
             item.rating?.let { "Rated %.1f / 10".format(it) },
         ),

@@ -84,6 +84,8 @@ data class Show(
     /** The NFO's rating on a 0–10 scale; null when unrated. */
     val rating: Double? = null,
     val studios: List<String> = emptyList(),
+    /** The show's actors, as its NFO names them. */
+    val cast: List<String> = emptyList(),
     /** The first air date as the NFO writes it, `2017-12-01`. */
     val premiered: String? = null,
 ) : MediaItem {

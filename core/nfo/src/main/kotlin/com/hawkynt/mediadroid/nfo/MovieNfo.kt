@@ -70,11 +70,7 @@ fun parseMovieNfo(xml: String): MovieInfo {
         set = setElement?.childText("name")?.let { SetInfo(it) },
         directors = root.childElements("director").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
         writers = root.childElements("writer").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
-        cast = root.childElements("cast").flatMap { cast ->
-            cast.childElements("actor").map { actor ->
-                CastMember(name = actor.childText("name") ?: "", role = actor.childText("role"))
-            }
-        }.filter { it.name.isNotEmpty() },
+        cast = root.actors("cast"),
         imdbId = root.childText("imdbid") ?: uniqueIds["imdb"] ?: bareId?.takeIf { it.startsWith("tt") },
         tmdbId = root.childText("tmdbid") ?: uniqueIds["tmdb"],
         trailer = root.childText("trailer"),
