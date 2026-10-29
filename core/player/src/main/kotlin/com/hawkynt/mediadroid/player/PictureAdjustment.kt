@@ -13,8 +13,21 @@ data class PictureAdjustment(
     val gamma: Float = 1f,
     val contrast: Float = 1f,
     val saturation: Float = 1f,
+    /** Edge sharpening, 0 (off) to 1: an unsharp mask of small radius on the luma. */
+    val sharpness: Float = 0f,
+    /** Local contrast, 0 (off) to 1: the same with a large radius, which lifts texture without halos. */
+    val clarity: Float = 0f,
+    /** Noise and MPEG block reduction, 0 (off) to 3: an edge-preserving bilateral filter of growing reach. */
+    val denoise: Int = 0,
 ) {
     val isNeutral: Boolean get() = this == Neutral
+
+    /** No colour correction: brightness, gamma, contrast and saturation all neutral. */
+    val isColorNeutral: Boolean
+        get() = brightness == 0f && gamma == 1f && contrast == 1f && saturation == 1f
+
+    /** A filter is set that only the GL stage can run (see the app's VideoFilterStage). */
+    val hasFilters: Boolean get() = sharpness > 0f || clarity > 0f || denoise > 0
 
     /** The correction as a GPU shader applies it: saturation, contrast, brightness, then the true gamma curve. */
     data class ShaderUniforms(
