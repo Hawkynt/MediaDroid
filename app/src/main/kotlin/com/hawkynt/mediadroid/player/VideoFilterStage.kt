@@ -650,16 +650,20 @@ class VideoFilterStage {
     }
 
     /**
-     * NIS's two filter tables (see [Nis]) as a 12 × 64 texture: per phase a row, its six scaling taps then
-     * its six sharpening taps, each shifted and scaled into 0..1 and kept to 16 bits over red and green.
+     * NIS's two filter tables (see [Nis]) as a 6 × 64 texture: per phase a row, per tap a texel holding the
+     * scaling tap in red and green and the sharpening tap in blue and alpha — one fetch for both — each
+     * shifted and scaled into 0..1 and kept to 16 bits.
      */
     private fun nisTable(): Int {
-        val bytes = ByteBuffer.allocateDirect(12 * Nis.PHASES * 4).order(ByteOrder.nativeOrder())
+        val bytes = ByteBuffer.allocateDirect(6 * Nis.PHASES * 4).order(ByteOrder.nativeOrder())
+        fun put(c: Float) {
+            val v = (((c + NIS_OFFSET) / NIS_SPAN) * 65535f + 0.5f).toInt().coerceIn(0, 65535)
+            bytes.put((v shr 8).toByte()).put((v and 0xFF).toByte())
+        }
         for (phase in 0 until Nis.PHASES) {
-            for (k in 0 until 12) {
-                val c = if (k < 6) Nis.scaleCoefficient(phase, k) else Nis.sharpenCoefficient(phase, k - 6)
-                val v = (((c + NIS_OFFSET) / NIS_SPAN) * 65535f + 0.5f).toInt().coerceIn(0, 65535)
-                bytes.put((v shr 8).toByte()).put((v and 0xFF).toByte()).put(0).put(0)
+            for (tap in 0 until 6) {
+                put(Nis.scaleCoefficient(phase, tap))
+                put(Nis.sharpenCoefficient(phase, tap))
             }
         }
         bytes.position(0)
@@ -667,7 +671,7 @@ class VideoFilterStage {
         GLES20.glGenTextures(1, ids, 0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
         GLES20.glTexImage2D(
-            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, 12, Nis.PHASES, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes,
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, 6, Nis.PHASES, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes,
         )
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
@@ -1041,9 +1045,10 @@ class VideoFilterStage {
             uniform float uSharpLimitMin;
             uniform float uSharpLimitScale;
             varying vec2 vTex;
-            float coef(float table, float phase, int tap) {
-                vec4 t = texture2D(uCoef, vec2((table * 6.0 + float(tap) + 0.5) / 12.0, (phase + 0.5) / 64.0));
-                return (t.r * 255.0 * 256.0 + t.g * 255.0) / 65535.0 * 2.5 - 1.0;
+            // Both taps of a phase in one fetch: the scaling tap in x, the sharpening tap in y.
+            vec2 coef(float phase, int tap) {
+                vec4 t = texture2D(uCoef, vec2((float(tap) + 0.5) / 6.0, (phase + 0.5) / 64.0));
+                return (vec2(t.r, t.b) * 255.0 * 256.0 + vec2(t.g, t.a) * 255.0) / 65535.0 * 2.5 - 1.0;
             }
             float lumaOf(vec3 c) { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
             float lumaAt(float column, float row) {
@@ -1077,8 +1082,9 @@ class VideoFilterStage {
                 float y = 0.0;
                 float usm = 0.0;
                 for (int i = 0; i < 6; i++) {
-                    y += coef(0.0, phase, i) * px[i];
-                    usm += coef(1.0, phase, i) * px[i];
+                    vec2 c = coef(phase, i);
+                    y += c.x * px[i];
+                    usm += c.y * px[i];
                 }
                 float yScale = 1.0 - clamp((y - uSharpStartY) * uSharpScaleY, 0.0, 1.0);
                 usm *= yScale * uSharpStrengthScale + uSharpStrengthMin;
@@ -1121,11 +1127,18 @@ class VideoFilterStage {
                 }
                 vec4 w = mix(mix(e[0], e[1], fx), mix(e[2], e[3], fx), fy);
                 float baseWeight = 1.0 - w.x - w.y - w.z - w.w;
+                // The scaling taps once per pixel, not once per use.
+                float cy[6];
+                float cx[6];
+                for (int i = 0; i < 6; i++) {
+                    cy[i] = coef(phaseY, i).x;
+                    cx[i] = coef(phaseX, i).x;
+                }
                 float normal = 0.0;
                 for (int j = 0; j < 6; j++) {
                     float v = 0.0;
-                    for (int i = 0; i < 6; i++) v += p[i * 6 + j] * coef(0.0, phaseY, i);
-                    normal += v * coef(0.0, phaseX, j);
+                    for (int i = 0; i < 6; i++) v += p[i * 6 + j] * cy[i];
+                    normal += v * cx[j];
                 }
                 float opY = normal * baseWeight;
                 float t[7];
