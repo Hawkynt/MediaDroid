@@ -55,6 +55,16 @@ object PlaybackChain {
         val screenWidth: Int,
         val screenHeight: Int,
         val refreshHz: Float,
+        /** The pixel format FFmpeg decodes to (`yuv420p`, `yuv411p`, `yuv422p10le`); null for other decoders. */
+        val decodedFormat: String? = null,
+        /** The stream's chroma subsampling, as `4:2:0`, when known. */
+        val chroma: String? = null,
+        /** Bits per sample of the picture, or 0 when unknown. */
+        val bitDepth: Int = 0,
+        /** Colour space, as `BT.709`; transfer, as `SDR` or `PQ (HDR10)`; range, as `limited range`. */
+        val colorSpace: String? = null,
+        val transfer: String? = null,
+        val range: String? = null,
     )
 
     /** The sound's way from the decoder to the output. */
@@ -76,6 +86,10 @@ object PlaybackChain {
         val spatial: Boolean,
         /** The output the sound goes to: `This device`, a headset's name, `HDMI`. */
         val device: String,
+        /** The sample format FFmpeg decodes to (`fltp`, `s16`); null for other decoders. */
+        val decodedFormat: String? = null,
+        /** The PCM the decoder hands on and the processing works in: `16-bit PCM`, `float PCM`. */
+        val pcmFormat: String? = null,
     )
 
     /** The subtitles shown: their format (a MIME type), language, shift, and the screen they are drawn on. */
@@ -133,10 +147,25 @@ object PlaybackChain {
     private fun picture(video: Video): Path {
         val ffmpeg = video.decoder?.let(::isFfmpeg) == true
         val shownWidth = (video.width * video.pixelRatio).toInt()
-        val pixels = when {
+        val size = when {
             video.width <= 0 -> "not known yet"
             video.pixelRatio == 1f || shownWidth == video.width -> "${video.width} × ${video.height}, square"
             else -> "${video.width} × ${video.height}, shown $shownWidth × ${video.height}"
+        }
+        val colour = listOfNotNull(video.colorSpace, video.transfer, video.range).joinToString(", ")
+        val pixels = if (colour.isEmpty()) size else "$size · $colour"
+        // What the decoder hands on: FFmpeg's own pixel format, else what the stream declares.
+        val streamFormat = video.chroma?.let { chroma ->
+            "YUV $chroma" + if (video.bitDepth > 0) ", ${video.bitDepth}-bit" else ""
+        }
+        val decoded = video.decodedFormat?.let { "$it (${pixelFormat(it)})" } ?: streamFormat
+        val decoder = decoderKind(video.decoder) + (decoded?.let { " → $it" } ?: "")
+        val conversion = when {
+            ffmpeg && video.decodedFormat == "yuv420p" -> "yuv420p copied as $YV12, $TO_RGB"
+            ffmpeg && video.decodedFormat != null -> "${video.decodedFormat} → $YV12 by libyuv, $TO_RGB"
+            ffmpeg -> "to $YV12 by libyuv, $TO_RGB"
+            streamFormat != null -> "none on the processor: $streamFormat stays on the surface, $TO_RGB"
+            else -> "none on the processor: the decoder draws onto the surface, $TO_RGB"
         }
         val adjustments = pictureOf(video.picture).ifEmpty { listOf("none") }.joinToString(", ")
         val framing = if (video.zoom != 1f) "${video.fit}, zoom ${number(video.zoom)}×" else video.fit
@@ -149,8 +178,8 @@ object PlaybackChain {
             Lane.PICTURE,
             video.input,
             listOf(
-                Node("Decoder", decoderKind(video.decoder)),
-                Node("Conversion", if (ffmpeg) FFMPEG_CONVERSION else DIRECT_CONVERSION),
+                Node("Decoder", decoder),
+                Node("Conversion", conversion),
                 Node("Pixels", pixels),
                 Node("Filters", "$adjustments · $framing"),
                 Node("Renderer", if (ffmpeg) "FFmpeg video renderer" else "Media3 MediaCodec video renderer"),
@@ -173,7 +202,16 @@ object PlaybackChain {
             if (audio.speed != 1f) add("speed ${number(audio.speed)}× (Sonic)")
             if (audio.delayMs != 0) add("delay ${audio.delayMs} ms")
             if (audio.spatial) add("spatial audio")
-        }.ifEmpty { listOf("none") }.joinToString(", ")
+        }.joinToString(", ").let { steps ->
+            when {
+                steps.isEmpty() -> "none" + (audio.pcmFormat?.let { " ($it)" } ?: "")
+                audio.pcmFormat != null -> "in ${audio.pcmFormat}: $steps"
+                else -> steps
+            }
+        }
+        val decoder = decoderKind(audio.decoder) +
+            (audio.decodedFormat?.let { " · $it (${sampleFormat(it)})" } ?: "") +
+            (audio.pcmFormat?.let { " → $it" } ?: "")
         val resampling = when {
             audio.passthrough || audio.sinkSampleRate <= 0 || audio.inputSampleRate <= 0 ->
                 "none" + if (audio.sinkSampleRate > 0) " (${khz(audio.sinkSampleRate)})" else ""
@@ -204,7 +242,7 @@ object PlaybackChain {
             Lane.SOUND,
             audio.input,
             listOf(
-                Node("Decoder", decoderKind(audio.decoder)),
+                Node("Decoder", decoder),
                 Node("Processing", processing),
                 Node("Resampling", resampling),
                 Node("Mixing", mixing),
@@ -233,6 +271,42 @@ object PlaybackChain {
         )
     }
 
+    /**
+     * An FFmpeg pixel format in words: `yuv411p` is `YUV 4:1:1, 8-bit`, `yuv422p10le` `YUV 4:2:2, 10-bit`,
+     * `yuvj420p` full-range 4:2:0; the semi-planar, grey and RGB ones by name. The names are FFmpeg's
+     * (libavutil/pixfmt.h); unknown ones stay as they are.
+     */
+    fun pixelFormat(name: String): String {
+        Regex("^yuv(j?)(4\\d\\d)p(\\d*)(le|be)?$").find(name)?.let { m ->
+            val (full, chroma, depth) = m.destructured
+            val sampling = chroma.toCharArray().joinToString(":")
+            return "YUV $sampling, ${depth.ifEmpty { "8" }}-bit" + if (full.isNotEmpty()) ", full range" else ""
+        }
+        return when (name) {
+            "nv12", "nv21" -> "YUV 4:2:0 semi-planar, 8-bit"
+            "p010le", "p010be" -> "YUV 4:2:0 semi-planar, 10-bit"
+            "gray" -> "grey, 8-bit"
+            "rgb24", "bgr24" -> "RGB, 8-bit"
+            "pal8" -> "8-bit palette"
+            else -> name
+        }
+    }
+
+    /** An FFmpeg sample format in words: `fltp` is `float, planar`, `s16` `16-bit` (libavutil/samplefmt.h). */
+    fun sampleFormat(name: String): String {
+        val planar = name.endsWith("p")
+        val base = when (name.removeSuffix("p")) {
+            "u8" -> "8-bit"
+            "s16" -> "16-bit"
+            "s32" -> "32-bit"
+            "s64" -> "64-bit"
+            "flt" -> "float"
+            "dbl" -> "double"
+            else -> return name
+        }
+        return if (planar) "$base, planar" else base
+    }
+
     private fun channels(count: Int): String = if (count == 1) "1 channel" else "$count channels"
 
     private fun khz(rate: Int): String = number(rate / 1000f) + " kHz"
@@ -242,8 +316,8 @@ object PlaybackChain {
 
     private fun signed(value: Float): String = (if (value > 0) "+" else "") + number(value)
 
-    private const val FFMPEG_CONVERSION = "YUV to the surface's format by libyuv"
-    private const val DIRECT_CONVERSION = "none — the decoder draws straight onto the surface"
+    private const val YV12 = "YV12 (YUV 4:2:0, 8-bit)"
+    private const val TO_RGB = "the display turns it into RGB"
     /** Subtitle formats by MIME type, as they are called; the picture-based ones say so. */
     private val SUBTITLE_FORMATS = mapOf(
         "application/x-subrip" to "SubRip",

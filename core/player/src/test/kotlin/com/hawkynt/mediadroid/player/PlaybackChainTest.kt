@@ -127,13 +127,88 @@ class PlaybackChainTest {
     fun `a hardware decoder writes straight to the surface, FFmpeg converts on the processor`() {
         val graph = PlaybackChain.of(facts)
         assertEquals("c2.qti.hevc.decoder (hardware)", graph.detail(Lane.PICTURE, "Decoder"))
-        assertEquals("none — the decoder draws straight onto the surface", graph.detail(Lane.PICTURE, "Conversion"))
+        assertEquals(
+            "none on the processor: the decoder draws onto the surface, the display turns it into RGB",
+            graph.detail(Lane.PICTURE, "Conversion"),
+        )
         assertEquals("Media3 MediaCodec video renderer", graph.detail(Lane.PICTURE, "Renderer"))
 
         val ffmpeg = PlaybackChain.of(facts.copy(video = video.copy(decoder = "ffmpeg-wmv3")))
         assertEquals("ffmpeg-wmv3 (software, FFmpeg)", ffmpeg.detail(Lane.PICTURE, "Decoder"))
-        assertEquals("YUV to the surface's format by libyuv", ffmpeg.detail(Lane.PICTURE, "Conversion"))
+        assertEquals(
+            "to YV12 (YUV 4:2:0, 8-bit) by libyuv, the display turns it into RGB",
+            ffmpeg.detail(Lane.PICTURE, "Conversion"),
+        )
         assertEquals("FFmpeg video renderer", ffmpeg.detail(Lane.PICTURE, "Renderer"))
+    }
+
+    @Test
+    fun `decoder and conversion name the pixel format at every step`() {
+        val hdr = PlaybackChain.of(
+            facts.copy(
+                video = video.copy(
+                    chroma = "4:2:0",
+                    bitDepth = 10,
+                    colorSpace = "BT.2020",
+                    transfer = "PQ (HDR10)",
+                    range = "limited range",
+                ),
+            ),
+        )
+        assertEquals("c2.qti.hevc.decoder (hardware) → YUV 4:2:0, 10-bit", hdr.detail(Lane.PICTURE, "Decoder"))
+        assertEquals(
+            "none on the processor: YUV 4:2:0, 10-bit stays on the surface, the display turns it into RGB",
+            hdr.detail(Lane.PICTURE, "Conversion"),
+        )
+        assertEquals(
+            "3840 × 1606, square · BT.2020, PQ (HDR10), limited range",
+            hdr.detail(Lane.PICTURE, "Pixels"),
+        )
+
+        val dv = PlaybackChain.of(facts.copy(video = video.copy(decoder = "ffmpeg-dvvideo", decodedFormat = "yuv411p")))
+        assertEquals(
+            "ffmpeg-dvvideo (software, FFmpeg) → yuv411p (YUV 4:1:1, 8-bit)",
+            dv.detail(Lane.PICTURE, "Decoder"),
+        )
+        assertEquals(
+            "yuv411p → YV12 (YUV 4:2:0, 8-bit) by libyuv, the display turns it into RGB",
+            dv.detail(Lane.PICTURE, "Conversion"),
+        )
+        val plain = PlaybackChain.of(facts.copy(video = video.copy(decoder = "ffmpeg-h264", decodedFormat = "yuv420p")))
+        assertEquals(
+            "yuv420p copied as YV12 (YUV 4:2:0, 8-bit), the display turns it into RGB",
+            plain.detail(Lane.PICTURE, "Conversion"),
+        )
+        val deep = PlaybackChain.of(
+            facts.copy(video = video.copy(decoder = "ffmpeg-hevc", decodedFormat = "yuv422p10le")),
+        )
+        assertEquals(
+            "ffmpeg-hevc (software, FFmpeg) → yuv422p10le (YUV 4:2:2, 10-bit)",
+            deep.detail(Lane.PICTURE, "Decoder"),
+        )
+    }
+
+    @Test
+    fun `decoder and processing name the sample format`() {
+        val aac = PlaybackChain.of(facts.copy(audio = audio.copy(pcmFormat = "16-bit PCM")))
+        assertEquals("c2.android.aac.decoder (software) → 16-bit PCM", aac.detail(Lane.SOUND, "Decoder"))
+        assertEquals("none (16-bit PCM)", aac.detail(Lane.SOUND, "Processing"))
+
+        val ffmpeg = PlaybackChain.of(
+            facts.copy(
+                audio = audio.copy(
+                    decoder = "ffmpegLavc60-ac3",
+                    decodedFormat = "fltp",
+                    pcmFormat = "float PCM",
+                    loudnessDb = 3f,
+                ),
+            ),
+        )
+        assertEquals(
+            "ffmpegLavc60-ac3 (software, FFmpeg) · fltp (float, planar) → float PCM",
+            ffmpeg.detail(Lane.SOUND, "Decoder"),
+        )
+        assertEquals("in float PCM: loudness +3 dB", ffmpeg.detail(Lane.SOUND, "Processing"))
     }
 
     @Test
