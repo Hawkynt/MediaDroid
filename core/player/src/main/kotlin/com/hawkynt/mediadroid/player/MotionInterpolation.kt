@@ -118,7 +118,7 @@ object MotionInterpolation {
             var mvY = yMb
             fun cost(x: Int, y: Int) {
                 if (x < xMin || x > xMaxS || y < yMin || y > yMaxS) return
-                val c = sbadOb(cur, ref, xMb, yMb, x, y)
+                val c = sbadOb(cur, ref, xMb, yMb, x, y, costMin)
                 if (c < costMin) {
                     costMin = c
                     mvX = x
@@ -140,7 +140,11 @@ object MotionInterpolation {
             vectors[i * 2 + 1] = mvY - yMb
         }
 
-        /** vf_minterpolate.c get_sbad_ob: the bilateral difference over the block's doubled window. */
+            /**
+         * vf_minterpolate.c get_sbad_ob: the bilateral difference over the block's doubled window. The sum stops
+         * once it reaches [bound], the best cost so far, as the candidate can no longer win: the search
+         * chooses exactly as FFmpeg's, sooner.
+         */
         private fun sbadOb(
             cur: Deinterlacer.Plane,
             ref: Deinterlacer.Plane,
@@ -148,6 +152,7 @@ object MotionInterpolation {
             yIn: Int,
             xMv: Int,
             yMv: Int,
+            bound: Long,
         ): Long {
             val half = BLOCK / 2
             val xLo = half
@@ -162,13 +167,22 @@ object MotionInterpolation {
             val reachY = minOf(y - yLo, yHi - y)
             val mvX = (xMv - x).coerceIn(-reachX, reachX)
             val mvY = (yMv - y).coerceIn(-reachY, reachY)
+            val penalty = (abs(mvX1 - predX) + abs(mvY1 - predY)).toLong() * COST_PRED_SCALE
+            val a = cur.pixels
+            val b = ref.pixels
+            val w = cur.width
             var sbad = 0L
             for (j in -half until BLOCK * 3 / 2) {
-                for (i in -half until BLOCK * 3 / 2) {
-                    sbad += abs(cur[x + mvX + i, y + mvY + j] - ref[x - mvX + i, y - mvY + j])
+                var p = (y + mvY + j) * w + x + mvX - half
+                var q = (y - mvY + j) * w + x - mvX - half
+                var row = 0
+                repeat(BLOCK * 2) {
+                    row += abs(a[p++] - b[q++])
                 }
+                sbad += row
+                if (sbad + penalty >= bound) return sbad + penalty
             }
-            return sbad + (abs(mvX1 - predX) + abs(mvY1 - predY)).toLong() * COST_PRED_SCALE
+            return sbad + penalty
         }
     }
 
