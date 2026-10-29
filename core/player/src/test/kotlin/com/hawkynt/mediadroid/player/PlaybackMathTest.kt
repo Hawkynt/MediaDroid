@@ -187,6 +187,17 @@ class PlaybackMathTest {
     }
 
     @Test
+    fun `a decoder that reports square pixels keeps the pixel shape the container declared`() {
+        // PAL DV: 720x576 with 16:15 pixels, decoded in software, which reports 1:1.
+        assertEquals(16f / 15f, PlaybackMath.pixelRatio(reported = 1f, declared = 16f / 15f), 1e-6f)
+        // A decoder that reports a shape of its own is believed.
+        assertEquals(4f / 3f, PlaybackMath.pixelRatio(reported = 4f / 3f, declared = 16f / 15f), 1e-6f)
+        // Nothing declared, or nothing usable: square.
+        assertEquals(1f, PlaybackMath.pixelRatio(reported = 1f, declared = -1f), 1e-6f)
+        assertEquals(1f, PlaybackMath.pixelRatio(reported = 1f, declared = Float.NaN), 1e-6f)
+    }
+
+    @Test
     fun `the display rate is the lowest whole multiple of the film's frame rate the screen offers`() {
         val tv = listOf(23.976f, 24f, 25f, 29.97f, 50f, 59.94f, 60f)
         assertEquals(23.976f, PlaybackMath.matchingRefreshRate(23.976f, tv)!!, 1e-3f)

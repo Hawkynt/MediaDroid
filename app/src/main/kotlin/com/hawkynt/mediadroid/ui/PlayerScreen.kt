@@ -239,7 +239,7 @@ fun PlayerScreen(
                         mediaCodecSelector,
                         enableDecoderFallback,
                         eventHandler,
-                        eventListener,
+                        com.hawkynt.mediadroid.player.PixelShapeListener(eventListener),
                         allowedVideoJoiningTimeMs,
                         out,
                     )

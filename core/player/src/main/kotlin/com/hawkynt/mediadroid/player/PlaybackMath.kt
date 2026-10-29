@@ -136,6 +136,13 @@ object PlaybackMath {
         if (remainingMs <= 0) 0 else ((remainingMs + 59_999) / 60_000).toInt()
 
     /**
+     * The pixel shape to show a video with: what the decoder [reported], unless it reported square pixels
+     * while the container [declared] another shape — software decoders report every picture as 1:1.
+     */
+    fun pixelRatio(reported: Float, declared: Float): Float =
+        if (reported == 1f && declared > 0f && declared.isFinite()) declared else reported
+
+    /**
      * The picture-in-picture window's aspect ratio for a video of [width] × [height] with [pixelRatio]:
      * the picture's own shape, held within the 1:2.39 … 2.39:1 Android accepts. Null while unknown.
      */
