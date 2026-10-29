@@ -93,9 +93,12 @@ private fun Line(text: String, bold: Boolean = false) {
     )
 }
 
-/** One track as people read it: `HEVC · 3840 × 1606 · 23.976 fps` or `Dolby Digital · 5.1 · German`. */
+/**
+ * One track as the file holds it: `HEVC · Main 10@L5.1 · 3840 × 1606 · 23.976 fps` or
+ * `Dolby Digital · 5.1 · German` — the codec and its profile, never the decoder that plays it.
+ */
 internal fun describe(format: Format): String {
-    val codec = Quality.codecOf(format.sampleMimeType)
+    val codec = Quality.codecOf(format.sampleMimeType, format.codecs)
     val parts = mutableListOf<String>()
     val shown = Quality.of(
         com.hawkynt.mediadroid.nfo.StreamDetails(
@@ -110,7 +113,8 @@ internal fun describe(format: Format): String {
             },
         ),
     )
-    (shown.video ?: shown.audio ?: format.sampleMimeType)?.let { parts += it }
+    (shown.video ?: shown.audio ?: codec ?: format.sampleMimeType)?.let { parts += it }
+    com.hawkynt.mediadroid.library.CodecProfile.of(format.codecs)?.let { parts += it }
     if (format.width > 0) parts += "${format.width} × ${format.height}"
     if (format.frameRate > 0) {
         parts += String.format(java.util.Locale.ROOT, "%.3f", format.frameRate).trimEnd('0').trimEnd('.') + " fps"

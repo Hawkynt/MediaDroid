@@ -494,12 +494,7 @@ private fun FileSection(location: String) {
             androidx.media3.common.C.TRACK_TYPE_TEXT -> "Subtitles"
             else -> "Other"
         }
-        val playedBy = when {
-            track.type == androidx.media3.common.C.TRACK_TYPE_TEXT -> "shown by the player"
-            track.decoder == null -> "no decoder on this device"
-            else -> decoder(track.decoder)
-        }
-        Text("$kind: ${describe(track.format)} — $playedBy", fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+        Text("$kind: ${describe(track.format)}", fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
     }
 }
 
