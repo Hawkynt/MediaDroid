@@ -52,7 +52,8 @@ class VideoFilterStage {
     private var blendProgram = 0
     private var temporalProgram = 0
     private var weaveProgram = 0
-    private val frames = Array(FILM_SLOTS + 2 * Telecine.CYCLE) { Frame() }
+    private var packProgram = 0
+    private val frames = Array(PACKED_LUMA + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -73,10 +74,15 @@ class VideoFilterStage {
     private var framesToJudge = 0
     private var readBack: ByteBuffer? = null
 
-    // Film (3:2 pulldown removed, see Telecine): each frame's fields matched, woven into one of two banks
-    // of five slots (frames[11] on), and once a bank's cycle is judged its four kept frames shown evenly.
+    // Film (3:2 pulldown removed, see Telecine): each frame's fields matched on a thread of its own, woven
+    // into one of two banks of five slots (frames[11] on), and once a bank's cycle is judged its four kept
+    // frames shown evenly. The matcher and the decimator live on that thread; a new history (a seek) starts
+    // a new generation, whose verdicts alone count.
+    private val filmWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     private var fieldMatch = Telecine.FieldMatch()
     private var decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
+    private var filmPending: java.util.concurrent.Future<FilmVerdict>? = null
+    private var filmGeneration = 0
     private val filmLumas = arrayOfNulls<Deinterlacer.Plane>(3)
     private var filmBank = 0
     private var filmPosition = 0
@@ -170,6 +176,8 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(blendProgram)
             GLES20.glDeleteProgram(temporalProgram)
             GLES20.glDeleteProgram(weaveProgram)
+            GLES20.glDeleteProgram(packProgram)
+            filmWorker.shutdownNow()
             handler.removeCallbacksAndMessages(filmToken)
             handler.removeCallbacks(secondField)
             vsync.removeFrameCallback(onVsync)
@@ -248,6 +256,7 @@ class VideoFilterStage {
         blendProgram = program(VERTEX, BLEND)
         temporalProgram = program(VERTEX, TEMPORAL)
         weaveProgram = program(VERTEX, WEAVE)
+        packProgram = program(VERTEX, PACK_LUMA)
     }
 
     private fun releaseWindow() {
@@ -407,14 +416,17 @@ class VideoFilterStage {
         val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
         grainNow = 0f
         EGL14.eglMakeCurrent(display, idle, idle, context)
-        if (remember(width, height)) {
+        // The verdict on the frame before must be woven before the history moves on past its frames.
+        finishFilm()
+        val afresh = remember(width, height)
+        if (afresh) {
             handler.removeCallbacksAndMessages(filmToken)
-            fieldMatch = Telecine.FieldMatch(fieldOrder.topFieldFirst)
-            decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
+            filmGeneration++
             filmLumas.fill(null)
             filmPosition = 0
         }
-        val luma = readLuma(width, height, if (width > MAX_FULL_FILM_WIDTH) 2 else 1)
+        val step = if (width > MAX_FULL_FILM_WIDTH) 2 else 1
+        val luma = packedLuma(frames[history[2]], width, height, step, 1)
         if (framesToJudge > 0) {
             framesToJudge--
             filmLumas[2]?.let { newest -> filmLumas[1]?.let { fieldOrder.add(it, newest, luma) } }
@@ -423,23 +435,74 @@ class VideoFilterStage {
         filmLumas[1] = filmLumas[2]
         filmLumas[2] = luma
         if (historyCount < 2) return
-        if (fieldMatch.field != (if (fieldOrder.topFieldFirst) 1 else 0)) {
-            fieldMatch = Telecine.FieldMatch(fieldOrder.topFieldFirst)
+        val prevLuma = filmLumas[0] ?: filmLumas[1]!!
+        val curLuma = filmLumas[1]!!
+        val topFirst = fieldOrder.topFieldFirst
+        val generation = filmGeneration
+        val prev = if (historyCount >= 3) history[0] else history[1]
+        val cur = history[1]
+        val next = history[2]
+        val interval = frameIntervalNs
+        filmPending = filmWorker.submit<FilmVerdict> {
+            if (afresh || fieldMatch.field != (if (topFirst) 1 else 0)) {
+                fieldMatch = Telecine.FieldMatch(topFirst)
+                if (afresh) decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
+            }
+            val (matched, woven) = fieldMatch.add(prevLuma, curLuma, luma)
+            val verdict = FilmVerdict(
+                matched, decimate.add(woven), fieldMatch.field, prev, cur, next, generation, width, height, interval,
+            )
+            handler.post { applyFilm(verdict) }
+            verdict
         }
-        val next = frames[history[2]]
-        val cur = frames[history[1]]
-        val prev = if (historyCount >= 3) frames[history[0]] else cur
-        val (matched, woven) = fieldMatch.add(filmLumas[0] ?: filmLumas[1]!!, filmLumas[1]!!, luma)
+    }
 
+    /** One frame's Film verdict from the worker, with the frames it was judged on. */
+    private class FilmVerdict(
+        val matched: Telecine.Matched,
+        val cycle: Telecine.Decimate.Cycle?,
+        val field: Int,
+        val prev: Int,
+        val cur: Int,
+        val next: Int,
+        val generation: Int,
+        val width: Int,
+        val height: Int,
+        val intervalNs: Long,
+    ) {
+        var applied = false
+    }
+
+    /** Waits for the verdict still out, if any, and weaves it. */
+    private fun finishFilm() {
+        val pending = filmPending ?: return
+        filmPending = null
+        val verdict = runCatching { pending.get() }.getOrNull() ?: return
+        applyFilm(verdict)
+    }
+
+    /**
+     * A verdict woven into the bank being filled — or, still combed after matching, deinterlaced by YADIF —
+     * and, at the end of a cycle, the kept frames scheduled evenly over the cycle's time.
+     */
+    private fun applyFilm(verdict: FilmVerdict) {
+        if (verdict.applied || verdict.generation != filmGeneration) return
+        verdict.applied = true
+        val width = verdict.width
+        val height = verdict.height
+        val prev = frames[verdict.prev]
+        val cur = frames[verdict.cur]
+        val next = frames[verdict.next]
+        EGL14.eglMakeCurrent(display, idle, idle, context)
         val slot = frames[FILM_SLOTS + filmBank * Telecine.CYCLE + filmPosition].ensure(width, height)
-        if (matched.combed) {
+        if (verdict.matched.combed) {
             rebuildField(slot, prev, cur, next, secondField = false, bwdif = false)
         } else {
-            val (other, rows) = when (matched.match) {
-                Telecine.Match.PREVIOUS -> prev to fieldMatch.field
-                Telecine.Match.NEXT -> next to fieldMatch.field
-                Telecine.Match.BOTTOM -> prev to 1 - fieldMatch.field
-                Telecine.Match.UPPER -> next to 1 - fieldMatch.field
+            val (other, rows) = when (verdict.matched.match) {
+                Telecine.Match.PREVIOUS -> prev to verdict.field
+                Telecine.Match.NEXT -> next to verdict.field
+                Telecine.Match.BOTTOM -> prev to 1 - verdict.field
+                Telecine.Match.UPPER -> next to 1 - verdict.field
                 Telecine.Match.CURRENT -> cur to -1
             }
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, slot.framebuffer)
@@ -454,7 +517,7 @@ class VideoFilterStage {
             }
         }
 
-        val cycle = decimate.add(woven)
+        val cycle = verdict.cycle
         if (cycle == null) {
             filmPosition++
             return
@@ -462,12 +525,12 @@ class VideoFilterStage {
         val base = FILM_SLOTS + filmBank * Telecine.CYCLE
         // Video with nothing repeated in the cycle (mixed decimation drops none) plays on frame by frame.
         val shown = if (cycle.drop < 0) Telecine.CYCLE else Telecine.CYCLE - 1
-        val stepNs = frameIntervalNs * Telecine.CYCLE / shown
+        val stepNs = verdict.intervalNs * Telecine.CYCLE / shown
         val start = android.os.SystemClock.uptimeMillis()
         (0 until Telecine.CYCLE).filter { it != cycle.drop }.forEachIndexed { j, position ->
             handler.postAtTime({ showFilm(base + position) }, filmToken, start + j * stepNs / 1_000_000L)
         }
-        latencyMs = (frameIntervalNs * Telecine.CYCLE / 1_000_000L).toInt().coerceIn(0, MAX_FILM_LATENCY_MS)
+        latencyMs = (verdict.intervalNs * Telecine.CYCLE / 1_000_000L).toInt().coerceIn(0, MAX_FILM_LATENCY_MS)
         filmBank = 1 - filmBank
         filmPosition = 0
     }
@@ -524,41 +587,47 @@ class VideoFilterStage {
         return afresh
     }
 
-    /** The newest frame's luma, read back from the framebuffer still bound, into the field-order verdict. */
+    /** The newest frame's luma, every fourth column, into the field-order verdict. */
     private fun judge(width: Int, height: Int) {
         framesToJudge--
         lumas[0] = lumas[1]
         lumas[1] = lumas[2]
-        lumas[2] = readLuma(width, height, JUDGED_COLUMN_STEP)
+        lumas[2] = packedLuma(frames[history[2]], width, height, JUDGED_COLUMN_STEP, 1)
         val prev = lumas[0] ?: return
         val cur = lumas[1] ?: return
         fieldOrder.add(prev, cur, lumas[2]!!)
     }
 
-    /** The bound framebuffer's luma, rows from the top, every [columnStep]th column. */
-    private fun readLuma(width: Int, height: Int, columnStep: Int): Deinterlacer.Plane {
-        val size = width * height * 4
+    /**
+     * [from]'s luma, every [stepX]th column of every [stepY]th row from the top, worked out on the graphics
+     * chip four values to a texel, so the read back is a quarter of the samples' bytes — with the weights the
+     * decoder's colour went through: BT.601 for standard definition, BT.709 above, so no chroma noise leaks
+     * into the luma the verdicts judge.
+     */
+    private fun packedLuma(from: Frame, width: Int, height: Int, stepX: Int, stepY: Int): Deinterlacer.Plane {
+        val columns = width / stepX
+        val rows = height / stepY
+        val texels = (columns + 3) / 4
+        val target = frames[PACKED_LUMA].ensure(texels, rows)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
+        GLES20.glViewport(0, 0, texels, rows)
+        run(packProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uStep"), stepX.toFloat(), stepY.toFloat())
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSd"), if (height <= SD_HEIGHT) 1 else 0)
+        }
+        val size = texels * rows * 4
         val bytes = readBack?.takeIf { it.capacity() == size }
             ?: ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder()).also { readBack = it }
         bytes.rewind()
-        GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
-        val columns = width / columnStep
-        val luma = IntArray(columns * height)
-        // The weights the decoder's colour went through: BT.601 for standard definition, BT.709 above, so no
-        // chroma noise leaks into the luma the verdicts judge.
-        val sd = height <= SD_HEIGHT
-        for (y in 0 until height) {
-            // The framebuffer's rows run from the bottom.
-            val row = (height - 1 - y) * width * 4
-            for (x in 0 until columns) {
-                val i = row + x * columnStep * 4
-                val r = bytes.get(i).toInt() and 0xFF
-                val g = bytes.get(i + 1).toInt() and 0xFF
-                val b = bytes.get(i + 2).toInt() and 0xFF
-                luma[y * columns + x] = if (sd) (77 * r + 150 * g + 29 * b) shr 8 else (54 * r + 183 * g + 19 * b) shr 8
-            }
+        GLES20.glReadPixels(0, 0, texels, rows, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
+        // The pass wrote row v at framebuffer row v, so the rows come back from the top.
+        val luma = IntArray(columns * rows)
+        for (y in 0 until rows) {
+            val line = y * texels * 4
+            for (x in 0 until columns) luma[y * columns + x] = bytes.get(line + x).toInt() and 0xFF
         }
-        return Deinterlacer.Plane(columns, height, luma)
+        return Deinterlacer.Plane(columns, rows, luma)
     }
 
     /** Step 3: the denoise filter [picture] asks for, if any, over [from]. */
@@ -803,6 +872,31 @@ class VideoFilterStage {
 
         /** Where Film's two banks of matched frames start in the frames. */
         private const val FILM_SLOTS = 11
+
+        /** Where luma is packed four values to a texel for reading back, after Film's banks. */
+        private const val PACKED_LUMA = FILM_SLOTS + 2 * Telecine.CYCLE
+
+        // Luma for reading back, four values to a texel: texel (u, v) holds columns 4u .. 4u + 3 (in steps of
+        // uStep.x) of row v (in steps of uStep.y), rows counted from the top, with the weights the decoder's
+        // colour went through (BT.601 up to 576 lines, BT.709 above).
+        private const val PACK_LUMA = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform vec2 uSize;
+            uniform vec2 uStep;
+            uniform bool uSd;
+            varying vec2 vTex;
+            float luma(float x, float y) {
+                vec3 c = texture2D(uTex, vec2(x + 0.5, uSize.y - y - 0.5) / uSize).rgb;
+                return uSd ? dot(c, vec3(0.299, 0.587, 0.114)) : dot(c, vec3(0.2126, 0.7152, 0.0722));
+            }
+            void main() {
+                float x = floor(gl_FragCoord.x) * 4.0 * uStep.x;
+                float y = floor(gl_FragCoord.y) * uStep.y;
+                gl_FragColor = vec4(
+                    luma(x, y), luma(x + uStep.x, y), luma(x + 2.0 * uStep.x, y), luma(x + 3.0 * uStep.x, y));
+            }
+        """
 
         /** Above this width Film judges every other column, to keep the work on the processor in bounds. */
         private const val MAX_FULL_FILM_WIDTH = 1024
