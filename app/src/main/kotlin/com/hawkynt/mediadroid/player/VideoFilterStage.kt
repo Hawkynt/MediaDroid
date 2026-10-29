@@ -134,6 +134,18 @@ class VideoFilterStage {
         return taken
     }
 
+    /**
+     * A fresh [inputSurface] over the same picture, handed to [attach] before the old one is let go. A
+     * software decoder that drew into the old one (FFmpeg's, through ANativeWindow_lock) stays connected
+     * to it as a CPU producer for as long as that surface lives, and no device decoder can attach meanwhile.
+     */
+    fun renewInput(attach: (Surface) -> Unit) {
+        val old = inputSurface
+        inputSurface = Surface(surfaceTexture)
+        attach(inputSurface)
+        old.release()
+    }
+
     fun release() {
         onThread {
             releaseWindow()
