@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The one thing MediaDroid may do as a device admin: lock the phone, when the darkened player is left. -->
+<device-admin>
+  <uses-policies>
+    <force-lock />
+  </uses-policies>
+</device-admin>
