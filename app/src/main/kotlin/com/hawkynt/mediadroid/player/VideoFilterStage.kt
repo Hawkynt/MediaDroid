@@ -78,6 +78,11 @@ class VideoFilterStage {
 
     private var hasFrame = false
 
+    // The film grain the pass drawing onto the screen adds, and a new seed for every picture shown.
+    private var grainNow = 0f
+    private var grainToShow = 0f
+    private var seed = 0f
+
     init {
         onThread { setUp() }
     }
@@ -230,6 +235,7 @@ class VideoFilterStage {
 
     /** Steps 1 to 3: the decoder's picture, deinterlaced and denoised, at its own size. */
     private fun filtered(picture: PictureAdjustment, width: Int, height: Int): Frame {
+        grainNow = 0f
         EGL14.eglMakeCurrent(display, idle, idle, context)
         val copied = frames[0].ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, copied.framebuffer)
@@ -245,12 +251,14 @@ class VideoFilterStage {
             }
             source = woven
         }
-        if (picture.denoise > 0) {
+        val kernel = picture.denoiseKernel()
+        if (kernel != null) {
             val denoised = frames[1].ensure(width, height)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, denoised.framebuffer)
             run(denoiseProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
-                val (radius, sigmaR) = DENOISE_LEVELS[picture.denoise.coerceIn(1, DENOISE_LEVELS.size) - 1]
+                val radius = kernel.radius
+                val sigmaR = kernel.similarity
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), radius)
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSigmaS2"), 2f * radius * radius)
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSigmaR2"), 2f * sigmaR * sigmaR)
@@ -323,6 +331,8 @@ class VideoFilterStage {
     /** Steps 4 and 5: sharpness and clarity, and the picture onto the screen, enlarged as chosen. */
     private fun output(from: Frame, width: Int, height: Int, picture: PictureAdjustment) {
         var source = from
+        grainNow = 0f
+        grainToShow = filters.grain
         val outWidth = query(EGL14.EGL_WIDTH)
         val outHeight = query(EGL14.EGL_HEIGHT)
         val upscaling = picture.upscaler != PictureAdjustment.Upscaler.STANDARD && outWidth > width
@@ -366,6 +376,8 @@ class VideoFilterStage {
 
     /** Draws onto the screen from here on. */
     private fun onWindow(width: Int, height: Int) {
+        grainNow = grainToShow
+        seed = (seed + 1f) % 1000f
         EGL14.eglMakeCurrent(display, window, window, context)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
         GLES20.glViewport(0, 0, width, height)
@@ -388,6 +400,8 @@ class VideoFilterStage {
         GLES20.glBindTexture(target, texture)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uTex"), 0)
         GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uTexMatrix"), 1, false, matrix, 0)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uGrain"), grainNow)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uSeed"), seed)
         uniforms(program)
         val position = GLES20.glGetAttribLocation(program, "aPosition")
         val coordinate = GLES20.glGetAttribLocation(program, "aTexCoord")
@@ -470,8 +484,6 @@ class VideoFilterStage {
         /** RCAS strength on AMD's scale of stops below full sharpness (FsrRcasCon): 0.2 stops, exp2(-0.2). */
         private const val RCAS_SHARPNESS = 0.8705506f
 
-        /** Denoise strengths: reach in pixels, and how different a neighbour may be and still count. */
-        private val DENOISE_LEVELS = listOf(1f to 0.06f, 2f to 0.09f, 2f to 0.15f)
 
         private val QUAD: FloatBuffer = floats(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
         private val QUAD_TEX: FloatBuffer = floats(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
@@ -578,6 +590,17 @@ class VideoFilterStage {
             precision highp float;
             uniform sampler2D uTex;
             uniform vec2 uInSize;
+            uniform float uGrain;
+            uniform float uSeed;
+            // Film grain: a different random value at every pixel and frame, the same on all three channels;
+            // Dave Hoskins' "hash without sine" (MIT), which stays patternless at large coordinates.
+            vec3 grain(vec3 color) {
+                if (uGrain <= 0.0) return color;
+                vec3 p3 = fract(vec3(gl_FragCoord.xy, uSeed).xyz * 0.1031);
+                p3 += dot(p3, p3.zyx + 31.32);
+                float n = fract((p3.x + p3.y) * p3.z) - 0.5;
+                return clamp(color + n * 2.0 * uGrain, 0.0, 1.0);
+            }
             varying vec2 vTex;
             float lanczos(float x) {
                 x = abs(x);
@@ -608,7 +631,7 @@ class VideoFilterStage {
                     }
                 }
                 vec3 c = sum / weights;
-                gl_FragColor = vec4(mix(c, clamp(c, lo, hi), 0.5), 1.0);
+                gl_FragColor = vec4(grain(mix(c, clamp(c, lo, hi), 0.5)), 1.0);
             }
         """
 
@@ -714,6 +737,17 @@ class VideoFilterStage {
             uniform sampler2D uTex;
             uniform vec2 uTexel;
             uniform float uSharp;
+            uniform float uGrain;
+            uniform float uSeed;
+            // Film grain: a different random value at every pixel and frame, the same on all three channels;
+            // Dave Hoskins' "hash without sine" (MIT), which stays patternless at large coordinates.
+            vec3 grain(vec3 color) {
+                if (uGrain <= 0.0) return color;
+                vec3 p3 = fract(vec3(gl_FragCoord.xy, uSeed).xyz * 0.1031);
+                p3 += dot(p3, p3.zyx + 31.32);
+                float n = fract((p3.x + p3.y) * p3.z) - 0.5;
+                return clamp(color + n * 2.0 * uGrain, 0.0, 1.0);
+            }
             varying vec2 vTex;
             void main() {
                 vec3 b = texture2D(uTex, vTex - vec2(0.0, uTexel.y)).rgb;
@@ -728,7 +762,7 @@ class VideoFilterStage {
                 vec3 lobeRGB = max(-hitMin, hitMax);
                 float lobe = max(-0.1875, min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0)) * uSharp;
                 vec3 c = (lobe * (b + d + h + f) + e) / (4.0 * lobe + 1.0);
-                gl_FragColor = vec4(c, 1.0);
+                gl_FragColor = vec4(grain(c), 1.0);
             }
         """
 
@@ -736,11 +770,22 @@ class VideoFilterStage {
         // uses the eight nearest neighbours; clarity a ring six pixels out, which lifts texture and
         // local contrast rather than edges. Rec. 709 luma weights.
         private const val SHARPEN = """
-            precision mediump float;
+            precision highp float;
             uniform sampler2D uTex;
             uniform vec2 uTexel;
             uniform float uSharpness;
             uniform float uClarity;
+            uniform float uGrain;
+            uniform float uSeed;
+            // Film grain: a different random value at every pixel and frame, the same on all three channels;
+            // Dave Hoskins' "hash without sine" (MIT), which stays patternless at large coordinates.
+            vec3 grain(vec3 color) {
+                if (uGrain <= 0.0) return color;
+                vec3 p3 = fract(vec3(gl_FragCoord.xy, uSeed).xyz * 0.1031);
+                p3 += dot(p3, p3.zyx + 31.32);
+                float n = fract((p3.x + p3.y) * p3.z) - 0.5;
+                return clamp(color + n * 2.0 * uGrain, 0.0, 1.0);
+            }
             varying vec2 vTex;
             float luma(vec2 at) { return dot(texture2D(uTex, at).rgb, vec3(0.2126, 0.7152, 0.0722)); }
             void main() {
@@ -755,7 +800,7 @@ class VideoFilterStage {
                     far += luma(vTex + direction * uTexel * 6.0);
                 }
                 float boost = uSharpness * 2.0 * (l - near / 8.0) + uClarity * 0.8 * (l - far / 8.0);
-                gl_FragColor = vec4(clamp(color + boost, 0.0, 1.0), 1.0);
+                gl_FragColor = vec4(grain(clamp(color + boost, 0.0, 1.0)), 1.0);
             }
         """
     }

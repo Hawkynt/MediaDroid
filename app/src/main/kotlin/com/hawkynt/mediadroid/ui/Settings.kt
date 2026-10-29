@@ -309,7 +309,8 @@ fun SettingsScreen(
                     it.saturation = defaultPicture.saturation
                     it.sharpness = defaultPicture.sharpness
                     it.clarity = defaultPicture.clarity
-                    it.denoise = defaultPicture.denoise
+                    it.denoise = 0
+                    it.noise = defaultPicture.noise
                     it.deinterlace = defaultPicture.deinterlace.name
                     it.upscaler = defaultPicture.upscaler.name
                     it.interpolation = defaultPicture.interpolation.name

@@ -38,7 +38,9 @@ data class PictureOverride(
     val saturation: Float = 1f,
     val sharpness: Float = 0f,
     val clarity: Float = 0f,
+    /** The old denoise step (0..3); read for pictures saved before [noise]. */
     val denoise: Int = 0,
+    val noise: Float? = null,
     val deinterlace: String = "OFF",
     val upscaler: String = "STANDARD",
     val interpolation: String = "OFF",
@@ -64,7 +66,8 @@ data class Settings(
     var saturation: Float = 1.0f,             // 0..2
     var sharpness: Float = 0f,                // 0..1, the picture filters' household default
     var clarity: Float = 0f,                  // 0..1
-    var denoise: Int = 0,                     // 0..3
+    var denoise: Int = 0,                     // 0..3, before the noise slider
+    var noise: Float? = null,                 // -1 (removed) .. 1 (grain)
     var deinterlace: String = "OFF",          // PictureAdjustment.Deinterlace name
     var upscaler: String = "STANDARD",        // PictureAdjustment.Upscaler name
     var interpolation: String = "OFF",        // PictureAdjustment.Interpolation name
@@ -218,7 +221,8 @@ class StateStore(context: Context) {
     /** The household's default picture, from the guarded settings. */
     fun defaultPicture(): PictureAdjustment = with(data.settings) {
         PictureAdjustment(
-            brightness, gamma, contrast, saturation, sharpness, clarity, denoise, deinterlaceOf(deinterlace),
+            brightness, gamma, contrast, saturation, sharpness, clarity,
+            noise ?: PictureAdjustment.noiseOfLevel(denoise), deinterlaceOf(deinterlace),
             upscalerOf(upscaler), interpolationOf(interpolation),
         )
     }
@@ -242,7 +246,7 @@ class StateStore(context: Context) {
                 it.saturation,
                 it.sharpness,
                 it.clarity,
-                it.denoise,
+                it.noise ?: PictureAdjustment.noiseOfLevel(it.denoise),
                 deinterlaceOf(it.deinterlace),
                 upscalerOf(it.upscaler),
                 interpolationOf(it.interpolation),
@@ -262,7 +266,8 @@ class StateStore(context: Context) {
                 picture.saturation,
                 picture.sharpness,
                 picture.clarity,
-                picture.denoise,
+                0,
+                picture.noise,
                 picture.deinterlace.name,
                 picture.upscaler.name,
                 picture.interpolation.name,

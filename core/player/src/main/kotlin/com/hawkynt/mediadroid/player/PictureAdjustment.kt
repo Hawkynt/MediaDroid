@@ -17,8 +17,12 @@ data class PictureAdjustment(
     val sharpness: Float = 0f,
     /** Local contrast, 0 (off) to 1: the same with a large radius, which lifts texture without halos. */
     val clarity: Float = 0f,
-    /** Noise and MPEG block reduction, 0 (off) to 3: an edge-preserving bilateral filter of growing reach. */
-    val denoise: Int = 0,
+    /**
+     * Noise, -1 to 1: below 0 noise and MPEG blocks are removed — an edge-preserving bilateral filter,
+     * stronger and wider towards -1 — above 0 fine film grain is added, up to 8 % of full scale, which
+     * hides banding and makes cleaned or enlarged pictures look natural.
+     */
+    val noise: Float = 0f,
     /** How interlaced pictures lose their combing. */
     val deinterlace: Deinterlace = Deinterlace.OFF,
     /** How a picture smaller than the screen is enlarged. */
@@ -73,13 +77,26 @@ data class PictureAdjustment(
 
     val isNeutral: Boolean get() = this == Neutral
 
+    /** The bilateral filter's reach in pixels and how alike two colours must be to blend. */
+    data class Denoise(val radius: Float, val similarity: Float)
+
+    /** The denoise filter [noise] asks for, or null when it asks for none. */
+    fun denoiseKernel(): Denoise? {
+        if (noise >= 0f) return null
+        val strength = -noise.coerceAtLeast(-1f)
+        return Denoise(if (strength <= 1f / 3f) 1f else 2f, 0.04f + 0.12f * strength)
+    }
+
+    /** The film grain [noise] asks for, as an amplitude on the 0..1 scale. */
+    val grain: Float get() = noise.coerceIn(0f, 1f) * MAX_GRAIN
+
     /** No colour correction: brightness, gamma, contrast and saturation all neutral. */
     val isColorNeutral: Boolean
         get() = brightness == 0f && gamma == 1f && contrast == 1f && saturation == 1f
 
     /** A filter is set that only the GL stage can run (see the app's VideoFilterStage). */
     val hasFilters: Boolean
-        get() = sharpness > 0f || clarity > 0f || denoise > 0 || deinterlace != Deinterlace.OFF ||
+        get() = sharpness > 0f || clarity > 0f || noise != 0f || deinterlace != Deinterlace.OFF ||
             upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF
 
     /** The correction as a GPU shader applies it: saturation, contrast, brightness, then the true gamma curve. */
@@ -119,6 +136,11 @@ data class PictureAdjustment(
 
     companion object {
         val Neutral = PictureAdjustment()
+
+        private const val MAX_GRAIN = 0.08f
+
+        /** Where an earlier denoise step (0 off … 3 strong) sits on the noise slider. */
+        fun noiseOfLevel(level: Int): Float = -level.coerceIn(0, 3) / 3f
 
         /** What full brightness adds, in 0..255 units: half the range. */
         const val BRIGHTNESS_SPAN = 128f
