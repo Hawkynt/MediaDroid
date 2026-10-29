@@ -21,7 +21,20 @@ data class PictureAdjustment(
     val denoise: Int = 0,
     /** How interlaced pictures lose their combing. */
     val deinterlace: Deinterlace = Deinterlace.OFF,
+    /** How a picture smaller than the screen is enlarged. */
+    val upscaler: Upscaler = Upscaler.STANDARD,
 ) {
+    /**
+     * Enlarging a picture smaller than the screen: [STANDARD] is the screen's own bilinear scaling;
+     * [LANCZOS] a Lanczos-3 filter (sharper, a little ringing held back); [FSR] AMD FidelityFX Super
+     * Resolution 1 — edge-adaptive upscaling (EASU) and robust contrast-adaptive sharpening (RCAS).
+     */
+    enum class Upscaler(val label: String) {
+        STANDARD("Standard"),
+        LANCZOS("Lanczos"),
+        FSR("FSR"),
+    }
+
     /**
      * Deinterlacing, as the GL stage does it on each frame: [BLEND] averages every line with its
      * neighbours (no combing ever, a little softness); [BOB] keeps one field and rebuilds the other's
@@ -43,7 +56,8 @@ data class PictureAdjustment(
 
     /** A filter is set that only the GL stage can run (see the app's VideoFilterStage). */
     val hasFilters: Boolean
-        get() = sharpness > 0f || clarity > 0f || denoise > 0 || deinterlace != Deinterlace.OFF
+        get() = sharpness > 0f || clarity > 0f || denoise > 0 || deinterlace != Deinterlace.OFF ||
+            upscaler != Upscaler.STANDARD
 
     /** The correction as a GPU shader applies it: saturation, contrast, brightness, then the true gamma curve. */
     data class ShaderUniforms(

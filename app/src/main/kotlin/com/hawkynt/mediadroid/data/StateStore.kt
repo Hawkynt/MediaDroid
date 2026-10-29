@@ -40,6 +40,7 @@ data class PictureOverride(
     val clarity: Float = 0f,
     val denoise: Int = 0,
     val deinterlace: String = "OFF",
+    val upscaler: String = "STANDARD",
 )
 
 /**
@@ -64,6 +65,7 @@ data class Settings(
     var clarity: Float = 0f,                  // 0..1
     var denoise: Int = 0,                     // 0..3
     var deinterlace: String = "OFF",          // PictureAdjustment.Deinterlace name
+    var upscaler: String = "STANDARD",        // PictureAdjustment.Upscaler name
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -215,8 +217,12 @@ class StateStore(context: Context) {
     fun defaultPicture(): PictureAdjustment = with(data.settings) {
         PictureAdjustment(
             brightness, gamma, contrast, saturation, sharpness, clarity, denoise, deinterlaceOf(deinterlace),
+            upscalerOf(upscaler),
         )
     }
+
+    private fun upscalerOf(name: String) =
+        runCatching { PictureAdjustment.Upscaler.valueOf(name) }.getOrDefault(PictureAdjustment.Upscaler.STANDARD)
 
     private fun deinterlaceOf(name: String) =
         runCatching { PictureAdjustment.Deinterlace.valueOf(name) }.getOrDefault(PictureAdjustment.Deinterlace.OFF)
@@ -233,6 +239,7 @@ class StateStore(context: Context) {
                 it.clarity,
                 it.denoise,
                 deinterlaceOf(it.deinterlace),
+                upscalerOf(it.upscaler),
             )
         }
             ?: defaultPicture()
@@ -251,6 +258,7 @@ class StateStore(context: Context) {
                 picture.clarity,
                 picture.denoise,
                 picture.deinterlace.name,
+                picture.upscaler.name,
             )
         }
         save()

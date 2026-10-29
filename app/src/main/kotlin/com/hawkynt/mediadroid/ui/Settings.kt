@@ -311,6 +311,7 @@ fun SettingsScreen(
                     it.clarity = defaultPicture.clarity
                     it.denoise = defaultPicture.denoise
                     it.deinterlace = defaultPicture.deinterlace.name
+                    it.upscaler = defaultPicture.upscaler.name
                 }
             },
         )
