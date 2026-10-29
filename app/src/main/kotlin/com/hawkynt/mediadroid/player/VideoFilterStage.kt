@@ -76,7 +76,7 @@ class VideoFilterStage {
     // Film (3:2 pulldown removed, see Telecine): each frame's fields matched, woven into one of two banks
     // of five slots (frames[11] on), and once a bank's cycle is judged its four kept frames shown evenly.
     private var fieldMatch = Telecine.FieldMatch()
-    private var decimate = Telecine.Decimate()
+    private var decimate = Telecine.Decimate(mixed = true)
     private val filmLumas = arrayOfNulls<Deinterlacer.Plane>(3)
     private var filmBank = 0
     private var filmPosition = 0
@@ -399,7 +399,8 @@ class VideoFilterStage {
      * fields (see Telecine) into the bank being filled — or, still combed after matching, deinterlaced by
      * YADIF. Once a bank holds a cycle of five, the one repeated frame is dropped and the other four are
      * shown evenly over the five frames' time, starting now: the film's own 24 a second from 30, about
-     * five frames behind, which the sound is told to wait.
+     * five frames behind, which the sound is told to wait. A cycle with no repeated frame — video, not
+     * film — keeps all five, so Film left on for ordinary video costs only the delay.
      */
     private fun film() {
         val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
@@ -409,7 +410,7 @@ class VideoFilterStage {
         if (remember(width, height)) {
             handler.removeCallbacksAndMessages(filmToken)
             fieldMatch = Telecine.FieldMatch(fieldOrder.topFieldFirst)
-            decimate = Telecine.Decimate()
+            decimate = Telecine.Decimate(mixed = true)
             filmLumas.fill(null)
             filmPosition = 0
         }
@@ -459,7 +460,9 @@ class VideoFilterStage {
             return
         }
         val base = FILM_SLOTS + filmBank * Telecine.CYCLE
-        val stepNs = frameIntervalNs * Telecine.CYCLE / (Telecine.CYCLE - 1)
+        // Video with nothing repeated in the cycle (mixed decimation drops none) plays on frame by frame.
+        val shown = if (cycle.drop < 0) Telecine.CYCLE else Telecine.CYCLE - 1
+        val stepNs = frameIntervalNs * Telecine.CYCLE / shown
         val start = android.os.SystemClock.uptimeMillis()
         (0 until Telecine.CYCLE).filter { it != cycle.drop }.forEachIndexed { j, position ->
             handler.postAtTime({ showFilm(base + position) }, filmToken, start + j * stepNs / 1_000_000L)

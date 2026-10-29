@@ -1,5 +1,6 @@
 # Writes telecined.gray.gz: 30 frames of 128 x 96 8-bit grey at 29.97 fps, 3:2 pulldown (top field first)
-# of 24 film frames (telecined-bff.gray.gz: the same bottom field first): a bar sweeping 4 pixels a frame, a drifting diagonal edge and a textured disc, a cut
+# of 24 film frames (telecined-bff.gray.gz: the same bottom field first; progressive.gray.gz: the 24 film
+# frames themselves, as video with nothing repeated): a bar sweeping 4 pixels a frame, a drifting diagonal edge and a textured disc, a cut
 # to a second scene after the 12th film frame and a still stretch at the end. Fixed arithmetic only, the
 # same file on every run. The expected files are FFmpeg 6.0's (configured --disable-x86asm
 # --disable-inline-asm) debug output for it, fed as YUV 4:2:0 with flat chroma (`--yuv` writes that to
@@ -11,6 +12,11 @@
 #     > decimate.txt
 #   python3 make-input.py --yuv --bff | ffmpeg -v debug -f rawvideo -pix_fmt yuv420p -s 128x96 -r 30000/1001 \
 #     -i - -vf fieldmatch=order=bff -f null - 2>&1 | grep -o "SC:.*" > fieldmatch-bff.txt
+#   for i in telecined progressive; do
+#     python3 make-input.py --yuv $([ $i = progressive ] && echo --progressive) | ffmpeg -v debug -f rawvideo \
+#       -pix_fmt yuv420p -s 128x96 -r 30000/1001 -i - -vf fieldmatch=order=tff,decimate=mixed=1 -f null - 2>&1 |
+#       grep -E "frame drop|#[0-9]: " | sed "s/^\[[^]]*\] *//" > decimate-mixed-$i.txt
+#   done
 import gzip
 import sys
 
@@ -58,12 +64,20 @@ def telecined(top_first):
     return frames
 
 
+def progressive():
+    return [b"".join(bytes(row) for row in f) for f in film]
+
+
 if "--yuv" in sys.argv:
     chroma = bytes([128]) * (W // 2 * H // 2 * 2)
-    for frame in telecined("--bff" not in sys.argv):
+    for frame in progressive() if "--progressive" in sys.argv else telecined("--bff" not in sys.argv):
         sys.stdout.buffer.write(frame + chroma)
 else:
-    for name, top_first in (("telecined.gray.gz", True), ("telecined-bff.gray.gz", False)):
+    for name, frames in (
+        ("telecined.gray.gz", telecined(True)),
+        ("telecined-bff.gray.gz", telecined(False)),
+        ("progressive.gray.gz", progressive()),
+    ):
         with gzip.GzipFile(name, "wb", mtime=0) as out:
-            for frame in telecined(top_first):
+            for frame in frames:
                 out.write(frame)

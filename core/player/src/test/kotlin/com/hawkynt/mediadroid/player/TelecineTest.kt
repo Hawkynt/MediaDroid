@@ -31,8 +31,11 @@ class TelecineTest {
      * FFmpeg's window: frame k between k - 1 and k + 1, the first frame standing in for its predecessor
      * and the last for its successor.
      */
-    private fun matched(topFirst: Boolean = true): List<Pair<Telecine.Matched, Deinterlacer.Plane>> {
-        val frames = frames(if (topFirst) "telecined.gray.gz" else "telecined-bff.gray.gz")
+    private fun matched(
+        topFirst: Boolean = true,
+        input: String = if (topFirst) "telecined.gray.gz" else "telecined-bff.gray.gz",
+    ): List<Pair<Telecine.Matched, Deinterlacer.Plane>> {
+        val frames = frames(input)
         val matcher = Telecine.FieldMatch(topFirst)
         val last = frames.size - 1
         return frames.indices.map { k -> matcher.add(frames[maxOf(k - 1, 0)], frames[k], frames[minOf(k + 1, last)]) }
@@ -58,6 +61,25 @@ class TelecineTest {
             cycles.flatMap { it.log }.map { it.trim() },
         )
         assertEquals(6, cycles.size)
+    }
+
+    private fun checkMixed(input: String, expected: String) {
+        val decimate = Telecine.Decimate(mixed = true)
+        val cycles = matched(input = input).mapNotNull { decimate.add(it.second) }
+        val lines = cycles.flatMap { it.log }.map { it.trim() }
+        assertEquals(text(expected).take(cycles.size * (Telecine.CYCLE + 1)), lines)
+    }
+
+    @Test
+    fun `mixed, pulldown still loses its repeated frames as FFmpeg's do`() =
+        checkMixed("telecined.gray.gz", "decimate-mixed-telecined.txt")
+
+    @Test
+    fun `mixed, video with nothing repeated keeps every frame as FFmpeg's does`() {
+        checkMixed("progressive.gray.gz", "decimate-mixed-progressive.txt")
+        val decimate = Telecine.Decimate(mixed = true)
+        val drops = matched(input = "progressive.gray.gz").mapNotNull { decimate.add(it.second)?.drop }
+        assertEquals(listOf(-1, -1, -1, -1), drops)
     }
 
     @Test
