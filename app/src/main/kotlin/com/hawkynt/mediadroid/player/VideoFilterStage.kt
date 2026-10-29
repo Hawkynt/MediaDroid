@@ -52,7 +52,7 @@ class VideoFilterStage {
     private var blendProgram = 0
     private var temporalProgram = 0
     private var weaveProgram = 0
-    private val frames = Array(FILM_SLOTS + 2 * Telecine.CYCLE) { Frame() }
+    private val frames = Array(KEPT_THIRD + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -83,11 +83,11 @@ class VideoFilterStage {
     private var filmShown = -1
     private val filmToken = Any()
 
-    // Frame blending: the last two filtered frames (frames[5] and frames[6], taking turns), when each
-    // arrived, and whether the screen still has a blend to show.
-    private var current = 5
-    private var currentAt = 0L
-    private var previousAt = 0L
+    // Frame blending: the last three filtered frames (frames[5], [6] and [KEPT_THIRD], taking turns), oldest
+    // first, when each arrived, and whether the screen still has a blend to show. Blending mixes the last two;
+    // Motion the two before, a frame later, which leaves the motion search a whole frame's time.
+    private val keptRing = intArrayOf(5, 6, KEPT_THIRD)
+    private val keptAt = LongArray(3)
     private var kept = 0
     private var blending = false
     private val vsync by lazy { android.view.Choreographer.getInstance() }
@@ -98,12 +98,13 @@ class VideoFilterStage {
     private val motionLumas = arrayOfNulls<Deinterlacer.Plane>(2)
     private var estimator: MotionInterpolation.Estimator? = null
     private val sceneChange = MotionInterpolation.SceneChange()
-    private var vectorsFor = 0L
-    private var vectorsCut = false
+    // Two vector textures taking turns: the next pair's search lands while the pair before is still on screen.
+    private val vectorsFor = LongArray(2)
+    private val vectorsCut = BooleanArray(2)
+    private val vectorTextures = IntArray(2)
     private var gridWidth = 0
     private var gridHeight = 0
     private var motionProgram = 0
-    private var vectorTexture = 0
     private var obmcTexture = 0
     private val onVsync = android.view.Choreographer.FrameCallback { blend(it) }
 
@@ -183,7 +184,7 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(rcasProgram)
             GLES20.glDeleteProgram(blendProgram)
             GLES20.glDeleteProgram(motionProgram)
-            GLES20.glDeleteTextures(2, intArrayOf(vectorTexture, obmcTexture), 0)
+            GLES20.glDeleteTextures(3, intArrayOf(vectorTextures[0], vectorTextures[1], obmcTexture), 0)
             motionSearch.shutdownNow()
             GLES20.glDeleteProgram(temporalProgram)
             GLES20.glDeleteProgram(weaveProgram)
@@ -264,7 +265,7 @@ class VideoFilterStage {
         rcasProgram = program(VERTEX, FSR_RCAS)
         blendProgram = program(VERTEX, BLEND)
         motionProgram = program(VERTEX, MOTION)
-        vectorTexture = byteTexture(1, 1, ByteArray(4))
+        for (k in 0 until 2) vectorTextures[k] = byteTexture(1, 1, ByteArray(4))
         obmcTexture = byteTexture(
             32, 32, ByteArray(32 * 32 * 4) { if (it % 4 == 0) MotionInterpolation.obmcWeight(it / 4).toByte() else 0 },
         )
@@ -608,29 +609,38 @@ class VideoFilterStage {
         val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
         val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
         val source = filtered(picture, width, height, fresh = true)
-        current = if (current == 5) 6 else 5
-        val target = frames[current].ensure(width, height)
+        val oldest = keptRing[0]
+        keptRing[0] = keptRing[1]
+        keptRing[1] = keptRing[2]
+        keptRing[2] = oldest
+        keptAt[0] = keptAt[1]
+        keptAt[1] = keptAt[2]
+        val target = frames[keptRing[2]].ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
         run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), picture.sharpness)
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), picture.clarity)
         }
-        previousAt = currentAt
-        currentAt = System.nanoTime()
-        kept = minOf(kept + 1, 2)
-        if (picture.interpolation.isMotionCompensated) searchMotion(width, height) else motionLumas.fill(null)
-        // The picture runs half a frame behind; the sound is told to wait as long.
-        if (kept == 2) {
-            latencyMs = ((currentAt - previousAt) / 2_000_000L).toInt().coerceIn(0, MAX_LATENCY_MS) +
-                deinterlaceLatencyMs
+        keptAt[2] = System.nanoTime()
+        kept = minOf(kept + 1, 3)
+        val motion = picture.interpolation.isMotionCompensated
+        if (motion) searchMotion(width, height) else motionLumas.fill(null)
+        // Blending runs half a frame behind, Motion two frames; the sound is told to wait as long.
+        if (kept >= 2) {
+            val intervalMs = (keptAt[2] - keptAt[1]) / 1_000_000L
+            latencyMs = if (motion) {
+                (intervalMs * 2).toInt().coerceIn(0, MAX_MOTION_LATENCY_MS)
+            } else {
+                (intervalMs / 2).toInt().coerceIn(0, MAX_LATENCY_MS)
+            } + deinterlaceLatencyMs
         }
     }
 
     /**
      * The newest kept frame (its framebuffer still bound) read back at half size, and the motion search
-     * between it and the one before started on its own thread; its vectors reach the texture once done,
-     * if no newer frame came meanwhile.
+     * between it and the one before started on its own thread; its vectors reach one of the two textures
+     * once done — the one not holding the pair on screen — named by the later frame's arrival.
      */
     private fun searchMotion(width: Int, height: Int) {
         val luma = MotionInterpolation.halve(readLuma(width, height, 1))
@@ -639,7 +649,7 @@ class VideoFilterStage {
         motionLumas[1] = luma
         if (prev == null || prev.width != luma.width || prev.height != luma.height) return
         if (luma.width < 2 * MotionInterpolation.BLOCK || luma.height < 2 * MotionInterpolation.BLOCK) return
-        val pair = currentAt
+        val pair = keptAt[2]
         motionSearch.execute {
             val search = estimator?.takeIf { it.width == luma.width && it.height == luma.height }
                 ?: MotionInterpolation.Estimator(luma.width, luma.height).also { estimator = it }
@@ -654,14 +664,16 @@ class VideoFilterStage {
             val wide = search.blocksWide
             val high = search.blocksHigh
             handler.post {
-                if (pair != currentAt) return@post
+                // Only for the pair on screen or the next one; anything older is past.
+                if (pair != keptAt[1] && pair != keptAt[2]) return@post
+                val slot = if (vectorsFor[0] == keptAt[1]) 1 else 0
                 EGL14.eglMakeCurrent(display, idle, idle, context)
-                GLES20.glDeleteTextures(1, intArrayOf(vectorTexture), 0)
-                vectorTexture = byteTexture(wide, high, bytes)
+                GLES20.glDeleteTextures(1, intArrayOf(vectorTextures[slot]), 0)
+                vectorTextures[slot] = byteTexture(wide, high, bytes)
                 gridWidth = wide
                 gridHeight = high
-                vectorsFor = pair
-                vectorsCut = cut
+                vectorsFor[slot] = pair
+                vectorsCut[slot] = cut
             }
         }
     }
@@ -691,8 +703,9 @@ class VideoFilterStage {
 
     /**
      * One screen refresh while blending: the previous and the current frame mixed by how far the clock
-     * is between them (see [PictureAdjustment.Interpolation.weight]), shown one frame late. Stops once
-     * the current frame shows whole, until the next arrives.
+     * is between them (see [PictureAdjustment.Interpolation.weight]), shown one frame late — with Motion
+     * the two frames before those, whose vectors had a whole frame's time to come in. Stops once the later
+     * frame shows whole, until the next arrives.
      */
     private fun blend(frameTimeNanos: Long) {
         blending = false
@@ -702,17 +715,22 @@ class VideoFilterStage {
         ) {
             return
         }
+        val motion = picture.interpolation.isMotionCompensated && kept == 3
+        // The pair shown: the two before the newest with Motion, otherwise the newest two.
+        val later = if (motion) 1 else 2
+        val current = keptRing[later]
+        val previous = keptRing[if (kept >= 2) later - 1 else later]
         val width = frames[current].width
         val height = frames[current].height
-        val interval = (currentAt - previousAt).takeIf { kept == 2 && it > 0 } ?: 1L
-        val phase = (frameTimeNanos - currentAt).toFloat() / interval
+        val interval = (keptAt[2] - keptAt[1]).takeIf { kept >= 2 && it > 0 } ?: 1L
+        val phase = (frameTimeNanos - keptAt[2]).toFloat() / interval
         var weight = if (kept < 2) 1f else picture.interpolation.weight(phase)
         // Motion along the vectors once they are in for this pair; a cut switches half-way, as FFmpeg's does,
         // and without vectors the earlier frame stays until the later one is due.
-        val motion = picture.interpolation.isMotionCompensated && kept == 2
-        val alongMotion = motion && vectorsFor == currentAt && !vectorsCut && weight > 0f && weight < 1f
-        if (motion && !alongMotion) {
-            val due = if (vectorsFor == currentAt && vectorsCut) 0.5f else 1f
+        val slot = if (vectorsFor[0] == keptAt[1]) 0 else if (vectorsFor[1] == keptAt[1]) 1 else -1
+        val alongMotion = motion && slot >= 0 && !vectorsCut[slot] && weight > 0f && weight < 1f
+        if (picture.interpolation.isMotionCompensated && !alongMotion && kept >= 2) {
+            val due = if (motion && slot >= 0 && vectorsCut[slot]) 0.5f else 1f
             weight = if (phase < due) 0f else 1f
         }
         EGL14.eglMakeCurrent(display, idle, idle, context)
@@ -722,11 +740,11 @@ class VideoFilterStage {
         val program = if (alongMotion) motionProgram else blendProgram
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, frames[if (current == 5) 6 else 5].texture)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, frames[previous].texture)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uPrevious"), 1)
         if (alongMotion) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, vectorTexture)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, vectorTextures[slot])
             GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uVectors"), 2)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, obmcTexture)
@@ -906,6 +924,12 @@ class VideoFilterStage {
 
         /** Where Film's two banks of matched frames start in the frames. */
         private const val FILM_SLOTS = 11
+
+        /** The third kept frame for blending and Motion, after Film's banks. */
+        private const val KEPT_THIRD = FILM_SLOTS + 2 * Telecine.CYCLE
+
+        /** Motion runs two frames behind: a twelfth of a second at 24 frames a second. */
+        private const val MAX_MOTION_LATENCY_MS = 250
 
         /** Above this width Film judges every other column, to keep the work on the processor in bounds. */
         private const val MAX_FULL_FILM_WIDTH = 1024
