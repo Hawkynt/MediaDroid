@@ -98,8 +98,9 @@ class VideoFilterStage {
     private var blending = false
     private val vsync by lazy { android.view.Choreographer.getInstance() }
 
-    // Motion: the kept frames' luma at half size, the search between each pair on a thread of its own, and
-    // its vectors as a texture once in — for the pair whose later frame arrived at vectorsFor.
+    // Motion: the kept frames' luma at half or quarter size (see motionScale), the search between each pair
+    // on a thread of its own, and its vectors as a texture once in — for the pair whose later frame arrived
+    // at vectorsFor.
     private val motionSearch = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val motionLumas = arrayOfNulls<Deinterlacer.Plane>(2)
     private var estimator: MotionInterpolation.Estimator? = null
@@ -110,6 +111,7 @@ class VideoFilterStage {
     private val vectorTextures = IntArray(2)
     private var gridWidth = 0
     private var gridHeight = 0
+    private var gridScale = 2
     private var motionProgram = 0
     private var obmcTexture = 0
     private val onVsync = android.view.Choreographer.FrameCallback { blend(it) }
@@ -707,12 +709,13 @@ class VideoFilterStage {
     }
 
     /**
-     * The newest kept frame (its framebuffer still bound) read back at half size, and the motion search
+     * The newest kept frame's luma read back at the search's size (see [motionScale]), and the motion search
      * between it and the one before started on its own thread; its vectors reach one of the two textures
      * once done — the one not holding the pair on screen — named by the later frame's arrival.
      */
     private fun searchMotion(width: Int, height: Int) {
-        val luma = packedLuma(frames[keptRing[2]], width, height, 2, 2)
+        val scale = motionScale(width)
+        val luma = packedLuma(frames[keptRing[2]], width, height, scale, scale)
         val prev = motionLumas[1]
         motionLumas[0] = prev
         motionLumas[1] = luma
@@ -740,12 +743,19 @@ class VideoFilterStage {
                 GLES20.glDeleteTextures(1, intArrayOf(vectorTextures[slot]), 0)
                 vectorTextures[slot] = byteTexture(wide, high, bytes)
                 gridWidth = wide
+                gridScale = scale
                 gridHeight = high
                 vectorsFor[slot] = pair
                 vectorsCut[slot] = cut
             }
         }
     }
+
+    /**
+     * How much smaller than the picture Motion searches: half up to 1280 pixels wide, a quarter above —
+     * at half size a 1080p search took 12 ms a frame on a desktop, too slow for a phone at 24 a second.
+     */
+    private fun motionScale(width: Int) = if (width > MOTION_HALF_WIDTH) 4 else 2
 
     /** A texture of [width] × [height] RGBA bytes, read texel by texel. */
     private fun byteTexture(width: Int, height: Int, rgba: ByteArray): Int {
@@ -827,7 +837,10 @@ class VideoFilterStage {
             )
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uGrid"), gridWidth.toFloat(), gridHeight.toFloat())
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uHalf"), (width / 2).toFloat(), (height / 2).toFloat())
+            val searchWidth = (width / gridScale).toFloat()
+            val searchHeight = (height / gridScale).toFloat()
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSearch"), searchWidth, searchHeight)
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uScale"), gridScale.toFloat())
         }
         output(mixed, width, height, picture.copy(sharpness = 0f, clarity = 0f))
         EGL14.eglSwapBuffers(display, window)
@@ -1022,6 +1035,9 @@ class VideoFilterStage {
         /** The third kept frame for blending and Motion, after the packed luma. */
         private const val KEPT_THIRD = PACKED_LUMA + 1
 
+        /** The widest picture Motion searches at half size; wider ones at a quarter. */
+        private const val MOTION_HALF_WIDTH = 1280
+
         /** Motion runs two frames behind: a twelfth of a second at 24 frames a second. */
         private const val MAX_MOTION_LATENCY_MS = 250
 
@@ -1173,10 +1189,11 @@ class VideoFilterStage {
         private const val VECTOR_ZERO = 128
 
         // Motion-compensated interpolation, written from the core's MotionInterpolation.compensate (FFmpeg's
-        // minterpolate, bilateral OBMC), whose search ran on the picture at half size: each pixel takes the up to
-        // four 16-pixel blocks (of the half-size grid) whose doubled windows cover it, weighted by uObmc, and
-        // mixes the previous frame uAlpha/1024 along the block's vector with the current frame the rest of the
-        // way back; offsets are whole half-size pixels, twice that at full size. Rows count from the top.
+        // minterpolate, bilateral OBMC), whose search ran on the picture uScale times smaller (uSearch): each
+        // pixel takes the up to four 16-pixel blocks (of that grid) whose doubled windows cover it, weighted by
+        // uObmc, and mixes the previous frame uAlpha/1024 along the block's vector with the current frame the
+        // rest of the way back; offsets are whole pixels of the search's size, uScale times that at full size.
+        // Rows count from the top.
         private const val MOTION = """
             precision highp float;
             uniform sampler2D uTex;
@@ -1185,7 +1202,8 @@ class VideoFilterStage {
             uniform sampler2D uObmc;
             uniform vec2 uSize;
             uniform vec2 uGrid;
-            uniform vec2 uHalf;
+            uniform vec2 uSearch;
+            uniform float uScale;
             uniform float uAlpha;
             varying vec2 vTex;
             vec3 at(sampler2D s, vec2 p) {
@@ -1195,7 +1213,7 @@ class VideoFilterStage {
             vec2 truncate(vec2 v) { return sign(v) * floor(abs(v)); }
             void main() {
                 vec2 pixel = vec2(floor(gl_FragCoord.x), uSize.y - 1.0 - floor(gl_FragCoord.y));
-                vec2 h = floor(pixel / 2.0);
+                vec2 h = floor(pixel / uScale);
                 vec2 first = floor((h + 8.0) / 16.0) - 1.0;
                 vec3 sum = vec3(0.0);
                 float weights = 0.0;
@@ -1205,16 +1223,16 @@ class VideoFilterStage {
                         if (mb.x < 0.0 || mb.y < 0.0 || mb.x >= uGrid.x || mb.y >= uGrid.y) continue;
                         vec2 start = mb * 16.0 - 8.0;
                         vec2 lo = max(start, vec2(0.0));
-                        vec2 hi = min(start + 32.0, uHalf - 1.0);
+                        vec2 hi = min(start + 32.0, uSearch - 1.0);
                         if (h.x < lo.x || h.y < lo.y || h.x >= hi.x || h.y >= hi.y) continue;
                         float w = floor(texture2D(uObmc, (h - start + 0.5) / 32.0).r * 255.0 + 0.5);
                         if (w == 0.0) continue;
                         vec2 v = (floor(texture2D(uVectors, (mb + 0.5) / uGrid).rg * 255.0 + 0.5) - 128.0) * 2.0;
-                        vec2 o1 = clamp(truncate(v * uAlpha / 1024.0), -h, uHalf - 1.0 - h);
-                        vec2 o2 = clamp(truncate(-v * (1024.0 - uAlpha) / 1024.0), -h, uHalf - 1.0 - h);
+                        vec2 o1 = clamp(truncate(v * uAlpha / 1024.0), -h, uSearch - 1.0 - h);
+                        vec2 o2 = clamp(truncate(-v * (1024.0 - uAlpha) / 1024.0), -h, uSearch - 1.0 - h);
                         float w1 = w * (1024.0 - uAlpha);
                         float w2 = w * uAlpha;
-                        sum += w1 * at(uPrevious, pixel + 2.0 * o1) + w2 * at(uTex, pixel + 2.0 * o2);
+                        sum += w1 * at(uPrevious, pixel + uScale * o1) + w2 * at(uTex, pixel + uScale * o2);
                         weights += w1 + w2;
                     }
                 }
