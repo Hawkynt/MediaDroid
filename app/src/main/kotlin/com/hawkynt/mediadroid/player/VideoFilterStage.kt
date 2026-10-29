@@ -91,6 +91,20 @@ class VideoFilterStage {
     private var kept = 0
     private var blending = false
     private val vsync by lazy { android.view.Choreographer.getInstance() }
+
+    // Motion: the kept frames' luma at half size, the search between each pair on a thread of its own, and
+    // its vectors as a texture once in — for the pair whose later frame arrived at vectorsFor.
+    private val motionSearch = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val motionLumas = arrayOfNulls<Deinterlacer.Plane>(2)
+    private var estimator: MotionInterpolation.Estimator? = null
+    private val sceneChange = MotionInterpolation.SceneChange()
+    private var vectorsFor = 0L
+    private var vectorsCut = false
+    private var gridWidth = 0
+    private var gridHeight = 0
+    private var motionProgram = 0
+    private var vectorTexture = 0
+    private var obmcTexture = 0
     private val onVsync = android.view.Choreographer.FrameCallback { blend(it) }
 
     /** Where the decoder draws. */
@@ -168,6 +182,9 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(easuProgram)
             GLES20.glDeleteProgram(rcasProgram)
             GLES20.glDeleteProgram(blendProgram)
+            GLES20.glDeleteProgram(motionProgram)
+            GLES20.glDeleteTextures(2, intArrayOf(vectorTexture, obmcTexture), 0)
+            motionSearch.shutdownNow()
             GLES20.glDeleteProgram(temporalProgram)
             GLES20.glDeleteProgram(weaveProgram)
             handler.removeCallbacksAndMessages(filmToken)
@@ -246,6 +263,11 @@ class VideoFilterStage {
         easuProgram = program(VERTEX, FSR_EASU)
         rcasProgram = program(VERTEX, FSR_RCAS)
         blendProgram = program(VERTEX, BLEND)
+        motionProgram = program(VERTEX, MOTION)
+        vectorTexture = byteTexture(1, 1, ByteArray(4))
+        obmcTexture = byteTexture(
+            32, 32, ByteArray(32 * 32 * 4) { if (it % 4 == 0) MotionInterpolation.obmcWeight(it / 4).toByte() else 0 },
+        )
         temporalProgram = program(VERTEX, TEMPORAL)
         weaveProgram = program(VERTEX, WEAVE)
     }
@@ -597,11 +619,68 @@ class VideoFilterStage {
         previousAt = currentAt
         currentAt = System.nanoTime()
         kept = minOf(kept + 1, 2)
+        if (picture.interpolation.isMotionCompensated) searchMotion(width, height) else motionLumas.fill(null)
         // The picture runs half a frame behind; the sound is told to wait as long.
         if (kept == 2) {
             latencyMs = ((currentAt - previousAt) / 2_000_000L).toInt().coerceIn(0, MAX_LATENCY_MS) +
                 deinterlaceLatencyMs
         }
+    }
+
+    /**
+     * The newest kept frame (its framebuffer still bound) read back at half size, and the motion search
+     * between it and the one before started on its own thread; its vectors reach the texture once done,
+     * if no newer frame came meanwhile.
+     */
+    private fun searchMotion(width: Int, height: Int) {
+        val luma = MotionInterpolation.halve(readLuma(width, height, 1))
+        val prev = motionLumas[1]
+        motionLumas[0] = prev
+        motionLumas[1] = luma
+        if (prev == null || prev.width != luma.width || prev.height != luma.height) return
+        if (luma.width < 2 * MotionInterpolation.BLOCK || luma.height < 2 * MotionInterpolation.BLOCK) return
+        val pair = currentAt
+        motionSearch.execute {
+            val search = estimator?.takeIf { it.width == luma.width && it.height == luma.height }
+                ?: MotionInterpolation.Estimator(luma.width, luma.height).also { estimator = it }
+            search.advance()
+            search.estimate(prev, luma)
+            val cut = sceneChange.check(prev, luma)
+            val bytes = ByteArray(search.blocksWide * search.blocksHigh * 4)
+            for (b in 0 until search.blocksWide * search.blocksHigh) {
+                bytes[b * 4] = (search.vectors[b * 2] + VECTOR_ZERO).toByte()
+                bytes[b * 4 + 1] = (search.vectors[b * 2 + 1] + VECTOR_ZERO).toByte()
+            }
+            val wide = search.blocksWide
+            val high = search.blocksHigh
+            handler.post {
+                if (pair != currentAt) return@post
+                EGL14.eglMakeCurrent(display, idle, idle, context)
+                GLES20.glDeleteTextures(1, intArrayOf(vectorTexture), 0)
+                vectorTexture = byteTexture(wide, high, bytes)
+                gridWidth = wide
+                gridHeight = high
+                vectorsFor = pair
+                vectorsCut = cut
+            }
+        }
+    }
+
+    /** A texture of [width] × [height] RGBA bytes, read texel by texel. */
+    private fun byteTexture(width: Int, height: Int, rgba: ByteArray): Int {
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
+        val buffer = ByteBuffer.allocateDirect(rgba.size).order(ByteOrder.nativeOrder()).put(rgba)
+        buffer.position(0)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, width, height, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buffer,
+        )
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        return ids[0]
     }
 
     private fun startBlending() {
@@ -627,17 +706,41 @@ class VideoFilterStage {
         val height = frames[current].height
         val interval = (currentAt - previousAt).takeIf { kept == 2 && it > 0 } ?: 1L
         val phase = (frameTimeNanos - currentAt).toFloat() / interval
-        val weight = if (kept < 2) 1f else picture.interpolation.weight(phase)
+        var weight = if (kept < 2) 1f else picture.interpolation.weight(phase)
+        // Motion along the vectors once they are in for this pair; a cut switches half-way, as FFmpeg's does,
+        // and without vectors the earlier frame stays until the later one is due.
+        val motion = picture.interpolation.isMotionCompensated && kept == 2
+        val alongMotion = motion && vectorsFor == currentAt && !vectorsCut && weight > 0f && weight < 1f
+        if (motion && !alongMotion) {
+            val due = if (vectorsFor == currentAt && vectorsCut) 0.5f else 1f
+            weight = if (phase < due) 0f else 1f
+        }
         EGL14.eglMakeCurrent(display, idle, idle, context)
         val mixed = frames[7].ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mixed.framebuffer)
         GLES20.glViewport(0, 0, width, height)
-        GLES20.glUseProgram(blendProgram)
+        val program = if (alongMotion) motionProgram else blendProgram
+        GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, frames[if (current == 5) 6 else 5].texture)
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(blendProgram, "uPrevious"), 1)
-        run(blendProgram, GLES20.GL_TEXTURE_2D, frames[current].texture, identity) { p ->
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uPrevious"), 1)
+        if (alongMotion) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, vectorTexture)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uVectors"), 2)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, obmcTexture)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uObmc"), 3)
+        }
+        run(program, GLES20.GL_TEXTURE_2D, frames[current].texture, identity) { p ->
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWeight"), weight)
+            GLES20.glUniform1f(
+                GLES20.glGetUniformLocation(p, "uAlpha"),
+                (weight * MotionInterpolation.ALPHA_MAX).toInt().toFloat(),
+            )
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uGrid"), gridWidth.toFloat(), gridHeight.toFloat())
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uHalf"), (width / 2).toFloat(), (height / 2).toFloat())
         }
         output(mixed, width, height, picture.copy(sharpness = 0f, clarity = 0f))
         EGL14.eglSwapBuffers(display, window)
@@ -945,6 +1048,60 @@ class VideoFilterStage {
                 float y = uSize.y - 1.0 - floor(gl_FragCoord.y);
                 bool other = abs(mod(y, 2.0) - uRows) < 0.5;
                 gl_FragColor = vec4((other ? texture2D(uOther, p) : texture2D(uTex, p)).rgb, 1.0);
+            }
+        """
+
+        /** The vector texture's zero: half-vectors of -32..32 kept as bytes around it. */
+        private const val VECTOR_ZERO = 128
+
+        // Motion-compensated interpolation, written from the core's MotionInterpolation.compensate (FFmpeg's
+        // minterpolate, bilateral OBMC), whose search ran on the picture at half size: each pixel takes the up to
+        // four 16-pixel blocks (of the half-size grid) whose doubled windows cover it, weighted by uObmc, and
+        // mixes the previous frame uAlpha/1024 along the block's vector with the current frame the rest of the
+        // way back; offsets are whole half-size pixels, twice that at full size. Rows count from the top.
+        private const val MOTION = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform sampler2D uPrevious;
+            uniform sampler2D uVectors;
+            uniform sampler2D uObmc;
+            uniform vec2 uSize;
+            uniform vec2 uGrid;
+            uniform vec2 uHalf;
+            uniform float uAlpha;
+            varying vec2 vTex;
+            vec3 at(sampler2D s, vec2 p) {
+                p = clamp(p, vec2(0.0), uSize - 1.0);
+                return texture2D(s, vec2(p.x + 0.5, uSize.y - p.y - 0.5) / uSize).rgb;
+            }
+            vec2 truncate(vec2 v) { return sign(v) * floor(abs(v)); }
+            void main() {
+                vec2 pixel = vec2(floor(gl_FragCoord.x), uSize.y - 1.0 - floor(gl_FragCoord.y));
+                vec2 h = floor(pixel / 2.0);
+                vec2 first = floor((h + 8.0) / 16.0) - 1.0;
+                vec3 sum = vec3(0.0);
+                float weights = 0.0;
+                for (int j = 0; j < 2; j++) {
+                    for (int i = 0; i < 2; i++) {
+                        vec2 mb = first + vec2(float(i), float(j));
+                        if (mb.x < 0.0 || mb.y < 0.0 || mb.x >= uGrid.x || mb.y >= uGrid.y) continue;
+                        vec2 start = mb * 16.0 - 8.0;
+                        vec2 lo = max(start, vec2(0.0));
+                        vec2 hi = min(start + 32.0, uHalf - 1.0);
+                        if (h.x < lo.x || h.y < lo.y || h.x >= hi.x || h.y >= hi.y) continue;
+                        float w = floor(texture2D(uObmc, (h - start + 0.5) / 32.0).r * 255.0 + 0.5);
+                        if (w == 0.0) continue;
+                        vec2 v = (floor(texture2D(uVectors, (mb + 0.5) / uGrid).rg * 255.0 + 0.5) - 128.0) * 2.0;
+                        vec2 o1 = clamp(truncate(v * uAlpha / 1024.0), -h, uHalf - 1.0 - h);
+                        vec2 o2 = clamp(truncate(-v * (1024.0 - uAlpha) / 1024.0), -h, uHalf - 1.0 - h);
+                        float w1 = w * (1024.0 - uAlpha);
+                        float w2 = w * uAlpha;
+                        sum += w1 * at(uPrevious, pixel + 2.0 * o1) + w2 * at(uTex, pixel + 2.0 * o2);
+                        weights += w1 + w2;
+                    }
+                }
+                vec3 c = weights > 0.0 ? sum / weights : mix(at(uPrevious, pixel), at(uTex, pixel), uAlpha / 1024.0);
+                gl_FragColor = vec4(c, 1.0);
             }
         """
 
