@@ -144,6 +144,8 @@ class FfmpegExtractor(
                 }
                 .build()
             tracks[stream.index] = output.track(stream.index, type).also { it.format(format) }
+            val kind = if (type == C.TRACK_TYPE_VIDEO) "video" else "audio"
+            stream.rawFormat?.let { raw -> uri?.let { DemuxerLog.recordFormat(it.toString(), kind, raw) } }
         }
         output.endTracks()
         output.seekMap(seekMap(demuxer.durationUs(), inputLength))

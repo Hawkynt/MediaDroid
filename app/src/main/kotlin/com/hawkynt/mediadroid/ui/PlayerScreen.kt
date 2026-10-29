@@ -1186,7 +1186,7 @@ fun PlayerScreen(
                             store.saveAudioDelay(audioOutput.key, audioDelayMs)
                         }
                         androidx.compose.material3.OutlinedButton(onClick = { nudge(-1) }) {
-                            Text("−", fontSize = 20.sp)
+                            Text("Sooner", fontSize = 16.sp)
                         }
                         Text(
                             if (audioDelayMs == 0) "in sync" else "%+d ms".format(audioDelayMs),
@@ -1194,7 +1194,7 @@ fun PlayerScreen(
                             modifier = Modifier.widthIn(min = 90.dp),
                         )
                         androidx.compose.material3.OutlinedButton(onClick = { nudge(1) }) {
-                            Text("+", fontSize = 20.sp)
+                            Text("Later", fontSize = 16.sp)
                         }
                         if (audioDelayMs != 0) {
                             androidx.compose.material3.TextButton(
@@ -1205,7 +1205,9 @@ fun PlayerScreen(
                         }
                     }
                     Text(
-                        "+ when the sound comes too early, − when it comes too late. Kept for this output.",
+                        PlaybackMath.syncText("sound", audioDelayMs).replaceFirstChar { it.uppercase() } +
+                            ". Later when you hear a word before the lips move, sooner when after. " +
+                            "Kept for this output.",
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1223,7 +1225,7 @@ fun PlayerScreen(
                         androidx.compose.material3.OutlinedButton(
                             onClick = { changeLook(subtitleLook.nudgeDelay(-1)) },
                         ) {
-                            Text("−", fontSize = 20.sp)
+                            Text("Sooner", fontSize = 16.sp)
                         }
                         Text(
                             if (subtitleLook.delayMs == 0) {
@@ -1237,9 +1239,15 @@ fun PlayerScreen(
                         androidx.compose.material3.OutlinedButton(
                             onClick = { changeLook(subtitleLook.nudgeDelay(1)) },
                         ) {
-                            Text("+", fontSize = 20.sp)
+                            Text("Later", fontSize = 16.sp)
                         }
                     }
+                    Text(
+                        PlaybackMath.syncText("subtitles", subtitleLook.delayMs).replaceFirstChar { it.uppercase() } +
+                            ". Later when a line shows before it is spoken, sooner when after.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                     androidx.compose.foundation.layout.FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),

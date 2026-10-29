@@ -136,6 +136,22 @@ object PlaybackMath {
         if (remainingMs <= 0) 0 else ((remainingMs + 59_999) / 60_000).toInt()
 
     /**
+     * A sound or subtitle delay in words, relative to the picture: positive is after it, negative before
+     * it — `sound 150 ms after the picture`, `subtitles 2 s before the picture`. Under a second in
+     * milliseconds, from a second on in seconds.
+     */
+    fun syncText(what: String, delayMs: Int): String {
+        if (delayMs == 0) return "in sync with the picture"
+        val amount = kotlin.math.abs(delayMs)
+        val shown = if (amount < 1000) {
+            "$amount ms"
+        } else {
+            String.format(java.util.Locale.ROOT, "%.1f", amount / 1000f).removeSuffix(".0") + " s"
+        }
+        return "$what $shown ${if (delayMs > 0) "after" else "before"} the picture"
+    }
+
+    /**
      * The pixel shape to show a video with: what the decoder [reported], unless it reported square pixels
      * while the container [declared] another shape — software decoders report every picture as 1:1.
      */

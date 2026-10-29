@@ -44,6 +44,7 @@ public final class DemuxCheck {
         for (FfmpegDemuxer.Stream s : streams) {
           System.out.println(
               "  #" + s.index + " kind=" + s.kind + " codec=" + s.codecName + " decoder=" + s.decoderName
+                  + " format=" + s.rawFormat
                   + " " + s.width + "x" + s.height + " " + s.sampleRate + "Hz " + s.channels + "ch"
                   + " params=" + s.parameters.length + "B"
                   + (s.pixelAspectRatio != 1f ? String.format(" pixel=%.4f", s.pixelAspectRatio) : ""));
