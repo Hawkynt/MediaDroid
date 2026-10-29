@@ -22,6 +22,10 @@ object PlayerWindow {
      */
     var elsewhere = false
 
+    /** The refresh rate of the second screen the video is on, or null while it is on the phone. */
+    @Volatile
+    var displayRefreshHz: Float? = null
+
     /** The video's shape for the small window, or null while unknown. */
     var aspect: Rational? = null
 
