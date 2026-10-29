@@ -83,7 +83,7 @@ class VideoFilterStage {
     private var frameIntervalNs = 0L
     private var shownAt = 0L
     private var deinterlaceLatencyMs = 0
-    private val secondField = Runnable { drawSecondField() }
+    private val secondField = Runnable { busy { drawSecondField() } }
 
     // Which field comes first, told from the pictures (see FieldOrder): the first frames after a start or
     // a seek are read back as luma — every fourth column, rows from the top — and judged in threes.
@@ -135,7 +135,7 @@ class VideoFilterStage {
     private var searchScale: SearchScale? = null
     private var motionProgram = 0
     private var obmcTexture = 0
-    private val onVsync = android.view.Choreographer.FrameCallback { blend(it) }
+    private val onVsync = android.view.Choreographer.FrameCallback { busy { blend(it) } }
 
     /** Where the decoder draws. */
     lateinit var inputSurface: Surface
@@ -144,6 +144,19 @@ class VideoFilterStage {
     /** Where the stage tells how playback goes, while the statistics overlay is on; null otherwise. */
     @Volatile
     var statistics: PlaybackStatistics? = null
+
+    // How long this thread has worked since the last decoded frame, for the statistics.
+    private var busyNanos = 0L
+
+    /** Runs [work] on this thread, counting its time towards the frame's. */
+    private inline fun busy(work: () -> Unit) {
+        val start = System.nanoTime()
+        try {
+            work()
+        } finally {
+            busyNanos += System.nanoTime() - start
+        }
+    }
 
     // The last blend drawn, so a refresh that changes nothing does not count as a new picture.
     private var lastBlend = -1L
@@ -312,7 +325,7 @@ class VideoFilterStage {
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         surfaceTexture = SurfaceTexture(oesTexture)
-        surfaceTexture.setOnFrameAvailableListener({ draw(redraw = false) }, handler)
+        surfaceTexture.setOnFrameAvailableListener({ busy { draw(redraw = false) } }, handler)
         inputSurface = Surface(surfaceTexture)
 
         copyProgram = program(VERTEX, COPY)
@@ -352,7 +365,12 @@ class VideoFilterStage {
             surfaceTexture.updateTexImage()
             surfaceTexture.getTransformMatrix(texMatrix)
             hasFrame = true
-            statistics?.frameArrived(System.nanoTime())
+            statistics?.let { stats ->
+                stats.frameArrived(System.nanoTime())
+                // The thread's work since the frame before, this frame's own included as it ends below.
+                stats.graphics(busyNanos)
+            }
+            busyNanos = 0L
             handler.removeCallbacks(secondField)
         }
         if (window == EGL14.EGL_NO_SURFACE) return
@@ -539,7 +557,7 @@ class VideoFilterStage {
             val verdict = FilmVerdict(
                 matched, cycle, fieldMatch.field, prev, cur, next, generation, width, height, interval,
             )
-            handler.post { applyFilm(verdict) }
+            handler.post { busy { applyFilm(verdict) } }
             verdict
         }
     }
@@ -615,7 +633,7 @@ class VideoFilterStage {
         val stepNs = verdict.intervalNs * Telecine.CYCLE / shown
         val start = android.os.SystemClock.uptimeMillis()
         (0 until Telecine.CYCLE).filter { it != cycle.drop }.forEachIndexed { j, position ->
-            handler.postAtTime({ showFilm(base + position) }, filmToken, start + j * stepNs / 1_000_000L)
+            handler.postAtTime({ busy { showFilm(base + position) } }, filmToken, start + j * stepNs / 1_000_000L)
         }
         latencyMs = (verdict.intervalNs * Telecine.CYCLE / 1_000_000L).toInt().coerceIn(0, MAX_FILM_LATENCY_MS)
         filmBank = 1 - filmBank
@@ -856,24 +874,26 @@ class VideoFilterStage {
             val wide = search.blocksWide
             val high = search.blocksHigh
             handler.post {
-                // Only for the pair on screen or the next one; anything older is past, and the search too slow.
-                val late = pair != keptAt[1] && pair != keptAt[2]
-                if (pace === searchScale) pace.report(took, keptAt[2] - keptAt[1], late)
-                statistics?.let { stats ->
-                    stats.work(took)
-                    stats.searchScale(scale)
-                    if (late) stats.late()
+                busy {
+                    // Only for the pair on screen or the next one; anything older is past, and the search too slow.
+                    val late = pair != keptAt[1] && pair != keptAt[2]
+                    if (pace === searchScale) pace.report(took, keptAt[2] - keptAt[1], late)
+                    statistics?.let { stats ->
+                        stats.work(took)
+                        stats.searchScale(scale)
+                        if (late) stats.late()
+                    }
+                    if (late) return@post
+                    val slot = if (vectorsFor[0] == keptAt[1]) 1 else 0
+                    EGL14.eglMakeCurrent(display, idle, idle, context)
+                    GLES20.glDeleteTextures(1, intArrayOf(vectorTextures[slot]), 0)
+                    vectorTextures[slot] = byteTexture(wide, high, bytes)
+                    gridWidth[slot] = wide
+                    gridScale[slot] = scale
+                    gridHeight[slot] = high
+                    vectorsFor[slot] = pair
+                    vectorsCut[slot] = cut
                 }
-                if (late) return@post
-                val slot = if (vectorsFor[0] == keptAt[1]) 1 else 0
-                EGL14.eglMakeCurrent(display, idle, idle, context)
-                GLES20.glDeleteTextures(1, intArrayOf(vectorTextures[slot]), 0)
-                vectorTextures[slot] = byteTexture(wide, high, bytes)
-                gridWidth[slot] = wide
-                gridScale[slot] = scale
-                gridHeight[slot] = high
-                vectorsFor[slot] = pair
-                vectorsCut[slot] = cut
             }
         }
     }

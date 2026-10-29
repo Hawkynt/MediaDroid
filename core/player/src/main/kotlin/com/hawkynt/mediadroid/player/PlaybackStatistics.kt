@@ -12,6 +12,8 @@ import kotlin.math.sqrt
  * - **Jitter**: how far the frame times spread around their mean (their standard deviation), in ms.
  * - **Judder**: how unevenly pictures stay on screen — the standard deviation of the times on screen
  *   against their mean, in percent; 0 is perfectly even.
+ * - **Graphics thread**: how long the picture filters' thread was busy per decoded frame; over the time
+ *   between frames, it holds the decoder back.
  */
 class PlaybackStatistics(private val capacity: Int = 240) {
 
@@ -20,6 +22,7 @@ class PlaybackStatistics(private val capacity: Int = 240) {
         val frameTimesMs: FloatArray,
         val shownTimesMs: FloatArray,
         val workMs: FloatArray,
+        val graphicsMs: FloatArray,
         val scales: IntArray,
         val late: Int,
         val dropped: Int,
@@ -50,6 +53,7 @@ class PlaybackStatistics(private val capacity: Int = 240) {
     private val frameTimes = Ring(capacity)
     private val shownTimes = Ring(capacity)
     private val work = Ring(capacity)
+    private val graphics = Ring(capacity)
     private val scales = Ring(capacity)
     private var lastArrival: Long? = null
     private var lastShown: Long? = null
@@ -74,6 +78,10 @@ class PlaybackStatistics(private val capacity: Int = 240) {
     @Synchronized
     fun work(nanos: Long) = work.add(nanos / 1e6f)
 
+    /** The picture filters' thread was busy [nanos] for one decoded frame. */
+    @Synchronized
+    fun graphics(nanos: Long) = graphics.add(nanos / 1e6f)
+
     /** Motion searched at [scale]. */
     @Synchronized
     fun searchScale(scale: Int) = scales.add(scale.toFloat())
@@ -96,6 +104,7 @@ class PlaybackStatistics(private val capacity: Int = 240) {
         frameTimes.clear()
         shownTimes.clear()
         work.clear()
+        graphics.clear()
         scales.clear()
         lastArrival = null
         lastShown = null
@@ -108,6 +117,7 @@ class PlaybackStatistics(private val capacity: Int = 240) {
         frameTimes.toArray(),
         shownTimes.toArray(),
         work.toArray(),
+        graphics.toArray(),
         scales.toArray().map { it.toInt() }.toIntArray(),
         late,
         dropped,

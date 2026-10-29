@@ -53,7 +53,8 @@ private val Critical = Color(0xFFD03B3B)
 /**
  * The statistics overlay (Info › Advanced › Statistics): how playback has been going over the last few
  * seconds — frame times from the decoder against the times pictures stay on screen, jitter and judder,
- * the processor's work per frame against its budget, and Motion's search scale. Redrawn four times a
+ * the graphics thread's work per frame against the time between frames, the processor's work per frame
+ * against its budget, and Motion's search scale. Redrawn four times a
  * second from [statistics]; it lets every touch through to the player below.
  */
 @Composable
@@ -95,6 +96,11 @@ fun StatisticsOverlay(statistics: PlaybackStatistics, modifier: Modifier = Modif
         Legend(listOf("decoder" to Series1, "screen" to Series2))
         LineChart(listOf(s.frameTimesMs to Series1, s.shownTimesMs to Series2), guide = null)
 
+        if (s.graphicsMs.isNotEmpty()) {
+            val between = if (s.frameTimesMs.isNotEmpty()) s.frameTimesMs.average().toFloat() else null
+            Text("Graphics thread per frame, ms (dashed: the time between frames)", color = MutedInk, fontSize = 11.sp)
+            LineChart(listOf(s.graphicsMs to Series1), guide = between)
+        }
         if (s.workMs.isNotEmpty()) {
             val budget = if (s.frameTimesMs.isNotEmpty()) s.frameTimesMs.average().toFloat() / 2f else null
             Text("Processor per frame, ms (dashed: the search's budget)", color = MutedInk, fontSize = 11.sp)

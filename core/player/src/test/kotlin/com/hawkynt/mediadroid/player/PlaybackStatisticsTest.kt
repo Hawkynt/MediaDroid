@@ -82,4 +82,12 @@ class PlaybackStatisticsTest {
         assertEquals(0, s.late)
         assertEquals(0f, s.framesPerSecond, 0f)
     }
+
+    @Test
+    fun `the graphics thread's time per frame is kept beside the processor's`() {
+        val stats = PlaybackStatistics()
+        stats.graphics(12 * ms)
+        stats.graphics(30 * ms)
+        assertArrayEquals(floatArrayOf(12f, 30f), stats.snapshot().graphicsMs, 1e-6f)
+    }
 }
