@@ -282,7 +282,8 @@ fun PlayerScreen(
                                 ),
                             )
                             .build(),
-                        { audioDelayMs },
+                        // Blended frames run a little behind; the sound waits as long (see VideoFilterStage).
+                        { audioDelayMs + com.hawkynt.mediadroid.player.VideoFilterStage.latencyMs },
                     )
                 }
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
