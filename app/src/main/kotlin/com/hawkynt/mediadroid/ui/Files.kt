@@ -92,12 +92,16 @@ fun FilesScreen(
 
     fun play(videos: List<FileEntry>, start: Int) {
         val queue = videos.map {
+            // A title or description the file carries stands in where no NFO gave one.
+            val tags = com.hawkynt.mediadroid.data.ContainerTags.peek(it.path)
+            val title = if (it.title == it.name.substringBeforeLast('.')) tags?.title ?: it.title else it.title
             Playable(
-                title = it.title,
-                subtitle = it.name.takeIf { n -> n != it.title },
+                title = title,
+                subtitle = it.name.takeIf { n -> n != title },
                 videoPath = it.path,
                 posterPath = it.picturePath,
                 nfoWatched = it.nfoWatched,
+                plot = it.plot ?: tags?.description,
             )
         }
         if (queue.isNotEmpty()) onPlay(queue, start)
@@ -255,7 +259,30 @@ private fun VideoRow(video: FileEntry, store: StateStore, onClick: () -> Unit) {
     }
     val watched = store.isWatched(video.path, video.nfoWatched)
     val progress = store.resumeFor(video.path)?.let { progressOf(it.positionMs, it.durationMs) }?.takeIf { it > 0f }
-    Row(modifier = rowModifier(onClick).padding(8.dp)) {
+    // Without an NFO, the file's own tags name and describe it.
+    val stem = video.name.substringBeforeLast('.')
+    val untold = video.title == stem || video.plot == null
+    val tags by produceState(com.hawkynt.mediadroid.data.ContainerTags.peek(video.path), video.path, untold) {
+        if (untold) value = com.hawkynt.mediadroid.data.ContainerTags.of(context, video.path)
+    }
+    val title = if (video.title == stem) tags?.title ?: video.title else video.title
+    val plot = video.plot ?: tags?.description
+    var about by remember { mutableStateOf(false) }
+    if (about) {
+        AboutDialog(
+            About(
+                title = title,
+                line = video.name,
+                plot = plot,
+                source = when {
+                    video.plot != null -> "From the NFO"
+                    plot != null -> "From the file's own tags"
+                    else -> null
+                },
+            ),
+        ) { about = false }
+    }
+    Row(modifier = rowModifier(onClick, onLongClick = { about = true }).padding(8.dp)) {
         Box(
             modifier = Modifier
                 .width(128.dp)
@@ -270,14 +297,14 @@ private fun VideoRow(video: FileEntry, store: StateStore, onClick: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
-                video.title,
+                title,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            // The real file name stays in sight when an NFO gave the video a title.
-            if (video.title != video.name.substringBeforeLast('.')) {
+            // The real file name stays in sight when an NFO or the file's tags gave the video a title.
+            if (title != stem) {
                 Text(
                     video.name,
                     fontSize = 13.sp,
@@ -303,13 +330,13 @@ private fun VideoRow(video: FileEntry, store: StateStore, onClick: () -> Unit) {
 }
 
 @Composable
-private fun rowModifier(onClick: () -> Unit): Modifier {
+private fun rowModifier(onClick: () -> Unit, onLongClick: (() -> Unit)? = null): Modifier {
     val shape = RoundedCornerShape(10.dp)
     return Modifier
         .fillMaxWidth()
         .clip(shape)
         .background(MaterialTheme.colorScheme.surfaceVariant)
-        .focusClickable(shape = shape, onClick = onClick)
+        .focusClickable(shape = shape, onLongClick = onLongClick, onClick = onClick)
 }
 
 /** `1:42:05` or `42:05`. */

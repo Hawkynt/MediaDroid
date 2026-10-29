@@ -736,6 +736,9 @@ fun PosterCard(
 ) {
     val shape = RoundedCornerShape(10.dp)
     val away = LocalAway.current(item)
+    // A long press tells what it is about, without leaving the wall.
+    var about by remember { mutableStateOf(false) }
+    if (about) AboutDialog(aboutOf(item)) { about = false }
     Column(modifier = modifier.alpha(if (away) AWAY_ALPHA else 1f)) {
         Box(
             modifier = Modifier
@@ -743,7 +746,7 @@ fun PosterCard(
                 .aspectRatio(2f / 3f)
                 .clip(shape)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                .focusClickable(shape = shape, onClick = onClick),
+                .focusClickable(shape = shape, onLongClick = { about = true }, onClick = onClick),
         ) {
             PosterImage(
                 item.posterPath,

@@ -25,6 +25,23 @@ class ContainerTitleTest {
     fun mp4ItunesNameAtom() = assertEquals("Das große Abenteuer", ContainerTitle.read(fixture("titled.mp4")))
 
     @Test
+    fun mp4DescriptionPrefersTheLongOne() {
+        assertEquals(
+            ContainerTitle.Tags("Heat", "A thief and a detective, at length."),
+            ContainerTitle.tags(LocalFile(fixture("described.mp4"))),
+        )
+        assertEquals(
+            ContainerTitle.Tags("Heat", "Only the short one."),
+            ContainerTitle.tags(LocalFile(fixture("short-described.mp4"))),
+        )
+        assertEquals(
+            ContainerTitle.Tags("Coco - Lebendiger als das Leben!", null),
+            ContainerTitle.tags(LocalFile(fixture("titled.mkv"))),
+        )
+        assertEquals(ContainerTitle.Tags(null, null), ContainerTitle.tags(LocalFile(fixture("untitled.mkv"))))
+    }
+
+    @Test
     fun anEmptyOrMissingTitleIsNone() {
         assertNull(ContainerTitle.read(fixture("untitled.mkv")))
         assertNull(ContainerTitle.read(File(folder.root, "missing.mkv")))
