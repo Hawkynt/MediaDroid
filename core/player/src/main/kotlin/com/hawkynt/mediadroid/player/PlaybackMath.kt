@@ -180,6 +180,24 @@ object PlaybackMath {
     fun nudgeAudioDelay(currentMs: Int, steps: Int): Int =
         (currentMs + steps * AUDIO_DELAY_STEP_MS).coerceIn(-AUDIO_DELAY_LIMIT_MS, AUDIO_DELAY_LIMIT_MS)
 
+    /** The slowest and fastest speed the player offers. */
+    const val SPEED_MIN = 0.2f
+    const val SPEED_MAX = 5f
+
+    /**
+     * The speed at slider [position] (0..1): logarithmic from [SPEED_MIN] to [SPEED_MAX], so 1× sits in
+     * the middle and the speeds around it get the most travel, snapped to steps of 0.05×.
+     */
+    fun speedAt(position: Float): Float {
+        val p = position.coerceIn(0f, 1f)
+        val speed = SPEED_MIN * (SPEED_MAX / SPEED_MIN).pow(p)
+        return (kotlin.math.round(speed * 20f) / 20f).coerceIn(SPEED_MIN, SPEED_MAX)
+    }
+
+    /** The slider position (0..1) showing [speed]. */
+    fun speedPosition(speed: Float): Float =
+        (kotlin.math.ln(speed.coerceIn(SPEED_MIN, SPEED_MAX) / SPEED_MIN) / kotlin.math.ln(SPEED_MAX / SPEED_MIN))
+
     /** Which way judder reduction may change the speed. */
     enum class JudderDirection(val label: String) {
         NEAREST("Nearest"),
