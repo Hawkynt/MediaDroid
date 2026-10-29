@@ -113,6 +113,19 @@ fun PictureSliders(
                 )
             }
         }
+        Text("Smooth motion (frame blending)", fontSize = 16.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PictureAdjustment.Interpolation.entries.forEach { strength ->
+                FilterChip(
+                    selected = picture.interpolation == strength,
+                    onClick = {
+                        onChange(picture.copy(interpolation = strength))
+                        onDone()
+                    },
+                    label = { Text(strength.label, fontSize = 15.sp) },
+                )
+            }
+        }
         Text(
             "Filters run on the graphics chip; HDR videos skip them.",
             fontSize = 13.sp,
