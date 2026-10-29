@@ -29,7 +29,8 @@ class PictureAdjustmentTest {
         assertEquals(true, sharp.hasFilters)
         assertEquals(true, sharp.isColorNeutral)
         assertEquals(false, sharp.isNeutral)
-        assertEquals(true, PictureAdjustment(denoise = 2).hasFilters)
+        assertEquals(true, PictureAdjustment(noise = -0.5f).hasFilters)
+        assertEquals(true, PictureAdjustment(noise = 0.3f).hasFilters)
         assertEquals(true, PictureAdjustment(clarity = 0.2f).hasFilters)
         assertEquals(true, PictureAdjustment(deinterlace = PictureAdjustment.Deinterlace.AUTO).hasFilters)
         assertEquals(PictureAdjustment.Deinterlace.OFF, PictureAdjustment.Neutral.deinterlace)
@@ -61,6 +62,24 @@ class PictureAdjustmentTest {
         // Outside the interval, the frames themselves.
         assertEquals(0f, high.weight(-1f), 0f)
         assertEquals(1f, high.weight(2f), 0f)
+    }
+
+    @Test
+    fun `one noise slider removes noise to the left and adds grain to the right`() {
+        val clean = PictureAdjustment(noise = -1f)
+        assertEquals(2f, clean.denoiseKernel()!!.radius, 0f)
+        assertEquals(0.16f, clean.denoiseKernel()!!.similarity, 1e-6f)
+        val light = PictureAdjustment(noise = -0.2f).denoiseKernel()!!
+        assertEquals(1f, light.radius, 0f)
+        assertEquals(0.064f, light.similarity, 1e-6f)
+        assertEquals(0f, clean.grain, 0f)
+        assertEquals(null, PictureAdjustment(noise = 0.5f).denoiseKernel())
+        assertEquals(0.04f, PictureAdjustment(noise = 0.5f).grain, 1e-6f)
+        assertEquals(null, PictureAdjustment.Neutral.denoiseKernel())
+        // The three old denoise steps land on the slider's left third, two thirds and end.
+        assertEquals(-1f / 3f, PictureAdjustment.noiseOfLevel(1), 1e-6f)
+        assertEquals(-1f, PictureAdjustment.noiseOfLevel(3), 1e-6f)
+        assertEquals(0f, PictureAdjustment.noiseOfLevel(0), 0f)
     }
 
     @Test

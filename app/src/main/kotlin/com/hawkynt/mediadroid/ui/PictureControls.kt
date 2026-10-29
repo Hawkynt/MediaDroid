@@ -26,7 +26,7 @@ import com.hawkynt.mediadroid.player.PictureControl
 
 /**
  * The four picture sliders, neutral in the middle, then the filters: sharpness and clarity from off
- * upwards, and denoise in steps. [onChange] fires while dragging so the picture follows live; [onDone]
+ * upwards, and noise from removed to added grain. [onChange] fires while dragging so the picture follows live; [onDone]
  * when a slider is let go or a step is picked, the moment to save.
  */
 @Composable
@@ -74,19 +74,25 @@ fun PictureSliders(
             }
             Slider(value = value, onValueChange = { onChange(set(it)) }, onValueChangeFinished = onDone)
         }
-        Text("Denoise", fontSize = 16.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("Off", "Low", "Medium", "High").forEachIndexed { level, label ->
-                FilterChip(
-                    selected = picture.denoise == level,
-                    onClick = {
-                        onChange(picture.copy(denoise = level))
-                        onDone()
-                    },
-                    label = { Text(label, fontSize = 15.sp) },
-                )
-            }
+        // One slider for noise: left removes it, right adds film grain, the middle leaves it alone.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("Noise", fontSize = 16.sp, modifier = Modifier.weight(1f))
+            Text(
+                when {
+                    picture.noise < 0f -> "removed %.0f %%".format(-picture.noise * 100)
+                    picture.noise > 0f -> "grain %.0f %%".format(picture.noise * 100)
+                    else -> "as it is"
+                },
+                fontSize = 15.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
+        Slider(
+            value = picture.noise,
+            onValueChange = { onChange(picture.copy(noise = if (kotlin.math.abs(it) < 0.03f) 0f else it)) },
+            valueRange = -1f..1f,
+            onValueChangeFinished = onDone,
+        )
         Text("Deinterlace", fontSize = 16.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PictureAdjustment.Deinterlace.entries.forEach { mode ->
