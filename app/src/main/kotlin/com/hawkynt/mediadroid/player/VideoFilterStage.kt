@@ -123,6 +123,13 @@ class VideoFilterStage {
     lateinit var inputSurface: Surface
         private set
 
+    /** Where the stage tells how playback goes, while the statistics overlay is on; null otherwise. */
+    @Volatile
+    var statistics: PlaybackStatistics? = null
+
+    // The last blend drawn, so a refresh that changes nothing does not count as a new picture.
+    private var lastBlend = -1L
+
     /** The filters to run; read on every frame. */
     @Volatile
     var filters: PictureAdjustment = PictureAdjustment.Neutral
@@ -302,6 +309,7 @@ class VideoFilterStage {
             surfaceTexture.updateTexImage()
             surfaceTexture.getTransformMatrix(texMatrix)
             hasFrame = true
+            statistics?.frameArrived(System.nanoTime())
             handler.removeCallbacks(secondField)
         }
         if (window == EGL14.EGL_NO_SURFACE) return
@@ -323,6 +331,7 @@ class VideoFilterStage {
         output(source, width, height, picture)
         if (!redraw) EGLExt.eglPresentationTimeANDROID(display, window, shownAt)
         EGL14.eglSwapBuffers(display, window)
+        if (!redraw) statistics?.pictureShown(System.nanoTime())
         // At field rate the other field follows half a frame later, as its own picture.
         if (!redraw && picture.isFieldRate && historyCount >= 2) {
             val halfMs = frameIntervalNs / 2_000_000L
@@ -339,6 +348,7 @@ class VideoFilterStage {
         val source = filtered(picture, width, height, fresh = false, secondField = true)
         output(source, width, height, picture)
         EGL14.eglSwapBuffers(display, window)
+        statistics?.pictureShown(System.nanoTime())
     }
 
     /**
@@ -476,9 +486,15 @@ class VideoFilterStage {
                 fieldMatch = Telecine.FieldMatch(topFirst)
                 if (afresh) decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
             }
+            val started = System.nanoTime()
             val (matched, woven) = fieldMatch.add(prevLuma, curLuma, luma)
+            val cycle = decimate.add(woven)
+            statistics?.let { stats ->
+                stats.work(System.nanoTime() - started)
+                if (cycle != null && cycle.drop >= 0) stats.dropped()
+            }
             val verdict = FilmVerdict(
-                matched, decimate.add(woven), fieldMatch.field, prev, cur, next, generation, width, height, interval,
+                matched, cycle, fieldMatch.field, prev, cur, next, generation, width, height, interval,
             )
             handler.post { applyFilm(verdict) }
             verdict
@@ -575,6 +591,7 @@ class VideoFilterStage {
         val source = denoised(picture, frame, frame.width, frame.height)
         output(source, frame.width, frame.height, picture)
         EGL14.eglSwapBuffers(display, window)
+        statistics?.pictureShown(System.nanoTime())
     }
 
     /**
@@ -746,6 +763,11 @@ class VideoFilterStage {
                 // Only for the pair on screen or the next one; anything older is past, and the search too slow.
                 val late = pair != keptAt[1] && pair != keptAt[2]
                 if (pace === searchScale) pace.report(took, keptAt[2] - keptAt[1], late)
+                statistics?.let { stats ->
+                    stats.work(took)
+                    stats.searchScale(scale)
+                    if (late) stats.late()
+                }
                 if (late) return@post
                 val slot = if (vectorsFor[0] == keptAt[1]) 1 else 0
                 EGL14.eglMakeCurrent(display, idle, idle, context)
@@ -848,6 +870,12 @@ class VideoFilterStage {
         }
         output(mixed, width, height, picture.copy(sharpness = 0f, clarity = 0f))
         EGL14.eglSwapBuffers(display, window)
+        // A new picture when the pair or the mix changed.
+        val blendKey = keptAt[later] * 4099 + (weight * 1024).toLong()
+        if (blendKey != lastBlend) {
+            lastBlend = blendKey
+            statistics?.pictureShown(System.nanoTime())
+        }
         if (weight < 1f) startBlending()
     }
 

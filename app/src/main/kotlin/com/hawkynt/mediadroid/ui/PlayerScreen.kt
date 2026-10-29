@@ -356,6 +356,9 @@ fun PlayerScreen(
     var audioDecoder by remember { mutableStateOf<String?>(null) }
     var audioTrack by remember { mutableStateOf<androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig?>(null) }
     var infoOpen by remember { mutableStateOf(false) }
+    // The statistics over the picture (Info › Advanced), for this session only.
+    var statisticsShown by remember { mutableStateOf(false) }
+    val statistics = remember { com.hawkynt.mediadroid.player.PlaybackStatistics() }
     DisposableEffect(player) {
         val analytics = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
             override fun onVideoDecoderInitialized(
@@ -982,6 +985,7 @@ fun PlayerScreen(
         val stage = filterStage[0]
         if (wanted) {
             val active = stage ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { filterStage[0] = it }
+            active.statistics = if (statisticsShown) statistics else null
             active.filters = shownPicture
             active.setVideoSize(player.videoSize.width, player.videoSize.height)
             if (routedTo[0] !== target) {
@@ -1008,6 +1012,18 @@ fun PlayerScreen(
         }
     }
     androidx.compose.runtime.SideEffect { filterStage[0]?.filters = shownPicture }
+    // Without the filters' stage, the statistics take each frame as the player releases it to the screen.
+    DisposableEffect(player, statisticsShown) {
+        val listener = androidx.media3.exoplayer.video.VideoFrameMetadataListener { _, releaseTimeNs, _, _ ->
+            if (routedTo[0] == null) {
+                statistics.frameArrived(releaseTimeNs)
+                statistics.pictureShown(releaseTimeNs)
+            }
+        }
+        if (statisticsShown) player.setVideoFrameMetadataListener(listener)
+        onDispose { if (statisticsShown) player.clearVideoFrameMetadataListener(listener) }
+    }
+    LaunchedEffect(index) { statistics.clear() }
     // The loop asks the latest composition's routing, with the picture and screens as they are now.
     val routeNow by androidx.compose.runtime.rememberUpdatedState({ routeVideo() })
     LaunchedEffect(player) {
@@ -1550,6 +1566,9 @@ fun PlayerScreen(
                 modifier = Modifier.align(Alignment.CenterEnd).then(safeArea),
             )
         }
+        if (statisticsShown) {
+            StatisticsOverlay(statistics, Modifier.align(Alignment.TopStart).then(safeArea).padding(8.dp))
+        }
         if (locked) {
             LockOverlay(stamp = lockHintStamp, onTouch = { lockHintStamp++ }, onUnlock = { locked = false })
         }
@@ -1587,6 +1606,8 @@ fun PlayerScreen(
                         sidecars = sidecars,
                     ),
                 ),
+                statisticsShown = statisticsShown,
+                onStatistics = { statisticsShown = it },
                 onDismiss = { infoOpen = false },
             )
         }

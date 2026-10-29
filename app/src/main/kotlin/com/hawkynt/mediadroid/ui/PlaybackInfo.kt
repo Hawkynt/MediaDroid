@@ -1,15 +1,18 @@
 package com.hawkynt.mediadroid.ui
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.font.FontWeight
@@ -28,7 +31,8 @@ import java.io.File
  * What is playing: the file, its container and size, every video / audio / subtitle track with codec,
  * language, channels, resolution and frame rate (the one playing marked), and how it plays — as a graph
  * (see [ChainGraph]): the files read, and a lane each for picture, sound and subtitles from them to the
- * screen and the speaker.
+ * screen and the speaker — and, under Advanced, the switch for the statistics over the picture (see
+ * [StatisticsOverlay]).
  */
 @Composable
 fun PlaybackInfoDialog(
@@ -38,6 +42,8 @@ fun PlaybackInfoDialog(
     tracks: Tracks,
     videoSize: VideoSize,
     graph: PlaybackChain.Graph,
+    statisticsShown: Boolean,
+    onStatistics: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val file = File(videoPath)
@@ -96,6 +102,17 @@ fun PlaybackInfoDialog(
 
                 Section("How it plays")
                 ChainGraph(graph)
+
+                Section("Advanced")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Statistics over the picture", fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = statisticsShown, onCheckedChange = onStatistics)
+                }
+                Text(
+                    "Frame times, jitter and judder, the processor's work and Motion's search, over the last seconds.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
     )
