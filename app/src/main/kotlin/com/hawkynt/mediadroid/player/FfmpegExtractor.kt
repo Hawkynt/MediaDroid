@@ -97,16 +97,7 @@ class FfmpegExtractor(
         if (uri.scheme != null && uri.scheme != "file") return openRemote(uri)
         val path = uri.takeIf { it.scheme == null || it.scheme == "file" }?.path ?: return false
         val raf = runCatching { RandomAccessFile(File(path), "r") }.getOrNull() ?: return false
-        val opened = FfmpegDemuxer.open(object : FfmpegDemuxer.Input {
-            override fun read(buffer: ByteArray, offset: Int, length: Int): Int = raf.read(buffer, offset, length)
-
-            override fun seek(position: Long): Long {
-                raf.seek(position)
-                return position
-            }
-
-            override fun length(): Long = raf.length()
-        })
+        val opened = FfmpegDemuxer.open(FfmpegInputs.local(raf))
         if (opened == null) {
             raf.close()
             return false
@@ -119,29 +110,7 @@ class FfmpegExtractor(
     /** A file on a network source: read as a stream, opened again further in when FFmpeg seeks. */
     private fun openRemote(uri: Uri): Boolean {
         val file = remote(uri.toString()) ?: return false
-        val input = object : FfmpegDemuxer.Input {
-            private var stream: java.io.InputStream? = null
-            private var position = 0L
-
-            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-                val current = stream ?: java.io.BufferedInputStream(file.open(position), REMOTE_BUFFER)
-                    .also { stream = it }
-                val read = current.read(buffer, offset, length)
-                if (read > 0) position += read
-                return read
-            }
-
-            override fun seek(position: Long): Long {
-                if (position != this.position) {
-                    stream?.close()
-                    stream = null
-                    this.position = position
-                }
-                return position
-            }
-
-            override fun length(): Long = file.length().takeIf { it > 0 } ?: -1
-        }
+        val input = FfmpegInputs.remote(file)
         demuxer = runCatching { FfmpegDemuxer.open(input) }.getOrNull() ?: return false
         return true
     }
@@ -213,6 +182,5 @@ class FfmpegExtractor(
     private companion object {
         const val INITIAL_BUFFER = 1 shl 20
         const val FOLLOW_CHUNK = 1 shl 20
-        const val REMOTE_BUFFER = 256 * 1024
     }
 }

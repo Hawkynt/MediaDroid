@@ -23,6 +23,7 @@ It is built from these and nothing else (attribution: `app/THIRD-PARTY-NOTICE.ff
 - MediaDroid's own part (LGPL-3.0-or-later): `mediadroid/jni/mediadroid_demux.cc` (libavformat over a
   custom AVIOContext, after FFmpeg's `doc/examples/avio_read_callback.c`),
   `mediadroid/jni/mediadroid_codecpar.h` (how a demuxed stream's codec parameters reach the decoders),
+  the thumbnail picture (libavcodec and libswscale, after FFmpeg's `doc/examples/decode_video.c`),
   `mediadroid/java/…/FfmpegDemuxer.java`, and `patches/0002-*.patch` — FFmpeg linked statically into
   one library, libyuv static, our two ABIs, and decoders found by name for `audio/x-ffmpeg-<decoder>` /
   `video/x-ffmpeg-<decoder>` tracks;
@@ -60,9 +61,13 @@ JAVA_HOME=…/jdk21 tools/ffmpeg/test/check.sh <host-ffmpeg-prefix> <out-dir>
 It writes a two-second sample of every container the app demuxes with FFmpeg (WMV, ASF, RealMedia with
 RealVideo 1/2 and RealAudio 1.0, DV, MXF, NUT, WTV, raw MPEG-2, Y4M), runs `FfmpegDemuxer.java` over
 JNI on them, records ffprobe's packet counts as the oracle, and decodes every stream twice — from
-FFmpeg's own parameters and from MediaDroid's codec-parameter blob alone. `test/expected.txt` is the
-reviewed result: packet counts equal ffprobe's and both decodes give the same frames. The script fails
-on any difference.
+FFmpeg's own parameters and from MediaDroid's codec-parameter blob alone. It also takes the thumbnail
+picture of every sample (`FfmpegDemuxer.frame`, from a demuxer opened just for it, as the app does) and
+finds it among the frames of ffmpeg's own decode at the same size, byte for byte. `test/expected.txt` is
+the reviewed result: packet counts equal ffprobe's, both decodes give the same frames, and every
+thumbnail is one of ffmpeg's frames from the keyframe before the middle (the first frame where the
+container cannot seek: WTV here, and raw MPEG-2, which has no duration). The script fails on any
+difference.
 
 ## Optional: the non-LGPL switch
 

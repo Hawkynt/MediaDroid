@@ -176,6 +176,17 @@ public final class FfmpegDemuxer implements AutoCloseable {
     return nSeek(handle, timeUs);
   }
 
+  /**
+   * The picture at about {@code timeUs} — the first one decoded from the keyframe at or before it —
+   * at most {@code maxWidth} wide with the pixel aspect applied, as ARGB_8888 pixels; {@code size}
+   * receives its width and height. Null when there is no picture. Moves the read position: meant for a
+   * demuxer opened just for this.
+   */
+  @Nullable
+  public int[] frame(long timeUs, int maxWidth, int[] size) {
+    return nFrame(handle, timeUs, maxWidth, size);
+  }
+
   @Override
   public void close() {
     nClose(handle);
@@ -200,6 +211,8 @@ public final class FfmpegDemuxer implements AutoCloseable {
   private static native int nReadPacket(long handle, ByteBuffer buffer, long[] out);
 
   private static native boolean nSeek(long handle, long timeUs);
+
+  private static native int[] nFrame(long handle, long timeUs, int maxWidth, int[] size);
 
   private static native void nClose(long handle);
 }
