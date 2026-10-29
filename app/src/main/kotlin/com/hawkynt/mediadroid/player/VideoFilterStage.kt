@@ -47,6 +47,10 @@ class VideoFilterStage {
     private var denoiseProgram = 0
     private var sharpenProgram = 0
     private var lanczosProgram = 0
+    private var ewaProgram = 0
+    private var ewaTable = 0
+    private var nisProgram = 0
+    private var nisTable = 0
     private var easuProgram = 0
     private var rcasProgram = 0
     private var blendProgram = 0
@@ -191,6 +195,10 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(sharpenProgram)
             GLES20.glDeleteProgram(lanczosProgram)
+            GLES20.glDeleteProgram(ewaProgram)
+            GLES20.glDeleteTextures(1, intArrayOf(ewaTable), 0)
+            GLES20.glDeleteProgram(nisProgram)
+            GLES20.glDeleteTextures(1, intArrayOf(nisTable), 0)
             GLES20.glDeleteProgram(easuProgram)
             GLES20.glDeleteProgram(rcasProgram)
             GLES20.glDeleteProgram(blendProgram)
@@ -274,6 +282,10 @@ class VideoFilterStage {
         denoiseProgram = program(VERTEX, DENOISE)
         sharpenProgram = program(VERTEX, SHARPEN)
         lanczosProgram = program(VERTEX, LANCZOS)
+        ewaProgram = program(VERTEX, EWA)
+        ewaTable = ewaTable()
+        nisProgram = program(VERTEX, NIS)
+        nisTable = nisTable()
         easuProgram = program(VERTEX, FSR_EASU)
         rcasProgram = program(VERTEX, FSR_RCAS)
         blendProgram = program(VERTEX, BLEND)
@@ -882,6 +894,65 @@ class VideoFilterStage {
             if (picture.upscaler == PictureAdjustment.Upscaler.LANCZOS) {
                 onWindow(outWidth, outHeight)
                 run(lanczosProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
+            } else if (picture.upscaler == PictureAdjustment.Upscaler.NIS) {
+                // NVIDIA Image Scaling to at most twice the picture's size, as NIS allows, and the screen's own
+                // bilinear scaling for whatever is left.
+                val midWidth = minOf(outWidth, width * 2)
+                val midHeight = minOf(outHeight, height * 2)
+                val enlarged = frames[4].ensure(midWidth, midHeight)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
+                GLES20.glViewport(0, 0, midWidth, midHeight)
+                GLES20.glUseProgram(nisProgram)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, nisTable)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(nisProgram, "uCoef"), 1)
+                val config = Nis.Config(NIS_SHARPNESS)
+                run(nisProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                    inSize(p)
+                    fun set(name: String, value: Float) =
+                        GLES20.glUniform1f(GLES20.glGetUniformLocation(p, name), value)
+                    GLES20.glUniform2f(
+                        GLES20.glGetUniformLocation(p, "uOutSize"), midWidth.toFloat(), midHeight.toFloat(),
+                    )
+                    set("uDetectRatio", config.detectRatio)
+                    set("uDetectThres", config.detectThres)
+                    set("uMinContrastRatio", config.minContrastRatio)
+                    set("uRatioNorm", config.ratioNorm)
+                    set("uSharpStartY", config.sharpStartY)
+                    set("uSharpScaleY", config.sharpScaleY)
+                    set("uSharpStrengthMin", config.sharpStrengthMin)
+                    set("uSharpStrengthScale", config.sharpStrengthScale)
+                    set("uSharpLimitMin", config.sharpLimitMin)
+                    set("uSharpLimitScale", config.sharpLimitScale)
+                }
+                onWindow(outWidth, outHeight)
+                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / midWidth, 1f / midHeight)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
+                }
+            } else if (picture.upscaler == PictureAdjustment.Upscaler.EWA) {
+                // EWA to at most twice the picture's size — its 8 × 8 taps stay affordable — and the screen's
+                // own bilinear scaling for whatever is left.
+                val midWidth = minOf(outWidth, width * 2)
+                val midHeight = minOf(outHeight, height * 2)
+                val enlarged = frames[4].ensure(midWidth, midHeight)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
+                GLES20.glViewport(0, 0, midWidth, midHeight)
+                GLES20.glUseProgram(ewaProgram)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ewaTable)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(ewaProgram, "uTable"), 1)
+                run(ewaProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                    inSize(p)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), Ewa.RADIUS.toFloat())
+                }
+                onWindow(outWidth, outHeight)
+                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / midWidth, 1f / midHeight)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
+                }
             } else {
                 // FSR 1: edge-adaptive upscaling to the screen's size, then contrast-adaptive sharpening on it.
                 val enlarged = frames[4].ensure(outWidth, outHeight)
@@ -895,6 +966,63 @@ class VideoFilterStage {
                 }
             }
         }
+    }
+
+    /**
+     * The EWA weights by distance (see [Ewa]) as a texture of [EWA_TABLE_SIZE] × 1: each weight shifted
+     * and scaled into 0..1 and kept to 16 bits over the red and green channels.
+     */
+    private fun ewaTable(): Int {
+        val weights = Ewa.table(EWA_TABLE_SIZE)
+        val bytes = ByteBuffer.allocateDirect(EWA_TABLE_SIZE * 4).order(ByteOrder.nativeOrder())
+        for (w in weights) {
+            val v = (((w + EWA_OFFSET) / EWA_SPAN) * 65535f).toInt().coerceIn(0, 65535)
+            bytes.put((v shr 8).toByte()).put((v and 0xFF).toByte()).put(0).put(0)
+        }
+        bytes.position(0)
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, EWA_TABLE_SIZE, 1, 0, GLES20.GL_RGBA,
+            GLES20.GL_UNSIGNED_BYTE, bytes,
+        )
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        return ids[0]
+    }
+
+    /**
+     * NIS's two filter tables (see [Nis]) as a 6 × 64 texture: per phase a row, per tap a texel holding the
+     * scaling tap in red and green and the sharpening tap in blue and alpha — one fetch for both — each
+     * shifted and scaled into 0..1 and kept to 16 bits.
+     */
+    private fun nisTable(): Int {
+        val bytes = ByteBuffer.allocateDirect(6 * Nis.PHASES * 4).order(ByteOrder.nativeOrder())
+        fun put(c: Float) {
+            val v = (((c + NIS_OFFSET) / NIS_SPAN) * 65535f + 0.5f).toInt().coerceIn(0, 65535)
+            bytes.put((v shr 8).toByte()).put((v and 0xFF).toByte())
+        }
+        for (phase in 0 until Nis.PHASES) {
+            for (tap in 0 until 6) {
+                put(Nis.scaleCoefficient(phase, tap))
+                put(Nis.sharpenCoefficient(phase, tap))
+            }
+        }
+        bytes.position(0)
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, 6, Nis.PHASES, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes,
+        )
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        return ids[0]
     }
 
     /** Draws onto the screen from here on. */
@@ -1354,6 +1482,229 @@ class VideoFilterStage {
                     }
                 }
                 gl_FragColor = vec4(sum / weights, 1.0);
+            }
+        """
+
+        /** NIS's sharpness, on its own 0..1 scale: the middle, NVIDIA's neutral setting. */
+        private const val NIS_SHARPNESS = 0.5f
+
+        /** How NIS's filter taps (-0.62..1.2) map into 0..1 in its table. */
+        private const val NIS_OFFSET = 1f
+        private const val NIS_SPAN = 2.5f
+
+        // NVIDIA Image Scaling's NVScaler (MIT, see Nis, which it is transcribed from): per output pixel the 6 × 6
+        // source luma, four directional edge strengths from the 3 × 3 around the nearest four pixels, a 6-tap
+        // scaler blended with directional 6-tap filters that sharpen by luma and hold back ringing; the luma
+        // change is added to a bilinear tap of the colour. Rows count from the top, as in NIS.
+        private const val NIS = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform sampler2D uCoef;
+            uniform vec2 uInSize;
+            uniform vec2 uOutSize;
+            uniform float uDetectRatio;
+            uniform float uDetectThres;
+            uniform float uMinContrastRatio;
+            uniform float uRatioNorm;
+            uniform float uSharpStartY;
+            uniform float uSharpScaleY;
+            uniform float uSharpStrengthMin;
+            uniform float uSharpStrengthScale;
+            uniform float uSharpLimitMin;
+            uniform float uSharpLimitScale;
+            varying vec2 vTex;
+            // Both taps of a phase in one fetch: the scaling tap in x, the sharpening tap in y.
+            vec2 coef(float phase, int tap) {
+                vec4 t = texture2D(uCoef, vec2((float(tap) + 0.5) / 6.0, (phase + 0.5) / 64.0));
+                return (vec2(t.r, t.b) * 255.0 * 256.0 + vec2(t.g, t.a) * 255.0) / 65535.0 * 2.5 - 1.0;
+            }
+            float lumaOf(vec3 c) { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
+            float lumaAt(float column, float row) {
+                return lumaOf(texture2D(uTex, vec2(column + 0.5, uInSize.y - row - 0.5) / uInSize).rgb);
+            }
+            vec4 edgeMap(float q[9]) {
+                float g0 = abs(q[0] + q[1] + q[2] - q[6] - q[7] - q[8]);
+                float g45 = abs(q[3] + q[0] + q[1] - q[7] - q[8] - q[5]);
+                float g90 = abs(q[0] + q[3] + q[6] - q[2] - q[5] - q[8]);
+                float g135 = abs(q[3] + q[6] + q[7] - q[1] - q[2] - q[5]);
+                float a = max(g0, g90);
+                float aMin = min(g0, g90);
+                float b = max(g45, g135);
+                float bMin = min(g45, g135);
+                if (a + b == 0.0) return vec4(0.0);
+                float e090 = min(a / (a + b), 1.0);
+                float e45135 = 1.0 - e090;
+                bool c090 = a > aMin * uDetectRatio && a > uDetectThres && a > bMin;
+                bool c45135 = b > bMin * uDetectRatio && b > uDetectThres && b > aMin;
+                bool cG0 = a == g0;
+                bool cG45 = b == g45;
+                float f090 = (c090 && c45135) ? e090 : 1.0;
+                float f45135 = (c090 && c45135) ? e45135 : 1.0;
+                return vec4(
+                    (c090 && cG0) ? f090 : 0.0,
+                    (c090 && !cG0) ? f090 : 0.0,
+                    (c45135 && cG45) ? f45135 : 0.0,
+                    (c45135 && !cG45) ? f45135 : 0.0);
+            }
+            float evalPoly6(float px[6], float phase) {
+                float y = 0.0;
+                float usm = 0.0;
+                for (int i = 0; i < 6; i++) {
+                    vec2 c = coef(phase, i);
+                    y += c.x * px[i];
+                    usm += c.y * px[i];
+                }
+                float yScale = 1.0 - clamp((y - uSharpStartY) * uSharpScaleY, 0.0, 1.0);
+                usm *= yScale * uSharpStrengthScale + uSharpStrengthMin;
+                float limit = (yScale * uSharpLimitScale + uSharpLimitMin) * y;
+                usm = min(limit, max(-limit, usm));
+                bool selector = phase <= 32.0;
+                float sel = selector ? px[0] : px[3];
+                float aCont = max(max(px[1], px[2]), sel) - min(min(px[1], px[2]), sel);
+                sel = selector ? px[2] : px[5];
+                float bCont = max(max(px[3], px[4]), sel) - min(min(px[3], px[4]), sel);
+                float ratio = max(aCont, bCont) / (min(aCont, bCont) + 1.0 / 255.0);
+                usm *= 1.0 - clamp((ratio - uMinContrastRatio) * uRatioNorm, 0.0, 1.0);
+                return y + usm;
+            }
+            void main() {
+                float dstX = floor(gl_FragCoord.x);
+                float dstY = uOutSize.y - 1.0 - floor(gl_FragCoord.y);
+                vec2 scale = uInSize / uOutSize;
+                float srcX = (0.5 + dstX) * scale.x - 0.5;
+                float srcY = (0.5 + dstY) * scale.y - 0.5;
+                float fx = srcX - floor(srcX);
+                float fy = srcY - floor(srcY);
+                float phaseX = floor(fx * 64.0);
+                float phaseY = floor(fy * 64.0);
+                float p[36];
+                for (int i = 0; i < 6; i++) {
+                    for (int j = 0; j < 6; j++) {
+                        p[i * 6 + j] = lumaAt(floor(srcX) - 2.0 + float(j), floor(srcY) - 2.0 + float(i));
+                    }
+                }
+                vec4 e[4];
+                float q[9];
+                for (int i = 0; i < 2; i++) {
+                    for (int j = 0; j < 2; j++) {
+                        for (int a = 0; a < 3; a++) {
+                            for (int b = 0; b < 3; b++) q[a * 3 + b] = p[(1 + i + a) * 6 + 1 + j + b];
+                        }
+                        e[i * 2 + j] = edgeMap(q);
+                    }
+                }
+                vec4 w = mix(mix(e[0], e[1], fx), mix(e[2], e[3], fx), fy);
+                float baseWeight = 1.0 - w.x - w.y - w.z - w.w;
+                // The scaling taps once per pixel, not once per use.
+                float cy[6];
+                float cx[6];
+                for (int i = 0; i < 6; i++) {
+                    cy[i] = coef(phaseY, i).x;
+                    cx[i] = coef(phaseX, i).x;
+                }
+                float normal = 0.0;
+                for (int j = 0; j < 6; j++) {
+                    float v = 0.0;
+                    for (int i = 0; i < 6; i++) v += p[i * 6 + j] * cy[i];
+                    normal += v * cx[j];
+                }
+                float opY = normal * baseWeight;
+                float t[7];
+                float d[6];
+                if (w.x > 0.0) {
+                    for (int i = 0; i < 6; i++) d[i] = mix(p[i * 6 + 2], p[i * 6 + 3], fx);
+                    opY += evalPoly6(d, phaseY) * w.x;
+                }
+                if (w.y > 0.0) {
+                    for (int i = 0; i < 6; i++) d[i] = mix(p[2 * 6 + i], p[3 * 6 + i], fy);
+                    opY += evalPoly6(d, phaseX) * w.y;
+                }
+                if (w.z > 0.0) {
+                    float b45 = 0.5 + 0.5 * (fx - fy);
+                    t[1] = mix(p[2 * 6 + 1], p[1 * 6 + 2], b45);
+                    t[3] = mix(p[3 * 6 + 2], p[2 * 6 + 3], b45);
+                    t[5] = mix(p[4 * 6 + 3], p[3 * 6 + 4], b45);
+                    b45 -= 0.5;
+                    bool up = b45 >= 0.0;
+                    float k = abs(b45);
+                    t[0] = mix(p[1 * 6 + 1], up ? p[0 * 6 + 2] : p[2 * 6 + 0], k);
+                    t[2] = mix(p[2 * 6 + 2], up ? p[1 * 6 + 3] : p[3 * 6 + 1], k);
+                    t[4] = mix(p[3 * 6 + 3], up ? p[2 * 6 + 4] : p[4 * 6 + 2], k);
+                    t[6] = mix(p[4 * 6 + 4], up ? p[3 * 6 + 5] : p[5 * 6 + 3], k);
+                    float p45 = fx + fy;
+                    bool shift = p45 >= 1.0;
+                    if (shift) p45 -= 1.0;
+                    for (int i = 0; i < 6; i++) d[i] = shift ? t[i + 1] : t[i];
+                    opY += evalPoly6(d, floor(p45 * 64.0)) * w.z;
+                }
+                if (w.w > 0.0) {
+                    float b135 = 0.5 * (fx + fy);
+                    t[1] = mix(p[3 * 6 + 1], p[4 * 6 + 2], b135);
+                    t[3] = mix(p[2 * 6 + 2], p[3 * 6 + 3], b135);
+                    t[5] = mix(p[1 * 6 + 3], p[2 * 6 + 4], b135);
+                    b135 -= 0.5;
+                    bool up = b135 >= 0.0;
+                    float k = abs(b135);
+                    t[0] = mix(p[4 * 6 + 1], up ? p[5 * 6 + 2] : p[3 * 6 + 0], k);
+                    t[2] = mix(p[3 * 6 + 2], up ? p[4 * 6 + 3] : p[2 * 6 + 1], k);
+                    t[4] = mix(p[2 * 6 + 3], up ? p[3 * 6 + 4] : p[1 * 6 + 2], k);
+                    t[6] = mix(p[1 * 6 + 4], up ? p[2 * 6 + 5] : p[0 * 6 + 3], k);
+                    float p135 = 1.0 + (fx - fy);
+                    bool shift = p135 >= 1.0;
+                    if (shift) p135 -= 1.0;
+                    for (int i = 0; i < 6; i++) d[i] = shift ? t[i + 1] : t[i];
+                    opY += evalPoly6(d, floor(p135 * 64.0)) * w.w;
+                }
+                vec3 c = texture2D(uTex, vec2(srcX + 0.5, uInSize.y - srcY - 0.5) / uInSize).rgb;
+                gl_FragColor = vec4(clamp(c + (opY - lumaOf(c)), 0.0, 1.0), 1.0);
+            }
+        """
+
+        /** How many distances the EWA table holds, and how its weights (-0.25..1) map into 0..1. */
+        private const val EWA_TABLE_SIZE = 512
+        private const val EWA_OFFSET = 0.25f
+        private const val EWA_SPAN = 1.25f
+
+        // EWA Lanczos-sharp (see Ewa): the source pixels in a circle of uRadius around the position weigh by
+        // their distance, read from uTable; the result is pulled halfway into the four nearest pixels' range,
+        // as the Lanczos pass does.
+        private const val EWA = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform sampler2D uTable;
+            uniform vec2 uInSize;
+            uniform float uRadius;
+            varying vec2 vTex;
+            float weight(float d) {
+                if (d >= uRadius) return 0.0;
+                float i = floor(d / uRadius * 511.0 + 0.5);
+                vec4 t = texture2D(uTable, vec2((i + 0.5) / 512.0, 0.5));
+                return (t.r * 255.0 * 256.0 + t.g * 255.0) / 65535.0 * 1.25 - 0.25;
+            }
+            void main() {
+                vec2 pos = vTex * uInSize - 0.5;
+                vec2 f = fract(pos);
+                vec2 base = floor(pos);
+                vec3 sum = vec3(0.0);
+                float weights = 0.0;
+                vec3 lo = vec3(1.0);
+                vec3 hi = vec3(0.0);
+                for (int j = -3; j <= 4; j++) {
+                    for (int i = -3; i <= 4; i++) {
+                        vec2 offset = vec2(float(i), float(j));
+                        float w = weight(length(offset - f));
+                        if (w == 0.0) continue;
+                        vec3 c = texture2D(uTex, (base + offset + 0.5) / uInSize).rgb;
+                        sum += c * w;
+                        weights += w;
+                        if (i >= 0 && i <= 1 && j >= 0 && j <= 1) {
+                            lo = min(lo, c);
+                            hi = max(hi, c);
+                        }
+                    }
+                }
+                vec3 c = sum / weights;
+                gl_FragColor = vec4(mix(c, clamp(c, lo, hi), 0.5), 1.0);
             }
         """
 
