@@ -20,19 +20,21 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.library.Quality
+import com.hawkynt.mediadroid.player.PlaybackChain
 import java.io.File
 
 /**
  * What is playing: the file, its container and size, every video / audio / subtitle track with codec,
- * language, channels, resolution and frame rate (the one playing marked), and the decoders at work.
+ * language, channels, resolution and frame rate (the one playing marked), and how it plays — the whole
+ * chain from the source and the demuxer through decoders, conversion, filters, resampling and mixing to
+ * the renderer, the sink and the output (see [PlaybackChain]).
  */
 @Composable
 fun PlaybackInfoDialog(
     videoPath: String,
     tracks: Tracks,
     videoSize: VideoSize,
-    videoDecoder: String?,
-    audioDecoder: String?,
+    chain: List<PlaybackChain.Stage>,
     onDismiss: () -> Unit,
 ) {
     val file = File(videoPath)
@@ -65,9 +67,11 @@ fun PlaybackInfoDialog(
                     }
                 }
 
-                Section("Decoders")
-                Line("Video: ${decoder(videoDecoder)}")
-                Line("Audio: ${decoder(audioDecoder)}")
+                Section("How it plays")
+                chain.groupBy { it.section }.forEach { (section, stages) ->
+                    Line(section, bold = true)
+                    stages.forEach { Line("   ${it.step}: ${it.detail}") }
+                }
             }
         },
     )
@@ -125,17 +129,96 @@ internal fun describe(format: Format): String {
     return parts.joinToString(" · ")
 }
 
-/** A decoder name with what kind it is: Android's own (hardware or not) or the bundled FFmpeg. */
-internal fun decoder(name: String?): String = when {
-    name == null -> "not in use"
-    name.startsWith("ffmpeg", ignoreCase = true) || name.contains("Ffmpeg") -> "$name (software, FFmpeg)"
-    name.startsWith("c2.android.") || name.startsWith("OMX.google.") -> "$name (software)"
-    name.contains("sw", ignoreCase = true) && name.startsWith("OMX.") -> "$name (software)"
-    else -> "$name (hardware)"
-}
-
 private fun size(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.2f GB".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%.0f MB".format(bytes / (1L shl 20).toDouble())
     else -> "$bytes bytes"
+}
+
+/** What the player and the platform report, gathered into [PlaybackChain.Facts]. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun playbackFacts(
+    location: String,
+    player: androidx.media3.exoplayer.ExoPlayer,
+    videoDecoder: String?,
+    audioDecoder: String?,
+    audioTrack: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig?,
+    picture: com.hawkynt.mediadroid.player.PictureAdjustment,
+    fit: String,
+    zoom: Float,
+    screen: android.view.Display?,
+    screenName: String,
+    loudnessDb: Float,
+    nightMode: Boolean,
+    speed: Float,
+    delayMs: Int,
+    spatial: Boolean,
+    device: String,
+): PlaybackChain.Facts {
+    val videoFormat = player.videoFormat
+    val audioFormat = player.audioFormat
+    val size = player.videoSize
+    val mode = screen?.mode
+    val encoding = audioTrack?.encoding
+    val passthrough = encoding != null && !androidx.media3.common.util.Util.isEncodingLinearPcm(encoding)
+    return PlaybackChain.Facts(
+        location = location,
+        demuxer = com.hawkynt.mediadroid.player.DemuxerLog.of(
+            com.hawkynt.mediadroid.player.playableUri(location).toString(),
+        ),
+        video = videoFormat?.let {
+            PlaybackChain.Video(
+                decoder = videoDecoder,
+                width = size.width.takeIf { w -> w > 0 } ?: it.width,
+                height = size.height.takeIf { h -> h > 0 } ?: it.height,
+                pixelRatio = size.pixelWidthHeightRatio,
+                picture = picture,
+                fit = fit,
+                zoom = zoom,
+                screen = screenName,
+                screenWidth = mode?.physicalWidth ?: 0,
+                screenHeight = mode?.physicalHeight ?: 0,
+                refreshHz = mode?.refreshRate ?: 0f,
+            )
+        },
+        audio = audioFormat?.let {
+            PlaybackChain.Audio(
+                decoder = audioDecoder,
+                inputSampleRate = it.sampleRate,
+                inputChannels = it.channelCount,
+                sinkEncoding = encoding?.let(::encodingName),
+                sinkSampleRate = audioTrack?.sampleRate ?: 0,
+                sinkChannels = audioTrack?.let { t -> Integer.bitCount(t.channelConfig) } ?: 0,
+                passthrough = passthrough,
+                offload = audioTrack?.offload == true,
+                loudnessDb = loudnessDb,
+                nightMode = nightMode,
+                speed = speed,
+                delayMs = delayMs,
+                spatial = spatial,
+                device = device,
+            )
+        },
+        player = "Media3 ExoPlayer ${androidx.media3.common.MediaLibraryInfo.VERSION}",
+    )
+}
+
+/** A `C.ENCODING_*` as people call it. */
+private fun encodingName(encoding: Int): String = when (encoding) {
+    C.ENCODING_PCM_8BIT -> "8-bit PCM"
+    C.ENCODING_PCM_16BIT, C.ENCODING_PCM_16BIT_BIG_ENDIAN -> "16-bit PCM"
+    C.ENCODING_PCM_24BIT, C.ENCODING_PCM_24BIT_BIG_ENDIAN -> "24-bit PCM"
+    C.ENCODING_PCM_32BIT, C.ENCODING_PCM_32BIT_BIG_ENDIAN -> "32-bit PCM"
+    C.ENCODING_PCM_FLOAT -> "float PCM"
+    C.ENCODING_AC3 -> "Dolby Digital"
+    C.ENCODING_E_AC3 -> "Dolby Digital Plus"
+    C.ENCODING_E_AC3_JOC -> "Dolby Digital Plus with Atmos"
+    C.ENCODING_AC4 -> "Dolby AC-4"
+    C.ENCODING_DOLBY_TRUEHD -> "Dolby TrueHD"
+    C.ENCODING_DTS -> "DTS"
+    C.ENCODING_DTS_HD -> "DTS-HD"
+    C.ENCODING_MP3 -> "MP3"
+    C.ENCODING_AAC_LC -> "AAC"
+    C.ENCODING_OPUS -> "Opus"
+    else -> "encoding $encoding"
 }
