@@ -163,6 +163,19 @@ class PlaybackChainTest {
     }
 
     @Test
+    fun `one channel is one channel`() {
+        val mono = PlaybackChain.of(
+            facts.copy(
+                audio = audio.copy(inputSampleRate = 44_100, inputChannels = 1, sinkSampleRate = 44_100, sinkChannels = 1),
+            ),
+        )
+        assertEquals("none (1 channel)", mono.detail("Audio", "Mixing"))
+        assertEquals("AudioTrack · 44.1 kHz · 1 channel · 16-bit PCM", mono.detail("Audio", "Sink"))
+        val up = PlaybackChain.of(facts.copy(audio = audio.copy(inputChannels = 1, sinkChannels = 2)))
+        assertEquals("1 → 2 channels (upmix)", up.detail("Audio", "Mixing"))
+    }
+
+    @Test
     fun `passthrough hands the encoded sound on untouched`() {
         val stages = PlaybackChain.of(
             facts.copy(audio = audio.copy(passthrough = true, sinkEncoding = "Dolby Digital", sinkChannels = 6)),
