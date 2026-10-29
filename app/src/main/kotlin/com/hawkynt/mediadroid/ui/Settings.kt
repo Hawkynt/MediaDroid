@@ -282,18 +282,7 @@ fun SettingsScreen(
         )
         Spacer(Modifier.height(8.dp))
         Text("Default speed", fontSize = 18.sp)
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Speeds.forEach { s ->
-                FilterChip(
-                    selected = settings.defaultSpeed == s,
-                    onClick = { update { it.defaultSpeed = s } },
-                    label = { Text(if (s == 1.0f) "1×" else "${s}×", fontSize = 16.sp) },
-                )
-            }
-        }
+        SpeedSlider(settings.defaultSpeed, { s -> update { it.defaultSpeed = s } }, Modifier.fillMaxWidth())
         SliderRow(
             label = "Loudness",
             value = settings.loudness,
@@ -321,6 +310,7 @@ fun SettingsScreen(
                     it.sharpness = defaultPicture.sharpness
                     it.clarity = defaultPicture.clarity
                     it.denoise = defaultPicture.denoise
+                    it.deinterlace = defaultPicture.deinterlace.name
                 }
             },
         )

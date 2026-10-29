@@ -87,6 +87,19 @@ fun PictureSliders(
                 )
             }
         }
+        Text("Deinterlace", fontSize = 16.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PictureAdjustment.Deinterlace.entries.forEach { mode ->
+                FilterChip(
+                    selected = picture.deinterlace == mode,
+                    onClick = {
+                        onChange(picture.copy(deinterlace = mode))
+                        onDone()
+                    },
+                    label = { Text(mode.label, fontSize = 15.sp) },
+                )
+            }
+        }
         Text(
             "Filters run on the graphics chip; HDR videos skip them.",
             fontSize = 13.sp,

@@ -35,6 +35,21 @@ class LibraryMergeTest {
     }
 
     @Test
+    fun aMergedShowKeepsWhatItsNfoSaid() {
+        val withNfo = dark("/a", 1).copy(
+            rating = 8.7,
+            studios = listOf("Netflix"),
+            premiered = "2017-12-01",
+            cast = listOf("Louis Hofmann"),
+        )
+        val merged = LibraryScanner.mergeShows(listOf(dark("/b", 2), withNfo))
+        assertEquals(8.7, merged.rating)
+        assertEquals(listOf("Netflix"), merged.studios)
+        assertEquals("2017-12-01", merged.premiered)
+        assertEquals(listOf("Louis Hofmann"), merged.cast)
+    }
+
+    @Test
     fun aShowSplitOverTwoRootsIsOneShowWithAllItsSeasons() {
         val a = Library(emptyList(), listOf(dark("/a", 1)))
         val b = Library(emptyList(), listOf(dark("/b", 2)))
