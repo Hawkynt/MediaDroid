@@ -1,12 +1,13 @@
 package com.hawkynt.mediadroid.player
 
+import com.hawkynt.mediadroid.player.PlaybackChain.Lane
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackChainTest {
 
     private val video = PlaybackChain.Video(
+        input = 0,
         decoder = "c2.qti.hevc.decoder",
         width = 3840,
         height = 1606,
@@ -20,6 +21,7 @@ class PlaybackChainTest {
         refreshHz = 120f,
     )
     private val audio = PlaybackChain.Audio(
+        input = 0,
         decoder = "c2.android.aac.decoder",
         inputSampleRate = 48_000,
         inputChannels = 6,
@@ -35,39 +37,72 @@ class PlaybackChainTest {
         spatial = false,
         device = "This device",
     )
+    private val subtitles = PlaybackChain.Subtitles(
+        input = 1,
+        mimeType = "application/x-subrip",
+        language = "German",
+        delayMs = 0,
+        screen = "this screen",
+    )
     private val facts = PlaybackChain.Facts(
-        location = "/storage/emulated/0/Movies/Heat (1995).mkv",
-        demuxer = "MatroskaExtractor",
+        inputs = listOf(
+            PlaybackChain.Source("/storage/emulated/0/Movies/Heat (1995).mkv", "MatroskaExtractor"),
+            PlaybackChain.Source("/storage/emulated/0/Movies/Heat (1995).de.srt", "SubripExtractor"),
+        ),
         video = video,
         audio = audio,
+        subtitles = subtitles,
         player = "Media3 ExoPlayer 1.11.1",
     )
 
-    private fun List<PlaybackChain.Stage>.detail(section: String, step: String) =
-        single { it.section == section && it.step == step }.detail
+    private fun PlaybackChain.Graph.lane(lane: Lane) = paths.single { it.lane == lane }
+
+    private fun PlaybackChain.Graph.detail(lane: Lane, title: String) =
+        lane(lane).nodes.single { it.title == title }.detail
 
     @Test
-    fun `the chain runs from the file to the screen and the speaker, in that order`() {
-        val stages = PlaybackChain.of(facts)
-        assertEquals(listOf("Source", "Video", "Audio", "Player"), stages.map { it.section }.distinct())
+    fun `every file read is an input, with where it is read from and what splits it`() {
+        val graph = PlaybackChain.of(facts)
         assertEquals(
-            listOf("Read from", "Demuxer"),
-            stages.filter { it.section == "Source" }.map { it.step },
+            listOf(
+                PlaybackChain.Input("Heat (1995).mkv", "Local file", "Media3 Matroska / WebM"),
+                PlaybackChain.Input("Heat (1995).de.srt", "Local file", "Media3 Subrip"),
+            ),
+            graph.inputs,
+        )
+        assertEquals("Media3 ExoPlayer 1.11.1", graph.engine)
+    }
+
+    @Test
+    fun `picture, sound and subtitles each run their own lane from their input to their output`() {
+        val graph = PlaybackChain.of(facts)
+        assertEquals(listOf(Lane.PICTURE, Lane.SOUND, Lane.SUBTITLES), graph.paths.map { it.lane })
+        assertEquals(listOf(0, 0, 1), graph.paths.map { it.input })
+        assertEquals(
+            listOf("Decoder", "Conversion", "Pixels", "Filters", "Renderer"),
+            graph.lane(Lane.PICTURE).nodes.map { it.title },
         )
         assertEquals(
-            listOf("Decoder", "Conversion", "Pixels", "Filters", "Renderer", "Output"),
-            stages.filter { it.section == "Video" }.map { it.step },
+            listOf("Decoder", "Processing", "Resampling", "Mixing", "Sink"),
+            graph.lane(Lane.SOUND).nodes.map { it.title },
         )
+        assertEquals(listOf("Parser", "Timing", "Renderer"), graph.lane(Lane.SUBTITLES).nodes.map { it.title })
         assertEquals(
-            listOf("Decoder", "Processing", "Resampling", "Mixing", "Sink", "Output"),
-            stages.filter { it.section == "Audio" }.map { it.step },
+            PlaybackChain.Node("Screen", "this screen · 2400 × 1080 · 120 Hz"),
+            graph.lane(Lane.PICTURE).output,
+        )
+        assertEquals(PlaybackChain.Node("Output", "This device"), graph.lane(Lane.SOUND).output)
+        assertEquals(
+            PlaybackChain.Node("Screen", "over the picture on this screen"),
+            graph.lane(Lane.SUBTITLES).output,
         )
     }
 
     @Test
     fun `the source names how the file is reached`() {
-        assertEquals("Local file", PlaybackChain.of(facts).detail("Source", "Read from"))
-        fun from(location: String) = PlaybackChain.of(facts.copy(location = location)).detail("Source", "Read from")
+        fun from(location: String) =
+            PlaybackChain.of(facts.copy(inputs = listOf(PlaybackChain.Source(location, null)))).inputs[0].readFrom
+        assertEquals("Local file", from("/storage/emulated/0/Movies/Heat.mkv"))
         assertEquals("SMB share (smbj)", from("smb://nas/films/Heat.mkv"))
         assertEquals("NFS export (NFSv3)", from("nfs://nas/export/Heat.mkv"))
         assertEquals("SFTP (sshj)", from("sftp://nas/Heat.mkv"))
@@ -78,8 +113,8 @@ class PlaybackChainTest {
 
     @Test
     fun `the demuxer is Media3's own extractor or FFmpeg's demuxer by its format`() {
-        assertEquals("Media3 Matroska / WebM", PlaybackChain.of(facts).detail("Source", "Demuxer"))
-        fun demuxer(name: String?) = PlaybackChain.of(facts.copy(demuxer = name)).detail("Source", "Demuxer")
+        fun demuxer(name: String?) =
+            PlaybackChain.of(facts.copy(inputs = listOf(PlaybackChain.Source("/a.mkv", name)))).inputs[0].demuxer
         assertEquals("Media3 MP4", demuxer("FragmentedMp4Extractor"))
         assertEquals("Media3 MPEG-TS", demuxer("TsExtractor"))
         assertEquals("Media3 AVI", demuxer("AviExtractor"))
@@ -90,23 +125,22 @@ class PlaybackChainTest {
 
     @Test
     fun `a hardware decoder writes straight to the surface, FFmpeg converts on the processor`() {
-        val stages = PlaybackChain.of(facts)
-        assertEquals("c2.qti.hevc.decoder (hardware)", stages.detail("Video", "Decoder"))
-        assertEquals("none — the decoder draws straight onto the surface", stages.detail("Video", "Conversion"))
-        assertEquals("Media3 MediaCodec video renderer", stages.detail("Video", "Renderer"))
+        val graph = PlaybackChain.of(facts)
+        assertEquals("c2.qti.hevc.decoder (hardware)", graph.detail(Lane.PICTURE, "Decoder"))
+        assertEquals("none — the decoder draws straight onto the surface", graph.detail(Lane.PICTURE, "Conversion"))
+        assertEquals("Media3 MediaCodec video renderer", graph.detail(Lane.PICTURE, "Renderer"))
 
         val ffmpeg = PlaybackChain.of(facts.copy(video = video.copy(decoder = "ffmpeg-wmv3")))
-        assertEquals("ffmpeg-wmv3 (software, FFmpeg)", ffmpeg.detail("Video", "Decoder"))
-        assertEquals("YUV to the surface's format by libyuv", ffmpeg.detail("Video", "Conversion"))
-        assertEquals("FFmpeg video renderer", ffmpeg.detail("Video", "Renderer"))
+        assertEquals("ffmpeg-wmv3 (software, FFmpeg)", ffmpeg.detail(Lane.PICTURE, "Decoder"))
+        assertEquals("YUV to the surface's format by libyuv", ffmpeg.detail(Lane.PICTURE, "Conversion"))
+        assertEquals("FFmpeg video renderer", ffmpeg.detail(Lane.PICTURE, "Renderer"))
     }
 
     @Test
     fun `pixels, filters and the screen say what happens to the picture`() {
-        val stages = PlaybackChain.of(facts)
-        assertEquals("3840 × 1606, square", stages.detail("Video", "Pixels"))
-        assertEquals("none · Fit", stages.detail("Video", "Filters"))
-        assertEquals("this screen · 2400 × 1080 · 120 Hz", stages.detail("Video", "Output"))
+        val graph = PlaybackChain.of(facts)
+        assertEquals("3840 × 1606, square", graph.detail(Lane.PICTURE, "Pixels"))
+        assertEquals("none · Fit", graph.detail(Lane.PICTURE, "Filters"))
 
         val dv = PlaybackChain.of(
             facts.copy(
@@ -124,20 +158,19 @@ class PlaybackChainTest {
                 ),
             ),
         )
-        assertEquals("720 × 576, shown 768 × 576", dv.detail("Video", "Pixels"))
-        assertEquals("brightness +10 %, contrast 120 % · Fill, zoom 1.5×", dv.detail("Video", "Filters"))
-        assertEquals("LG TV · 1920 × 1080 · 50 Hz", dv.detail("Video", "Output"))
+        assertEquals("720 × 576, shown 768 × 576", dv.detail(Lane.PICTURE, "Pixels"))
+        assertEquals("brightness +10 %, contrast 120 % · Fill, zoom 1.5×", dv.detail(Lane.PICTURE, "Filters"))
+        assertEquals("LG TV · 1920 × 1080 · 50 Hz", dv.lane(Lane.PICTURE).output.detail)
     }
 
     @Test
     fun `the sound's way names every step that changes it`() {
         val plain = PlaybackChain.of(facts)
-        assertEquals("c2.android.aac.decoder (software)", plain.detail("Audio", "Decoder"))
-        assertEquals("none", plain.detail("Audio", "Processing"))
-        assertEquals("none (48 kHz)", plain.detail("Audio", "Resampling"))
-        assertEquals("6 → 2 channels (downmix)", plain.detail("Audio", "Mixing"))
-        assertEquals("AudioTrack · 48 kHz · 2 channels · 16-bit PCM", plain.detail("Audio", "Sink"))
-        assertEquals("This device", plain.detail("Audio", "Output"))
+        assertEquals("c2.android.aac.decoder (software)", plain.detail(Lane.SOUND, "Decoder"))
+        assertEquals("none", plain.detail(Lane.SOUND, "Processing"))
+        assertEquals("none (48 kHz)", plain.detail(Lane.SOUND, "Resampling"))
+        assertEquals("6 → 2 channels (downmix)", plain.detail(Lane.SOUND, "Mixing"))
+        assertEquals("AudioTrack · 48 kHz · 2 channels · 16-bit PCM", plain.detail(Lane.SOUND, "Sink"))
 
         val busy = PlaybackChain.of(
             facts.copy(
@@ -155,39 +188,60 @@ class PlaybackChainTest {
         )
         assertEquals(
             "loudness +3 dB, night mode, speed 1.5× (Sonic), delay 120 ms, spatial audio",
-            busy.detail("Audio", "Processing"),
+            busy.detail(Lane.SOUND, "Processing"),
         )
-        assertEquals("44.1 kHz → 48 kHz", busy.detail("Audio", "Resampling"))
-        assertEquals("none (2 channels)", busy.detail("Audio", "Mixing"))
-        assertEquals("AudioTrack · 48 kHz · 2 channels · 16-bit PCM · offloaded", busy.detail("Audio", "Sink"))
+        assertEquals("44.1 kHz → 48 kHz", busy.detail(Lane.SOUND, "Resampling"))
+        assertEquals("none (2 channels)", busy.detail(Lane.SOUND, "Mixing"))
+        assertEquals(
+            "AudioTrack · 48 kHz · 2 channels · 16-bit PCM · offloaded",
+            busy.detail(Lane.SOUND, "Sink"),
+        )
     }
 
     @Test
     fun `one channel is one channel`() {
         val mono = PlaybackChain.of(
             facts.copy(
-                audio = audio.copy(inputSampleRate = 44_100, inputChannels = 1, sinkSampleRate = 44_100, sinkChannels = 1),
+                audio = audio.copy(
+                    inputSampleRate = 44_100,
+                    inputChannels = 1,
+                    sinkSampleRate = 44_100,
+                    sinkChannels = 1,
+                ),
             ),
         )
-        assertEquals("none (1 channel)", mono.detail("Audio", "Mixing"))
-        assertEquals("AudioTrack · 44.1 kHz · 1 channel · 16-bit PCM", mono.detail("Audio", "Sink"))
+        assertEquals("none (1 channel)", mono.detail(Lane.SOUND, "Mixing"))
+        assertEquals("AudioTrack · 44.1 kHz · 1 channel · 16-bit PCM", mono.detail(Lane.SOUND, "Sink"))
         val up = PlaybackChain.of(facts.copy(audio = audio.copy(inputChannels = 1, sinkChannels = 2)))
-        assertEquals("1 → 2 channels (upmix)", up.detail("Audio", "Mixing"))
+        assertEquals("1 → 2 channels (upmix)", up.detail(Lane.SOUND, "Mixing"))
     }
 
     @Test
     fun `passthrough hands the encoded sound on untouched`() {
-        val stages = PlaybackChain.of(
+        val graph = PlaybackChain.of(
             facts.copy(audio = audio.copy(passthrough = true, sinkEncoding = "Dolby Digital", sinkChannels = 6)),
         )
-        assertEquals("AudioTrack · passthrough of Dolby Digital", stages.detail("Audio", "Sink"))
-        assertEquals("none — passed through to the receiver", stages.detail("Audio", "Mixing"))
+        assertEquals("AudioTrack · passthrough of Dolby Digital", graph.detail(Lane.SOUND, "Sink"))
+        assertEquals("none — passed through to the receiver", graph.detail(Lane.SOUND, "Mixing"))
     }
 
     @Test
-    fun `a file without sound or picture leaves that part out`() {
-        val stages = PlaybackChain.of(facts.copy(video = null))
-        assertTrue(stages.none { it.section == "Video" })
-        assertEquals("Media3 ExoPlayer 1.11.1", stages.detail("Player", "Engine"))
+    fun `subtitles name their format, their timing and where they are drawn`() {
+        val graph = PlaybackChain.of(facts)
+        assertEquals("SubRip · German", graph.detail(Lane.SUBTITLES, "Parser"))
+        assertEquals("in sync", graph.detail(Lane.SUBTITLES, "Timing"))
+        assertEquals("Media3 text renderer", graph.detail(Lane.SUBTITLES, "Renderer"))
+
+        val late = PlaybackChain.of(
+            facts.copy(subtitles = subtitles.copy(mimeType = "application/pgs", language = null, delayMs = -250)),
+        )
+        assertEquals("PGS (pictures)", late.detail(Lane.SUBTITLES, "Parser"))
+        assertEquals("250 ms earlier", late.detail(Lane.SUBTITLES, "Timing"))
+    }
+
+    @Test
+    fun `a lane without a track is left out`() {
+        val graph = PlaybackChain.of(facts.copy(video = null, subtitles = null))
+        assertEquals(listOf(Lane.SOUND), graph.paths.map { it.lane })
     }
 }
