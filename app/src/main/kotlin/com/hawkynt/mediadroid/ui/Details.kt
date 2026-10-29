@@ -158,7 +158,10 @@ fun DetailsScreen(
                 }
                 val credits = listOfNotNull(
                     (item as? Movie)?.directors?.ifEmpty { null }?.let { "Director: ${it.joinToString(", ")}" },
-                    (item as? Movie)?.cast?.ifEmpty { null }?.let { "Cast: ${it.take(8).joinToString(", ")}" },
+                    when (item) {
+                        is Movie -> item.cast
+                        is Show -> item.cast
+                    }.ifEmpty { null }?.let { "Cast: ${it.take(8).joinToString(", ")}" },
                     when (item) {
                         is Movie -> item.studios
                         is Show -> item.studios
@@ -338,6 +341,11 @@ private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick
                 subtitles = episode.subtitleLanguages,
                 quality = details?.let { com.hawkynt.mediadroid.library.Quality.of(it) } ?: episode.quality,
             )
+            // How far it was watched, as on every other thumb.
+            store.resumeFor(episode.videoPath)
+                ?.let { progressOf(it.positionMs, it.durationMs) }
+                ?.takeIf { it > 0f }
+                ?.let { ResumeBar(it, Modifier.align(Alignment.BottomCenter)) }
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {

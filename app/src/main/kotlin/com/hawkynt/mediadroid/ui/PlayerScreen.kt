@@ -99,8 +99,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 
-/** Playback speeds the player offers, slowest to fastest. */
-val Speeds = listOf(0.2f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 5.0f)
 
 /** How long the controls stay up after the last touch, like the streaming apps' players. */
 private const val ControlsTimeoutMs = 3_000
@@ -1634,18 +1632,7 @@ private fun PlayerPanel(
         }
 
         PanelTitle("Speed")
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Speeds.forEach { s ->
-                FilterChip(
-                    selected = speed == s,
-                    onClick = { onSpeed(s) },
-                    label = { Text(if (s == 1.0f) "1×" else "${s}×", fontSize = 16.sp) },
-                )
-            }
-        }
+        SpeedSlider(speed, onSpeed, Modifier.fillMaxWidth())
 
         sections()
 

@@ -44,11 +44,7 @@ fun parseEpisodeNfo(xml: String): EpisodeInfo {
         firstAired = root.childText("aired"),
         directors = root.childElements("director").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
         studios = root.childElements("studio").mapNotNull { it.textContent?.trim() }.filter { it.isNotEmpty() },
-        guests = root.childElements("gueststars").flatMap { guests ->
-            guests.childElements("actor").map { actor ->
-                CastMember(name = actor.childText("name") ?: "", role = actor.childText("role"))
-            }
-        }.filter { it.name.isNotEmpty() },
+        guests = root.actors("gueststars"),
         imdbId = root.childText("imdbid") ?: root.uniqueIds()["imdb"],
         showImdbId = root.childText("showid"),
         playcount = root.childInt("playcount") ?: 0,
