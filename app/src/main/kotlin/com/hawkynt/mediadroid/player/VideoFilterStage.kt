@@ -98,7 +98,7 @@ class VideoFilterStage {
     private var blending = false
     private val vsync by lazy { android.view.Choreographer.getInstance() }
 
-    // Motion: the kept frames' luma at half or quarter size (see motionScale), the search between each pair
+    // Motion: the kept frames' luma at the search's scale (see SearchScale), the search between each pair
     // on a thread of its own, and its vectors as a texture once in — for the pair whose later frame arrived
     // at vectorsFor.
     private val motionSearch = java.util.concurrent.Executors.newSingleThreadExecutor()
@@ -109,9 +109,12 @@ class VideoFilterStage {
     private val vectorsFor = LongArray(2)
     private val vectorsCut = BooleanArray(2)
     private val vectorTextures = IntArray(2)
-    private var gridWidth = 0
-    private var gridHeight = 0
-    private var gridScale = 2
+    // Per vector texture: its grid of blocks and the scale its search ran at.
+    private val gridWidth = IntArray(2)
+    private val gridHeight = IntArray(2)
+    private val gridScale = IntArray(2) { 2 }
+    // The search's scale, chosen as it plays from how long searches take (see SearchScale).
+    private var searchScale: SearchScale? = null
     private var motionProgram = 0
     private var obmcTexture = 0
     private val onVsync = android.view.Choreographer.FrameCallback { blend(it) }
@@ -709,12 +712,14 @@ class VideoFilterStage {
     }
 
     /**
-     * The newest kept frame's luma read back at the search's size (see [motionScale]), and the motion search
+     * The newest kept frame's luma read back at the search's scale (see [SearchScale]), and the motion search
      * between it and the one before started on its own thread; its vectors reach one of the two textures
      * once done — the one not holding the pair on screen — named by the later frame's arrival.
      */
     private fun searchMotion(width: Int, height: Int) {
-        val scale = motionScale(width)
+        val pace = searchScale?.takeIf { it.width == width && it.height == height }
+            ?: SearchScale(width, height).also { searchScale = it }
+        val scale = pace.scale
         val luma = packedLuma(frames[keptRing[2]], width, height, scale, scale)
         val prev = motionLumas[1]
         motionLumas[0] = prev
@@ -723,10 +728,12 @@ class VideoFilterStage {
         if (luma.width < 2 * MotionInterpolation.BLOCK || luma.height < 2 * MotionInterpolation.BLOCK) return
         val pair = keptAt[2]
         motionSearch.execute {
+            val started = System.nanoTime()
             val search = estimator?.takeIf { it.width == luma.width && it.height == luma.height }
                 ?: MotionInterpolation.Estimator(luma.width, luma.height).also { estimator = it }
             search.advance()
             search.estimate(prev, luma)
+            val took = System.nanoTime() - started
             val cut = sceneChange.check(prev, luma)
             val bytes = ByteArray(search.blocksWide * search.blocksHigh * 4)
             for (b in 0 until search.blocksWide * search.blocksHigh) {
@@ -736,26 +743,22 @@ class VideoFilterStage {
             val wide = search.blocksWide
             val high = search.blocksHigh
             handler.post {
-                // Only for the pair on screen or the next one; anything older is past.
-                if (pair != keptAt[1] && pair != keptAt[2]) return@post
+                // Only for the pair on screen or the next one; anything older is past, and the search too slow.
+                val late = pair != keptAt[1] && pair != keptAt[2]
+                if (pace === searchScale) pace.report(took, keptAt[2] - keptAt[1], late)
+                if (late) return@post
                 val slot = if (vectorsFor[0] == keptAt[1]) 1 else 0
                 EGL14.eglMakeCurrent(display, idle, idle, context)
                 GLES20.glDeleteTextures(1, intArrayOf(vectorTextures[slot]), 0)
                 vectorTextures[slot] = byteTexture(wide, high, bytes)
-                gridWidth = wide
-                gridScale = scale
-                gridHeight = high
+                gridWidth[slot] = wide
+                gridScale[slot] = scale
+                gridHeight[slot] = high
                 vectorsFor[slot] = pair
                 vectorsCut[slot] = cut
             }
         }
     }
-
-    /**
-     * How much smaller than the picture Motion searches: half up to 1280 pixels wide, a quarter above —
-     * at half size a 1080p search took 12 ms a frame on a desktop, too slow for a phone at 24 a second.
-     */
-    private fun motionScale(width: Int) = if (width > MOTION_HALF_WIDTH) 4 else 2
 
     /** A texture of [width] × [height] RGBA bytes, read texel by texel. */
     private fun byteTexture(width: Int, height: Int, rgba: ByteArray): Int {
@@ -836,11 +839,12 @@ class VideoFilterStage {
                 (weight * MotionInterpolation.ALPHA_MAX).toInt().toFloat(),
             )
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uGrid"), gridWidth.toFloat(), gridHeight.toFloat())
-            val searchWidth = (width / gridScale).toFloat()
-            val searchHeight = (height / gridScale).toFloat()
+            val k = maxOf(slot, 0)
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uGrid"), gridWidth[k].toFloat(), gridHeight[k].toFloat())
+            val searchWidth = (width / gridScale[k]).toFloat()
+            val searchHeight = (height / gridScale[k]).toFloat()
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSearch"), searchWidth, searchHeight)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uScale"), gridScale.toFloat())
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uScale"), gridScale[k].toFloat())
         }
         output(mixed, width, height, picture.copy(sharpness = 0f, clarity = 0f))
         EGL14.eglSwapBuffers(display, window)
@@ -1034,9 +1038,6 @@ class VideoFilterStage {
 
         /** The third kept frame for blending and Motion, after the packed luma. */
         private const val KEPT_THIRD = PACKED_LUMA + 1
-
-        /** The widest picture Motion searches at half size; wider ones at a quarter. */
-        private const val MOTION_HALF_WIDTH = 1280
 
         /** Motion runs two frames behind: a twelfth of a second at 24 frames a second. */
         private const val MAX_MOTION_LATENCY_MS = 250
