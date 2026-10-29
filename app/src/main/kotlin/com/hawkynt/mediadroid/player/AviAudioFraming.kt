@@ -47,6 +47,10 @@ object AviAudioFraming {
     @Volatile
     var remote: (String) -> FsFile? = { null }
 
+    /** [extractors] noting in [DemuxerLog] which of them takes the file at [uri]. */
+    fun recording(extractors: Array<Extractor>, uri: Uri): Array<Extractor> =
+        extractors.map { RecordingExtractor(it, uri.toString()) }.toTypedArray()
+
     private fun wrap(extractors: Array<Extractor>, uri: Uri?): Array<Extractor> = extractors.map {
         val framed = if (it is AviExtractor) FramingExtractor(it) else it
         if (uri != null) RecordingExtractor(framed, uri.toString()) else framed

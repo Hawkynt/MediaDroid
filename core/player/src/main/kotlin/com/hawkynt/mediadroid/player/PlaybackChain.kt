@@ -99,6 +99,9 @@ object PlaybackChain {
         engine = facts.player,
     )
 
+    /** A subtitle format's name for its MIME type: `SubRip`, `PGS (pictures)`; unknown ones as they are. */
+    fun subtitleFormat(mimeType: String): String = SUBTITLE_FORMATS[mimeType] ?: mimeType
+
     /** A decoder's name with what kind it is: the device's own (hardware or software) or the bundled FFmpeg. */
     fun decoderKind(name: String?): String = when {
         name == null -> "not in use"
@@ -215,7 +218,7 @@ object PlaybackChain {
     }
 
     private fun subtitles(subtitles: Subtitles): Path {
-        val format = SUBTITLE_FORMATS[subtitles.mimeType] ?: subtitles.mimeType ?: "not known yet"
+        val format = subtitles.mimeType?.let(::subtitleFormat) ?: "not known yet"
         val timing = when {
             subtitles.delayMs > 0 -> "${subtitles.delayMs} ms later"
             subtitles.delayMs < 0 -> "${-subtitles.delayMs} ms earlier"
@@ -275,5 +278,6 @@ object PlaybackChain {
         "FlacExtractor" to "FLAC",
         "WavExtractor" to "WAV",
         "AmrExtractor" to "AMR",
+        "SubtitleExtractor" to "subtitle parser",
     )
 }
