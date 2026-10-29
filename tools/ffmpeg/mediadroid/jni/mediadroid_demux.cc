@@ -18,6 +18,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/display.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
 
@@ -248,6 +249,21 @@ JNIEXPORT jstring JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nStre
   if (!stream) return nullptr;
   const AVCodec* decoder = avcodec_find_decoder(stream->codecpar->codec_id);
   return decoder ? env->NewStringUTF(decoder->name) : nullptr;
+}
+
+// The stream's pixel format (video, as yuv420p or yuv422p10le) or sample format (audio, as fltp or
+// s16), as FFmpeg names it; null when unknown.
+JNIEXPORT jstring JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nStreamFormat(
+    JNIEnv* env, jclass, jlong handle, jint index) {
+  AVStream* stream = streamOf(demuxerOf(env, handle), index);
+  if (!stream || stream->codecpar->format < 0) return nullptr;
+  const char* name = nullptr;
+  if (stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+    name = av_get_pix_fmt_name((AVPixelFormat)stream->codecpar->format);
+  } else if (stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+    name = av_get_sample_fmt_name((AVSampleFormat)stream->codecpar->format);
+  }
+  return name ? env->NewStringUTF(name) : nullptr;
 }
 
 JNIEXPORT jstring JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nStreamLanguage(

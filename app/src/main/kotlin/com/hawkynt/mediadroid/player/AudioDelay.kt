@@ -6,6 +6,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import androidx.annotation.OptIn
+import androidx.media3.common.Format
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
@@ -20,6 +21,17 @@ class DelayedAudioSink(sink: AudioSink, private val delayMs: () -> Int) : Forwar
         val position = super.getCurrentPositionUs(sourceEnded)
         if (position == AudioSink.CURRENT_POSITION_NOT_SET) return position
         return position + delayMs() * 1000L
+    }
+
+    override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
+        lastInput = audioSinkConfig.format
+        super.configure(audioSinkConfig)
+    }
+
+    companion object {
+        /** What the decoder hands the sink — its PCM encoding, rate and channels — for the info sheet. */
+        @Volatile
+        var lastInput: Format? = null
     }
 }
 

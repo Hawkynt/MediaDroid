@@ -14,4 +14,13 @@ object DemuxerLog {
     }
 
     fun of(location: String): String? = chosen[location]
+
+    private val formats = ConcurrentHashMap<String, String>()
+
+    /** FFmpeg's pixel or sample format of the [kind] (`video`, `audio`) stream it demuxed from [location]. */
+    fun recordFormat(location: String, kind: String, format: String) {
+        formats.putIfAbsent("$kind@$location", format)
+    }
+
+    fun formatOf(location: String, kind: String): String? = formats["$kind@$location"]
 }

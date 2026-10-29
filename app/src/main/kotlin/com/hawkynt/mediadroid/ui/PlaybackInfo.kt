@@ -181,6 +181,7 @@ internal fun playbackFacts(
     subtitleDelayMs: Int,
 ): PlaybackChain.Facts {
     val videoFormat = player.videoFormat
+    val profile = com.hawkynt.mediadroid.library.CodecProfile.of(videoFormat?.codecs)
     val audioFormat = player.audioFormat
     val size = player.videoSize
     val mode = screen?.mode
@@ -217,6 +218,27 @@ internal fun playbackFacts(
                 screenWidth = mode?.physicalWidth ?: 0,
                 screenHeight = mode?.physicalHeight ?: 0,
                 refreshHz = mode?.refreshRate ?: 0f,
+                decodedFormat = ffmpegFormat(videoDecoder, location, "video"),
+                chroma = chromaOf(profile),
+                bitDepth = it.colorInfo?.lumaBitdepth?.takeIf { d -> d > 0 }
+                    ?: if (profile?.contains("10") == true) 10 else 8,
+                colorSpace = when (it.colorInfo?.colorSpace) {
+                    C.COLOR_SPACE_BT709 -> "BT.709"
+                    C.COLOR_SPACE_BT601 -> "BT.601"
+                    C.COLOR_SPACE_BT2020 -> "BT.2020"
+                    else -> null
+                },
+                transfer = when (it.colorInfo?.colorTransfer) {
+                    C.COLOR_TRANSFER_SDR, C.COLOR_TRANSFER_GAMMA_2_2 -> "SDR"
+                    C.COLOR_TRANSFER_ST2084 -> "PQ (HDR10)"
+                    C.COLOR_TRANSFER_HLG -> "HLG"
+                    else -> null
+                },
+                range = when (it.colorInfo?.colorRange) {
+                    C.COLOR_RANGE_LIMITED -> "limited range"
+                    C.COLOR_RANGE_FULL -> "full range"
+                    else -> null
+                },
             )
         },
         audio = audioFormat?.let {
@@ -236,6 +258,10 @@ internal fun playbackFacts(
                 delayMs = delayMs,
                 spatial = spatial,
                 device = device,
+                decodedFormat = ffmpegFormat(audioDecoder, location, "audio"),
+                pcmFormat = com.hawkynt.mediadroid.player.DelayedAudioSink.lastInput?.pcmEncoding
+                    ?.takeIf { e -> e != Format.NO_VALUE }
+                    ?.let(::encodingName),
             )
         },
         subtitles = textFormat?.let {
@@ -254,6 +280,26 @@ internal fun playbackFacts(
         },
         player = "Media3 ExoPlayer ${androidx.media3.common.MediaLibraryInfo.VERSION}",
     )
+}
+
+/**
+ * FFmpeg's own pixel or sample format of the [kind] stream at [location], when FFmpeg both demuxed and
+ * decodes it; other decoders do not say what they decode to.
+ */
+private fun ffmpegFormat(decoder: String?, location: String, kind: String): String? {
+    if (decoder == null || !(decoder.startsWith("ffmpeg", ignoreCase = true) || decoder.contains("Ffmpeg"))) return null
+    return com.hawkynt.mediadroid.player.DemuxerLog.formatOf(
+        com.hawkynt.mediadroid.player.playableUri(location).toString(),
+        kind,
+    )
+}
+
+/** The chroma subsampling a profile implies: 4:2:2 or 4:4:4 where it says so, else 4:2:0. */
+private fun chromaOf(profile: String?): String = when {
+    profile == null -> "4:2:0"
+    "4:4:4" in profile -> "4:4:4"
+    "4:2:2" in profile -> "4:2:2"
+    else -> "4:2:0"
 }
 
 /** The input a track group comes from: Media3 prefixes the ids of merged sources' groups with their index. */

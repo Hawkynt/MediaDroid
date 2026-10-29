@@ -46,7 +46,7 @@ FILES=$(ls "$S"/* | sort)
   echo "== ffprobe packet counts (oracle)"
   for f in $FILES; do
     echo "$(basename "$f") $("$P/bin/ffprobe" -v error -count_packets \
-      -show_entries stream=index,codec_name,nb_read_packets -of csv=p=0 "$f" | tr '\n' ' ')"
+      -show_entries stream=index,codec_name,pix_fmt,sample_fmt,nb_read_packets -of csv=p=0 "$f" | tr '\n' ' ')"
   done
   echo "== thumbnails: which frame of ffmpeg's own decode at the same size (oracle) each one is, byte for byte"
   for f in $FILES; do
