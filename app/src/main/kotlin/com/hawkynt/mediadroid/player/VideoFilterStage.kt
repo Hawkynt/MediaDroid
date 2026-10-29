@@ -50,7 +50,27 @@ class VideoFilterStage {
     private var easuProgram = 0
     private var rcasProgram = 0
     private var blendProgram = 0
-    private val frames = Array(8) { Frame() }
+    private var temporalProgram = 0
+    private val frames = Array(11) { Frame() }
+
+    // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
+    // first, with when each was due; the picture shown is the middle one, one frame behind.
+    private val history = intArrayOf(8, 9, 10)
+    private val historyAt = LongArray(3)
+    private var historyCount = 0
+    // The frames' interval, averaged: decoders hand frames over on the screen's refreshes, so one gap
+    // alone is uneven (25 fps on 60 Hz arrives 33 and 50 ms apart).
+    private var frameIntervalNs = 0L
+    private var shownAt = 0L
+    private var deinterlaceLatencyMs = 0
+    private val secondField = Runnable { drawSecondField() }
+
+    // Which field comes first, told from the pictures (see FieldOrder): the first frames after a start or
+    // a seek are read back as luma — every fourth column, rows from the top — and judged in threes.
+    private val fieldOrder = FieldOrder()
+    private val lumas = arrayOfNulls<Deinterlacer.Plane>(3)
+    private var framesToJudge = 0
+    private var readBack: ByteBuffer? = null
 
     // Frame blending: the last two filtered frames (frames[5] and frames[6], taking turns), when each
     // arrived, and whether the screen still has a blend to show.
@@ -125,6 +145,8 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(easuProgram)
             GLES20.glDeleteProgram(rcasProgram)
             GLES20.glDeleteProgram(blendProgram)
+            GLES20.glDeleteProgram(temporalProgram)
+            handler.removeCallbacks(secondField)
             vsync.removeFrameCallback(onVsync)
             latencyMs = 0
             frames.forEach { it.release() }
@@ -199,6 +221,7 @@ class VideoFilterStage {
         easuProgram = program(VERTEX, FSR_EASU)
         rcasProgram = program(VERTEX, FSR_RCAS)
         blendProgram = program(VERTEX, BLEND)
+        temporalProgram = program(VERTEX, TEMPORAL)
     }
 
     private fun releaseWindow() {
@@ -216,6 +239,7 @@ class VideoFilterStage {
             surfaceTexture.updateTexImage()
             surfaceTexture.getTransformMatrix(texMatrix)
             hasFrame = true
+            handler.removeCallbacks(secondField)
         }
         if (window == EGL14.EGL_NO_SURFACE) return
         val picture = filters
@@ -224,19 +248,48 @@ class VideoFilterStage {
             startBlending()
             return
         }
-        latencyMs = 0
         val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
         val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
-        val source = filtered(picture, width, height)
+        val source = filtered(picture, width, height, fresh = !redraw)
+        latencyMs = deinterlaceLatencyMs
         output(source, width, height, picture)
-        if (!redraw) EGLExt.eglPresentationTimeANDROID(display, window, surfaceTexture.timestamp)
+        if (!redraw) EGLExt.eglPresentationTimeANDROID(display, window, shownAt)
+        EGL14.eglSwapBuffers(display, window)
+        // At field rate the other field follows half a frame later, as its own picture.
+        if (!redraw && picture.isFieldRate && historyCount >= 2) {
+            val halfMs = frameIntervalNs / 2_000_000L
+            if (halfMs in 1..MAX_LATENCY_MS) handler.postDelayed(secondField, halfMs)
+        }
+    }
+
+    /** The second field of the frame on screen, rebuilt from it and the frame after it. */
+    private fun drawSecondField() {
+        val picture = filters
+        if (window == EGL14.EGL_NO_SURFACE || !picture.isFieldRate || historyCount < 2) return
+        val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
+        val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
+        val source = filtered(picture, width, height, fresh = false, secondField = true)
+        output(source, width, height, picture)
         EGL14.eglSwapBuffers(display, window)
     }
 
-    /** Steps 1 to 3: the decoder's picture, deinterlaced and denoised, at its own size. */
-    private fun filtered(picture: PictureAdjustment, width: Int, height: Int): Frame {
+    /**
+     * Steps 1 to 3: the decoder's picture, deinterlaced and denoised, at its own size. [fresh] is a new
+     * decoded frame; [secondField] rebuilds the other field of a temporal deinterlacer's picture.
+     */
+    private fun filtered(
+        picture: PictureAdjustment,
+        width: Int,
+        height: Int,
+        fresh: Boolean,
+        secondField: Boolean = false,
+    ): Frame {
         grainNow = 0f
         EGL14.eglMakeCurrent(display, idle, idle, context)
+        if (picture.deinterlace.isTemporal) return temporal(picture, width, height, fresh, secondField)
+        historyCount = 0
+        deinterlaceLatencyMs = 0
+        shownAt = surfaceTexture.timestamp
         val copied = frames[0].ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, copied.framebuffer)
         GLES20.glViewport(0, 0, width, height)
@@ -251,6 +304,116 @@ class VideoFilterStage {
             }
             source = woven
         }
+        return denoised(picture, source, width, height)
+    }
+
+    /**
+     * YADIF or BWDIF (see [PictureAdjustment.Deinterlace]): a [fresh] frame joins the last three, and
+     * the one before it is shown with a field rebuilt from its neighbours — one frame behind, which the
+     * sound is told to wait. Until three have come, the missing neighbours are the frames there are.
+     */
+    private fun temporal(
+        picture: PictureAdjustment,
+        width: Int,
+        height: Int,
+        fresh: Boolean,
+        secondField: Boolean,
+    ): Frame {
+        if (fresh || historyCount == 0) {
+            // After a seek or a stall the frames before it are no neighbours.
+            val step = surfaceTexture.timestamp - historyAt[2]
+            if (step <= 0 || step > MAX_FRAME_STEP_NS) {
+                historyCount = 0
+                frameIntervalNs = 0L
+            } else {
+                frameIntervalNs = if (frameIntervalNs == 0L) step else (frameIntervalNs * 7 + step) / 8
+            }
+            val oldest = history[0]
+            history[0] = history[1]
+            history[1] = history[2]
+            history[2] = oldest
+            historyAt[0] = historyAt[1]
+            historyAt[1] = historyAt[2]
+            historyAt[2] = surfaceTexture.timestamp
+            val newest = frames[history[2]]
+            if (frames[history[1]].width != width || frames[history[1]].height != height) {
+                if (historyCount > 0) fieldOrder.reset()
+                historyCount = 0
+            }
+            if (historyCount == 0) {
+                lumas.fill(null)
+                framesToJudge = FRAMES_TO_JUDGE
+            }
+            newest.ensure(width, height)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, newest.framebuffer)
+            GLES20.glViewport(0, 0, width, height)
+            run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, texMatrix) {}
+            historyCount = minOf(historyCount + 1, 3)
+            if (framesToJudge > 0) judge(width, height)
+        }
+        val next = frames[history[2]]
+        val cur = if (historyCount >= 2) frames[history[1]] else next
+        val prev = if (historyCount >= 3) frames[history[0]] else cur
+        shownAt = historyAt[if (historyCount >= 2) 1 else 2]
+        val intervalMs = if (historyCount >= 2) frameIntervalNs / 1_000_000L else 0L
+        deinterlaceLatencyMs = intervalMs.toInt().coerceIn(0, MAX_LATENCY_MS)
+        val woven = frames[2].ensure(width, height)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, woven.framebuffer)
+        GLES20.glViewport(0, 0, width, height)
+        GLES20.glUseProgram(temporalProgram)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prev.texture)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(temporalProgram, "uPrev"), 1)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, next.texture)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(temporalProgram, "uNext"), 2)
+        run(temporalProgram, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSecond"), if (secondField) 1 else 0)
+            GLES20.glUniform1f(
+                GLES20.glGetUniformLocation(p, "uParity"),
+                Deinterlacer.rebuiltParity(secondField, fieldOrder.topFieldFirst).toFloat(),
+            )
+            GLES20.glUniform1i(
+                GLES20.glGetUniformLocation(p, "uBwdif"),
+                if (picture.deinterlace == PictureAdjustment.Deinterlace.BWDIF) 1 else 0,
+            )
+        }
+        return denoised(picture, woven, width, height)
+    }
+
+    /** The newest frame's luma, read back from the framebuffer still bound, into the field-order verdict. */
+    private fun judge(width: Int, height: Int) {
+        framesToJudge--
+        val size = width * height * 4
+        val bytes = readBack?.takeIf { it.capacity() == size }
+            ?: ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder()).also { readBack = it }
+        bytes.rewind()
+        GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
+        val columns = width / JUDGED_COLUMN_STEP
+        val luma = IntArray(columns * height)
+        for (y in 0 until height) {
+            // The framebuffer's rows run from the bottom.
+            val row = (height - 1 - y) * width * 4
+            for (x in 0 until columns) {
+                val i = row + x * JUDGED_COLUMN_STEP * 4
+                val r = bytes.get(i).toInt() and 0xFF
+                val g = bytes.get(i + 1).toInt() and 0xFF
+                val b = bytes.get(i + 2).toInt() and 0xFF
+                luma[y * columns + x] = (54 * r + 183 * g + 19 * b) shr 8
+            }
+        }
+        lumas[0] = lumas[1]
+        lumas[1] = lumas[2]
+        lumas[2] = Deinterlacer.Plane(columns, height, luma)
+        val prev = lumas[0] ?: return
+        val cur = lumas[1] ?: return
+        fieldOrder.add(prev, cur, lumas[2]!!)
+    }
+
+    /** Step 3: the denoise filter [picture] asks for, if any, over [from]. */
+    private fun denoised(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
+        var source = from
         val kernel = picture.denoiseKernel()
         if (kernel != null) {
             val denoised = frames[1].ensure(width, height)
@@ -272,7 +435,7 @@ class VideoFilterStage {
     private fun keep(picture: PictureAdjustment) {
         val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
         val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
-        val source = filtered(picture, width, height)
+        val source = filtered(picture, width, height, fresh = true)
         current = if (current == 5) 6 else 5
         val target = frames[current].ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
@@ -285,7 +448,10 @@ class VideoFilterStage {
         currentAt = System.nanoTime()
         kept = minOf(kept + 1, 2)
         // The picture runs half a frame behind; the sound is told to wait as long.
-        if (kept == 2) latencyMs = ((currentAt - previousAt) / 2_000_000L).toInt().coerceIn(0, MAX_LATENCY_MS)
+        if (kept == 2) {
+            latencyMs = ((currentAt - previousAt) / 2_000_000L).toInt().coerceIn(0, MAX_LATENCY_MS) +
+                deinterlaceLatencyMs
+        }
     }
 
     private fun startBlending() {
@@ -404,14 +570,17 @@ class VideoFilterStage {
         GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uSeed"), seed)
         uniforms(program)
         val position = GLES20.glGetAttribLocation(program, "aPosition")
+        // A pass that works from gl_FragCoord alone has its texture coordinate optimised away.
         val coordinate = GLES20.glGetAttribLocation(program, "aTexCoord")
         GLES20.glEnableVertexAttribArray(position)
         GLES20.glVertexAttribPointer(position, 2, GLES20.GL_FLOAT, false, 0, QUAD)
-        GLES20.glEnableVertexAttribArray(coordinate)
-        GLES20.glVertexAttribPointer(coordinate, 2, GLES20.GL_FLOAT, false, 0, QUAD_TEX)
+        if (coordinate >= 0) {
+            GLES20.glEnableVertexAttribArray(coordinate)
+            GLES20.glVertexAttribPointer(coordinate, 2, GLES20.GL_FLOAT, false, 0, QUAD_TEX)
+        }
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         GLES20.glDisableVertexAttribArray(position)
-        GLES20.glDisableVertexAttribArray(coordinate)
+        if (coordinate >= 0) GLES20.glDisableVertexAttribArray(coordinate)
     }
 
     /** A texture with its framebuffer, sized on demand. */
@@ -468,6 +637,130 @@ class VideoFilterStage {
             private set
 
         private const val MAX_LATENCY_MS = 100
+
+        /** The longest gap between two frames that still play on from each other: a 4 fps slide show. */
+        private const val MAX_FRAME_STEP_NS = 250_000_000L
+
+        /** How many frames after a start or a seek are read back for the field order: two seconds' worth. */
+        private const val FRAMES_TO_JUDGE = 50
+
+        /** Every how many columns the field-order verdict looks at. */
+        private const val JUDGED_COLUMN_STEP = 4
+
+        // YADIF and BWDIF, converted from FFmpeg's vf_yadif.c (Michael Niedermayer) and vf_bwdif.c (Thomas
+        // Mundt), LGPL-2.1-or-later, by way of the core's Deinterlacer, which is checked against FFmpeg byte
+        // for byte; this is the same arithmetic on each colour channel, in whole steps of 0..255. Rows
+        // count from the top; uParity picks the field rebuilt (see Deinterlacer.rebuiltParity): with uSecond
+        // the earlier one, from the shown frame and the next, otherwise the later one, from the previous
+        // frame and the shown one.
+        private const val TEMPORAL = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform sampler2D uPrev;
+            uniform sampler2D uNext;
+            uniform vec2 uSize;
+            uniform bool uSecond;
+            uniform float uParity;
+            uniform bool uBwdif;
+            varying vec2 vTex;
+            vec3 px(sampler2D s, float x, float y) {
+                return floor(texture2D(s, vec2(x + 0.5, uSize.y - y - 0.5) / uSize).rgb * 255.0 + 0.5);
+            }
+            vec3 cur(float x, float y) { return px(uTex, x, y); }
+            // The two pictures either side of the rebuilt field's moment.
+            vec3 before(float x, float y) { return uSecond ? px(uTex, x, y) : px(uPrev, x, y); }
+            vec3 after(float x, float y) { return uSecond ? px(uNext, x, y) : px(uTex, x, y); }
+            vec3 score(float x, float y, float m, float p, float j) {
+                return abs(cur(x - 1.0 + j, y + m) - cur(x - 1.0 - j, y + p)) +
+                    abs(cur(x + j, y + m) - cur(x - j, y + p)) +
+                    abs(cur(x + 1.0 + j, y + m) - cur(x + 1.0 - j, y + p));
+            }
+            vec3 along(float x, float y, float m, float p, float j) {
+                return floor((cur(x + j, y + m) + cur(x - j, y + p)) * 0.5);
+            }
+            vec3 yadif(float x, float y) {
+                float m = y > 0.0 ? -1.0 : 1.0;
+                float p = y + 1.0 < uSize.y ? 1.0 : -1.0;
+                vec3 c = cur(x, y + m);
+                vec3 e = cur(x, y + p);
+                vec3 b0 = before(x, y);
+                vec3 a0 = after(x, y);
+                vec3 d = floor((b0 + a0) * 0.5);
+                vec3 t0 = abs(b0 - a0);
+                vec3 t1 = floor((abs(px(uPrev, x, y + m) - c) + abs(px(uPrev, x, y + p) - e)) * 0.5);
+                vec3 t2 = floor((abs(px(uNext, x, y + m) - c) + abs(px(uNext, x, y + p) - e)) * 0.5);
+                vec3 diff = max(max(floor(t0 * 0.5), t1), t2);
+                vec3 pred = floor((c + e) * 0.5);
+                if (x >= 3.0 && x < uSize.x - 3.0) {
+                    vec3 best = abs(cur(x - 1.0, y + m) - cur(x - 1.0, y + p)) + abs(c - e) +
+                        abs(cur(x + 1.0, y + m) - cur(x + 1.0, y + p)) - 1.0;
+                    for (int side = 0; side < 2; side++) {
+                        float j = side == 0 ? -1.0 : 1.0;
+                        vec3 s = score(x, y, m, p, j);
+                        vec3 take = vec3(lessThan(s, best));
+                        best = mix(best, s, take);
+                        pred = mix(pred, along(x, y, m, p, j), take);
+                        vec3 s2 = score(x, y, m, p, 2.0 * j);
+                        vec3 take2 = take * vec3(lessThan(s2, best));
+                        best = mix(best, s2, take2);
+                        pred = mix(pred, along(x, y, m, p, 2.0 * j), take2);
+                    }
+                }
+                if (y != 1.0 && y + 2.0 != uSize.y) {
+                    vec3 b = floor((before(x, y + 2.0 * m) + after(x, y + 2.0 * m)) * 0.5);
+                    vec3 f = floor((before(x, y + 2.0 * p) + after(x, y + 2.0 * p)) * 0.5);
+                    vec3 most = max(max(d - e, d - c), min(b - c, f - e));
+                    vec3 least = min(min(d - e, d - c), max(b - c, f - e));
+                    diff = max(max(diff, least), -most);
+                }
+                return clamp(pred, d - diff, d + diff);
+            }
+            vec3 both(float x, float y) { return before(x, y) + after(x, y); }
+            vec3 bwdif(float x, float y) {
+                bool edge = y < 4.0 || y + 5.0 > uSize.y;
+                float m = (!edge || y > 0.0) ? -1.0 : 1.0;
+                float p = (!edge || y + 1.0 < uSize.y) ? 1.0 : -1.0;
+                vec3 c = cur(x, y + m);
+                vec3 e = cur(x, y + p);
+                vec3 b0 = before(x, y);
+                vec3 a0 = after(x, y);
+                vec3 d = floor((b0 + a0) * 0.5);
+                vec3 t0 = abs(b0 - a0);
+                vec3 t1 = floor((abs(px(uPrev, x, y + m) - c) + abs(px(uPrev, x, y + p) - e)) * 0.5);
+                vec3 t2 = floor((abs(px(uNext, x, y + m) - c) + abs(px(uNext, x, y + p) - e)) * 0.5);
+                vec3 still = max(max(floor(t0 * 0.5), t1), t2);
+                vec3 diff = still;
+                if (!edge || (y >= 2.0 && y + 3.0 <= uSize.y)) {
+                    vec3 b = floor(both(x, y - 2.0) * 0.5) - c;
+                    vec3 f = floor(both(x, y + 2.0) * 0.5) - e;
+                    vec3 most = max(max(d - e, d - c), min(b, f));
+                    vec3 least = min(min(d - e, d - c), max(b, f));
+                    diff = max(max(diff, least), -most);
+                }
+                vec3 interpol = floor((c + e) * 0.5);
+                if (!edge) {
+                    vec3 outer = cur(x, y - 3.0) + cur(x, y + 3.0);
+                    vec3 hf = floor((5570.0 * both(x, y) - 3801.0 * (both(x, y - 2.0) + both(x, y + 2.0)) +
+                        1016.0 * (both(x, y - 4.0) + both(x, y + 4.0))) / 4.0);
+                    vec3 high = floor((hf + 4309.0 * (c + e) - 213.0 * outer) / 8192.0);
+                    vec3 spatial = floor((5077.0 * (c + e) - 981.0 * outer) / 8192.0);
+                    interpol = mix(spatial, high, vec3(greaterThan(abs(c - e), t0)));
+                }
+                vec3 result = clamp(clamp(interpol, d - diff, d + diff), 0.0, 255.0);
+                return mix(result, d, vec3(equal(still, vec3(0.0))));
+            }
+            void main() {
+                float x = floor(gl_FragCoord.x);
+                float y = uSize.y - 1.0 - floor(gl_FragCoord.y);
+                vec3 v;
+                if (mod(y + uParity, 2.0) < 0.5) {
+                    v = cur(x, y);
+                } else {
+                    v = uBwdif ? bwdif(x, y) : yadif(x, y);
+                }
+                gl_FragColor = vec4(v / 255.0, 1.0);
+            }
+        """
 
         // Frame blending: the current frame over the previous one by the weight.
         private const val BLEND = """
