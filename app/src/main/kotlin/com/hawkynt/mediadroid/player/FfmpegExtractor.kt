@@ -117,6 +117,7 @@ class FfmpegExtractor(
 
     /** Declares the streams Media3 can be given and how seeking works. */
     private fun declare(demuxer: FfmpegDemuxer, inputLength: Long) {
+        uri?.let { location -> demuxer.formatName()?.let { DemuxerLog.record(location.toString(), "ffmpeg:$it") } }
         for (stream in demuxer.streams()) {
             val mapping = DemuxedTrack.map(stream.kind, stream.codecName, stream.parameters, stream.decoderName)
                 ?: continue
