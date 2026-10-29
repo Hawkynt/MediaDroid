@@ -198,6 +198,15 @@ class PlaybackMathTest {
     }
 
     @Test
+    fun `a delay says whether the sound or the subtitles come before or after the picture`() {
+        assertEquals("in sync with the picture", PlaybackMath.syncText("sound", 0))
+        assertEquals("sound 150 ms after the picture", PlaybackMath.syncText("sound", 150))
+        assertEquals("sound 2 s before the picture", PlaybackMath.syncText("sound", -2000))
+        assertEquals("subtitles 500 ms after the picture", PlaybackMath.syncText("subtitles", 500))
+        assertEquals("subtitles 1.2 s before the picture", PlaybackMath.syncText("subtitles", -1200))
+    }
+
+    @Test
     fun `the display rate is the lowest whole multiple of the film's frame rate the screen offers`() {
         val tv = listOf(23.976f, 24f, 25f, 29.97f, 50f, 59.94f, 60f)
         assertEquals(23.976f, PlaybackMath.matchingRefreshRate(23.976f, tv)!!, 1e-3f)
