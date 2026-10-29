@@ -1344,7 +1344,7 @@ fun PlayerScreen(
                 videoPath = queue[index].videoPath,
                 tracks = player.currentTracks,
                 videoSize = player.videoSize,
-                chain = com.hawkynt.mediadroid.player.PlaybackChain.of(
+                graph = com.hawkynt.mediadroid.player.PlaybackChain.of(
                     playbackFacts(
                         location = queue[index].videoPath,
                         player = player,
@@ -1366,6 +1366,7 @@ fun PlayerScreen(
                         delayMs = audioDelayMs,
                         spatial = spatialAudio,
                         device = audioOutput.name,
+                        subtitleDelayMs = subtitleLook.delayMs,
                     ),
                 ),
                 onDismiss = { infoOpen = false },

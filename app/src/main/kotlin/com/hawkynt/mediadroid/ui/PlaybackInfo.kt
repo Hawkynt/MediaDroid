@@ -1,7 +1,7 @@
 package com.hawkynt.mediadroid.ui
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -25,16 +26,16 @@ import java.io.File
 
 /**
  * What is playing: the file, its container and size, every video / audio / subtitle track with codec,
- * language, channels, resolution and frame rate (the one playing marked), and how it plays — the whole
- * chain from the source and the demuxer through decoders, conversion, filters, resampling and mixing to
- * the renderer, the sink and the output (see [PlaybackChain]).
+ * language, channels, resolution and frame rate (the one playing marked), and how it plays — as a graph
+ * (see [ChainGraph]): the files read, and a lane each for picture, sound and subtitles from them to the
+ * screen and the speaker.
  */
 @Composable
 fun PlaybackInfoDialog(
     videoPath: String,
     tracks: Tracks,
     videoSize: VideoSize,
-    chain: List<PlaybackChain.Stage>,
+    graph: PlaybackChain.Graph,
     onDismiss: () -> Unit,
 ) {
     val file = File(videoPath)
@@ -42,8 +43,10 @@ fun PlaybackInfoDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         title = { Text("What is playing") },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.fillMaxWidth(0.94f),
         text = {
-            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Section("File")
                 Line(file.name)
                 Line(file.parent ?: "")
@@ -68,10 +71,7 @@ fun PlaybackInfoDialog(
                 }
 
                 Section("How it plays")
-                chain.groupBy { it.section }.forEach { (section, stages) ->
-                    Line(section, bold = true)
-                    stages.forEach { Line("   ${it.step}: ${it.detail}") }
-                }
+                ChainGraph(graph)
             }
         },
     )
@@ -154,6 +154,7 @@ internal fun playbackFacts(
     delayMs: Int,
     spatial: Boolean,
     device: String,
+    subtitleDelayMs: Int,
 ): PlaybackChain.Facts {
     val videoFormat = player.videoFormat
     val audioFormat = player.audioFormat
@@ -161,13 +162,26 @@ internal fun playbackFacts(
     val mode = screen?.mode
     val encoding = audioTrack?.encoding
     val passthrough = encoding != null && !androidx.media3.common.util.Util.isEncodingLinearPcm(encoding)
+    val playing = { type: Int ->
+        player.currentTracks.groups.firstOrNull { it.type == type && it.isSelected }
+    }
+    val textGroup = playing(C.TRACK_TYPE_TEXT)
+    val textFormat = textGroup?.let { group ->
+        (0 until group.length).firstOrNull(group::isTrackSelected)?.let(group::getTrackFormat)
+    }
     return PlaybackChain.Facts(
-        location = location,
-        demuxer = com.hawkynt.mediadroid.player.DemuxerLog.of(
-            com.hawkynt.mediadroid.player.playableUri(location).toString(),
+        // The file itself; sidecar files, when the player merges them in, follow in their order.
+        inputs = listOf(
+            PlaybackChain.Source(
+                location,
+                com.hawkynt.mediadroid.player.DemuxerLog.of(
+                    com.hawkynt.mediadroid.player.playableUri(location).toString(),
+                ),
+            ),
         ),
         video = videoFormat?.let {
             PlaybackChain.Video(
+                input = inputOf(playing(C.TRACK_TYPE_VIDEO)?.mediaTrackGroup?.id),
                 decoder = videoDecoder,
                 width = size.width.takeIf { w -> w > 0 } ?: it.width,
                 height = size.height.takeIf { h -> h > 0 } ?: it.height,
@@ -183,6 +197,7 @@ internal fun playbackFacts(
         },
         audio = audioFormat?.let {
             PlaybackChain.Audio(
+                input = inputOf(playing(C.TRACK_TYPE_AUDIO)?.mediaTrackGroup?.id),
                 decoder = audioDecoder,
                 inputSampleRate = it.sampleRate,
                 inputChannels = it.channelCount,
@@ -199,9 +214,27 @@ internal fun playbackFacts(
                 device = device,
             )
         },
+        subtitles = textFormat?.let {
+            PlaybackChain.Subtitles(
+                input = inputOf(textGroup.mediaTrackGroup.id),
+                // Subtitles Media3 parses while extracting reach the renderer as cues; codecs keeps their format.
+                mimeType = if (it.sampleMimeType == androidx.media3.common.MimeTypes.APPLICATION_MEDIA3_CUES) {
+                    it.codecs
+                } else {
+                    it.sampleMimeType
+                },
+                language = it.language?.let(Languages::label),
+                delayMs = subtitleDelayMs,
+                screen = screenName,
+            )
+        },
         player = "Media3 ExoPlayer ${androidx.media3.common.MediaLibraryInfo.VERSION}",
     )
 }
+
+/** The input a track group comes from: Media3 prefixes the ids of merged sources' groups with their index. */
+private fun inputOf(groupId: String?): Int =
+    groupId?.let { Regex("^(\\d+):").find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
 
 /** A `C.ENCODING_*` as people call it. */
 private fun encodingName(encoding: Int): String = when (encoding) {
