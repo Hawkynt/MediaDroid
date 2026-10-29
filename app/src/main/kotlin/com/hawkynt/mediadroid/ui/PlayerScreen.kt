@@ -1486,6 +1486,7 @@ fun PlayerScreen(
                         spatial = spatialAudio,
                         device = audioOutput.name,
                         subtitleDelayMs = subtitleLook.delayMs,
+                        speedFactor = judderFactor,
                         sidecars = sidecars,
                     ),
                 ),

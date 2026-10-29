@@ -190,6 +190,20 @@ class PlaybackChainTest {
     }
 
     @Test
+    fun `timing says the frame rate, and how it is changed to fall evenly on the screen`() {
+        val steady = PlaybackChain.of(facts.copy(video = video.copy(frameRate = 25f)))
+        assertEquals("25 fps on 120 Hz", steady.detail(Lane.PICTURE, "Timing"))
+        val even = PlaybackChain.of(
+            facts.copy(video = video.copy(frameRate = 23.976f, speedFactor = 24f / 23.976f)),
+        )
+        assertEquals("23.976 fps played at 24 fps (+0.1 %) on 120 Hz", even.detail(Lane.PICTURE, "Timing"))
+        val slower = PlaybackChain.of(
+            facts.copy(video = video.copy(frameRate = 23.976f, speedFactor = 20f / 23.976f, refreshHz = 60f)),
+        )
+        assertEquals("23.976 fps played at 20 fps (−16.6 %) on 60 Hz", slower.detail(Lane.PICTURE, "Timing"))
+    }
+
+    @Test
     fun `decoder and processing name the sample format`() {
         val aac = PlaybackChain.of(facts.copy(audio = audio.copy(pcmFormat = "16-bit PCM")))
         assertEquals("c2.android.aac.decoder (software) → 16-bit PCM", aac.detail(Lane.SOUND, "Decoder"))
