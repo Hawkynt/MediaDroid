@@ -46,7 +46,10 @@ class VideoFilterStage {
     private var deinterlaceProgram = 0
     private var denoiseProgram = 0
     private var sharpenProgram = 0
-    private val frames = arrayOf(Frame(), Frame(), Frame())
+    private var lanczosProgram = 0
+    private var easuProgram = 0
+    private var rcasProgram = 0
+    private val frames = arrayOf(Frame(), Frame(), Frame(), Frame(), Frame())
 
     /** Where the decoder draws. */
     lateinit var inputSurface: Surface
@@ -102,6 +105,9 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(deinterlaceProgram)
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(sharpenProgram)
+            GLES20.glDeleteProgram(lanczosProgram)
+            GLES20.glDeleteProgram(easuProgram)
+            GLES20.glDeleteProgram(rcasProgram)
             frames.forEach { it.release() }
             surfaceTexture.release()
             inputSurface.release()
@@ -170,6 +176,9 @@ class VideoFilterStage {
         deinterlaceProgram = program(VERTEX, DEINTERLACE)
         denoiseProgram = program(VERTEX, DENOISE)
         sharpenProgram = program(VERTEX, SHARPEN)
+        lanczosProgram = program(VERTEX, LANCZOS)
+        easuProgram = program(VERTEX, FSR_EASU)
+        rcasProgram = program(VERTEX, FSR_RCAS)
     }
 
     private fun releaseWindow() {
@@ -226,17 +235,54 @@ class VideoFilterStage {
             source = denoised
         }
 
-        // 4: sharpness and clarity, drawn onto the screen at its size.
-        EGL14.eglMakeCurrent(display, window, window, context)
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-        GLES20.glViewport(0, 0, query(EGL14.EGL_WIDTH), query(EGL14.EGL_HEIGHT))
-        run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+        val outWidth = query(EGL14.EGL_WIDTH)
+        val outHeight = query(EGL14.EGL_HEIGHT)
+        val upscaling = picture.upscaler != PictureAdjustment.Upscaler.STANDARD && outWidth > width
+        val sharpen: (Int) -> Unit = { p ->
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), picture.sharpness)
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), picture.clarity)
         }
+        if (!upscaling) {
+            // 4: sharpness and clarity, drawn onto the screen at its size by its own bilinear scaling.
+            onWindow(outWidth, outHeight)
+            run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, sharpen)
+        } else {
+            // 4: sharpness and clarity at the picture's own size, then 5: enlarged onto the screen.
+            if (picture.sharpness > 0f || picture.clarity > 0f) {
+                val sharpened = frames[3].ensure(width, height)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, sharpened.framebuffer)
+                run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, sharpen)
+                source = sharpened
+            }
+            val inSize: (Int) -> Unit = { p ->
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uInSize"), width.toFloat(), height.toFloat())
+            }
+            if (picture.upscaler == PictureAdjustment.Upscaler.LANCZOS) {
+                onWindow(outWidth, outHeight)
+                run(lanczosProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
+            } else {
+                // FSR 1: edge-adaptive upscaling to the screen's size, then contrast-adaptive sharpening on it.
+                val enlarged = frames[4].ensure(outWidth, outHeight)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
+                GLES20.glViewport(0, 0, outWidth, outHeight)
+                run(easuProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
+                onWindow(outWidth, outHeight)
+                run(rcasProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / outWidth, 1f / outHeight)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharp"), RCAS_SHARPNESS)
+                }
+            }
+        }
         if (!redraw) EGLExt.eglPresentationTimeANDROID(display, window, surfaceTexture.timestamp)
         EGL14.eglSwapBuffers(display, window)
+    }
+
+    /** Draws onto the screen from here on. */
+    private fun onWindow(width: Int, height: Int) {
+        EGL14.eglMakeCurrent(display, window, window, context)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        GLES20.glViewport(0, 0, width, height)
     }
 
     private fun query(what: Int): Int {
@@ -311,6 +357,9 @@ class VideoFilterStage {
     }
 
     private companion object {
+        /** RCAS strength on AMD's scale of stops below full sharpness (FsrRcasCon): 0.2 stops, exp2(-0.2). */
+        const val RCAS_SHARPNESS = 0.8705506f
+
         /** Denoise strengths: reach in pixels, and how different a neighbour may be and still count. */
         val DENOISE_LEVELS = listOf(1f to 0.06f, 2f to 0.09f, 2f to 0.15f)
 
@@ -410,6 +459,166 @@ class VideoFilterStage {
                     }
                 }
                 gl_FragColor = vec4(sum / weights, 1.0);
+            }
+        """
+
+        // Lanczos-3 (a = 3), 6 × 6 taps around the position; the result is pulled halfway back into the range
+        // of the four nearest pixels, which holds back most of the ringing Lanczos leaves at hard edges.
+        const val LANCZOS = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform vec2 uInSize;
+            varying vec2 vTex;
+            float lanczos(float x) {
+                x = abs(x);
+                if (x < 1e-5) return 1.0;
+                if (x >= 3.0) return 0.0;
+                float px = 3.14159265 * x;
+                return 3.0 * sin(px) * sin(px / 3.0) / (px * px);
+            }
+            void main() {
+                vec2 pos = vTex * uInSize - 0.5;
+                vec2 f = fract(pos);
+                vec2 base = floor(pos);
+                vec3 sum = vec3(0.0);
+                float weights = 0.0;
+                vec3 lo = vec3(1.0);
+                vec3 hi = vec3(0.0);
+                for (int j = -2; j <= 3; j++) {
+                    float wy = lanczos(float(j) - f.y);
+                    for (int i = -2; i <= 3; i++) {
+                        vec3 c = texture2D(uTex, (base + vec2(float(i), float(j)) + 0.5) / uInSize).rgb;
+                        float w = lanczos(float(i) - f.x) * wy;
+                        sum += c * w;
+                        weights += w;
+                        if (i >= 0 && i <= 1 && j >= 0 && j <= 1) {
+                            lo = min(lo, c);
+                            hi = max(hi, c);
+                        }
+                    }
+                }
+                vec3 c = sum / weights;
+                gl_FragColor = vec4(mix(c, clamp(c, lo, hi), 0.5), 1.0);
+            }
+        """
+
+        // AMD FidelityFX Super Resolution 1, EASU (edge-adaptive spatial upsampling), from ffx_fsr1.h
+        // (MIT, see THIRD-PARTY-NOTICE.FidelityFX-FSR.txt): the 12 texels around 'f' read one by one where
+        // AMD gathers them, the approximate reciprocals written exactly. Taps, as in the original:
+        //     b c
+        //   e f g h
+        //   i j k l
+        //     n o
+        const val FSR_EASU = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform vec2 uInSize;
+            varying vec2 vTex;
+            vec2 fp;
+            vec3 tex(float x, float y) { return texture2D(uTex, (fp + vec2(x, y) + 0.5) / uInSize).rgb; }
+            float luma2(vec3 c) { return c.b * 0.5 + (c.r * 0.5 + c.g); }
+            void setF(inout vec2 dir, inout float len, float w, float lA, float lB, float lC, float lD, float lE) {
+                float dc = lD - lC;
+                float cb = lC - lB;
+                float lenX = 1.0 / max(max(abs(dc), abs(cb)), 1e-6);
+                float dirX = lD - lB;
+                dir.x += dirX * w;
+                lenX = clamp(abs(dirX) * lenX, 0.0, 1.0);
+                lenX *= lenX;
+                len += lenX * w;
+                float ec = lE - lC;
+                float ca = lC - lA;
+                float lenY = 1.0 / max(max(abs(ec), abs(ca)), 1e-6);
+                float dirY = lE - lA;
+                dir.y += dirY * w;
+                lenY = clamp(abs(dirY) * lenY, 0.0, 1.0);
+                lenY *= lenY;
+                len += lenY * w;
+            }
+            void tap(inout vec3 aC, inout float aW, vec2 off, vec2 dir, vec2 len, float lob, float clp, vec3 c) {
+                vec2 v = vec2(off.x * dir.x + off.y * dir.y, off.x * -dir.y + off.y * dir.x) * len;
+                float d2 = min(dot(v, v), clp);
+                float wB = 0.4 * d2 - 1.0;
+                float wA = lob * d2 - 1.0;
+                wB *= wB;
+                wA *= wA;
+                wB = 1.5625 * wB - 0.5625;
+                float w = wB * wA;
+                aC += c * w;
+                aW += w;
+            }
+            void main() {
+                vec2 pp = vTex * uInSize - 0.5;
+                fp = floor(pp);
+                pp -= fp;
+                vec3 b = tex(0.0, -1.0); vec3 c = tex(1.0, -1.0);
+                vec3 e = tex(-1.0, 0.0); vec3 f = tex(0.0, 0.0); vec3 g = tex(1.0, 0.0); vec3 h = tex(2.0, 0.0);
+                vec3 i = tex(-1.0, 1.0); vec3 j = tex(0.0, 1.0); vec3 k = tex(1.0, 1.0); vec3 l = tex(2.0, 1.0);
+                vec3 n = tex(0.0, 2.0); vec3 o = tex(1.0, 2.0);
+                float bL = luma2(b); float cL = luma2(c); float eL = luma2(e); float fL = luma2(f);
+                float gL = luma2(g); float hL = luma2(h); float iL = luma2(i); float jL = luma2(j);
+                float kL = luma2(k); float lL = luma2(l); float nL = luma2(n); float oL = luma2(o);
+                vec2 dir = vec2(0.0);
+                float len = 0.0;
+                setF(dir, len, (1.0 - pp.x) * (1.0 - pp.y), bL, eL, fL, gL, jL);
+                setF(dir, len, pp.x * (1.0 - pp.y), cL, fL, gL, hL, kL);
+                setF(dir, len, (1.0 - pp.x) * pp.y, fL, iL, jL, kL, nL);
+                setF(dir, len, pp.x * pp.y, gL, jL, kL, lL, oL);
+                vec2 dir2 = dir * dir;
+                float dirR = dir2.x + dir2.y;
+                bool zro = dirR < 1.0 / 32768.0;
+                dirR = zro ? 1.0 : inversesqrt(dirR);
+                dir.x = zro ? 1.0 : dir.x;
+                dir *= dirR;
+                len = len * 0.5;
+                len *= len;
+                float stretch = (dir.x * dir.x + dir.y * dir.y) / max(abs(dir.x), abs(dir.y));
+                vec2 len2 = vec2(1.0 + (stretch - 1.0) * len, 1.0 - 0.5 * len);
+                float lob = 0.5 + ((1.0 / 4.0 - 0.04) - 0.5) * len;
+                float clp = 1.0 / lob;
+                vec3 min4 = min(min(f, g), min(j, k));
+                vec3 max4 = max(max(f, g), max(j, k));
+                vec3 aC = vec3(0.0);
+                float aW = 0.0;
+                tap(aC, aW, vec2(0.0, -1.0) - pp, dir, len2, lob, clp, b);
+                tap(aC, aW, vec2(1.0, -1.0) - pp, dir, len2, lob, clp, c);
+                tap(aC, aW, vec2(-1.0, 1.0) - pp, dir, len2, lob, clp, i);
+                tap(aC, aW, vec2(0.0, 1.0) - pp, dir, len2, lob, clp, j);
+                tap(aC, aW, vec2(0.0, 0.0) - pp, dir, len2, lob, clp, f);
+                tap(aC, aW, vec2(-1.0, 0.0) - pp, dir, len2, lob, clp, e);
+                tap(aC, aW, vec2(1.0, 1.0) - pp, dir, len2, lob, clp, k);
+                tap(aC, aW, vec2(2.0, 1.0) - pp, dir, len2, lob, clp, l);
+                tap(aC, aW, vec2(2.0, 0.0) - pp, dir, len2, lob, clp, h);
+                tap(aC, aW, vec2(1.0, 0.0) - pp, dir, len2, lob, clp, g);
+                tap(aC, aW, vec2(1.0, 2.0) - pp, dir, len2, lob, clp, o);
+                tap(aC, aW, vec2(0.0, 2.0) - pp, dir, len2, lob, clp, n);
+                gl_FragColor = vec4(min(max4, max(min4, aC / aW)), 1.0);
+            }
+        """
+
+        // AMD FidelityFX Super Resolution 1, RCAS (robust contrast-adaptive sharpening), from ffx_fsr1.h
+        // (MIT): the strongest negative lobe that cannot clip, limited to FSR_RCAS_LIMIT = 0.25 - 1/16,
+        // times the strength; divisions guarded where AMD's reciprocals would meet zero.
+        const val FSR_RCAS = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform vec2 uTexel;
+            uniform float uSharp;
+            varying vec2 vTex;
+            void main() {
+                vec3 b = texture2D(uTex, vTex - vec2(0.0, uTexel.y)).rgb;
+                vec3 d = texture2D(uTex, vTex - vec2(uTexel.x, 0.0)).rgb;
+                vec3 e = texture2D(uTex, vTex).rgb;
+                vec3 f = texture2D(uTex, vTex + vec2(uTexel.x, 0.0)).rgb;
+                vec3 h = texture2D(uTex, vTex + vec2(0.0, uTexel.y)).rgb;
+                vec3 mn4 = min(min(b, d), min(f, h));
+                vec3 mx4 = max(max(b, d), max(f, h));
+                vec3 hitMin = min(mn4, e) / max(4.0 * mx4, vec3(1e-5));
+                vec3 hitMax = (1.0 - max(mx4, e)) / min(4.0 * mn4 - 4.0, vec3(-1e-5));
+                vec3 lobeRGB = max(-hitMin, hitMax);
+                float lobe = max(-0.1875, min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0)) * uSharp;
+                vec3 c = (lobe * (b + d + h + f) + e) / (4.0 * lobe + 1.0);
+                gl_FragColor = vec4(c, 1.0);
             }
         """
 

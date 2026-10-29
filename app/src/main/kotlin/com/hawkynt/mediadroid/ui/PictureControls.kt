@@ -100,6 +100,19 @@ fun PictureSliders(
                 )
             }
         }
+        Text("Upscaling", fontSize = 16.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PictureAdjustment.Upscaler.entries.forEach { upscaler ->
+                FilterChip(
+                    selected = picture.upscaler == upscaler,
+                    onClick = {
+                        onChange(picture.copy(upscaler = upscaler))
+                        onDone()
+                    },
+                    label = { Text(upscaler.label, fontSize = 15.sp) },
+                )
+            }
+        }
         Text(
             "Filters run on the graphics chip; HDR videos skip them.",
             fontSize = 13.sp,
