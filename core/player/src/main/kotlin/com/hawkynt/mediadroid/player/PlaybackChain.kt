@@ -151,7 +151,7 @@ object PlaybackChain {
                 "${audio.inputChannels} → ${audio.sinkChannels} channels (downmix)"
             audio.inputChannels < audio.sinkChannels ->
                 "${audio.inputChannels} → ${audio.sinkChannels} channels (upmix)"
-            else -> "none (${audio.sinkChannels} channels)"
+            else -> "none (${channels(audio.sinkChannels)})"
         }
         val sink = when {
             audio.passthrough -> "AudioTrack · passthrough of ${audio.sinkEncoding ?: "encoded sound"}"
@@ -159,7 +159,7 @@ object PlaybackChain {
             else -> buildList {
                 add("AudioTrack")
                 add(khz(audio.sinkSampleRate))
-                add("${audio.sinkChannels} channels")
+                add(channels(audio.sinkChannels))
                 audio.sinkEncoding?.let { add(it) }
                 if (audio.offload) add("offloaded")
             }.joinToString(" · ")
@@ -173,6 +173,8 @@ object PlaybackChain {
             Stage(AUDIO, "Output", audio.device),
         )
     }
+
+    private fun channels(count: Int): String = if (count == 1) "1 channel" else "$count channels"
 
     private fun khz(rate: Int): String = number(rate / 1000f) + " kHz"
 
