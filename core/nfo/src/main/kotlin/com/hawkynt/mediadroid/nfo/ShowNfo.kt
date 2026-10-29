@@ -17,6 +17,8 @@ data class ShowInfo(
     val tags: List<String> = emptyList(),
     val imdbId: String? = null,
     val tmdbId: String? = null,
+    /** The show's actors, in the NFO's order. */
+    val cast: List<CastMember> = emptyList(),
     /** The rating on a 0–10 scale; null when unrated. */
     val rating: Double? = null,
 )
@@ -44,5 +46,6 @@ fun parseShowNfo(xml: String): ShowInfo {
         imdbId = root.childText("imdbid") ?: uniqueIds["imdb"],
         tmdbId = root.childText("tmdbid") ?: uniqueIds["tmdb"],
         rating = root.rating(),
+        cast = root.actors("cast"),
     )
 }

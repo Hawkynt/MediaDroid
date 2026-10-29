@@ -310,6 +310,7 @@ fun SettingsScreen(
                     it.sharpness = defaultPicture.sharpness
                     it.clarity = defaultPicture.clarity
                     it.denoise = defaultPicture.denoise
+                    it.deinterlace = defaultPicture.deinterlace.name
                 }
             },
         )

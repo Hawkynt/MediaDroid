@@ -158,7 +158,10 @@ fun DetailsScreen(
                 }
                 val credits = listOfNotNull(
                     (item as? Movie)?.directors?.ifEmpty { null }?.let { "Director: ${it.joinToString(", ")}" },
-                    (item as? Movie)?.cast?.ifEmpty { null }?.let { "Cast: ${it.take(8).joinToString(", ")}" },
+                    when (item) {
+                        is Movie -> item.cast
+                        is Show -> item.cast
+                    }.ifEmpty { null }?.let { "Cast: ${it.take(8).joinToString(", ")}" },
                     when (item) {
                         is Movie -> item.studios
                         is Show -> item.studios

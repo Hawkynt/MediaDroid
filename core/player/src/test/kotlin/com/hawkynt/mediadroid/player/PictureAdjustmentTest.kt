@@ -31,6 +31,8 @@ class PictureAdjustmentTest {
         assertEquals(false, sharp.isNeutral)
         assertEquals(true, PictureAdjustment(denoise = 2).hasFilters)
         assertEquals(true, PictureAdjustment(clarity = 0.2f).hasFilters)
+        assertEquals(true, PictureAdjustment(deinterlace = PictureAdjustment.Deinterlace.AUTO).hasFilters)
+        assertEquals(PictureAdjustment.Deinterlace.OFF, PictureAdjustment.Neutral.deinterlace)
         // Colour and filters are separate: brightness alone needs no GL stage.
         assertEquals(false, PictureAdjustment(brightness = 0.3f).hasFilters)
         assertEquals(false, PictureAdjustment(brightness = 0.3f).isColorNeutral)
