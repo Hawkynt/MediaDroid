@@ -9,6 +9,7 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
+import android.opengl.GLES30
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
@@ -38,6 +39,19 @@ class VideoFilterStage {
     private var windowSurface: Surface? = null
 
     private var oesTexture = 0
+
+    // Whether the context is OpenGL ES 3, which reads pictures back into a buffer without waiting.
+    private var es3 = false
+
+    // Motion's read-back on ES 3: two pixel buffers taking turns; each holds one frame's packed luma until the
+    // next frame comes and collects it, long finished on the graphics chip by then.
+    private val lumaBuffers = IntArray(2)
+    private val lumaBufferSizes = IntArray(2)
+    private val lumaPending = arrayOfNulls<PendingLuma>(2)
+    private var lumaSlot = 0
+
+    /** A packed-luma read-back on its way: the frame's arrival, and the layout to unpack it with. */
+    private class PendingLuma(val id: Long, val columns: Int, val rows: Int, val texels: Int)
     private lateinit var surfaceTexture: SurfaceTexture
     private val texMatrix = FloatArray(16)
     private val identity = FloatArray(16).also { android.opengl.Matrix.setIdentityM(it, 0) }
@@ -204,6 +218,7 @@ class VideoFilterStage {
             GLES20.glDeleteProgram(blendProgram)
             GLES20.glDeleteProgram(motionProgram)
             GLES20.glDeleteProgram(packProgram)
+            if (lumaBuffers[0] != 0) GLES20.glDeleteBuffers(2, lumaBuffers, 0)
             GLES20.glDeleteTextures(3, intArrayOf(vectorTextures[0], vectorTextures[1], obmcTexture), 0)
             motionSearch.shutdownNow()
             GLES20.glDeleteProgram(temporalProgram)
@@ -244,23 +259,39 @@ class VideoFilterStage {
         display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
         val version = IntArray(2)
         EGL14.eglInitialize(display, version, 0, version, 1)
-        val configs = arrayOfNulls<EGLConfig>(1)
-        val count = IntArray(1)
-        EGL14.eglChooseConfig(
-            display,
-            intArrayOf(
-                EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
-                EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
-                EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT or EGL14.EGL_PBUFFER_BIT,
-                EGL14.EGL_NONE,
-            ),
-            0, configs, 0, 1, count, 0,
-        )
-        config = configs[0] ?: error("No EGL configuration for the picture filters")
-        context = EGL14.eglCreateContext(
-            display, config, EGL14.EGL_NO_CONTEXT,
-            intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE), 0,
-        )
+        // OpenGL ES 3 where there is one — for reading pictures back without waiting — else ES 2.
+        fun choose(renderable: Int): EGLConfig? {
+            val configs = arrayOfNulls<EGLConfig>(1)
+            val count = IntArray(1)
+            EGL14.eglChooseConfig(
+                display,
+                intArrayOf(
+                    EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
+                    EGL14.EGL_RENDERABLE_TYPE, renderable,
+                    EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT or EGL14.EGL_PBUFFER_BIT,
+                    EGL14.EGL_NONE,
+                ),
+                0, configs, 0, 1, count, 0,
+            )
+            return configs[0].takeIf { count[0] > 0 }
+        }
+        val es3Config = choose(EGLExt.EGL_OPENGL_ES3_BIT_KHR)
+        val es3Context = es3Config?.let {
+            EGL14.eglCreateContext(
+                display, it, EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE), 0,
+            )
+        }?.takeIf { it != EGL14.EGL_NO_CONTEXT }
+        if (es3Config != null && es3Context != null) {
+            config = es3Config
+            context = es3Context
+            es3 = true
+        } else {
+            config = choose(EGL14.EGL_OPENGL_ES2_BIT) ?: error("No EGL configuration for the picture filters")
+            context = EGL14.eglCreateContext(
+                display, config, EGL14.EGL_NO_CONTEXT,
+                intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE), 0,
+            )
+        }
         val onePixel = intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE)
         idle = EGL14.eglCreatePbufferSurface(display, config, onePixel, 0)
         EGL14.eglMakeCurrent(display, idle, idle, context)
@@ -645,6 +676,17 @@ class VideoFilterStage {
      * into the luma the verdicts judge.
      */
     private fun packedLuma(from: Frame, width: Int, height: Int, stepX: Int, stepY: Int): Deinterlacer.Plane {
+        val (columns, rows, texels) = packLuma(from, width, height, stepX, stepY)
+        val size = texels * rows * 4
+        val bytes = readBack?.takeIf { it.capacity() == size }
+            ?: ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder()).also { readBack = it }
+        bytes.rewind()
+        GLES20.glReadPixels(0, 0, texels, rows, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
+        return unpackLuma(bytes, columns, rows, texels)
+    }
+
+    /** The packing pass into the bound framebuffer; returns the columns, rows and texels it wrote. */
+    private fun packLuma(from: Frame, width: Int, height: Int, stepX: Int, stepY: Int): Triple<Int, Int, Int> {
         val columns = width / stepX
         val rows = height / stepY
         val texels = (columns + 3) / 4
@@ -656,18 +698,55 @@ class VideoFilterStage {
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uStep"), stepX.toFloat(), stepY.toFloat())
             GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSd"), if (height <= SD_HEIGHT) 1 else 0)
         }
-        val size = texels * rows * 4
-        val bytes = readBack?.takeIf { it.capacity() == size }
-            ?: ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder()).also { readBack = it }
-        bytes.rewind()
-        GLES20.glReadPixels(0, 0, texels, rows, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
-        // The pass wrote row v at framebuffer row v, so the rows come back from the top.
+        return Triple(columns, rows, texels)
+    }
+
+    /** Packed luma bytes back into a plane; the pass wrote row v at framebuffer row v, so rows run from the top. */
+    private fun unpackLuma(bytes: ByteBuffer, columns: Int, rows: Int, texels: Int): Deinterlacer.Plane {
         val luma = IntArray(columns * rows)
         for (y in 0 until rows) {
             val line = y * texels * 4
             for (x in 0 until columns) luma[y * columns + x] = bytes.get(line + x).toInt() and 0xFF
         }
         return Deinterlacer.Plane(columns, rows, luma)
+    }
+
+    /**
+     * On ES 3: starts reading [from]'s packed luma into a pixel buffer without waiting, and returns the one
+     * started for the frame before — with that frame's [id] — or null while there is none.
+     */
+    private fun lumaLater(from: Frame, width: Int, height: Int, step: Int, id: Long): Pair<Long, Deinterlacer.Plane>? {
+        val earlier = collectLuma(1 - lumaSlot)
+        if (lumaBuffers[0] == 0) GLES20.glGenBuffers(2, lumaBuffers, 0)
+        val (columns, rows, texels) = packLuma(from, width, height, step, step)
+        val size = texels * rows * 4
+        val slot = lumaSlot
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, lumaBuffers[slot])
+        if (lumaBufferSizes[slot] != size) {
+            GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, size, null, GLES30.GL_STREAM_READ)
+            lumaBufferSizes[slot] = size
+        }
+        GLES30.glReadPixels(0, 0, texels, rows, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, 0)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        lumaPending[slot] = PendingLuma(id, columns, rows, texels)
+        lumaSlot = 1 - slot
+        return earlier
+    }
+
+    /** The read-back waiting in [slot], unpacked, with its frame's id; null when none waits. */
+    private fun collectLuma(slot: Int): Pair<Long, Deinterlacer.Plane>? {
+        val pending = lumaPending[slot] ?: return null
+        lumaPending[slot] = null
+        val size = pending.texels * pending.rows * 4
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, lumaBuffers[slot])
+        val mapped = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, size, GLES30.GL_MAP_READ_BIT)
+            as? ByteBuffer
+        val plane = mapped?.let {
+            unpackLuma(it.order(ByteOrder.nativeOrder()), pending.columns, pending.rows, pending.texels)
+        }
+        if (mapped != null) GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        return plane?.let { pending.id to it }
     }
 
     /** Step 3: the denoise filter [picture] asks for, if any, over [from]. */
@@ -731,14 +810,19 @@ class VideoFilterStage {
     private fun searchMotion(width: Int, height: Int) {
         val pace = searchScale?.takeIf { it.width == width && it.height == height }
             ?: SearchScale(width, height).also { searchScale = it }
-        val scale = pace.scale
-        val luma = packedLuma(frames[keptRing[2]], width, height, scale, scale)
+        // On ES 3 the read-back is collected a frame later — the search then runs while its pair is on screen;
+        // on ES 2 it waits for the graphics chip and the search gets the pair before.
+        val (pair, luma) = if (es3) {
+            lumaLater(frames[keptRing[2]], width, height, pace.scale, keptAt[2]) ?: return
+        } else {
+            keptAt[2] to packedLuma(frames[keptRing[2]], width, height, pace.scale, pace.scale)
+        }
+        val scale = width / luma.width
         val prev = motionLumas[1]
         motionLumas[0] = prev
         motionLumas[1] = luma
         if (prev == null || prev.width != luma.width || prev.height != luma.height) return
         if (luma.width < 2 * MotionInterpolation.BLOCK || luma.height < 2 * MotionInterpolation.BLOCK) return
-        val pair = keptAt[2]
         motionSearch.execute {
             val started = System.nanoTime()
             val search = estimator?.takeIf { it.width == luma.width && it.height == luma.height }
