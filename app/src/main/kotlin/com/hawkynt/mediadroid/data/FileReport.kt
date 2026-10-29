@@ -5,10 +5,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.decoder.ffmpeg.FfmpegLibrary
-import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.inspector.MetadataRetriever
 import com.hawkynt.mediadroid.player.AviAudioFraming
@@ -18,12 +15,12 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** One track of a file, and the decoder that would play it here; null for subtitles and unplayable tracks. */
-data class TrackReport(val type: Int, val format: Format, val decoder: String?)
+/** One track of a file: its kind (`C.TRACK_TYPE_*`) and its format as the file holds it. */
+data class TrackReport(val type: Int, val format: Format)
 
 /**
  * What a file holds, for the details' File section: every track as the player's extractors see it,
- * and which decoder this device would use — its own first, the bundled FFmpeg when it has none.
+ * named by the codec it is stored in.
  */
 @OptIn(UnstableApi::class)
 object FileReport {
@@ -45,20 +42,13 @@ object FileReport {
                     (0 until groups.length).flatMap { g ->
                         val group = groups[g]
                         (0 until group.length).map { i ->
-                            val format = group.getFormat(i)
-                            TrackReport(group.type, format, decoderFor(format))
+                            TrackReport(group.type, group.getFormat(i))
                         }
                     }.sortedBy { order(it.type) }
                 }
         }.getOrNull()
     }
 
-    private fun decoderFor(format: Format): String? {
-        val mime = format.sampleMimeType ?: return null
-        if (!MimeTypes.isVideo(mime) && !MimeTypes.isAudio(mime)) return null
-        val device = runCatching { MediaCodecUtil.getDecoderInfos(mime, false, false).firstOrNull()?.name }.getOrNull()
-        return device ?: if (FfmpegLibrary.supportsFormat(mime)) "ffmpeg" else null
-    }
 
     private fun order(type: Int) = when (type) {
         C.TRACK_TYPE_VIDEO -> 0

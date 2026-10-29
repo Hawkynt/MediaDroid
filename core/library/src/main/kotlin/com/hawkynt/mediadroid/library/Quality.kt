@@ -53,6 +53,16 @@ data class Quality(
             else -> media3Codec(mime)
         }
 
+        /**
+         * The Kodi codec name of a track with MIME type [mime] and RFC 6381 [codecs] string: a stream the
+         * bundled FFmpeg demuxed carries its decoder's name in the MIME type and the codec the file
+         * holds in [codecs], and it is the codec that is shown.
+         */
+        fun codecOf(mime: String?, codecs: String?): String? {
+            val ffmpeg = mime != null && (mime.startsWith(FFMPEG_VIDEO) || mime.startsWith(FFMPEG_AUDIO))
+            return if (ffmpeg && !codecs.isNullOrBlank()) codecs.trim() else codecOf(mime)
+        }
+
         private const val FFMPEG_VIDEO = "video/x-ffmpeg-"
         private const val FFMPEG_AUDIO = "audio/x-ffmpeg-"
 

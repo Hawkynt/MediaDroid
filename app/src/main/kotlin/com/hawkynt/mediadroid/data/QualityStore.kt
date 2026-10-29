@@ -107,10 +107,10 @@ class QualityStore private constructor(private val context: Context) {
                 Entry(
                     width = video?.width?.takeIf { it > 0 },
                     height = video?.height?.takeIf { it > 0 },
-                    videoCodec = Quality.codecOf(video?.sampleMimeType),
+                    videoCodec = Quality.codecOf(video?.sampleMimeType, video?.codecs),
                     hdr = hdr,
                     audio = formats.filter { MimeTypes.isAudio(it.sampleMimeType) }.map {
-                        Audio(Quality.codecOf(it.sampleMimeType), it.channelCount.takeIf { c -> c > 0 }, it.language)
+                        Audio(Quality.codecOf(it.sampleMimeType, it.codecs), it.channelCount.takeIf { c -> c > 0 }, it.language)
                     },
                     durationMs = runCatching { retriever.retrieveDurationUs().get(PROBE_TIMEOUT_S, TimeUnit.SECONDS) }
                         .getOrNull()
