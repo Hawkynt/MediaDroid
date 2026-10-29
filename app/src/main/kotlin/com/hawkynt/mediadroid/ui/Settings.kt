@@ -318,6 +318,9 @@ fun SettingsScreen(
                     it.gamma = defaultPicture.gamma
                     it.contrast = defaultPicture.contrast
                     it.saturation = defaultPicture.saturation
+                    it.sharpness = defaultPicture.sharpness
+                    it.clarity = defaultPicture.clarity
+                    it.denoise = defaultPicture.denoise
                 }
             },
         )

@@ -22,6 +22,21 @@ class PictureAdjustmentTest {
     }
 
     @Test
+    fun `filters are neutral at zero and need the GL stage only when set`() {
+        assertEquals(false, PictureAdjustment.Neutral.hasFilters)
+        assertEquals(true, PictureAdjustment.Neutral.isColorNeutral)
+        val sharp = PictureAdjustment(sharpness = 0.5f)
+        assertEquals(true, sharp.hasFilters)
+        assertEquals(true, sharp.isColorNeutral)
+        assertEquals(false, sharp.isNeutral)
+        assertEquals(true, PictureAdjustment(denoise = 2).hasFilters)
+        assertEquals(true, PictureAdjustment(clarity = 0.2f).hasFilters)
+        // Colour and filters are separate: brightness alone needs no GL stage.
+        assertEquals(false, PictureAdjustment(brightness = 0.3f).hasFilters)
+        assertEquals(false, PictureAdjustment(brightness = 0.3f).isColorNeutral)
+    }
+
+    @Test
     fun `zero saturation turns every row into the same luma weights`() {
         val m = PictureAdjustment(saturation = 0f).colorMatrix()
         val luma = floatArrayOf(0.213f, 0.715f, 0.072f)

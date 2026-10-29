@@ -902,6 +902,50 @@ fun PlayerScreen(
     val current = queue[index]
     // The video's own picture correction, with the brightness swipe's gamma on top once past the maximum.
     val shownPicture = picture.copy(gamma = picture.gamma * gammaBoost)
+    // The picture filters' GL stage (see VideoFilterStage): the player draws into it while a filter is
+    // set — not for HDR, which it would flatten — and it draws into the view that shows the picture,
+    // on the phone or the second screen; otherwise the player draws straight into that view.
+    val filterStage = remember { arrayOfNulls<com.hawkynt.mediadroid.player.VideoFilterStage>(1) }
+    val routedTo = remember { arrayOfNulls<android.view.TextureView>(1) }
+    fun routeVideo() {
+        val target = ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.videoSurfaceView)
+            as? android.view.TextureView
+        val transfer = player.videoFormat?.colorInfo?.colorTransfer
+        val hdr = transfer == C.COLOR_TRANSFER_ST2084 || transfer == C.COLOR_TRANSFER_HLG
+        val wanted = shownPicture.hasFilters && !hdr && target != null && target.isAvailable
+        val stage = filterStage[0]
+        if (wanted) {
+            val active = stage ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { filterStage[0] = it }
+            active.filters = shownPicture
+            active.setVideoSize(player.videoSize.width, player.videoSize.height)
+            if (routedTo[0] !== target) {
+                player.setVideoSurface(active.inputSurface)
+                // Taken on a later round when the view's surface is not free yet.
+                if (active.setOutput(android.view.Surface(target!!.surfaceTexture))) routedTo[0] = target
+            }
+        } else if (routedTo[0] != null) {
+            stage?.setOutput(null)
+            routedTo[0] = null
+            target?.let { player.setVideoTextureView(it) }
+        }
+    }
+    androidx.compose.runtime.SideEffect { filterStage[0]?.filters = shownPicture }
+    // The loop asks the latest composition's routing, with the picture and screens as they are now.
+    val routeNow by androidx.compose.runtime.rememberUpdatedState({ routeVideo() })
+    LaunchedEffect(player) {
+        while (true) {
+            routeNow()
+            delay(400)
+        }
+    }
+    DisposableEffect(player) {
+        onDispose {
+            filterStage[0]?.setOutput(null)
+            filterStage[0]?.release()
+            filterStage[0] = null
+        }
+    }
+
     // While the phone's own screen is mirrored to a TV (Smart View and friends show up as a presentation
     // display we are not using), the TV crops a long phone screen to 16:9: overlays stay inside that part.
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
