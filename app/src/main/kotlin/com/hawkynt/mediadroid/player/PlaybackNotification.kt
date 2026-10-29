@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.player
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -19,8 +20,8 @@ import com.hawkynt.mediadroid.R
 @OptIn(UnstableApi::class)
 object PlaybackNotification {
 
-    private const val CHANNEL_ID = "playback"
-    private const val NOTIFICATION_ID = 1
+    const val CHANNEL_ID = "playback"
+    const val NOTIFICATION_ID = 1
 
     fun attach(
         context: Context,
@@ -57,6 +58,11 @@ object PlaybackNotification {
         return PlayerNotificationManager.Builder(context, NOTIFICATION_ID, CHANNEL_ID)
             .setMediaDescriptionAdapter(adapter)
             .setSmallIconResourceId(R.drawable.ic_movie)
+            .setNotificationListener(object : PlayerNotificationManager.NotificationListener {
+                override fun onNotificationPosted(id: Int, notification: Notification, ongoing: Boolean) {
+                    PlaybackService.latest = notification
+                }
+            })
             .build()
             .apply {
                 setMediaSessionToken(session.platformToken)
