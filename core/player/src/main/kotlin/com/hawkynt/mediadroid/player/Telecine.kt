@@ -50,6 +50,7 @@ object Telecine {
         private var count = 0L
         private var lastN = 0L
         private var lastSceneDiff = 0L
+        private val scratch = Scratch()
 
         /** Matches [cur] between [prev] and [next]; returns the verdict and the woven, progressive frame. */
         fun add(
@@ -63,7 +64,7 @@ object Telecine {
             val woven = arrayOfNulls<Deinterlacer.Plane>(5)
             woven[Match.CURRENT.ordinal] = cur
 
-            var match = compareFields(window, Match.CURRENT, Match.PREVIOUS, field)
+            var match = compareFields(window, Match.CURRENT, Match.PREVIOUS, field, scratch)
 
             val threshold = (cur.width * cur.height * 255.0 * SCTHRESH / 100.0).toLong()
             var sceneChange = if (lastN == n - 1) {
@@ -116,14 +117,25 @@ object Telecine {
         return sum
     }
 
+    /** Buffers [compareFields] works in, kept between frames of one size. */
+    private class Scratch {
+        var map = ByteArray(0)
+        var diff = IntArray(0)
+        var next19 = IntArray(0)
+    }
+
     /** Which of two matches leaves fewer combing artefacts, from the motion around their fields. */
-    private fun compareFields(window: Window, match1: Match, match2: Match, field: Int): Match {
+    private fun compareFields(window: Window, match1: Match, match2: Match, field: Int, scratch: Scratch): Match {
         val src = window.cur
         val width = src.width
         val height = src.height
-        val map = IntArray(width * height)
         val startX = 8
         val stopX = width - startX
+        // The map's rows in use: every other row from the first field row, one more than the loop's rows.
+        val loops = (height - 4 + 1) / 2
+        if (scratch.map.size != (loops + 1) * width) scratch.map = ByteArray((loops + 1) * width)
+        val map = scratch.map
+        map.fill(0)
 
         val base1 = fieldBase(match1, field)
         val prev = window.select(match1)
@@ -131,47 +143,51 @@ object Telecine {
         val next = window.select(match2)
 
         if ((match1.ordinal >= 3 && field == 1) || (match1.ordinal < 3 && field != 1)) {
-            buildDiffMap(prev, base1, next, base2, map, base1, width, height)
+            buildDiffMap(prev, base1, next, base2, map, 0, width, height, scratch)
         } else {
-            buildDiffMap(prev, base1 + 2, next, base2 + 2, map, base1 + 2, width, height)
+            buildDiffMap(prev, base1 + 2, next, base2 + 2, map, 1, width, height, scratch)
         }
 
+        val s = src.pixels
+        val pp = prev.pixels
+        val np = next.pixels
         var accumPc = 0L
         var accumPm = 0L
         var accumPml = 0L
         var accumNc = 0L
         var accumNm = 0L
         var accumNml = 0L
-        var k = 0
-        var y = 2
-        while (y < height - 2) {
-            val srcF = base1 + 1 + 2 * k
-            val prvPf = base1 + 2 * k
-            val nxtPf = base2 + 2 * k
-            val mapRow = base1 + 2 * k
+        for (k in 0 until loops) {
+            val srcF = (base1 + 1 + 2 * k) * width
+            val srcP = srcF - 2 * width
+            val srcN = srcF + 2 * width
+            val prvP = (base1 + 2 * k) * width
+            val prvN = prvP + 2 * width
+            val nxtP = (base2 + 2 * k) * width
+            val nxtN = nxtP + 2 * width
+            val map0 = k * width
+            val map1 = map0 + width
             for (x in startX until stopX) {
-                val m0 = map[mapRow * width + x]
-                val m1 = map[(mapRow + 2) * width + x]
-                if (m0 > 0 || m1 > 0) {
-                    val temp1 = src[x, srcF - 2] + (src[x, srcF] shl 2) + src[x, srcF + 2]
+                val m0 = map[map0 + x].toInt()
+                val m1 = map[map1 + x].toInt()
+                if (m0 == 0 && m1 == 0) continue
+                val either = m0 or m1
+                val temp1 = s[srcP + x] + (s[srcF + x] shl 2) + s[srcN + x]
 
-                    var temp2 = abs(3 * (prev[x, prvPf] + prev[x, prvPf + 2]) - temp1)
-                    if (temp2 > 23 && ((m0 and 1) != 0 || (m1 and 1) != 0)) accumPc += temp2
-                    if (temp2 > 42) {
-                        if ((m0 and 2) != 0 || (m1 and 2) != 0) accumPm += temp2
-                        if ((m0 and 4) != 0 || (m1 and 4) != 0) accumPml += temp2
-                    }
+                var temp2 = abs(3 * (pp[prvP + x] + pp[prvN + x]) - temp1)
+                if (temp2 > 23 && (either and 1) != 0) accumPc += temp2
+                if (temp2 > 42) {
+                    if ((either and 2) != 0) accumPm += temp2
+                    if ((either and 4) != 0) accumPml += temp2
+                }
 
-                    temp2 = abs(3 * (next[x, nxtPf] + next[x, nxtPf + 2]) - temp1)
-                    if (temp2 > 23 && ((m0 and 1) != 0 || (m1 and 1) != 0)) accumNc += temp2
-                    if (temp2 > 42) {
-                        if ((m0 and 2) != 0 || (m1 and 2) != 0) accumNm += temp2
-                        if ((m0 and 4) != 0 || (m1 and 4) != 0) accumNml += temp2
-                    }
+                temp2 = abs(3 * (np[nxtP + x] + np[nxtN + x]) - temp1)
+                if (temp2 > 23 && (either and 1) != 0) accumNc += temp2
+                if (temp2 > 42) {
+                    if ((either and 2) != 0) accumNm += temp2
+                    if ((either and 4) != 0) accumNml += temp2
                 }
             }
-            y += 2
-            k++
         }
 
         if (accumPm < 500 && accumNm < 500 && (accumPml >= 500 || accumNml >= 500) &&
@@ -202,82 +218,91 @@ object Telecine {
     }
 
     /**
-     * Marks where the two candidate fields differ a little (bit 0) or a lot (bits 1 and 2), on every
-     * other row of [map] from [mapRow]; [prevRow] and [nextRow] are the fields' first rows.
+     * Marks where the two candidate fields differ a little (bit 0) or a lot (bits 1 and 2), one map row per
+     * loop from [mapRow] (in rows of the map, which holds every other picture row); [prevRow] and
+     * [nextRow] are the fields' first rows.
      */
     private fun buildDiffMap(
         prev: Deinterlacer.Plane,
         prevRow: Int,
         next: Deinterlacer.Plane,
         nextRow: Int,
-        map: IntArray,
+        map: ByteArray,
         mapRow: Int,
         width: Int,
         height: Int,
+        scratch: Scratch,
     ) {
         // FFmpeg's tbuffer: row i holds the difference of the fields' rows from one row before the first.
         val rows = height shr 1
-        val diff = IntArray(rows * width)
+        if (scratch.diff.size != rows * width) scratch.diff = IntArray(rows * width)
+        val diff = scratch.diff
+        val pp = prev.pixels
+        val np = next.pixels
+        if (scratch.next19.size != rows * width) scratch.next19 = IntArray(rows * width)
+        val next19 = scratch.next19
         for (i in 0 until rows) {
-            for (x in 0 until width) {
-                diff[i * width + x] = abs(prev[x, prevRow - 2 + 2 * i] - next[x, nextRow - 2 + 2 * i])
+            val a = (prevRow - 2 + 2 * i) * width
+            val b = (nextRow - 2 + 2 * i) * width
+            val d = i * width
+            for (x in 0 until width) diff[d + x] = abs(pp[a + x] - np[b + x])
+            // The next column from x on whose difference is above 19, or width: range questions in one look.
+            var next = width
+            for (x in width - 1 downTo 0) {
+                if (diff[d + x] > 19) next = x
+                next19[d + x] = next
             }
         }
-        fun dp(row: Int, x: Int) = diff[row * width + x]
 
+        // FFmpeg counts the differences above 3 and above 19 around each pixel in loops that stop early; the
+        // verdicts only ever ask whether a full count reaches a bound, and the upper and lower flags its first
+        // loop sets are recomputed over a wider range that holds them, so full counts give exactly its marks.
+        // The count above 3 runs as a window over the columns' vertical counts.
         var k = 0
         var y = 2
         while (y < height - 2) {
-            val row = k + 1
-            val dst = (mapRow + 2 * k) * width
+            val row = (k + 1) * width
+            val up = row - width
+            val down = row + width
+            val dst = (mapRow + k) * width
+            fun column3(x: Int) =
+                (if (diff[up + x] > 3) 1 else 0) + (if (diff[row + x] > 3) 1 else 0) +
+                    (if (diff[down + x] > 3) 1 else 0)
+            fun column19(x: Int) =
+                (if (diff[up + x] > 19) 1 else 0) + (if (diff[row + x] > 19) 1 else 0) +
+                    (if (diff[down + x] > 19) 1 else 0)
+            fun any(base: Int, from: Int, to: Int) = next19[base + from] < to
+            var left = column3(0)
+            var middle = column3(1)
             for (x in 1 until width - 1) {
-                val d = dp(row, x)
-                if (d <= 3) continue
-                var count = 0
-                var u = x - 1
-                while (u < x + 2 && count < 2) {
-                    if (dp(row - 1, u) > 3) count++
-                    if (dp(row, u) > 3) count++
-                    if (dp(row + 1, u) > 3) count++
-                    u++
-                }
-                if (count <= 1) continue
-                map[dst + x] = 1
-                if (d <= 19) continue
-                var upper = false
-                var lower = false
-                count = 0
-                u = x - 1
-                while (u < x + 2 && count < 6) {
-                    if (dp(row - 1, u) > 19) {
-                        count++
-                        upper = true
-                    }
-                    if (dp(row, u) > 19) count++
-                    if (dp(row + 1, u) > 19) {
-                        count++
-                        lower = true
-                    }
-                    u++
-                }
-                if (count <= 3) continue
-                if (upper && lower) {
-                    map[dst + x] = map[dst + x] or 2
-                } else {
-                    var upper2 = false
-                    var lower2 = false
-                    for (v in maxOf(x - 4, 0) until minOf(x + 5, width)) {
-                        if (y != 2 && dp(row - 2, v) > 19) upper2 = true
-                        if (dp(row - 1, v) > 19) upper = true
-                        if (dp(row + 1, v) > 19) lower = true
-                        if (y != height - 4 && dp(row + 2, v) > 19) lower2 = true
-                    }
-                    if ((upper && (lower || upper2)) || (lower && (upper || lower2))) {
-                        map[dst + x] = map[dst + x] or 2
-                    } else if (count > 5) {
-                        map[dst + x] = map[dst + x] or 4
+                val right = column3(x + 1)
+                val c3 = left + middle + right
+                left = middle
+                middle = right
+                val d = diff[row + x]
+                if (d <= 3 || c3 < 2) continue
+                var mark = 1
+                if (d > 19) {
+                    val count = column19(x - 1) + column19(x) + column19(x + 1)
+                    if (count > 3) {
+                        if (any(up, x - 1, x + 2) && any(down, x - 1, x + 2)) {
+                            mark = mark or 2
+                        } else {
+                            val from = maxOf(x - 4, 0)
+                            val to = minOf(x + 5, width)
+                            val upper = any(up, from, to)
+                            val lower = any(down, from, to)
+                            val upper2 = y != 2 && any(up - width, from, to)
+                            val lower2 = y != height - 4 && any(down + width, from, to)
+                            if ((upper && (lower || upper2)) || (lower && (upper || lower2))) {
+                                mark = mark or 2
+                            } else if (count > 5) {
+                                mark = mark or 4
+                            }
+                        }
                     }
                 }
+                map[dst + x] = mark.toByte()
             }
             y += 2
             k++
@@ -444,9 +469,20 @@ object Telecine {
             val xBlocks = (a.width + half - 1) / half
             val yBlocks = (a.height + half - 1) / half
             val blocks = LongArray(xBlocks * yBlocks)
+            val pa = a.pixels
+            val pb = b.pixels
             for (y in 0 until a.height) {
-                for (x in 0 until a.width) {
-                    blocks[(y / half) * xBlocks + x / half] += abs(a[x, y] - b[x, y]).toLong()
+                val rowBlocks = (y / half) * xBlocks
+                val row = y * a.width
+                var x = 0
+                var block = 0
+                while (x < a.width) {
+                    val end = minOf(a.width, x + half)
+                    var acc = 0
+                    for (i in row + x until row + end) acc += abs(pa[i] - pb[i])
+                    blocks[rowBlocks + block] += acc.toLong()
+                    x = end
+                    block++
                 }
             }
             var max = -1L
