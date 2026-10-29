@@ -46,6 +46,11 @@ public final class FfmpegDemuxer implements AutoCloseable {
     @Nullable public final String codecName;
     /** The decoder this build has for it — {@code dca} for DTS; null when there is none. */
     @Nullable public final String decoderName;
+    /**
+     * The pixel format (video: {@code yuv420p}, {@code yuv411p}, {@code yuv422p10le}) or sample format
+     * (audio: {@code fltp}, {@code s16}) as FFmpeg names it; null when unknown.
+     */
+    @Nullable public final String rawFormat;
     @Nullable public final String language;
     public final int sampleRate;
     public final int channels;
@@ -67,12 +72,14 @@ public final class FfmpegDemuxer implements AutoCloseable {
         long[] n,
         @Nullable String codecName,
         @Nullable String decoderName,
+        @Nullable String rawFormat,
         @Nullable String language,
         byte[] parameters) {
       this.index = index;
       this.kind = (int) n[0];
       this.codecName = codecName;
       this.decoderName = decoderName;
+      this.rawFormat = rawFormat;
       this.language = language;
       this.sampleRate = (int) n[1];
       this.channels = (int) n[2];
@@ -114,6 +121,7 @@ public final class FfmpegDemuxer implements AutoCloseable {
               numbers.clone(),
               codec,
               nStreamDecoder(handle, i),
+              nStreamFormat(handle, i),
               nStreamLanguage(handle, i),
               nStreamParameters(handle, i));
     }
@@ -203,6 +211,8 @@ public final class FfmpegDemuxer implements AutoCloseable {
   private static native String nStreamInfo(long handle, int index, long[] numbers);
 
   private static native String nStreamDecoder(long handle, int index);
+
+  private static native String nStreamFormat(long handle, int index);
 
   private static native String nStreamLanguage(long handle, int index);
 
