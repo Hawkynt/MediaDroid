@@ -39,6 +39,7 @@ data class PictureOverride(
     val sharpness: Float = 0f,
     val clarity: Float = 0f,
     val denoise: Int = 0,
+    val deinterlace: String = "OFF",
 )
 
 /**
@@ -62,6 +63,7 @@ data class Settings(
     var sharpness: Float = 0f,                // 0..1, the picture filters' household default
     var clarity: Float = 0f,                  // 0..1
     var denoise: Int = 0,                     // 0..3
+    var deinterlace: String = "OFF",          // PictureAdjustment.Deinterlace name
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -211,13 +213,27 @@ class StateStore(context: Context) {
 
     /** The household's default picture, from the guarded settings. */
     fun defaultPicture(): PictureAdjustment = with(data.settings) {
-        PictureAdjustment(brightness, gamma, contrast, saturation, sharpness, clarity, denoise)
+        PictureAdjustment(
+            brightness, gamma, contrast, saturation, sharpness, clarity, denoise, deinterlaceOf(deinterlace),
+        )
     }
+
+    private fun deinterlaceOf(name: String) =
+        runCatching { PictureAdjustment.Deinterlace.valueOf(name) }.getOrDefault(PictureAdjustment.Deinterlace.OFF)
 
     /** The picture for [videoPath]: its own correction if one was set, else the default. */
     fun pictureFor(videoPath: String): PictureAdjustment =
         data.picture[videoPath]?.let {
-            PictureAdjustment(it.brightness, it.gamma, it.contrast, it.saturation, it.sharpness, it.clarity, it.denoise)
+            PictureAdjustment(
+                it.brightness,
+                it.gamma,
+                it.contrast,
+                it.saturation,
+                it.sharpness,
+                it.clarity,
+                it.denoise,
+                deinterlaceOf(it.deinterlace),
+            )
         }
             ?: defaultPicture()
 
@@ -234,6 +250,7 @@ class StateStore(context: Context) {
                 picture.sharpness,
                 picture.clarity,
                 picture.denoise,
+                picture.deinterlace.name,
             )
         }
         save()
