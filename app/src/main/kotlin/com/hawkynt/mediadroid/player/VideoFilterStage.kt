@@ -69,6 +69,7 @@ class VideoFilterStage {
     private var frameIntervalNs = 0L
     private var shownAt = 0L
     private var deinterlaceLatencyMs = 0
+    private var deinterlaceFrames = 0f
     private val secondField = Runnable { drawSecondField() }
 
     // Which field comes first, told from the pictures (see FieldOrder): the first frames after a start or
@@ -190,6 +191,7 @@ class VideoFilterStage {
             handler.removeCallbacks(secondField)
             vsync.removeFrameCallback(onVsync)
             latencyMs = 0
+            latencyFrames = 0f
             frames.forEach { it.release() }
             surfaceTexture.release()
             inputSurface.release()
@@ -304,6 +306,7 @@ class VideoFilterStage {
         val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
         val source = filtered(picture, width, height, fresh = !redraw)
         latencyMs = deinterlaceLatencyMs
+        latencyFrames = deinterlaceFrames
         output(source, width, height, picture)
         if (!redraw) EGLExt.eglPresentationTimeANDROID(display, window, shownAt)
         EGL14.eglSwapBuffers(display, window)
@@ -341,6 +344,7 @@ class VideoFilterStage {
         if (picture.deinterlace.isTemporal) return temporal(picture, width, height, fresh, secondField)
         historyCount = 0
         deinterlaceLatencyMs = 0
+        deinterlaceFrames = 0f
         shownAt = surfaceTexture.timestamp
         val copied = frames[0].ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, copied.framebuffer)
@@ -381,6 +385,7 @@ class VideoFilterStage {
         shownAt = historyAt[if (historyCount >= 2) 1 else 2]
         val intervalMs = if (historyCount >= 2) frameIntervalNs / 1_000_000L else 0L
         deinterlaceLatencyMs = intervalMs.toInt().coerceIn(0, MAX_LATENCY_MS)
+        deinterlaceFrames = if (historyCount >= 2) 1f else 0f
         val woven = frames[2].ensure(width, height)
         rebuildField(woven, prev, cur, next, secondField, picture.deinterlace == PictureAdjustment.Deinterlace.BWDIF)
         return denoised(picture, woven, width, height)
@@ -543,6 +548,7 @@ class VideoFilterStage {
             handler.postAtTime({ showFilm(base + position) }, filmToken, start + j * stepNs / 1_000_000L)
         }
         latencyMs = (verdict.intervalNs * Telecine.CYCLE / 1_000_000L).toInt().coerceIn(0, MAX_FILM_LATENCY_MS)
+        latencyFrames = Telecine.CYCLE.toFloat()
         filmBank = 1 - filmBank
         filmPosition = 0
     }
@@ -682,6 +688,7 @@ class VideoFilterStage {
         if (kept == 2) {
             latencyMs = ((currentAt - previousAt) / 2_000_000L).toInt().coerceIn(0, MAX_LATENCY_MS) +
                 deinterlaceLatencyMs
+            latencyFrames = 0.5f + deinterlaceFrames
         }
     }
 
@@ -976,11 +983,20 @@ class VideoFilterStage {
 
     companion object {
         /**
-         * How far the picture runs behind while frames blend, for the sound to wait as long: half a frame,
-         * as the change shows half-way to the next frame. 0 without blending.
+         * How far the picture runs behind, for the sound to wait as long, as measured from the gaps between
+         * frames: the fallback while the video's frame rate is unknown (see [latencyFrames]).
          */
         @Volatile
         var latencyMs = 0
+            private set
+
+        /**
+         * How many frames the picture runs behind: half a frame while frames blend (the change shows half-way
+         * to the next), one with YADIF or BWDIF, five with Film; 0 without such a filter. Turned into time by
+         * the video's frame rate (PlaybackMath.pictureLatencyMs), which holds still where the measured gaps do not.
+         */
+        @Volatile
+        var latencyFrames = 0f
             private set
 
         private const val MAX_LATENCY_MS = 100
