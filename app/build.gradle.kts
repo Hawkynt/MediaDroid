@@ -74,8 +74,9 @@ dependencies {
     implementation(libs.media3.inspector)
     // FFmpeg audio decoder extension (AC3/E-AC3/DTS/TrueHD and other codecs the
     // device itself cannot decode), built from the androidx/media 1.11.1 sources
-    // with an LGPL-only FFmpeg 6.0 — see tools/ffmpeg/README.md.
-    implementation(files("libs/lib-decoder-ffmpeg-release.aar"))
+    // with an LGPL-only FFmpeg 6.0 — see tools/ffmpeg/README.md. `-PffmpegAar=<path>` swaps in another
+    // build of it (buildnonlgpl.sh passes the GPL one, for your own device only) without touching this file.
+    implementation(files(providers.gradleProperty("ffmpegAar").getOrElse("libs/lib-decoder-ffmpeg-release.aar")))
     implementation(libs.coil.compose)
     implementation(libs.serialization.json)
     debugImplementation(libs.compose.ui.tooling)
