@@ -11,6 +11,8 @@ import com.hawkynt.mediadroid.nfo.ReleaseName
 import com.hawkynt.mediadroid.nfo.episodeRefFromName
 import com.hawkynt.mediadroid.nfo.findArt
 import com.hawkynt.mediadroid.nfo.minAgeOf
+import com.hawkynt.mediadroid.nfo.NumberedEpisode
+import com.hawkynt.mediadroid.nfo.numberedEpisodes
 import com.hawkynt.mediadroid.nfo.parseEpisodeNfo
 import com.hawkynt.mediadroid.nfo.parseMovieNfo
 import com.hawkynt.mediadroid.nfo.parseSeasonNfo
@@ -172,16 +174,28 @@ object LibraryScanner {
 
     /**
      * A folder is a show when it says so (`tvshow.nfo`), keeps `Season NN`
-     * subfolders, or every one of its videos is episode-named (`SxxExx`). The
-     * last rule is deliberately all-or-nothing: an `Incoming` dump that mixes
+     * subfolders, every one of its videos is episode-named (`SxxExx`), or its videos
+     * agree on a numbering ([numbering]: `Show 101 - Title`, `sr.01.title`). The
+     * last rules are deliberately all-or-nothing: an `Incoming` dump that mixes
      * episodes with `Title (Year)` movies is a pile of loose files, not a show.
      */
     private fun isShowDirectory(files: List<FsFile>, subDirs: List<FsFile>): Boolean {
         if (files.any { it.name.equals("tvshow.nfo", ignoreCase = true) }) return true
         if (subDirs.any { seasonDirName.matches(it.name) }) return true
         val videos = files.filter { isVideo(it) }
-        return videos.isNotEmpty() &&
-            videos.all { episodeRefFromName(it.name) != null || bareEpisodeFromName(it.name) != null }
+        if (videos.isEmpty()) return false
+        return videos.all { episodeRefFromName(it.name) != null || bareEpisodeFromName(it.name) != null } ||
+            numbering(videos) != null
+    }
+
+    /**
+     * The episodes a folder's videos carry as a numbering of their own — see [numberedEpisodes] —
+     * unless they are the parts of one multi-part movie (`Heat cd01`, `Heat cd02`).
+     */
+    private fun numbering(videos: List<FsFile>, defaultSeason: Int = 1): Map<String, NumberedEpisode>? {
+        val names = videos.filter { !isExtra(it) }.map { it.name }
+        if (MovieStacking.stack(names).singleOrNull()?.parts?.size == names.size) return null
+        return numberedEpisodes(names, defaultSeason)
     }
 
     /**
@@ -240,8 +254,10 @@ object LibraryScanner {
                 ?: sub.name.filter { it.isDigit() }.toIntOrNull()
                 ?: return@mapNotNull null
             val siblings = sub.listFiles()?.map { it.name } ?: return@mapNotNull null
-            val episodes = sub.listFiles()!!.filter { isVideo(it) }
-                .mapNotNull { video -> parseEpisode(video, siblings, seasonFolder = number) }
+            val videos = sub.listFiles()!!.filter { isVideo(it) }
+            val numbered = numbering(videos, defaultSeason = number)
+            val episodes = videos
+                .mapNotNull { video -> parseEpisode(video, siblings, seasonFolder = number, numbered?.get(video.name)) }
                 .sortedBy { it.number }
             val poster = findArt(siblings)[ArtKind.Poster]?.let { sub.child(it).path }
                 ?: seasonPoster(dir, showNames, number)
@@ -253,9 +269,13 @@ object LibraryScanner {
         // …and virtual seasons from episode-named files sitting loose in the show
         // folder itself: `s02e01.mkv` belongs to season 2 whether or not a folder says so,
         // and absolute numbering (`EP002.mkv`, no seasons at all) is season 1.
-        val fromLoose = files.filter { isVideo(it) }
+        val looseVideos = files.filter { isVideo(it) }
+        val numbered = numbering(looseVideos)
+        val fromLoose = looseVideos
             .mapNotNull { video ->
-                parseEpisode(video, files.map { f -> f.name }, seasonFolder = 1)?.let { refSeason(video) to it }
+                val number = numbered?.get(video.name)
+                parseEpisode(video, files.map { f -> f.name }, seasonFolder = 1, number)
+                    ?.let { (refSeason(video) ?: number?.ref?.season) to it }
             }
             .groupBy({ it.first }, { it.second })
             .mapNotNull { (number, episodes) ->
@@ -290,13 +310,20 @@ object LibraryScanner {
 
     /**
      * One episode file. [seasonFolder] is the season of the `Season NN` folder it sits in, which
-     * lets a bare `E02 - Title.mkv` count as an episode of that season.
+     * lets a bare `E02 - Title.mkv` count as an episode of that season; [numbered] is what the
+     * folder's own numbering says of it.
      */
-    private fun parseEpisode(video: FsFile, siblingNames: List<String>, seasonFolder: Int? = null): Episode? {
+    private fun parseEpisode(
+        video: FsFile,
+        siblingNames: List<String>,
+        seasonFolder: Int? = null,
+        numbered: NumberedEpisode? = null,
+    ): Episode? {
         val nfo = sidecarNfo(video, siblingNames)?.readTextSafe()
             ?.let { runCatching { parseEpisodeNfo(it) }.getOrNull() }
         val ref: EpisodeRef? = episodeRefFromName(video.name)
             ?: seasonFolder?.let { season -> bareEpisodeFromName(video.name)?.let { EpisodeRef(season, it) } }
+            ?: numbered?.ref
         if (nfo?.episode == null && ref == null) return null
 
         val skips = edlSkips(video, siblingNames)
@@ -307,7 +334,7 @@ object LibraryScanner {
 
         return Episode(
             number = nfo?.episode ?: ref!!.episode,
-            title = nfo?.title ?: ReleaseName.episodeTitle(stem),
+            title = nfo?.title ?: ReleaseName.episodeTitle(stem) ?: numbered?.title,
             firstAired = nfo?.firstAired,
             plot = nfo?.plot ?: nfo?.outline,
             watched = (nfo?.playcount ?: 0) > 0,
