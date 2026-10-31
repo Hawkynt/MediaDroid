@@ -162,7 +162,11 @@ Requires JDK 21 and an Android SDK with platform 37; `local.properties` must poi
 ```bash
 ./gradlew assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew test            # parser, library, and binge-logic unit tests
+./build.sh                # signed release build: dist/MediaDroid.apk
+./buildnonlgpl.sh         # the same with the GPL + nonfree FFmpeg: dist/MediaDroid-nonlgpl.apk
 ```
+
+`build.sh` signs with the release key when `KEYSTORE` (or `KEYSTORE_BASE64`), `KEYSTORE_PASSWORD` and `KEY_ALIAS` are set — in the environment or in a git-ignored `signing.env` — and otherwise with the Android debug key, which installs on your own device but cannot update a release or nightly. The key itself lives only in the repository's secrets. `buildnonlgpl.sh` first builds FFmpeg with every decoder, demuxer and parser (`FULL=1 tools/ffmpeg/build.sh`, once, into `stage/ffmpeg-full`); that build is GPL and cannot be distributed under this licence, so it is for your own device only — see [tools/ffmpeg/README.md](tools/ffmpeg/README.md).
 
 ## 🤝 Contributing
 
