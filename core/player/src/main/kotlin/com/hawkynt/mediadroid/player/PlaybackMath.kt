@@ -180,6 +180,15 @@ object PlaybackMath {
     fun nudgeAudioDelay(currentMs: Int, steps: Int): Int =
         (currentMs + steps * AUDIO_DELAY_STEP_MS).coerceIn(-AUDIO_DELAY_LIMIT_MS, AUDIO_DELAY_LIMIT_MS)
 
+    /**
+     * How long the sound waits for a picture [frames] frames behind, in the media time the audio clock counts:
+     * the frames over the video's own [frameRate], which holds still — unlike the gaps between frames as they
+     * arrive, which widen whenever one is dropped, and would move the clock and drop more. [measuredMs] while
+     * the frame rate is unknown.
+     */
+    fun pictureLatencyMs(frames: Float, frameRate: Float, measuredMs: Int): Int =
+        if (frameRate > 0f && frameRate.isFinite()) (frames * 1000f / frameRate).roundToInt() else measuredMs
+
     /** The slowest and fastest speed the player offers. */
     const val SPEED_MIN = 0.2f
     const val SPEED_MAX = 5f
