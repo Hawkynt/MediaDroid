@@ -1034,6 +1034,8 @@ fun PlayerScreen(
             val active = stage ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { filterStage[0] = it }
             active.statistics = if (statisticsShown) statistics else null
             active.filters = shownPicture
+            active.downscaler = runCatching { com.hawkynt.mediadroid.player.Downscaler.valueOf(settings.downscaler) }
+                .getOrDefault(com.hawkynt.mediadroid.player.Downscaler.DEFAULT)
             active.setVideoSize(player.videoSize.width, player.videoSize.height)
             if (routedTo[0] !== target || routedTexture[0] !== target?.surfaceTexture) {
                 player.setVideoSurface(active.inputSurface)

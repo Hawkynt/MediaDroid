@@ -87,6 +87,7 @@ data class Settings(
     var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout
 
     var spatialAudio: Boolean = false,        // hand multichannel sound to the platform spatializer (Android 13+)
+    var downscaler: String = "BILINEAR",     // Downscaler name: how video larger than 1080p is brought down
     var softwareVideoDecoding: Boolean = false, // FFmpeg before the device's decoders: last resort, drains the battery
 )
 
