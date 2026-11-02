@@ -133,8 +133,8 @@ fun PictureSliders(
                 )
             }
         }
-        Text("Smooth motion (frame blending)", fontSize = 16.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Smooth motion", fontSize = 16.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PictureAdjustment.Interpolation.entries.forEach { strength ->
                 FilterChip(
                     selected = picture.interpolation == strength,
