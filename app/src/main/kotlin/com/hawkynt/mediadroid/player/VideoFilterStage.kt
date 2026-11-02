@@ -14,10 +14,12 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
 import androidx.media3.decoder.VideoDecoderOutputBuffer
+import com.hawkynt.mediadroid.imaging.Xbrz
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.CountDownLatch
+import kotlin.math.ceil
 
 /**
  * The picture filters' own GL stage between the decoder and the screen, for what a colour matrix
@@ -73,6 +75,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val anime4kPrograms = IntArray(4)
     private var anime4kDepthToSpace = 0
     private var halfTargets = false
+
+    // xBRZ (see XbrzShaders): its three passes, the table of its patterns' shares, and whether the programs built.
+    private val xbrzPrograms = IntArray(3)
+    private var xbrzTable = 0
+    private var xbrzReady = false
     private var yuvInput = false
     private val yuvColor = FloatArray(9)
     private var yuvChroma = 1f
@@ -106,7 +113,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var temporalProgram = 0
     private var weaveProgram = 0
     private var packProgram = 0
-    private val frames = Array(ANIME4K_B + 1) { Frame() }
+    private val frames = Array(XBRZ_DECISIONS + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -387,6 +394,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(yuvProgram)
             anime4kPrograms.forEach { GLES20.glDeleteProgram(it) }
             GLES20.glDeleteProgram(anime4kDepthToSpace)
+            xbrzPrograms.forEach { GLES20.glDeleteProgram(it) }
+            GLES20.glDeleteTextures(1, intArrayOf(xbrzTable), 0)
             GLES20.glDeleteTextures(3, yuvTextures, 0)
             releaseWindow()
             GLES20.glDeleteProgram(copyProgram)
@@ -513,6 +522,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             listOf(Anime4k.ANIME4K_CONV_1, Anime4k.ANIME4K_CONV_2, Anime4k.ANIME4K_CONV_3, Anime4k.ANIME4K_CONV_4)
                 .forEachIndexed { i, fragment -> anime4kPrograms[i] = program(VERTEX, fragment) }
             anime4kDepthToSpace = program(VERTEX, ANIME4K_DEPTH_TO_SPACE)
+        }.isSuccess
+        xbrzReady = runCatching {
+            listOf(XbrzShaders.CORNERS, XbrzShaders.DECISIONS, XbrzShaders.SCALE)
+                .forEachIndexed { i, fragment -> xbrzPrograms[i] = program(VERTEX, fragment) }
+            xbrzTable = xbrzTable()
         }.isSuccess
         inputSurface = Surface(surfaceTexture)
 
@@ -1361,6 +1375,49 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
                 }
+            } else if (picture.upscaler == PictureAdjustment.Upscaler.XBRZ && xbrzReady) {
+                // xBRZ by the whole factor that reaches the screen's size, 2 to 6, the screen's own scaling then
+                // bringing it the rest of the way: the corners where pixels meet, what each pixel draws in its
+                // corners, then the enlarged picture.
+                val factor = ceil(minOf(outWidth.toFloat() / width, outHeight.toFloat() / height)).toInt()
+                    .coerceIn(Xbrz.FACTORS)
+                val size: (Int) -> Unit = { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+                }
+                val corners = frames[XBRZ_CORNERS].ensure(width + 1, height + 1)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, corners.framebuffer)
+                GLES20.glViewport(0, 0, width + 1, height + 1)
+                run(xbrzPrograms[0], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
+                val decisions = frames[XBRZ_DECISIONS].ensure(width, height)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, decisions.framebuffer)
+                GLES20.glViewport(0, 0, width, height)
+                GLES20.glUseProgram(xbrzPrograms[1])
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, corners.texture)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[1], "uCorners"), 1)
+                run(xbrzPrograms[1], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
+                val enlarged = frames[4].ensure(width * factor, height * factor)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
+                GLES20.glViewport(0, 0, width * factor, height * factor)
+                GLES20.glUseProgram(xbrzPrograms[2])
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, decisions.texture)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uDecisions"), 1)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, xbrzTable)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uTable"), 2)
+                run(xbrzPrograms[2], GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                    size(p)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFactor"), factor.toFloat())
+                }
+                onWindow(outWidth, outHeight)
+                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
+                    val texelX = 1f / (width * factor)
+                    val texelY = 1f / (height * factor)
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), texelX, texelY)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
+                }
             } else {
                 // FSR 1: edge-adaptive upscaling to the screen's size, then contrast-adaptive sharpening on it.
                 val enlarged = frames[4].ensure(outWidth, outHeight)
@@ -1407,6 +1464,36 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
         GLES20.glTexImage2D(
             GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, EWA_TABLE_SIZE, 1, 0, GLES20.GL_RGBA,
+            GLES20.GL_UNSIGNED_BYTE, bytes,
+        )
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        return ids[0]
+    }
+
+    /**
+     * xBRZ's patterns (see [Xbrz.weights]) as a [XbrzShaders.TABLE_WIDTH] × 25 texture: a row per factor from 2 and
+     * pattern, a texel per cell of the block, its share of the neighbour's colour as m in red and n in green.
+     */
+    private fun xbrzTable(): Int {
+        val rows = Xbrz.FACTORS.count() * Xbrz.Pattern.entries.size
+        val bytes = ByteBuffer.allocateDirect(XbrzShaders.TABLE_WIDTH * rows * 4).order(ByteOrder.nativeOrder())
+        for (factor in Xbrz.FACTORS) for (pattern in Xbrz.Pattern.entries) {
+            val weights = Xbrz.weights(factor, pattern)
+            for (cell in 0 until XbrzShaders.TABLE_WIDTH) {
+                val m = if (cell < factor * factor) weights[cell * 2] else 0
+                val n = if (cell < factor * factor) weights[cell * 2 + 1] else 1
+                bytes.put(m.toByte()).put(n.toByte()).put(0).put(0)
+            }
+        }
+        bytes.position(0)
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, XbrzShaders.TABLE_WIDTH, rows, 0, GLES20.GL_RGBA,
             GLES20.GL_UNSIGNED_BYTE, bytes,
         )
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
@@ -1617,6 +1704,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** Anime4K's two half-float textures, taking turns between its passes. */
         private const val ANIME4K_A = REDUCED + 1
         private const val ANIME4K_B = ANIME4K_A + 1
+
+        /** xBRZ's corners and decisions between its passes (see XbrzShaders). */
+        private const val XBRZ_CORNERS = ANIME4K_B + 1
+        private const val XBRZ_DECISIONS = XBRZ_CORNERS + 1
 
         // Anime4K's last step (its Depth-to-Space, MIT, see Anime4k): each of the four channels of the last pass is
         // one of the four pixels a picture pixel becomes, added to the picture's bilinear doubling on every colour.
