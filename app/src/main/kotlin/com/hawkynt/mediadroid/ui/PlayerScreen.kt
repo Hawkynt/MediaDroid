@@ -194,6 +194,8 @@ fun PlayerScreen(
             android.media.Spatializer.SPATIALIZER_IMMERSIVE_LEVEL_NONE
     }
     var gammaBoost by remember { mutableFloatStateOf(1f) }
+    // The video's frame rate, for the sound's wait behind a filtered picture; kept current by the routing loop.
+    val videoFrameRate = remember { floatArrayOf(-1f) }
     val player = remember {
         ExoPlayer.Builder(context)
             // Two minutes ahead where memory allows, and a longer start after a stall: a 4K file over
@@ -282,8 +284,15 @@ fun PlayerScreen(
                                 ),
                             )
                             .build(),
-                        // Blended frames run a little behind; the sound waits as long (see VideoFilterStage).
-                        { audioDelayMs + com.hawkynt.mediadroid.player.VideoFilterStage.latencyMs },
+                        // A filtered picture can run a few frames behind; the sound waits as long, counted by the
+                        // video's own frame rate (see VideoFilterStage.latencyFrames).
+                        {
+                            audioDelayMs + com.hawkynt.mediadroid.player.PlaybackMath.pictureLatencyMs(
+                                com.hawkynt.mediadroid.player.VideoFilterStage.latencyFrames,
+                                videoFrameRate[0],
+                                com.hawkynt.mediadroid.player.VideoFilterStage.latencyMs,
+                            )
+                        },
                     )
                 }
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
@@ -976,6 +985,7 @@ fun PlayerScreen(
     fun routeVideo() {
         val target = ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.videoSurfaceView)
             as? android.view.TextureView
+        videoFrameRate[0] = player.videoFormat?.frameRate ?: -1f
         val transfer = player.videoFormat?.colorInfo?.colorTransfer
         val hdr = transfer == C.COLOR_TRANSFER_ST2084 || transfer == C.COLOR_TRANSFER_HLG
         val wanted = shownPicture.hasFilters && !hdr && target != null && target.isAvailable
