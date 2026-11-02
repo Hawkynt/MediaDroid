@@ -370,6 +370,9 @@ fun PlayerScreen(
     // PlayerView opens its shutter only for a first frame drawn into its own surface; one drawn by the filters'
     // stage from FFmpeg's planes is announced to analytics alone, so the shutter is opened from here.
     val openShutter = remember { arrayOfNulls<() -> Unit>(1) }
+    // The routing of the picture (see routeVideo), asked at once when a decoder starts: FFmpeg's must reach the
+    // filters' stage before its first pictures, or they go through the slow window path, late, and are dropped.
+    val routeAtOnce = remember { arrayOfNulls<() -> Unit>(1) }
     DisposableEffect(player) {
         val analytics = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
             override fun onRenderedFirstFrame(
@@ -387,6 +390,7 @@ fun PlayerScreen(
                 initializationDurationMs: Long,
             ) {
                 videoDecoder = decoderName
+                routeAtOnce[0]?.invoke()
             }
 
             override fun onAudioDecoderInitialized(
@@ -664,6 +668,7 @@ fun PlayerScreen(
             if (startPos > 0) player.seekTo(startPos)
             // The demo library's videos are placeholders: the screen shows its chrome without playing them.
             if (!demo) {
+                routeAtOnce[0]?.invoke()
                 player.prepare()
                 player.playWhenReady = true
             }
@@ -1039,21 +1044,29 @@ fun PlayerScreen(
     val routedTo = remember { arrayOfNulls<android.view.TextureView>(1) }
     // The view's surface the stage draws into: a view gets a new one when the app comes back to the screen.
     val routedTexture = remember { arrayOfNulls<android.graphics.SurfaceTexture>(1) }
-    // Whether FFmpeg's renderer was last told to hand its pictures to the stage; any new surface undoes it.
-    val ffmpegToStage = remember { booleanArrayOf(false) }
     fun routeVideo() {
+        // The demo library's videos never play: no stage, no routing.
+        if (demo) return
         val target = ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.videoSurfaceView)
             as? android.view.TextureView
         videoFrameRate[0] = player.videoFormat?.frameRate ?: -1f
         val transfer = player.videoFormat?.colorInfo?.colorTransfer
         val hdr = transfer == C.COLOR_TRANSFER_ST2084 || transfer == C.COLOR_TRANSFER_HLG
         // FFmpeg's pictures always go through the stage: it takes them as YUV planes, which spares the
-        // decoder a window's buffer queue (see VideoFilterStage.setOutputBuffer).
+        // decoder a window's buffer queue (see VideoFilterStage.setOutputBuffer). FFmpeg's renderer is pointed
+        // at the stage before it starts, on every round — any new surface given to the player points it back —
+        // so even its first pictures never take the slow window path; idle while a device decoder plays.
         val ffmpegVideo = videoDecoder?.startsWith("ffmpeg", ignoreCase = true) == true
-        val wanted = (shownPicture.hasFilters || ffmpegVideo) && !hdr && target != null && target.isAvailable
-        val stage = filterStage[0]
+        val wanted = (ffmpegVideo || (shownPicture.hasFilters && !hdr)) && target != null && target.isAvailable
+        val stage = filterStage[0] ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { filterStage[0] = it }
+        ffmpegVideoRenderer[0]?.let { renderer ->
+            player.createMessage(renderer)
+                .setType(androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_OUTPUT)
+                .setPayload(stage)
+                .send()
+        }
         if (wanted) {
-            val active = stage ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { filterStage[0] = it }
+            val active = stage
             active.statistics = if (statisticsShown) statistics else null
             active.filters = shownPicture
             active.downscaler = runCatching { com.hawkynt.mediadroid.player.Downscaler.valueOf(settings.downscaler) }
@@ -1061,27 +1074,22 @@ fun PlayerScreen(
             active.setVideoSize(player.videoSize.width, player.videoSize.height)
             if (routedTo[0] !== target || routedTexture[0] !== target?.surfaceTexture) {
                 player.setVideoSurface(active.inputSurface)
-                ffmpegToStage[0] = false
+                ffmpegVideoRenderer[0]?.let { renderer ->
+                    player.createMessage(renderer)
+                        .setType(androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_OUTPUT)
+                        .setPayload(active)
+                        .send()
+                }
                 // Taken on a later round when the view's surface is not free yet.
                 if (active.setOutput(android.view.Surface(target!!.surfaceTexture))) {
                     routedTo[0] = target
                     routedTexture[0] = target.surfaceTexture
                 }
             }
-            if (ffmpegVideo && !ffmpegToStage[0]) {
-                ffmpegVideoRenderer[0]?.let { renderer ->
-                    player.createMessage(renderer)
-                        .setType(androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_OUTPUT)
-                        .setPayload(active)
-                        .send()
-                    ffmpegToStage[0] = true
-                }
-            }
         } else if (routedTo[0] != null) {
-            stage?.setOutput(null)
+            stage.setOutput(null)
             routedTo[0] = null
             routedTexture[0] = null
-            ffmpegToStage[0] = false
             target?.let { player.setVideoTextureView(it) }
         }
     }
@@ -1091,7 +1099,6 @@ fun PlayerScreen(
             ?.videoSurfaceView as? android.view.TextureView)
         if (stage != null && routedTo[0] != null) {
             stage.renewInput { player.setVideoSurface(it) }
-            ffmpegToStage[0] = false
         } else if (view != null) {
             // The player makes its own surface over the view's, and lets the old one go.
             player.clearVideoTextureView(view)
@@ -1113,6 +1120,7 @@ fun PlayerScreen(
     LaunchedEffect(index) { statistics.clear() }
     // The loop asks the latest composition's routing, with the picture and screens as they are now.
     val routeNow by androidx.compose.runtime.rememberUpdatedState({ routeVideo() })
+    routeAtOnce[0] = { routeNow() }
     LaunchedEffect(player) {
         while (true) {
             routeNow()
