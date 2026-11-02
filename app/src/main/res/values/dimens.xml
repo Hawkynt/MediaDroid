@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Media3's seek bar: a touch area of 80dp centred on the line (see ExoStyledControls.TimeBar in themes.xml),
+       where the library has 48dp above it and next to nothing below; the line stays where it was, 53dp up. -->
+  <dimen name="exo_styled_progress_layout_height">80dp</dimen>
+  <dimen name="exo_styled_progress_touch_target_height">80dp</dimen>
+  <dimen name="exo_styled_progress_margin_bottom">13dp</dimen>
+  <dimen name="exo_styled_progress_bar_height">4dp</dimen>
+  <dimen name="exo_styled_progress_enabled_thumb_size">16dp</dimen>
+  <dimen name="exo_styled_progress_dragged_thumb_size">24dp</dimen>
+</resources>

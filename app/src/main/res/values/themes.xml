@@ -7,4 +7,14 @@
     <item name="android:statusBarColor">@color/night</item>
     <item name="android:navigationBarColor">@color/night</item>
   </style>
+
+  <!-- Media3's seek bar with the line in the middle of its touch area (see dimens.xml), not at the bottom. -->
+  <style name="ExoStyledControls.TimeBar">
+    <item name="bar_height">@dimen/exo_styled_progress_bar_height</item>
+    <item name="bar_gravity">center</item>
+    <item name="touch_target_height">@dimen/exo_styled_progress_touch_target_height</item>
+    <item name="scrubber_enabled_size">@dimen/exo_styled_progress_enabled_thumb_size</item>
+    <item name="scrubber_dragged_size">@dimen/exo_styled_progress_dragged_thumb_size</item>
+    <item name="android:layout_height">@dimen/exo_styled_progress_layout_height</item>
+  </style>
 </resources>
