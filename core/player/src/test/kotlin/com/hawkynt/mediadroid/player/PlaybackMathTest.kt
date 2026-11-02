@@ -292,4 +292,17 @@ class PlaybackMathTest {
         assertFalse(PlaybackMath.isBoosted(1f))
         assertTrue(PlaybackMath.isBoosted(1.01f))
     }
+
+    @Test
+    fun `the sound waits for a picture frames behind by the video's own frame rate`() {
+        assertEquals(80, PlaybackMath.pictureLatencyMs(frames = 2f, frameRate = 25f, measuredMs = 140))
+        assertEquals(167, PlaybackMath.pictureLatencyMs(frames = 5f, frameRate = 29.97f, measuredMs = 0))
+        assertEquals(20, PlaybackMath.pictureLatencyMs(frames = 0.5f, frameRate = 25f, measuredMs = 33))
+        assertEquals(0, PlaybackMath.pictureLatencyMs(frames = 0f, frameRate = 25f, measuredMs = 40))
+    }
+
+    @Test
+    fun `without a known frame rate the measured wait stands`() {
+        assertEquals(140, PlaybackMath.pictureLatencyMs(frames = 2f, frameRate = -1f, measuredMs = 140))
+    }
 }
