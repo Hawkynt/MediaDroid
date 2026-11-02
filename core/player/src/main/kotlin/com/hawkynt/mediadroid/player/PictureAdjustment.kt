@@ -31,7 +31,36 @@ data class PictureAdjustment(
     val interpolation: Interpolation = Interpolation.OFF,
     /** A temporal [deinterlace] shows each field as a picture of its own, see [isFieldRate]. */
     val fieldRate: Boolean = false,
+    /** 3D video shown as 2D: one eye's half of the frame. */
+    val stereo: Stereo = Stereo.OFF,
 ) {
+    /**
+     * One eye of a 3D frame as the whole picture: [LEFT] or [RIGHT] half of a side-by-side frame, [TOP] or
+     * [BOTTOM] half of a top-and-bottom one, stretched twice in the direction it was halved. A half-width or
+     * half-height eye was squeezed to fit the frame, so the stretch gives it back its proper shape and the
+     * picture keeps the frame's. [x], [y], [width] and [height] are the half in the frame's texture
+     * coordinates: 0 to 1, from the bottom left, as SurfaceTexture's.
+     */
+    enum class Stereo(val label: String, val x: Float, val y: Float, val width: Float, val height: Float) {
+        OFF("Off", 0f, 0f, 1f, 1f),
+        LEFT("Left", 0f, 0f, 0.5f, 1f),
+        RIGHT("Right", 0.5f, 0f, 0.5f, 1f),
+        TOP("Top", 0f, 0.5f, 1f, 0.5f),
+        BOTTOM("Bottom", 0f, 0f, 1f, 0.5f),
+        ;
+
+        /**
+         * The crop as a texture matrix (column-major 4×4, as OpenGL's): the whole picture's coordinates onto
+         * the half, to be applied before the frame's own transform.
+         */
+        fun cropMatrix(): FloatArray = floatArrayOf(
+            width, 0f, 0f, 0f,
+            0f, height, 0f, 0f,
+            0f, 0f, 1f, 0f,
+            x, y, 0f, 1f,
+        )
+    }
+
     /**
      * Frame blending: between two frames the screen shows a mix of both, weighted by how far the clock
      * is between them — the screen's refresh rate instead of the film's frame rate, so motion steps
@@ -122,7 +151,7 @@ data class PictureAdjustment(
     /** A filter is set that only the GL stage can run (see the app's VideoFilterStage). */
     val hasFilters: Boolean
         get() = sharpness > 0f || clarity > 0f || noise != 0f || deinterlace != Deinterlace.OFF ||
-            upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF
+            upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF || stereo != Stereo.OFF
 
     /** The correction as a GPU shader applies it: saturation, contrast, brightness, then the true gamma curve. */
     data class ShaderUniforms(

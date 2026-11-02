@@ -38,6 +38,8 @@ fun PictureSliders(
     onChange: (PictureAdjustment) -> Unit,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Offer one eye of a 3D video; a choice for one video, not a household default. */
+    stereo: Boolean = false,
 ) {
     Column(modifier = modifier) {
         PictureControl.entries.forEach { control ->
@@ -144,6 +146,21 @@ fun PictureSliders(
                     },
                     label = { Text(strength.label, fontSize = 15.sp) },
                 )
+            }
+        }
+        if (stereo) {
+            Text("3D as 2D: one eye", fontSize = 16.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                PictureAdjustment.Stereo.entries.forEach { eye ->
+                    FilterChip(
+                        selected = picture.stereo == eye,
+                        onClick = {
+                            onChange(picture.copy(stereo = eye))
+                            onDone()
+                        },
+                        label = { Text(eye.label, fontSize = 15.sp) },
+                    )
+                }
             }
         }
         Text(
