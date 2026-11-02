@@ -1,5 +1,7 @@
 package com.hawkynt.mediadroid.ui
 
+import com.hawkynt.mediadroid.player.DecodedBuffer
+import com.hawkynt.mediadroid.player.PictureSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -299,6 +301,18 @@ fun SettingsScreen(
             }
         }
         Spacer(Modifier.height(8.dp))
+        DecodedBufferSetting(
+            unit = runCatching { DecodedBuffer.Unit.valueOf(settings.bufferUnit) }
+                .getOrDefault(DecodedBuffer.Unit.SECONDS),
+            value = settings.bufferValue,
+            onChange = { unit, value ->
+                update {
+                    it.bufferUnit = unit.name
+                    it.bufferValue = value
+                }
+            },
+        )
+        Spacer(Modifier.height(8.dp))
         Text("Default speed", fontSize = 18.sp)
         SpeedSlider(settings.defaultSpeed, { s -> update { it.defaultSpeed = s } }, Modifier.fillMaxWidth())
         SliderRow(
@@ -410,6 +424,67 @@ private fun SwitchRow(label: String, detail: String, checked: Boolean, onChange:
         Spacer(Modifier.width(12.dp))
         Switch(checked = checked, onCheckedChange = onChange)
     }
+}
+
+/**
+ * How far ahead decoded pictures are kept: the unit, the amount, and the other two units beside it for a 1080p film
+ * at 25 fps on this device. Switching the unit keeps the amount the buffer comes to.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun DecodedBufferSetting(
+    unit: DecodedBuffer.Unit,
+    value: Float,
+    onChange: (DecodedBuffer.Unit, Float) -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val ceiling = remember(context) {
+        val memory = android.app.ActivityManager.MemoryInfo()
+        context.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memory)
+        DecodedBuffer.ceilingBytes(memory.totalMem)
+    }
+    val example = PictureSize(1920, 1080)
+    val exampleRate = 25f
+    val buffer = DecodedBuffer(unit, value)
+    Text("Pictures kept ahead", fontSize = 18.sp)
+    Text(
+        "Decoded pictures waiting in memory, so a scene that decodes slowly still plays evenly. At most a quarter " +
+            "of this device's memory.",
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        DecodedBuffer.Unit.entries.forEach { choice ->
+            FilterChip(
+                selected = unit == choice,
+                onClick = {
+                    val amount = when (choice) {
+                        DecodedBuffer.Unit.SECONDS -> buffer.seconds(example, exampleRate, ceiling)
+                        DecodedBuffer.Unit.MEGABYTES -> buffer.megabytes(example, exampleRate, ceiling)
+                        DecodedBuffer.Unit.FRAMES -> buffer.frames(example, exampleRate, ceiling).toFloat()
+                    }
+                    onChange(choice, choice.rounded(amount))
+                },
+                label = { Text(choice.label, fontSize = 16.sp) },
+            )
+        }
+    }
+    SliderRow(
+        label = unit.label,
+        value = value.coerceIn(unit.range),
+        range = unit.range,
+        valueText = if (unit == DecodedBuffer.Unit.SECONDS) "%.1f s".format(value) else value.toInt().toString(),
+        onValueChange = { onChange(unit, unit.rounded(it)) },
+    )
+    Text(
+        "For a 1080p film at 25 fps: %d frames, %.0f MB, %.1f s".format(
+            buffer.frames(example, exampleRate, ceiling),
+            buffer.megabytes(example, exampleRate, ceiling),
+            buffer.seconds(example, exampleRate, ceiling),
+        ),
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
