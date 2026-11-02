@@ -69,6 +69,14 @@ class DecodedBufferTest {
     }
 
     @Test
+    fun `the decoder's pictures live in the app's heap, so a quarter of it is their ceiling too`() {
+        // 8 GB of memory but a 256 MB heap: 64 MB, five 4K pictures.
+        val ceiling = DecodedBuffer.decoderCeilingBytes(totalMemoryBytes = 8 * gb, heapBytes = 256L * 1024 * 1024)
+        assertEquals(64L * 1024 * 1024, ceiling)
+        assertEquals(5, DecodedBuffer.DEFAULT.decoderFrames(ceiling))
+    }
+
+    @Test
     fun `five seconds ahead by default`() {
         assertEquals(DecodedBuffer(Unit.SECONDS, 5f), DecodedBuffer.DEFAULT)
     }

@@ -107,8 +107,11 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 /** How long the controls stay up after the last touch, like the streaming apps' players. */
 private const val ControlsTimeoutMs = 3_000
 
-/** Compressed samples waiting for FFmpeg's video decoder: enough to keep it busy; the pictures ahead are set apart. */
-private const val FFMPEG_INPUT_BUFFERS = 8
+/**
+ * Compressed samples waiting for FFmpeg's video decoder, as Media3 keeps them: each grows to the largest sample, in
+ * the app's heap — 12 MB for a raw 4K picture.
+ */
+private const val FFMPEG_INPUT_BUFFERS = 4
 
 /** How the video fills the screen; maps onto Media3's resize modes. */
 enum class VideoFit(val label: String, val resizeMode: Int) {
@@ -207,10 +210,14 @@ fun PlayerScreen(
     val player = remember {
         ExoPlayer.Builder(context)
             // Two minutes ahead where memory allows, and a longer start after a stall: a 4K file over
-            // Wi-Fi rides out the dips. The byte limit stays Media3's own, which fits any heap.
+            // Wi-Fi rides out the dips. The bytes held stay within a quarter of the app's memory (see LoadBudget):
+            // Media3's own 131 MB ran a 256 MB heap out with a raw 4K file.
             .setLoadControl(
                 androidx.media3.exoplayer.DefaultLoadControl.Builder()
                     .setBufferDurationsMs(BUFFER_MIN_MS, BUFFER_MAX_MS, BUFFER_START_MS, BUFFER_RESTART_MS)
+                    .setTargetBufferBytes(
+                        com.hawkynt.mediadroid.player.LoadBudget.targetBytes(Runtime.getRuntime().maxMemory()).toInt(),
+                    )
                     .build(),
             )
             .setRenderersFactory(
@@ -266,7 +273,10 @@ fun PlayerScreen(
                                 settings.bufferValue,
                             )
                             val frames = buffer.decoderFrames(
-                                com.hawkynt.mediadroid.player.DecodedBuffer.ceilingBytes(memory.totalMem),
+                                com.hawkynt.mediadroid.player.DecodedBuffer.decoderCeilingBytes(
+                                    memory.totalMem,
+                                    Runtime.getRuntime().maxMemory(),
+                                ),
                             )
                             out[at] = androidx.media3.decoder.ffmpeg.ExperimentalFfmpegVideoRenderer(
                                 allowedVideoJoiningTimeMs,
