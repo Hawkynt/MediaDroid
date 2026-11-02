@@ -347,6 +347,7 @@ fun SettingsScreen(
                     it.upscaler = defaultPicture.upscaler.name
                     it.interpolation = defaultPicture.interpolation.name
                     it.fieldRate = defaultPicture.fieldRate
+                    it.upscalerStrength = defaultPicture.upscalerStrength
                 }
             },
         )

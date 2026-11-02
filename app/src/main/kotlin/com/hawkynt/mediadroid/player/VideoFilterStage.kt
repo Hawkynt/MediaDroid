@@ -1231,7 +1231,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         grainToShow = filters.grain
         val outWidth = query(EGL14.EGL_WIDTH)
         val outHeight = query(EGL14.EGL_HEIGHT)
-        val upscaling = picture.upscaler != PictureAdjustment.Upscaler.STANDARD && outWidth > width
+        val upscaling = picture.upscales && outWidth > width
         val sharpen: (Int) -> Unit = { p ->
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), picture.sharpness)
@@ -1325,6 +1325,20 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / outWidth, 1f / outHeight)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharp"), RCAS_SHARPNESS)
                 }
+            }
+            // Below full strength the plain picture, as the screen's own scaling gives it, is laid over the
+            // upscaled one with that share: the graphics chip mixes the two as it draws.
+            val plain = picture.plainShare
+            if (plain > 0f) {
+                GLES20.glEnable(GLES20.GL_BLEND)
+                GLES20.glBlendColor(0f, 0f, 0f, plain)
+                GLES20.glBlendFunc(GLES20.GL_CONSTANT_ALPHA, GLES20.GL_ONE_MINUS_CONSTANT_ALPHA)
+                run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
+                }
+                GLES20.glDisable(GLES20.GL_BLEND)
             }
         }
     }
