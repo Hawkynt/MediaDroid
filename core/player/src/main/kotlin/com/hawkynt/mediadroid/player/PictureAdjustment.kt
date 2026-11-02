@@ -33,7 +33,15 @@ data class PictureAdjustment(
     val fieldRate: Boolean = false,
     /** 3D video shown as 2D: one eye's half of the frame. */
     val stereo: Stereo = Stereo.OFF,
+    /** How much of the [upscaler]'s picture shows, 0 to 1; the rest is plain scaling, see [plainShare]. */
+    val upscalerStrength: Float = 1f,
 ) {
+    /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
+    val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
+
+    /** Whether an [upscaler] other than the screen's own runs: not at zero strength, where only plain scaling shows. */
+    val upscales: Boolean get() = upscaler != Upscaler.STANDARD && plainShare < 1f
+
     /**
      * One eye of a 3D frame as the whole picture: [LEFT] or [RIGHT] half of a side-by-side frame, [TOP] or
      * [BOTTOM] half of a top-and-bottom one, stretched twice in the direction it was halved. A half-width or

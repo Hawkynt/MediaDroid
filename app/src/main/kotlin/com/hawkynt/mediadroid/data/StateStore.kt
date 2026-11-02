@@ -47,6 +47,8 @@ data class PictureOverride(
     val fieldRate: Boolean = false,
     /** PictureAdjustment.Stereo name: one eye of a 3D video, kept per video only. */
     val stereo: String = "OFF",
+    /** How much of the upscaler shows, 0..1. */
+    val upscalerStrength: Float = 1f,
 )
 
 /**
@@ -75,6 +77,7 @@ data class Settings(
     var upscaler: String = "STANDARD",        // PictureAdjustment.Upscaler name
     var interpolation: String = "OFF",        // PictureAdjustment.Interpolation name
     var fieldRate: Boolean = false,           // YADIF/BWDIF show every field
+    var upscalerStrength: Float = 1f,         // 0..1, how much of the upscaler shows over plain scaling
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -232,6 +235,7 @@ class StateStore(context: Context) {
             brightness, gamma, contrast, saturation, sharpness, clarity,
             noise ?: PictureAdjustment.noiseOfLevel(denoise), deinterlaceOf(deinterlace),
             upscalerOf(upscaler), interpolationOf(interpolation), fieldRate,
+            upscalerStrength = upscalerStrength,
         )
     }
 
@@ -260,6 +264,7 @@ class StateStore(context: Context) {
                 interpolationOf(it.interpolation),
                 it.fieldRate,
                 runCatching { PictureAdjustment.Stereo.valueOf(it.stereo) }.getOrDefault(PictureAdjustment.Stereo.OFF),
+                it.upscalerStrength,
             )
         }
             ?: defaultPicture()
@@ -283,6 +288,7 @@ class StateStore(context: Context) {
                 picture.interpolation.name,
                 picture.fieldRate,
                 picture.stereo.name,
+                picture.upscalerStrength,
             )
         }
         save()

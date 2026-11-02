@@ -135,6 +135,23 @@ fun PictureSliders(
                 )
             }
         }
+        // How much of the upscaler shows: 0 % plain scaling, 100 % the upscaler alone.
+        if (picture.upscaler != PictureAdjustment.Upscaler.STANDARD) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Upscaler strength", fontSize = 16.sp, modifier = Modifier.weight(1f))
+                Text(
+                    if (picture.upscalerStrength <= 0f) "off" else "%.0f %%".format(picture.upscalerStrength * 100),
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Slider(
+                value = picture.upscalerStrength,
+                onValueChange = { onChange(picture.copy(upscalerStrength = (it * 20).toInt() / 20f)) },
+                valueRange = 0f..1f,
+                onValueChangeFinished = onDone,
+            )
+        }
         Text("Smooth motion", fontSize = 16.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PictureAdjustment.Interpolation.entries.forEach { strength ->
