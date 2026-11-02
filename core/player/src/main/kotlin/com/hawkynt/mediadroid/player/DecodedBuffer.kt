@@ -42,10 +42,11 @@ data class DecodedBuffer(val unit: Unit, val value: Float) {
 
     /**
      * The pictures a decoder is set up to keep ahead before the video is known: this setting for a 1080p film at
-     * 25 fps, but no more than [ceilingBytes] holds of 4K pictures, which a video may still decode to.
+     * 25 fps, but no more than [ceilingBytes] holds of 4K pictures, which a video may still decode to, and no more
+     * than [MAX_DECODER_FRAMES].
      */
     fun decoderFrames(ceilingBytes: Long): Int =
-        minOf(frames(FULL_HD, BASIS_RATE, ceilingBytes), (ceilingBytes / pictureBytes(UHD)).toInt())
+        minOf(frames(FULL_HD, BASIS_RATE, ceilingBytes), (ceilingBytes / pictureBytes(UHD)).toInt(), MAX_DECODER_FRAMES)
             .coerceAtLeast(MIN_FRAMES)
 
     companion object {
@@ -59,6 +60,12 @@ data class DecodedBuffer(val unit: Unit, val value: Float) {
 
         /** Pictures always kept ahead, whatever the setting: as many as Media3 keeps on its own. */
         const val MIN_FRAMES = 4
+
+        /**
+         * The most pictures a decoder keeps ahead. Media3's decoder renderer drops the late ones of a full queue in
+         * one go after a start or a seek and, with 125 waiting, never draws again (seen on the phone); 16 recovers.
+         */
+        const val MAX_DECODER_FRAMES = 16
 
         private const val MEBIBYTE = 1024L * 1024L
 

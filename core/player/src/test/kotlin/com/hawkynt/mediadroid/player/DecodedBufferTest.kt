@@ -60,10 +60,12 @@ class DecodedBufferTest {
     }
 
     @Test
-    fun `the decoder keeps the setting's frames for 1080p at 25 fps, few enough that 4K pictures fit too`() {
-        assertEquals(125, DecodedBuffer.DEFAULT.decoderFrames(ceilingBytes = 4 * gb))
-        // 1 GB: 1080p would allow 125, but 86 4K pictures already fill it.
-        assertEquals(86, DecodedBuffer.DEFAULT.decoderFrames(ceilingBytes = gb))
+    fun `the decoder keeps the setting's frames, at most as many as Media3's decoder renderer copes with`() {
+        // Five seconds of 1080p at 25 fps would be 125; the decoder keeps 16.
+        assertEquals(DecodedBuffer.MAX_DECODER_FRAMES, DecodedBuffer.DEFAULT.decoderFrames(ceilingBytes = 4 * gb))
+        assertEquals(10, DecodedBuffer(DecodedBuffer.Unit.FRAMES, 10f).decoderFrames(ceilingBytes = 4 * gb))
+        // 100 MB holds eight 4K pictures.
+        assertEquals(8, DecodedBuffer.DEFAULT.decoderFrames(ceilingBytes = 100L * 1024 * 1024))
     }
 
     @Test

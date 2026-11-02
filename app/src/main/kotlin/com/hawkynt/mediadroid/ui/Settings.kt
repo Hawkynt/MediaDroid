@@ -449,7 +449,7 @@ private fun DecodedBufferSetting(
     Text("Pictures kept ahead", fontSize = 18.sp)
     Text(
         "Decoded pictures waiting in memory, so a scene that decodes slowly still plays evenly. At most a quarter " +
-            "of this device's memory.",
+            "of this device's memory; the built-in software decoder keeps up to 16 of them ready.",
         fontSize = 14.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
