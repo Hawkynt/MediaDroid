@@ -100,7 +100,8 @@ data class PictureAdjustment(
      * [LANCZOS] a Lanczos-3 filter (sharper, a little ringing held back); [FSR] AMD FidelityFX Super
      * Resolution 1 — edge-adaptive upscaling (EASU) and robust contrast-adaptive sharpening (RCAS); [EWA]
      * a sharpened Jinc over a circle (see [Ewa]), alike at every angle, so diagonals keep no staircase;
-     * [NIS] NVIDIA Image Scaling (see [Nis]): directional filters by edge, with luma-adaptive sharpening.
+     * [NIS] NVIDIA Image Scaling (see [Nis]): directional filters by edge, with luma-adaptive sharpening;
+     * [ANIME4K] Anime4K's small convolutional network doubling the picture, made for line art and animation.
      */
     enum class Upscaler(val label: String) {
         STANDARD("Standard"),
@@ -108,6 +109,7 @@ data class PictureAdjustment(
         FSR("FSR"),
         EWA("EWA"),
         NIS("NIS"),
+        ANIME4K("Anime4K"),
     }
 
     /**
