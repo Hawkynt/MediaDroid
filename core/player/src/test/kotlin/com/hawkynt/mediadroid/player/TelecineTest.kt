@@ -1,6 +1,8 @@
 package com.hawkynt.mediadroid.player
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 import java.util.zip.GZIPInputStream
 
@@ -88,5 +90,14 @@ class TelecineTest {
         val cur = Deinterlacer.Plane(16, 4, IntArray(64) { 2 })
         val woven = Telecine.weave(Telecine.Match.PREVIOUS, 1, prev, cur, cur)
         assertEquals(listOf(2, 1, 2, 1), (0 until 4).map { woven[0, it] })
+    }
+
+    @Test
+    fun `a frame of another size starts a new cycle`() {
+        fun plane(width: Int, height: Int) = Deinterlacer.Plane(width, height, IntArray(width * height))
+        val decimate = Telecine.Decimate(mixed = true)
+        repeat(2) { assertNull(decimate.add(plane(1080, 2326))) }
+        repeat(4) { assertNull(decimate.add(plane(720, 480))) }
+        assertNotNull(decimate.add(plane(720, 480)))
     }
 }
