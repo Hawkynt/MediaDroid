@@ -137,7 +137,7 @@ class PlaybackChainTest {
         val ffmpeg = PlaybackChain.of(facts.copy(video = video.copy(decoder = "ffmpeg-wmv3")))
         assertEquals("ffmpeg-wmv3 (software, FFmpeg)", ffmpeg.detail(Lane.PICTURE, "Decoder"))
         assertEquals(
-            "to YV12 (YUV 4:2:0, 8-bit) by libyuv, the display turns it into RGB",
+            "to YUV 4:2:0, 8-bit, handed on as three planes, the filters' stage turns them into RGB",
             ffmpeg.detail(Lane.PICTURE, "Conversion"),
         )
         assertEquals("FFmpeg video renderer", ffmpeg.detail(Lane.PICTURE, "Renderer"))
@@ -172,12 +172,12 @@ class PlaybackChainTest {
             dv.detail(Lane.PICTURE, "Decoder"),
         )
         assertEquals(
-            "yuv411p → YV12 (YUV 4:2:0, 8-bit) by libyuv, the display turns it into RGB",
+            "yuv411p → YUV 4:2:0, 8-bit, handed on as three planes, the filters' stage turns them into RGB",
             dv.detail(Lane.PICTURE, "Conversion"),
         )
         val plain = PlaybackChain.of(facts.copy(video = video.copy(decoder = "ffmpeg-h264", decodedFormat = "yuv420p")))
         assertEquals(
-            "yuv420p copied as YV12 (YUV 4:2:0, 8-bit), the display turns it into RGB",
+            "yuv420p handed on as three planes, the filters' stage turns them into RGB",
             plain.detail(Lane.PICTURE, "Conversion"),
         )
         val deep = PlaybackChain.of(

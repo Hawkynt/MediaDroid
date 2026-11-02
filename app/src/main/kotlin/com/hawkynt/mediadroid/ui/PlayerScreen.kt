@@ -199,6 +199,8 @@ fun PlayerScreen(
     var gammaBoost by remember { mutableFloatStateOf(1f) }
     // The video's frame rate, for the sound's wait behind a filtered picture; kept current by the routing loop.
     val videoFrameRate = remember { floatArrayOf(-1f) }
+    // The bundled FFmpeg's video renderer, which hands its pictures to the filters' stage as YUV planes.
+    val ffmpegVideoRenderer = remember { arrayOfNulls<androidx.media3.exoplayer.Renderer>(1) }
     val player = remember {
         ExoPlayer.Builder(context)
             // Two minutes ahead where memory allows, and a longer start after a stall: a 4K file over
@@ -233,20 +235,23 @@ fun PlayerScreen(
                         eventListener: androidx.media3.exoplayer.video.VideoRendererEventListener,
                         allowedVideoJoiningTimeMs: Long,
                         out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
-                    ) = super.buildVideoRenderers(
-                        context,
-                        if (settings.softwareVideoDecoding) {
-                            EXTENSION_RENDERER_MODE_PREFER
-                        } else {
-                            EXTENSION_RENDERER_MODE_ON
-                        },
-                        mediaCodecSelector,
-                        enableDecoderFallback,
-                        eventHandler,
-                        com.hawkynt.mediadroid.player.PixelShapeListener(eventListener),
-                        allowedVideoJoiningTimeMs,
-                        out,
-                    )
+                    ) {
+                        super.buildVideoRenderers(
+                            context,
+                            if (settings.softwareVideoDecoding) {
+                                EXTENSION_RENDERER_MODE_PREFER
+                            } else {
+                                EXTENSION_RENDERER_MODE_ON
+                            },
+                            mediaCodecSelector,
+                            enableDecoderFallback,
+                            eventHandler,
+                            com.hawkynt.mediadroid.player.PixelShapeListener(eventListener),
+                            allowedVideoJoiningTimeMs,
+                            out,
+                        )
+                        ffmpegVideoRenderer[0] = out.firstOrNull { it.name.startsWith("ExperimentalFfmpegVideo") }
+                    }
 
                     // Real loudness fix for unnormalized streams: the settings dB
                     // is applied to the decoded PCM and re-read per buffer, so the
@@ -371,8 +376,19 @@ fun PlayerScreen(
     // The statistics over the picture (Info › Advanced), for this session only.
     var statisticsShown by remember { mutableStateOf(false) }
     val statistics = remember { com.hawkynt.mediadroid.player.PlaybackStatistics() }
+    // PlayerView opens its shutter only for a first frame drawn into its own surface; one drawn by the filters'
+    // stage from FFmpeg's planes is announced to analytics alone, so the shutter is opened from here.
+    val openShutter = remember { arrayOfNulls<() -> Unit>(1) }
     DisposableEffect(player) {
         val analytics = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onRenderedFirstFrame(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                output: Any,
+                renderTimeMs: Long,
+            ) {
+                if (output is com.hawkynt.mediadroid.player.VideoFilterStage) openShutter[0]?.invoke()
+            }
+
             override fun onVideoDecoderInitialized(
                 eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
                 decoderName: String,
@@ -528,6 +544,11 @@ fun PlayerScreen(
     val externalDisplay = rememberExternalDisplay()
     var onSecondScreen by remember { mutableStateOf(false) }
     var presentation by remember { mutableStateOf<VideoPresentation?>(null) }
+    openShutter[0] = {
+        listOfNotNull(playerView, presentation?.takeIf { it.isShowing }?.playerView).forEach {
+            it.findViewById<View>(androidx.media3.ui.R.id.exo_shutter)?.visibility = View.INVISIBLE
+        }
+    }
 
     // Touching one of our own controls must keep Media3's controls up too, or they would time
     // out mid-choice: both are one set of controls to the viewer.
@@ -994,27 +1015,49 @@ fun PlayerScreen(
     // on the phone or the second screen; otherwise the player draws straight into that view.
     val filterStage = remember { arrayOfNulls<com.hawkynt.mediadroid.player.VideoFilterStage>(1) }
     val routedTo = remember { arrayOfNulls<android.view.TextureView>(1) }
+    // The view's surface the stage draws into: a view gets a new one when the app comes back to the screen.
+    val routedTexture = remember { arrayOfNulls<android.graphics.SurfaceTexture>(1) }
+    // Whether FFmpeg's renderer was last told to hand its pictures to the stage; any new surface undoes it.
+    val ffmpegToStage = remember { booleanArrayOf(false) }
     fun routeVideo() {
         val target = ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.videoSurfaceView)
             as? android.view.TextureView
         videoFrameRate[0] = player.videoFormat?.frameRate ?: -1f
         val transfer = player.videoFormat?.colorInfo?.colorTransfer
         val hdr = transfer == C.COLOR_TRANSFER_ST2084 || transfer == C.COLOR_TRANSFER_HLG
-        val wanted = shownPicture.hasFilters && !hdr && target != null && target.isAvailable
+        // FFmpeg's pictures always go through the stage: it takes them as YUV planes, which spares the
+        // decoder a window's buffer queue (see VideoFilterStage.setOutputBuffer).
+        val ffmpegVideo = videoDecoder?.startsWith("ffmpeg", ignoreCase = true) == true
+        val wanted = (shownPicture.hasFilters || ffmpegVideo) && !hdr && target != null && target.isAvailable
         val stage = filterStage[0]
         if (wanted) {
             val active = stage ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { filterStage[0] = it }
             active.statistics = if (statisticsShown) statistics else null
             active.filters = shownPicture
             active.setVideoSize(player.videoSize.width, player.videoSize.height)
-            if (routedTo[0] !== target) {
+            if (routedTo[0] !== target || routedTexture[0] !== target?.surfaceTexture) {
                 player.setVideoSurface(active.inputSurface)
+                ffmpegToStage[0] = false
                 // Taken on a later round when the view's surface is not free yet.
-                if (active.setOutput(android.view.Surface(target!!.surfaceTexture))) routedTo[0] = target
+                if (active.setOutput(android.view.Surface(target!!.surfaceTexture))) {
+                    routedTo[0] = target
+                    routedTexture[0] = target.surfaceTexture
+                }
+            }
+            if (ffmpegVideo && !ffmpegToStage[0]) {
+                ffmpegVideoRenderer[0]?.let { renderer ->
+                    player.createMessage(renderer)
+                        .setType(androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_OUTPUT)
+                        .setPayload(active)
+                        .send()
+                    ffmpegToStage[0] = true
+                }
             }
         } else if (routedTo[0] != null) {
             stage?.setOutput(null)
             routedTo[0] = null
+            routedTexture[0] = null
+            ffmpegToStage[0] = false
             target?.let { player.setVideoTextureView(it) }
         }
     }
@@ -1024,6 +1067,7 @@ fun PlayerScreen(
             ?.videoSurfaceView as? android.view.TextureView)
         if (stage != null && routedTo[0] != null) {
             stage.renewInput { player.setVideoSurface(it) }
+            ffmpegToStage[0] = false
         } else if (view != null) {
             // The player makes its own surface over the view's, and lets the old one go.
             player.clearVideoTextureView(view)

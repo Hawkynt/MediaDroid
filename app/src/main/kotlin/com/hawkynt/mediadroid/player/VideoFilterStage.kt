@@ -13,6 +13,7 @@ import android.opengl.GLES30
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
+import androidx.media3.decoder.VideoDecoderOutputBuffer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -26,7 +27,7 @@ import java.util.concurrent.CountDownLatch
  * presentation time. The player uses it only while a filter is set; otherwise the decoder draws
  * straight onto the view, as before, which keeps HDR untouched.
  */
-class VideoFilterStage {
+class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBufferRenderer {
 
     private val thread = HandlerThread("video-filters").apply { start() }
     private val handler = Handler(thread.looper)
@@ -54,6 +55,20 @@ class VideoFilterStage {
     private class PendingLuma(val id: Long, val columns: Int, val rows: Int, val texels: Int)
     private lateinit var surfaceTexture: SurfaceTexture
     private val texMatrix = FloatArray(16)
+
+    // FFmpeg's pictures arrive as YUV planes (see setOutputBuffer) rather than through inputSurface: the
+    // newest one waiting, the textures its planes go into, and whether the frame being drawn is one.
+    private val yuvQueue = java.util.concurrent.ConcurrentLinkedDeque<Arrival>()
+    private val pacer = FramePacer()
+    private val pumpYuv = Runnable { busy { pumpYuv() } }
+    private val yuvTextures = IntArray(3)
+    private var yuvProgram = 0
+    private var yuvInput = false
+    private val yuvColor = FloatArray(9)
+    private var yuvChroma = 1f
+
+    /** When the frame being drawn arrived, on the clock eglPresentationTimeANDROID and the history use. */
+    private var frameTimestamp = 0L
     private val croppedMatrix = FloatArray(16)
 
     /** The frame's own transform, after the crop to one eye of a 3D frame when one is chosen. */
@@ -234,8 +249,110 @@ class VideoFilterStage {
         old.release()
     }
 
+    /**
+     * A picture from a decoder that hands over YUV planes — the bundled FFmpeg's. They are uploaded as
+     * textures here, which keeps the decoder clear of a window's buffer queue: on some devices a buffer the
+     * processor writes into a window waits on the order of 100 ms to be free again. Called on the playback
+     * thread up to 30 ms early and now and then two at once, so they wait in a short queue and are drawn evenly
+     * spaced (see [FramePacer]); far behind, the oldest is let go unshown.
+     */
+    override fun setOutputBuffer(outputBuffer: VideoDecoderOutputBuffer) {
+        yuvQueue.addLast(Arrival(outputBuffer, System.nanoTime()))
+        while (yuvQueue.size > MAX_YUV_QUEUED) yuvQueue.pollFirst()?.buffer?.release()
+        handler.post(pumpYuv)
+    }
+
+    /** A picture handed over, with when; [counted] once the pacer has heard of it. */
+    private class Arrival(val buffer: VideoDecoderOutputBuffer, val atNs: Long) {
+        var counted = false
+    }
+
+    /** Draws the oldest waiting picture when it is due, and comes back for the next. */
+    private fun pumpYuv() {
+        handler.removeCallbacks(pumpYuv)
+        yuvQueue.forEach {
+            if (!it.counted) {
+                it.counted = true
+                pacer.arrived(it.atNs)
+            }
+        }
+        val now = System.nanoTime()
+        val due = pacer.dueAt(now, yuvQueue.size)
+        if (due - now > 1_000_000L) {
+            handler.postDelayed(pumpYuv, (due - now) / 1_000_000L)
+            return
+        }
+        val arrival = yuvQueue.pollFirst() ?: return
+        pacer.shown(now)
+        takeYuv(arrival.buffer)
+        if (yuvQueue.isNotEmpty()) handler.post(pumpYuv)
+    }
+
+    private fun takeYuv(buffer: VideoDecoderOutputBuffer) {
+        try {
+            val planes = buffer.yuvPlanes ?: return
+            val strides = buffer.yuvStrides ?: return
+            if (buffer.width <= 0 || buffer.height <= 0 || strides[0] <= 0 || strides[1] <= 0) return
+            EGL14.eglMakeCurrent(display, idle, idle, context)
+            GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
+            for (i in 0 until 3) {
+                val rows = if (i == 0) buffer.height else (buffer.height + 1) / 2
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, yuvTextures[i])
+                GLES20.glTexImage2D(
+                    GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, strides[i], rows, 0,
+                    GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, planes[i].position(0),
+                )
+            }
+            // Rows run from the top in the planes, from the bottom in texture coordinates; the stride's padding
+            // right of the picture is cut off.
+            val lumaPart = buffer.width.toFloat() / strides[0]
+            yuvChroma = ((buffer.width + 1) / 2).toFloat() / strides[1] / lumaPart
+            texMatrix.fill(0f)
+            texMatrix[0] = lumaPart
+            texMatrix[5] = -1f
+            texMatrix[10] = 1f
+            texMatrix[13] = 1f
+            texMatrix[15] = 1f
+            System.arraycopy(
+                when (buffer.colorspace) {
+                    VideoDecoderOutputBuffer.COLORSPACE_BT601 -> BT601
+                    VideoDecoderOutputBuffer.COLORSPACE_BT2020 -> BT2020
+                    else -> BT709
+                },
+                0, yuvColor, 0, 9,
+            )
+            yuvInput = true
+            draw(redraw = false)
+        } finally {
+            buffer.release()
+        }
+    }
+
+    /** The frame just arrived into the bound framebuffer: the decoder's surface, or FFmpeg's planes. */
+    private fun copyInput() {
+        if (!yuvInput) {
+            run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, frameMatrix()) {}
+            return
+        }
+        run(yuvProgram, GLES20.GL_TEXTURE_2D, yuvTextures[0], frameMatrix()) { p ->
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, yuvTextures[1])
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uU"), 1)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, yuvTextures[2])
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uV"), 2)
+            GLES20.glUniformMatrix3fv(GLES20.glGetUniformLocation(p, "uColor"), 1, false, yuvColor, 0)
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uChroma"), yuvChroma)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        }
+    }
+
     fun release() {
+        handler.removeCallbacks(pumpYuv)
+        while (true) yuvQueue.pollFirst()?.buffer?.release() ?: break
         onThread {
+            GLES20.glDeleteProgram(yuvProgram)
+            GLES20.glDeleteTextures(3, yuvTextures, 0)
             releaseWindow()
             GLES20.glDeleteProgram(copyProgram)
             GLES20.glDeleteProgram(deinterlaceProgram)
@@ -339,7 +456,19 @@ class VideoFilterStage {
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         surfaceTexture = SurfaceTexture(oesTexture)
-        surfaceTexture.setOnFrameAvailableListener({ busy { draw(redraw = false) } }, handler)
+        surfaceTexture.setOnFrameAvailableListener({
+            yuvInput = false
+            busy { draw(redraw = false) }
+        }, handler)
+        GLES20.glGenTextures(3, yuvTextures, 0)
+        yuvTextures.forEach {
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, it)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        }
+        yuvProgram = program(VERTEX, YUV)
         inputSurface = Surface(surfaceTexture)
 
         copyProgram = program(VERTEX, COPY)
@@ -376,8 +505,13 @@ class VideoFilterStage {
     /** One decoded frame through the filters onto the output; [redraw] repeats the last one. */
     private fun draw(redraw: Boolean) {
         if (!redraw) {
-            surfaceTexture.updateTexImage()
-            surfaceTexture.getTransformMatrix(texMatrix)
+            if (yuvInput) {
+                frameTimestamp = System.nanoTime()
+            } else {
+                surfaceTexture.updateTexImage()
+                surfaceTexture.getTransformMatrix(texMatrix)
+                frameTimestamp = surfaceTexture.timestamp
+            }
             hasFrame = true
             statistics?.let { stats ->
                 stats.frameArrived(System.nanoTime())
@@ -444,11 +578,11 @@ class VideoFilterStage {
         historyCount = 0
         deinterlaceLatencyMs = 0
         deinterlaceFrames = 0f
-        shownAt = surfaceTexture.timestamp
+        shownAt = frameTimestamp
         val copied = frames[0].ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, copied.framebuffer)
         GLES20.glViewport(0, 0, width, height)
-        run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, frameMatrix()) {}
+        copyInput()
         var source = copied
         if (picture.deinterlace != PictureAdjustment.Deinterlace.OFF) {
             val woven = frames[2].ensure(width, height)
@@ -683,7 +817,7 @@ class VideoFilterStage {
      * Leaves the newest frame's framebuffer bound.
      */
     private fun remember(width: Int, height: Int): Boolean {
-        val step = surfaceTexture.timestamp - historyAt[2]
+        val step = frameTimestamp - historyAt[2]
         if (step <= 0 || step > MAX_FRAME_STEP_NS) {
             historyCount = 0
             frameIntervalNs = 0L
@@ -696,7 +830,7 @@ class VideoFilterStage {
         history[2] = oldest
         historyAt[0] = historyAt[1]
         historyAt[1] = historyAt[2]
-        historyAt[2] = surfaceTexture.timestamp
+        historyAt[2] = frameTimestamp
         val newest = frames[history[2]]
         if (frames[history[1]].width != width || frames[history[1]].height != height) {
             if (historyCount > 0) fieldOrder.reset()
@@ -710,7 +844,7 @@ class VideoFilterStage {
         newest.ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, newest.framebuffer)
         GLES20.glViewport(0, 0, width, height)
-        run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, frameMatrix()) {}
+        copyInput()
         historyCount = minOf(historyCount + 1, 3)
         return afresh
     }
@@ -1585,6 +1719,35 @@ class VideoFilterStage {
                 vTex = (uTexMatrix * aTexCoord).xy;
             }
         """
+
+        /** Pictures from FFmpeg waiting to be drawn, beyond which the oldest is let go. */
+        private const val MAX_YUV_QUEUED = 4
+
+        // YUV planes to RGB, as Media3's VideoDecoderGLSurfaceView does (Apache-2.0): luma less its 16/256
+        // foot, chroma about its middle, through the colour space's matrix (BT601, BT709, BT2020 below).
+        private const val YUV = """
+            precision mediump float;
+            uniform sampler2D uTex;
+            uniform sampler2D uU;
+            uniform sampler2D uV;
+            uniform mat3 uColor;
+            uniform float uChroma;
+            varying vec2 vTex;
+            void main() {
+                vec2 c = vec2(vTex.x * uChroma, vTex.y);
+                vec3 yuv = vec3(
+                    texture2D(uTex, vTex).r - 0.0625,
+                    texture2D(uU, c).r - 0.5,
+                    texture2D(uV, c).r - 0.5
+                );
+                gl_FragColor = vec4(uColor * yuv, 1.0);
+            }
+        """
+
+        // Limited-range YUV to RGB, column-major, copied from Media3's VideoDecoderGLSurfaceView.
+        private val BT601 = floatArrayOf(1.164f, 1.164f, 1.164f, 0.0f, -0.392f, 2.017f, 1.596f, -0.813f, 0.0f)
+        private val BT709 = floatArrayOf(1.164f, 1.164f, 1.164f, 0.0f, -0.213f, 2.112f, 1.793f, -0.533f, 0.0f)
+        private val BT2020 = floatArrayOf(1.168f, 1.168f, 1.168f, 0.0f, -0.188f, 2.148f, 1.683f, -0.652f, 0.0f)
 
         private const val COPY = """
             #extension GL_OES_EGL_image_external : require

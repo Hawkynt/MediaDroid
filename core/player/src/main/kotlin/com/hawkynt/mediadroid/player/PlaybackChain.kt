@@ -168,9 +168,10 @@ object PlaybackChain {
         val decoded = video.decodedFormat?.let { "$it (${pixelFormat(it)})" } ?: streamFormat
         val decoder = decoderKind(video.decoder) + (decoded?.let { " → $it" } ?: "")
         val conversion = when {
-            ffmpeg && video.decodedFormat == "yuv420p" -> "yuv420p copied as $YV12, $TO_RGB"
-            ffmpeg && video.decodedFormat != null -> "${video.decodedFormat} → $YV12 by libyuv, $TO_RGB"
-            ffmpeg -> "to $YV12 by libyuv, $TO_RGB"
+            // FFmpeg's pictures reach the filters' stage as planes, not through a window (see VideoFilterStage).
+            ffmpeg && video.decodedFormat == "yuv420p" -> "yuv420p $PLANES"
+            ffmpeg && video.decodedFormat != null -> "${video.decodedFormat} → $YUV420, $PLANES"
+            ffmpeg -> "to $YUV420, $PLANES"
             streamFormat != null -> "none on the processor: $streamFormat stays on the surface, $TO_RGB"
             else -> "none on the processor: the decoder draws onto the surface, $TO_RGB"
         }
@@ -336,7 +337,8 @@ object PlaybackChain {
 
     private fun signed(value: Float): String = (if (value > 0) "+" else "") + number(value)
 
-    private const val YV12 = "YV12 (YUV 4:2:0, 8-bit)"
+    private const val YUV420 = "YUV 4:2:0, 8-bit"
+    private const val PLANES = "handed on as three planes, the filters' stage turns them into RGB"
     private const val TO_RGB = "the display turns it into RGB"
     /** Subtitle formats by MIME type, as they are called; the picture-based ones say so. */
     private val SUBTITLE_FORMATS = mapOf(
