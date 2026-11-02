@@ -281,6 +281,24 @@ fun SettingsScreen(
             },
         )
         Spacer(Modifier.height(8.dp))
+        Text("Large video", fontSize = 18.sp)
+        Text(
+            "Before the picture filters work on a video larger than 1080p, it is brought down to fit 1920 × 1080 — " +
+                "after the 3D eye and deinterlacing. Bilinear is quick; Bicubic, Lanczos and Area are sharper.",
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            com.hawkynt.mediadroid.player.Downscaler.entries.forEach { method ->
+                FilterChip(
+                    selected = settings.downscaler == method.name,
+                    onClick = { update { it.downscaler = method.name } },
+                    label = { Text(method.label, fontSize = 16.sp) },
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
         Text("Default speed", fontSize = 18.sp)
         SpeedSlider(settings.defaultSpeed, { s -> update { it.defaultSpeed = s } }, Modifier.fillMaxWidth())
         SliderRow(

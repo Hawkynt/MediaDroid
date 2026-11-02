@@ -85,6 +85,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var denoiseProgram = 0
     private var sharpenProgram = 0
     private var lanczosProgram = 0
+    private var downscaleProgram = 0
     private var ewaProgram = 0
     private var ewaTable = 0
     private var nisProgram = 0
@@ -95,7 +96,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var temporalProgram = 0
     private var weaveProgram = 0
     private var packProgram = 0
-    private val frames = Array(KEPT_THIRD + 1) { Frame() }
+    private val frames = Array(REDUCED + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -192,6 +193,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     /** The filters to run; read on every frame. */
     @Volatile
     var filters: PictureAdjustment = PictureAdjustment.Neutral
+
+    /** How a picture larger than 1080p is brought down after deinterlacing (see [reduced]). */
+    @Volatile
+    var downscaler: Downscaler = Downscaler.DEFAULT
+
+    /** The size the stage takes the decoder's frame at: the 3D eye's half, pixel for pixel, or the whole frame. */
+    private fun eyeSize(): PictureSize =
+        PictureSize(videoWidth.takeIf { it > 0 } ?: surfaceWidth(), videoHeight.takeIf { it > 0 } ?: surfaceHeight())
+            .eye(filters.stereo)
 
     @Volatile
     private var videoWidth = 0
@@ -359,6 +369,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(sharpenProgram)
             GLES20.glDeleteProgram(lanczosProgram)
+            GLES20.glDeleteProgram(downscaleProgram)
             GLES20.glDeleteProgram(ewaProgram)
             GLES20.glDeleteTextures(1, intArrayOf(ewaTable), 0)
             GLES20.glDeleteProgram(nisProgram)
@@ -476,6 +487,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         denoiseProgram = program(VERTEX, DENOISE)
         sharpenProgram = program(VERTEX, SHARPEN)
         lanczosProgram = program(VERTEX, LANCZOS)
+        downscaleProgram = program(VERTEX, DOWNSCALE)
         ewaProgram = program(VERTEX, EWA)
         ewaTable = ewaTable()
         nisProgram = program(VERTEX, NIS)
@@ -533,12 +545,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             startBlending()
             return
         }
-        val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
-        val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
+        val (width, height) = eyeSize()
         val source = filtered(picture, width, height, fresh = !redraw)
         latencyMs = deinterlaceLatencyMs
         latencyFrames = deinterlaceFrames
-        output(source, width, height, picture)
+        output(source, source.width, source.height, picture)
         if (!redraw) EGLExt.eglPresentationTimeANDROID(display, window, shownAt)
         EGL14.eglSwapBuffers(display, window)
         if (!redraw) statistics?.pictureShown(System.nanoTime())
@@ -553,16 +564,16 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private fun drawSecondField() {
         val picture = filters
         if (window == EGL14.EGL_NO_SURFACE || !picture.isFieldRate || historyCount < 2) return
-        val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
-        val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
+        val (width, height) = eyeSize()
         val source = filtered(picture, width, height, fresh = false, secondField = true)
-        output(source, width, height, picture)
+        output(source, source.width, source.height, picture)
         EGL14.eglSwapBuffers(display, window)
         statistics?.pictureShown(System.nanoTime())
     }
 
     /**
-     * Steps 1 to 3: the decoder's picture, deinterlaced and denoised, at its own size. [fresh] is a new
+     * Steps 1 to 3: the decoder's picture (its 3D eye, if one is chosen), deinterlaced, brought down to 1080p if
+     * larger (see [reduced]) and denoised; the frame returned has the size it ends at. [fresh] is a new
      * decoded frame; [secondField] rebuilds the other field of a temporal deinterlacer's picture.
      */
     private fun filtered(
@@ -593,7 +604,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             }
             source = woven
         }
-        return denoised(picture, source, width, height)
+        source = reduced(source)
+        return denoised(picture, source, source.width, source.height)
     }
 
     /**
@@ -621,7 +633,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         deinterlaceFrames = if (historyCount >= 2) 1f else 0f
         val woven = frames[2].ensure(width, height)
         rebuildField(woven, prev, cur, next, secondField, picture.deinterlace == PictureAdjustment.Deinterlace.BWDIF)
-        return denoised(picture, woven, width, height)
+        val shrunk = reduced(woven)
+        return denoised(picture, shrunk, shrunk.width, shrunk.height)
     }
 
     /** YADIF or BWDIF into [target]: [cur] with a field rebuilt from its neighbours. */
@@ -662,8 +675,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * film — keeps all five, so Film left on for ordinary video costs only the delay.
      */
     private fun film() {
-        val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
-        val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
+        val (width, height) = eyeSize()
         grainNow = 0f
         EGL14.eglMakeCurrent(display, idle, idle, context)
         // The verdict on the frame before must be woven before the history moves on past its frames.
@@ -805,8 +817,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         filmShown = slot
         grainNow = 0f
         EGL14.eglMakeCurrent(display, idle, idle, context)
-        val source = denoised(picture, frame, frame.width, frame.height)
-        output(source, frame.width, frame.height, picture)
+        val shrunk = reduced(frame)
+        val source = denoised(picture, shrunk, shrunk.width, shrunk.height)
+        output(source, source.width, source.height, picture)
         EGL14.eglSwapBuffers(display, window)
         statistics?.pictureShown(System.nanoTime())
     }
@@ -940,6 +953,46 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         return plane?.let { pending.id to it }
     }
 
+    /**
+     * [from] brought down to fit 1080p with [downscaler] (see [PictureSize.reduced]), or [from] itself when it
+     * fits. Nearest and Bilinear take one sample; the others weigh every pixel a new one spans, across and
+     * then down, so a 4K picture costs a few dozen samples a pixel rather than the square of that.
+     */
+    private fun reduced(from: Frame): Frame {
+        val scaler = downscaler
+        val size = PictureSize(from.width, from.height).reduced(scaler)
+        if (size.width == from.width && size.height == from.height) return from
+        val target = frames[REDUCED].ensure(size.width, size.height)
+        if (!scaler.separable) {
+            val filter = if (scaler == Downscaler.NEAREST) GLES20.GL_NEAREST else GLES20.GL_LINEAR
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, from.texture)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, filter)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, filter)
+            downscalePass(from, target, scaler, 0f, 0f, 1f)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, from.texture)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            return target
+        }
+        val across = frames[REDUCED_ACROSS].ensure(size.width, from.height)
+        downscalePass(from, across, scaler, 1f, 0f, from.width.toFloat() / size.width)
+        downscalePass(across, target, scaler, 0f, 1f, from.height.toFloat() / size.height)
+        return target
+    }
+
+    /** One pass of [reduced]: [from] into [target] along ([dirX], [dirY]), [scale] old pixels to a new one. */
+    private fun downscalePass(from: Frame, target: Frame, scaler: Downscaler, dirX: Float, dirY: Float, scale: Float) {
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
+        GLES20.glViewport(0, 0, target.width, target.height)
+        run(downscaleProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uInSize"), from.width.toFloat(), from.height.toFloat())
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uDir"), dirX, dirY)
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uScale"), scale)
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), scaler.radius)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uKernel"), scaler.ordinal)
+        }
+    }
+
     /** Step 3: the denoise filter [picture] asks for, if any, over [from]. */
     private fun denoised(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
         var source = from
@@ -962,26 +1015,28 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     /** A new frame for blending: filtered and sharpened at its own size, kept with when it arrived. */
     private fun keep(picture: PictureAdjustment) {
-        val width = videoWidth.takeIf { it > 0 } ?: surfaceWidth()
-        val height = videoHeight.takeIf { it > 0 } ?: surfaceHeight()
+        val (width, height) = eyeSize()
         val source = filtered(picture, width, height, fresh = true)
+        val keptWidth = source.width
+        val keptHeight = source.height
         val oldest = keptRing[0]
         keptRing[0] = keptRing[1]
         keptRing[1] = keptRing[2]
         keptRing[2] = oldest
         keptAt[0] = keptAt[1]
         keptAt[1] = keptAt[2]
-        val target = frames[keptRing[2]].ensure(width, height)
+        val target = frames[keptRing[2]].ensure(keptWidth, keptHeight)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
+        GLES20.glViewport(0, 0, keptWidth, keptHeight)
         run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / keptWidth, 1f / keptHeight)
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), picture.sharpness)
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), picture.clarity)
         }
         keptAt[2] = System.nanoTime()
         kept = minOf(kept + 1, 3)
         val motion = picture.interpolation.isMotionCompensated
-        if (motion) searchMotion(width, height) else motionLumas.fill(null)
+        if (motion) searchMotion(keptWidth, keptHeight) else motionLumas.fill(null)
         // Blending runs half a frame behind, Motion two frames; the sound is told to wait as long.
         if (kept >= 2) {
             val intervalMs = (keptAt[2] - keptAt[1]) / 1_000_000L
@@ -1465,6 +1520,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** The third kept frame for blending and Motion, after the packed luma. */
         private const val KEPT_THIRD = PACKED_LUMA + 1
+
+        /** A picture larger than 1080p brought down, and its first pass across, after the kept frames. */
+        private const val REDUCED_ACROSS = KEPT_THIRD + 1
+        private const val REDUCED = REDUCED_ACROSS + 1
 
         /** Motion runs two frames behind: a twelfth of a second at 24 frames a second. */
         private const val MAX_MOTION_LATENCY_MS = 250
@@ -2038,6 +2097,60 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         // Lanczos-3 (a = 3), 6 × 6 taps around the position; the result is pulled halfway back into the range
         // of the four nearest pixels, which holds back most of the ringing Lanczos leaves at hard edges.
+        // Bringing a picture down (see reduced and Downscaler): uKernel is the Downscaler's ordinal. Below
+        // Bicubic one sample, the texture's own filtering doing Nearest or Bilinear; from Bicubic on every pixel
+        // within the kernel's reach along uDir, weighed by Keys' cubic (a = -0.5), Lanczos-3, or by how much of
+        // it the new pixel covers (Area), the edge pixels repeated beyond the picture.
+        private const val DOWNSCALE = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform vec2 uInSize;
+            uniform vec2 uDir;
+            uniform float uScale;
+            uniform float uRadius;
+            uniform int uKernel;
+            varying vec2 vTex;
+            const float PI = 3.14159265;
+            float sinc(float x) {
+                if (abs(x) < 1e-4) return 1.0;
+                float p = PI * x;
+                return sin(p) / p;
+            }
+            void main() {
+                if (uKernel < 3) {
+                    gl_FragColor = texture2D(uTex, vTex);
+                    return;
+                }
+                float length = dot(uInSize, uDir);
+                float along = dot(vTex * uInSize, uDir);
+                float reach = uRadius * uScale;
+                float first = floor(along - reach);
+                vec2 across = vTex * (vec2(1.0) - uDir);
+                vec4 sum = vec4(0.0);
+                float total = 0.0;
+                for (int k = 0; k < 64; k++) {
+                    float i = first + float(k);
+                    if (i > along + reach) break;
+                    float x = (i + 0.5 - along) / uScale;
+                    float a = abs(x);
+                    float w;
+                    if (uKernel == 3) {
+                        w = a < 1.0
+                            ? (1.5 * a - 2.5) * a * a + 1.0
+                            : (a < 2.0 ? ((-0.5 * a + 2.5) * a - 4.0) * a + 2.0 : 0.0);
+                    } else if (uKernel == 4) {
+                        w = a < 3.0 ? sinc(x) * sinc(x / 3.0) : 0.0;
+                    } else {
+                        w = max(0.0, min(i + 1.0, along + 0.5 * uScale) - max(i, along - 0.5 * uScale));
+                    }
+                    float at = clamp(i + 0.5, 0.5, length - 0.5) / length;
+                    sum += w * texture2D(uTex, across + uDir * at);
+                    total += w;
+                }
+                gl_FragColor = sum / total;
+            }
+        """
+
         private const val LANCZOS = """
             precision highp float;
             uniform sampler2D uTex;
