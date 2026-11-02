@@ -54,6 +54,15 @@ class VideoFilterStage {
     private class PendingLuma(val id: Long, val columns: Int, val rows: Int, val texels: Int)
     private lateinit var surfaceTexture: SurfaceTexture
     private val texMatrix = FloatArray(16)
+    private val croppedMatrix = FloatArray(16)
+
+    /** The frame's own transform, after the crop to one eye of a 3D frame when one is chosen. */
+    private fun frameMatrix(): FloatArray {
+        val stereo = filters.stereo
+        if (stereo == PictureAdjustment.Stereo.OFF) return texMatrix
+        android.opengl.Matrix.multiplyMM(croppedMatrix, 0, texMatrix, 0, stereo.cropMatrix(), 0)
+        return croppedMatrix
+    }
     private val identity = FloatArray(16).also { android.opengl.Matrix.setIdentityM(it, 0) }
 
     private var copyProgram = 0
@@ -439,7 +448,7 @@ class VideoFilterStage {
         val copied = frames[0].ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, copied.framebuffer)
         GLES20.glViewport(0, 0, width, height)
-        run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, texMatrix) {}
+        run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, frameMatrix()) {}
         var source = copied
         if (picture.deinterlace != PictureAdjustment.Deinterlace.OFF) {
             val woven = frames[2].ensure(width, height)
@@ -701,7 +710,7 @@ class VideoFilterStage {
         newest.ensure(width, height)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, newest.framebuffer)
         GLES20.glViewport(0, 0, width, height)
-        run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, texMatrix) {}
+        run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, frameMatrix()) {}
         historyCount = minOf(historyCount + 1, 3)
         return afresh
     }
