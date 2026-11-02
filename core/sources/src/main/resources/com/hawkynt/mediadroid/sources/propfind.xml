@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:"><d:prop>
+  <d:resourcetype/><d:getcontentlength/><d:getlastmodified/>
+</d:prop></d:propfind>

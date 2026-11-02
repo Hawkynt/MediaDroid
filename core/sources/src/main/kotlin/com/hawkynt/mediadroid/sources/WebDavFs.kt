@@ -105,12 +105,10 @@ class WebDavFs(private val source: Source, private val secrets: Secrets) : Remot
         const val MULTI_STATUS = 207
         const val PARTIAL_CONTENT = 206
         const val TIMEOUT_S = 20L
-        val PROPFIND_BODY = """
-            <?xml version="1.0" encoding="utf-8"?>
-            <d:propfind xmlns:d="DAV:"><d:prop>
-              <d:resourcetype/><d:getcontentlength/><d:getlastmodified/>
-            </d:prop></d:propfind>
-        """.trimIndent()
+
+        /** The PROPFIND request: the three properties a listing needs, from propfind.xml beside this class. */
+        val PROPFIND_BODY: String = checkNotNull(WebDavFs::class.java.getResourceAsStream("propfind.xml"))
+            .bufferedReader().use { it.readText().trimEnd() }
     }
 }
 

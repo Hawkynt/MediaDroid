@@ -15,6 +15,7 @@ import android.os.HandlerThread
 import android.view.Surface
 import androidx.media3.decoder.VideoDecoderOutputBuffer
 import com.hawkynt.mediadroid.imaging.Xbrz
+import com.hawkynt.mediadroid.shaders.Shaders
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -70,13 +71,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val yuvTextures = IntArray(3)
     private var yuvProgram = 0
 
-    // Anime4K (see Anime4k): its four convolution passes, the step back up to twice the size, and whether the
+    // Anime4K (see glsl/anime4k): its four convolution passes, the step back up to twice the size, and whether the
     // graphics chip can draw into half-float textures, which the passes' values outside 0..1 need.
     private val anime4kPrograms = IntArray(4)
     private var anime4kDepthToSpace = 0
     private var halfTargets = false
 
-    // xBRZ (see XbrzShaders): its three passes, the table of its patterns' shares, and whether the programs built.
+    // xBRZ (see glsl/xbrz): its three passes, the table of its patterns' shares, and whether the programs built.
     private val xbrzPrograms = IntArray(3)
     private var xbrzTable = 0
     private var xbrzReady = false
@@ -513,44 +514,44 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
             GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         }
-        yuvProgram = program(VERTEX, YUV)
+        yuvProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_YUV)
         val extensions = GLES20.glGetString(GLES20.GL_EXTENSIONS).orEmpty()
         halfTargets = es3 &&
             ("GL_EXT_color_buffer_half_float" in extensions || "GL_EXT_color_buffer_float" in extensions)
         // A chip that cannot build Anime4K's programs gets FSR in its place rather than no picture at all.
         halfTargets = halfTargets && runCatching {
-            listOf(Anime4k.ANIME4K_CONV_1, Anime4k.ANIME4K_CONV_2, Anime4k.ANIME4K_CONV_3, Anime4k.ANIME4K_CONV_4)
-                .forEachIndexed { i, fragment -> anime4kPrograms[i] = program(VERTEX, fragment) }
-            anime4kDepthToSpace = program(VERTEX, ANIME4K_DEPTH_TO_SPACE)
+            listOf(Shaders.ANIME4K_CONV_1, Shaders.ANIME4K_CONV_2, Shaders.ANIME4K_CONV_3, Shaders.ANIME4K_CONV_4)
+                .forEachIndexed { i, fragment -> anime4kPrograms[i] = program(Shaders.VIDEO_VERTEX, fragment) }
+            anime4kDepthToSpace = program(Shaders.VIDEO_VERTEX, Shaders.ANIME4K_DEPTH_TO_SPACE)
         }.isSuccess
         xbrzReady = runCatching {
-            listOf(XbrzShaders.CORNERS, XbrzShaders.DECISIONS, XbrzShaders.SCALE)
-                .forEachIndexed { i, fragment -> xbrzPrograms[i] = program(VERTEX, fragment) }
+            listOf(Shaders.XBRZ_CORNERS, Shaders.XBRZ_DECISIONS, Shaders.XBRZ_SCALE)
+                .forEachIndexed { i, fragment -> xbrzPrograms[i] = program(Shaders.VIDEO_VERTEX, fragment) }
             xbrzTable = xbrzTable()
         }.isSuccess
         inputSurface = Surface(surfaceTexture)
 
-        copyProgram = program(VERTEX, COPY)
-        deinterlaceProgram = program(VERTEX, DEINTERLACE)
-        denoiseProgram = program(VERTEX, DENOISE)
-        sharpenProgram = program(VERTEX, SHARPEN)
-        lanczosProgram = program(VERTEX, LANCZOS)
-        downscaleProgram = program(VERTEX, DOWNSCALE)
-        ewaProgram = program(VERTEX, EWA)
+        copyProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_COPY)
+        deinterlaceProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEINTERLACE)
+        denoiseProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DENOISE)
+        sharpenProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_SHARPEN)
+        lanczosProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_LANCZOS)
+        downscaleProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DOWNSCALE)
+        ewaProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_EWA)
         ewaTable = ewaTable()
-        nisProgram = program(VERTEX, NIS)
+        nisProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_NIS)
         nisTable = nisTable()
-        easuProgram = program(VERTEX, FSR_EASU)
-        rcasProgram = program(VERTEX, FSR_RCAS)
-        blendProgram = program(VERTEX, BLEND)
-        motionProgram = program(VERTEX, MOTION)
-        packProgram = program(VERTEX, PACK_LUMA)
+        easuProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_EASU)
+        rcasProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_RCAS)
+        blendProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_BLEND)
+        motionProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MOTION)
+        packProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PACK_LUMA)
         for (k in 0 until 2) vectorTextures[k] = byteTexture(1, 1, ByteArray(4))
         obmcTexture = byteTexture(
             32, 32, ByteArray(32 * 32 * 4) { if (it % 4 == 0) MotionInterpolation.obmcWeight(it / 4).toByte() else 0 },
         )
-        temporalProgram = program(VERTEX, TEMPORAL)
-        weaveProgram = program(VERTEX, WEAVE)
+        temporalProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TEMPORAL)
+        weaveProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_WEAVE)
     }
 
     private fun releaseWindow() {
@@ -1474,15 +1475,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
-     * xBRZ's patterns (see [Xbrz.weights]) as a [XbrzShaders.TABLE_WIDTH] × 25 texture: a row per factor from 2 and
+     * xBRZ's patterns (see [Xbrz.weights]) as a [XBRZ_TABLE_WIDTH] × 25 texture: a row per factor from 2 and
      * pattern, a texel per cell of the block, its share of the neighbour's colour as m in red and n in green.
      */
     private fun xbrzTable(): Int {
         val rows = Xbrz.FACTORS.count() * Xbrz.Pattern.entries.size
-        val bytes = ByteBuffer.allocateDirect(XbrzShaders.TABLE_WIDTH * rows * 4).order(ByteOrder.nativeOrder())
+        val bytes = ByteBuffer.allocateDirect(XBRZ_TABLE_WIDTH * rows * 4).order(ByteOrder.nativeOrder())
         for (factor in Xbrz.FACTORS) for (pattern in Xbrz.Pattern.entries) {
             val weights = Xbrz.weights(factor, pattern)
-            for (cell in 0 until XbrzShaders.TABLE_WIDTH) {
+            for (cell in 0 until XBRZ_TABLE_WIDTH) {
                 val m = if (cell < factor * factor) weights[cell * 2] else 0
                 val n = if (cell < factor * factor) weights[cell * 2 + 1] else 1
                 bytes.put(m.toByte()).put(n.toByte()).put(0).put(0)
@@ -1493,7 +1494,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         GLES20.glGenTextures(1, ids, 0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
         GLES20.glTexImage2D(
-            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, XbrzShaders.TABLE_WIDTH, rows, 0, GLES20.GL_RGBA,
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, XBRZ_TABLE_WIDTH, rows, 0, GLES20.GL_RGBA,
             GLES20.GL_UNSIGNED_BYTE, bytes,
         )
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
@@ -1672,28 +1673,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** Where luma is packed four values to a texel for reading back, after Film's banks. */
         private const val PACKED_LUMA = FILM_SLOTS + 2 * Telecine.CYCLE
 
-        // Luma for reading back, four values to a texel: texel (u, v) holds columns 4u .. 4u + 3 (in steps of
-        // uStep.x) of row v (in steps of uStep.y), rows counted from the top, with the weights the decoder's
-        // colour went through (BT.601 up to 576 lines, BT.709 above).
-        private const val PACK_LUMA = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform vec2 uSize;
-            uniform vec2 uStep;
-            uniform bool uSd;
-            varying vec2 vTex;
-            float luma(float x, float y) {
-                vec3 c = texture2D(uTex, vec2(x + 0.5, uSize.y - y - 0.5) / uSize).rgb;
-                return uSd ? dot(c, vec3(0.299, 0.587, 0.114)) : dot(c, vec3(0.2126, 0.7152, 0.0722));
-            }
-            void main() {
-                float x = floor(gl_FragCoord.x) * 4.0 * uStep.x;
-                float y = floor(gl_FragCoord.y) * uStep.y;
-                gl_FragColor = vec4(
-                    luma(x, y), luma(x + uStep.x, y), luma(x + 2.0 * uStep.x, y), luma(x + 3.0 * uStep.x, y));
-            }
-        """
-
         /** The third kept frame for blending and Motion, after the packed luma. */
         private const val KEPT_THIRD = PACKED_LUMA + 1
 
@@ -1705,36 +1684,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         private const val ANIME4K_A = REDUCED + 1
         private const val ANIME4K_B = ANIME4K_A + 1
 
-        /** xBRZ's corners and decisions between its passes (see XbrzShaders). */
+        /** xBRZ's corners and decisions between its passes (see glsl/xbrz). */
         private const val XBRZ_CORNERS = ANIME4K_B + 1
         private const val XBRZ_DECISIONS = XBRZ_CORNERS + 1
 
-        // Anime4K's last step (its Depth-to-Space, MIT, see Anime4k): each of the four channels of the last pass is
-        // one of the four pixels a picture pixel becomes, added to the picture's bilinear doubling on every colour.
-        // mpv counts rows downwards: its upper pair of the four (rows 0) is the upper half here, where v is larger.
-        private const val ANIME4K_DEPTH_TO_SPACE = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform sampler2D uLast;
-            uniform vec2 uLastSize;
-            varying vec2 vTex;
-            void main() {
-                vec2 cell = vTex * uLastSize;
-                vec2 f = fract(cell);
-                vec4 c = texture2D(uLast, (floor(cell) + 0.5) / uLastSize);
-                float ix = f.x < 0.5 ? 0.0 : 1.0;
-                float iy = f.y < 0.5 ? 1.0 : 0.0;
-                float index = iy * 2.0 + ix;
-                vec4 pick = vec4(
-                    index == 0.0 ? 1.0 : 0.0,
-                    index == 1.0 ? 1.0 : 0.0,
-                    index == 2.0 ? 1.0 : 0.0,
-                    index == 3.0 ? 1.0 : 0.0
-                );
-                float detail = dot(c, pick);
-                gl_FragColor = vec4(texture2D(uTex, vTex).rgb + detail, 1.0);
-            }
-        """
+        /** Width of xBRZ's pattern table, one texel a cell of the largest block — as glsl/xbrz/scale.frag reads it. */
+        private const val XBRZ_TABLE_WIDTH = 36
 
         /** Motion runs two frames behind: a twelfth of a second at 24 frames a second. */
         private const val MAX_MOTION_LATENCY_MS = 250
@@ -1751,209 +1706,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** Every how many columns the field-order verdict looks at. */
         private const val JUDGED_COLUMN_STEP = 4
 
-        // YADIF and BWDIF, converted from FFmpeg's vf_yadif.c (Michael Niedermayer) and vf_bwdif.c (Thomas
-        // Mundt), LGPL-2.1-or-later, by way of the core's Deinterlacer, which is checked against FFmpeg byte
-        // for byte; this is the same arithmetic on each colour channel, in whole steps of 0..255. Rows
-        // count from the top; uParity picks the field rebuilt (see Deinterlacer.rebuiltParity): with uSecond
-        // the earlier one, from the shown frame and the next, otherwise the later one, from the previous
-        // frame and the shown one.
-        private const val TEMPORAL = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform sampler2D uPrev;
-            uniform sampler2D uNext;
-            uniform vec2 uSize;
-            uniform bool uSecond;
-            uniform float uParity;
-            uniform bool uBwdif;
-            varying vec2 vTex;
-            vec3 px(sampler2D s, float x, float y) {
-                return floor(texture2D(s, vec2(x + 0.5, uSize.y - y - 0.5) / uSize).rgb * 255.0 + 0.5);
-            }
-            vec3 cur(float x, float y) { return px(uTex, x, y); }
-            // The two pictures either side of the rebuilt field's moment.
-            vec3 before(float x, float y) { return uSecond ? px(uTex, x, y) : px(uPrev, x, y); }
-            vec3 after(float x, float y) { return uSecond ? px(uNext, x, y) : px(uTex, x, y); }
-            vec3 score(float x, float y, float m, float p, float j) {
-                return abs(cur(x - 1.0 + j, y + m) - cur(x - 1.0 - j, y + p)) +
-                    abs(cur(x + j, y + m) - cur(x - j, y + p)) +
-                    abs(cur(x + 1.0 + j, y + m) - cur(x + 1.0 - j, y + p));
-            }
-            vec3 along(float x, float y, float m, float p, float j) {
-                return floor((cur(x + j, y + m) + cur(x - j, y + p)) * 0.5);
-            }
-            vec3 yadif(float x, float y) {
-                float m = y > 0.0 ? -1.0 : 1.0;
-                float p = y + 1.0 < uSize.y ? 1.0 : -1.0;
-                vec3 c = cur(x, y + m);
-                vec3 e = cur(x, y + p);
-                vec3 b0 = before(x, y);
-                vec3 a0 = after(x, y);
-                vec3 d = floor((b0 + a0) * 0.5);
-                vec3 t0 = abs(b0 - a0);
-                vec3 t1 = floor((abs(px(uPrev, x, y + m) - c) + abs(px(uPrev, x, y + p) - e)) * 0.5);
-                vec3 t2 = floor((abs(px(uNext, x, y + m) - c) + abs(px(uNext, x, y + p) - e)) * 0.5);
-                vec3 diff = max(max(floor(t0 * 0.5), t1), t2);
-                vec3 pred = floor((c + e) * 0.5);
-                if (x >= 3.0 && x < uSize.x - 3.0) {
-                    vec3 best = abs(cur(x - 1.0, y + m) - cur(x - 1.0, y + p)) + abs(c - e) +
-                        abs(cur(x + 1.0, y + m) - cur(x + 1.0, y + p)) - 1.0;
-                    for (int side = 0; side < 2; side++) {
-                        float j = side == 0 ? -1.0 : 1.0;
-                        vec3 s = score(x, y, m, p, j);
-                        vec3 take = vec3(lessThan(s, best));
-                        best = mix(best, s, take);
-                        pred = mix(pred, along(x, y, m, p, j), take);
-                        vec3 s2 = score(x, y, m, p, 2.0 * j);
-                        vec3 take2 = take * vec3(lessThan(s2, best));
-                        best = mix(best, s2, take2);
-                        pred = mix(pred, along(x, y, m, p, 2.0 * j), take2);
-                    }
-                }
-                if (y != 1.0 && y + 2.0 != uSize.y) {
-                    vec3 b = floor((before(x, y + 2.0 * m) + after(x, y + 2.0 * m)) * 0.5);
-                    vec3 f = floor((before(x, y + 2.0 * p) + after(x, y + 2.0 * p)) * 0.5);
-                    vec3 most = max(max(d - e, d - c), min(b - c, f - e));
-                    vec3 least = min(min(d - e, d - c), max(b - c, f - e));
-                    diff = max(max(diff, least), -most);
-                }
-                return clamp(pred, d - diff, d + diff);
-            }
-            vec3 both(float x, float y) { return before(x, y) + after(x, y); }
-            vec3 bwdif(float x, float y) {
-                bool edge = y < 4.0 || y + 5.0 > uSize.y;
-                float m = (!edge || y > 0.0) ? -1.0 : 1.0;
-                float p = (!edge || y + 1.0 < uSize.y) ? 1.0 : -1.0;
-                vec3 c = cur(x, y + m);
-                vec3 e = cur(x, y + p);
-                vec3 b0 = before(x, y);
-                vec3 a0 = after(x, y);
-                vec3 d = floor((b0 + a0) * 0.5);
-                vec3 t0 = abs(b0 - a0);
-                vec3 t1 = floor((abs(px(uPrev, x, y + m) - c) + abs(px(uPrev, x, y + p) - e)) * 0.5);
-                vec3 t2 = floor((abs(px(uNext, x, y + m) - c) + abs(px(uNext, x, y + p) - e)) * 0.5);
-                vec3 still = max(max(floor(t0 * 0.5), t1), t2);
-                vec3 diff = still;
-                if (!edge || (y >= 2.0 && y + 3.0 <= uSize.y)) {
-                    vec3 b = floor(both(x, y - 2.0) * 0.5) - c;
-                    vec3 f = floor(both(x, y + 2.0) * 0.5) - e;
-                    vec3 most = max(max(d - e, d - c), min(b, f));
-                    vec3 least = min(min(d - e, d - c), max(b, f));
-                    diff = max(max(diff, least), -most);
-                }
-                vec3 interpol = floor((c + e) * 0.5);
-                if (!edge) {
-                    vec3 outer = cur(x, y - 3.0) + cur(x, y + 3.0);
-                    vec3 hf = floor((5570.0 * both(x, y) - 3801.0 * (both(x, y - 2.0) + both(x, y + 2.0)) +
-                        1016.0 * (both(x, y - 4.0) + both(x, y + 4.0))) / 4.0);
-                    vec3 high = floor((hf + 4309.0 * (c + e) - 213.0 * outer) / 8192.0);
-                    vec3 spatial = floor((5077.0 * (c + e) - 981.0 * outer) / 8192.0);
-                    interpol = mix(spatial, high, vec3(greaterThan(abs(c - e), t0)));
-                }
-                vec3 result = clamp(clamp(interpol, d - diff, d + diff), 0.0, 255.0);
-                return mix(result, d, vec3(equal(still, vec3(0.0))));
-            }
-            void main() {
-                float x = floor(gl_FragCoord.x);
-                float y = uSize.y - 1.0 - floor(gl_FragCoord.y);
-                vec3 v;
-                if (mod(y + uParity, 2.0) < 0.5) {
-                    v = cur(x, y);
-                } else {
-                    v = uBwdif ? bwdif(x, y) : yadif(x, y);
-                }
-                gl_FragColor = vec4(v / 255.0, 1.0);
-            }
-        """
-
-        // Film's weave: the matched frame with the rows uRows (0 even, 1 odd, from the top; -1 none) taken
-        // from the frame its other field comes from.
-        private const val WEAVE = """
-            precision mediump float;
-            uniform sampler2D uTex;
-            uniform sampler2D uOther;
-            uniform vec2 uSize;
-            uniform float uRows;
-            varying vec2 vTex;
-            void main() {
-                vec2 p = gl_FragCoord.xy / uSize;
-                float y = uSize.y - 1.0 - floor(gl_FragCoord.y);
-                bool other = abs(mod(y, 2.0) - uRows) < 0.5;
-                gl_FragColor = vec4((other ? texture2D(uOther, p) : texture2D(uTex, p)).rgb, 1.0);
-            }
-        """
-
         /** The vector texture's zero: half-vectors of -32..32 kept as bytes around it. */
         private const val VECTOR_ZERO = 128
 
-        // Motion-compensated interpolation, written from the core's MotionInterpolation.compensate (FFmpeg's
-        // minterpolate, bilateral OBMC), whose search ran on the picture uScale times smaller (uSearch): each
-        // pixel takes the up to four 16-pixel blocks (of that grid) whose doubled windows cover it, weighted by
-        // uObmc, and mixes the previous frame uAlpha/1024 along the block's vector with the current frame the
-        // rest of the way back; offsets are whole pixels of the search's size, uScale times that at full size.
-        // Rows count from the top.
-        private const val MOTION = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform sampler2D uPrevious;
-            uniform sampler2D uVectors;
-            uniform sampler2D uObmc;
-            uniform vec2 uSize;
-            uniform vec2 uGrid;
-            uniform vec2 uSearch;
-            uniform float uScale;
-            uniform float uAlpha;
-            varying vec2 vTex;
-            vec3 at(sampler2D s, vec2 p) {
-                p = clamp(p, vec2(0.0), uSize - 1.0);
-                return texture2D(s, vec2(p.x + 0.5, uSize.y - p.y - 0.5) / uSize).rgb;
-            }
-            vec2 truncate(vec2 v) { return sign(v) * floor(abs(v)); }
-            void main() {
-                vec2 pixel = vec2(floor(gl_FragCoord.x), uSize.y - 1.0 - floor(gl_FragCoord.y));
-                vec2 h = floor(pixel / uScale);
-                vec2 first = floor((h + 8.0) / 16.0) - 1.0;
-                vec3 sum = vec3(0.0);
-                float weights = 0.0;
-                for (int j = 0; j < 2; j++) {
-                    for (int i = 0; i < 2; i++) {
-                        vec2 mb = first + vec2(float(i), float(j));
-                        if (mb.x < 0.0 || mb.y < 0.0 || mb.x >= uGrid.x || mb.y >= uGrid.y) continue;
-                        vec2 start = mb * 16.0 - 8.0;
-                        vec2 lo = max(start, vec2(0.0));
-                        vec2 hi = min(start + 32.0, uSearch - 1.0);
-                        if (h.x < lo.x || h.y < lo.y || h.x >= hi.x || h.y >= hi.y) continue;
-                        float w = floor(texture2D(uObmc, (h - start + 0.5) / 32.0).r * 255.0 + 0.5);
-                        if (w == 0.0) continue;
-                        vec2 v = (floor(texture2D(uVectors, (mb + 0.5) / uGrid).rg * 255.0 + 0.5) - 128.0) * 2.0;
-                        vec2 o1 = clamp(truncate(v * uAlpha / 1024.0), -h, uSearch - 1.0 - h);
-                        vec2 o2 = clamp(truncate(-v * (1024.0 - uAlpha) / 1024.0), -h, uSearch - 1.0 - h);
-                        float w1 = w * (1024.0 - uAlpha);
-                        float w2 = w * uAlpha;
-                        sum += w1 * at(uPrevious, pixel + uScale * o1) + w2 * at(uTex, pixel + uScale * o2);
-                        weights += w1 + w2;
-                    }
-                }
-                vec3 c = weights > 0.0 ? sum / weights : mix(at(uPrevious, pixel), at(uTex, pixel), uAlpha / 1024.0);
-                gl_FragColor = vec4(c, 1.0);
-            }
-        """
-
-        // Frame blending: the current frame over the previous one by the weight.
-        private const val BLEND = """
-            precision mediump float;
-            uniform sampler2D uTex;
-            uniform sampler2D uPrevious;
-            uniform float uWeight;
-            varying vec2 vTex;
-            void main() {
-                gl_FragColor = vec4(mix(texture2D(uPrevious, vTex).rgb, texture2D(uTex, vTex).rgb, uWeight), 1.0);
-            }
-        """
-
         /** RCAS strength on AMD's scale of stops below full sharpness (FsrRcasCon): 0.2 stops, exp2(-0.2). */
         private const val RCAS_SHARPNESS = 0.8705506f
-
 
         private val QUAD: FloatBuffer = floats(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
         private val QUAD_TEX: FloatBuffer = floats(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
@@ -1979,17 +1736,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             }
         }
 
-        private const val VERTEX = """
-            attribute vec4 aPosition;
-            attribute vec4 aTexCoord;
-            uniform mat4 uTexMatrix;
-            varying vec2 vTex;
-            void main() {
-                gl_Position = aPosition;
-                vTex = (uTexMatrix * aTexCoord).xy;
-            }
-        """
-
         /** Pictures from FFmpeg waiting to be drawn, beyond which the oldest is let go. */
         private const val MAX_YUV_QUEUED = 4
 
@@ -1998,95 +1744,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         private const val MIN_VSYNC_NS = 4_000_000L
         private const val MAX_VSYNC_NS = 50_000_000L
 
-        // YUV planes to RGB, as Media3's VideoDecoderGLSurfaceView does (Apache-2.0): luma less its 16/256
-        // foot, chroma about its middle, through the colour space's matrix (BT601, BT709, BT2020 below).
-        private const val YUV = """
-            precision mediump float;
-            uniform sampler2D uTex;
-            uniform sampler2D uU;
-            uniform sampler2D uV;
-            uniform mat3 uColor;
-            uniform float uChroma;
-            varying vec2 vTex;
-            void main() {
-                vec2 c = vec2(vTex.x * uChroma, vTex.y);
-                vec3 yuv = vec3(
-                    texture2D(uTex, vTex).r - 0.0625,
-                    texture2D(uU, c).r - 0.5,
-                    texture2D(uV, c).r - 0.5
-                );
-                gl_FragColor = vec4(uColor * yuv, 1.0);
-            }
-        """
-
         // Limited-range YUV to RGB, column-major, copied from Media3's VideoDecoderGLSurfaceView.
         private val BT601 = floatArrayOf(1.164f, 1.164f, 1.164f, 0.0f, -0.392f, 2.017f, 1.596f, -0.813f, 0.0f)
         private val BT709 = floatArrayOf(1.164f, 1.164f, 1.164f, 0.0f, -0.213f, 2.112f, 1.793f, -0.533f, 0.0f)
         private val BT2020 = floatArrayOf(1.168f, 1.168f, 1.168f, 0.0f, -0.188f, 2.148f, 1.683f, -0.652f, 0.0f)
-
-        private const val COPY = """
-            #extension GL_OES_EGL_image_external : require
-            precision mediump float;
-            uniform samplerExternalOES uTex;
-            varying vec2 vTex;
-            void main() { gl_FragColor = vec4(texture2D(uTex, vTex).rgb, 1.0); }
-        """
-
-        // Deinterlacing; uMode is Deinterlace's ordinal. Blend: every line with half of each neighbour. Bob:
-        // the odd lines — the second field — rebuilt from the lines above and below. Auto: the same, but
-        // only where a pixel combs — it differs from both neighbours in the same direction (their
-        // luma-weighted product is positive beyond noise), the motion artefact of two fields woven
-        // together; the first field always stays, or the comb would only be turned over.
-        private const val DEINTERLACE = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform vec2 uTexel;
-            uniform int uMode;
-            varying vec2 vTex;
-            void main() {
-                vec3 c = texture2D(uTex, vTex).rgb;
-                vec3 up = texture2D(uTex, vTex + vec2(0.0, uTexel.y)).rgb;
-                vec3 down = texture2D(uTex, vTex - vec2(0.0, uTexel.y)).rgb;
-                vec3 rebuilt = (up + down) * 0.5;
-                if (uMode == 2) {
-                    gl_FragColor = vec4((2.0 * c + up + down) * 0.25, 1.0);
-                } else {
-                    bool second = mod(floor(gl_FragCoord.y), 2.0) >= 1.0;
-                    float comb = dot((c - up) * (c - down), vec3(0.2126, 0.7152, 0.0722));
-                    bool rebuild = second && (uMode == 3 || comb > 0.003);
-                    gl_FragColor = vec4(rebuild ? rebuilt : c, 1.0);
-                }
-            }
-        """
-
-        // Bilateral filter (Tomasi & Manduchi, ICCV 1998): neighbours weigh by distance and by how alike
-        // they are, so flat areas and block edges smooth while real edges stay.
-        private const val DENOISE = """
-            precision mediump float;
-            uniform sampler2D uTex;
-            uniform vec2 uTexel;
-            uniform float uRadius;
-            uniform float uSigmaS2;
-            uniform float uSigmaR2;
-            varying vec2 vTex;
-            void main() {
-                vec3 center = texture2D(uTex, vTex).rgb;
-                vec3 sum = vec3(0.0);
-                float weights = 0.0;
-                for (int y = -2; y <= 2; y++) {
-                    for (int x = -2; x <= 2; x++) {
-                        vec2 offset = vec2(float(x), float(y));
-                        if (abs(offset.x) > uRadius || abs(offset.y) > uRadius) continue;
-                        vec3 neighbour = texture2D(uTex, vTex + offset * uTexel).rgb;
-                        vec3 d = neighbour - center;
-                        float w = exp(-dot(offset, offset) / uSigmaS2 - dot(d, d) / uSigmaR2);
-                        sum += neighbour * w;
-                        weights += w;
-                    }
-                }
-                gl_FragColor = vec4(sum / weights, 1.0);
-            }
-        """
 
         /** NIS's sharpness, on its own 0..1 scale: the middle, NVIDIA's neutral setting. */
         private const val NIS_SHARPNESS = 0.5f
@@ -2095,534 +1756,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         private const val NIS_OFFSET = 1f
         private const val NIS_SPAN = 2.5f
 
-        // NVIDIA Image Scaling's NVScaler (MIT, see Nis, which it is transcribed from): per output pixel the 6 × 6
-        // source luma, four directional edge strengths from the 3 × 3 around the nearest four pixels, a 6-tap
-        // scaler blended with directional 6-tap filters that sharpen by luma and hold back ringing; the luma
-        // change is added to a bilinear tap of the colour. Rows count from the top, as in NIS. Every value is
-        // its own variable (pIJ is the luma of row I, column J) rather than an array: mobile graphics chips keep
-        // local arrays in memory, not registers, which made the pass about 18 times slower.
-        private const val NIS = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform sampler2D uCoef;
-            uniform vec2 uInSize;
-            uniform vec2 uOutSize;
-            uniform float uDetectRatio;
-            uniform float uDetectThres;
-            uniform float uMinContrastRatio;
-            uniform float uRatioNorm;
-            uniform float uSharpStartY;
-            uniform float uSharpScaleY;
-            uniform float uSharpStrengthMin;
-            uniform float uSharpStrengthScale;
-            uniform float uSharpLimitMin;
-            uniform float uSharpLimitScale;
-            varying vec2 vTex;
-            // Both taps of a phase in one fetch: the scaling tap in x, the sharpening tap in y.
-            vec2 coef(float phase, float tap) {
-                vec4 t = texture2D(uCoef, vec2((tap + 0.5) / 6.0, (phase + 0.5) / 64.0));
-                return (vec2(t.r, t.b) * 255.0 * 256.0 + vec2(t.g, t.a) * 255.0) / 65535.0 * 2.5 - 1.0;
-            }
-            float lumaOf(vec3 c) { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
-            float lumaAt(float column, float row) {
-                return lumaOf(texture2D(uTex, vec2(column + 0.5, uInSize.y - row - 0.5) / uInSize).rgb);
-            }
-            vec4 edgeMap(float q0, float q1, float q2, float q3, float q4, float q5, float q6, float q7, float q8) {
-                float g0 = abs(q0 + q1 + q2 - q6 - q7 - q8);
-                float g45 = abs(q3 + q0 + q1 - q7 - q8 - q5);
-                float g90 = abs(q0 + q3 + q6 - q2 - q5 - q8);
-                float g135 = abs(q3 + q6 + q7 - q1 - q2 - q5);
-                float a = max(g0, g90);
-                float aMin = min(g0, g90);
-                float b = max(g45, g135);
-                float bMin = min(g45, g135);
-                if (a + b == 0.0) return vec4(0.0);
-                float e090 = min(a / (a + b), 1.0);
-                float e45135 = 1.0 - e090;
-                bool c090 = a > aMin * uDetectRatio && a > uDetectThres && a > bMin;
-                bool c45135 = b > bMin * uDetectRatio && b > uDetectThres && b > aMin;
-                bool cG0 = a == g0;
-                bool cG45 = b == g45;
-                float f090 = (c090 && c45135) ? e090 : 1.0;
-                float f45135 = (c090 && c45135) ? e45135 : 1.0;
-                return vec4(
-                    (c090 && cG0) ? f090 : 0.0,
-                    (c090 && !cG0) ? f090 : 0.0,
-                    (c45135 && cG45) ? f45135 : 0.0,
-                    (c45135 && !cG45) ? f45135 : 0.0);
-            }
-            float evalPoly6(float x0, float x1, float x2, float x3, float x4, float x5, float phase) {
-                vec2 c0 = coef(phase, 0.0);
-                vec2 c1 = coef(phase, 1.0);
-                vec2 c2 = coef(phase, 2.0);
-                vec2 c3 = coef(phase, 3.0);
-                vec2 c4 = coef(phase, 4.0);
-                vec2 c5 = coef(phase, 5.0);
-                float y = c0.x * x0 + c1.x * x1 + c2.x * x2 + c3.x * x3 + c4.x * x4 + c5.x * x5;
-                float usm = c0.y * x0 + c1.y * x1 + c2.y * x2 + c3.y * x3 + c4.y * x4 + c5.y * x5;
-                float yScale = 1.0 - clamp((y - uSharpStartY) * uSharpScaleY, 0.0, 1.0);
-                usm *= yScale * uSharpStrengthScale + uSharpStrengthMin;
-                float limit = (yScale * uSharpLimitScale + uSharpLimitMin) * y;
-                usm = min(limit, max(-limit, usm));
-                bool selector = phase <= 32.0;
-                float sel = selector ? x0 : x3;
-                float aCont = max(max(x1, x2), sel) - min(min(x1, x2), sel);
-                sel = selector ? x2 : x5;
-                float bCont = max(max(x3, x4), sel) - min(min(x3, x4), sel);
-                float ratio = max(aCont, bCont) / (min(aCont, bCont) + 1.0 / 255.0);
-                usm *= 1.0 - clamp((ratio - uMinContrastRatio) * uRatioNorm, 0.0, 1.0);
-                return y + usm;
-            }
-            void main() {
-                float dstX = floor(gl_FragCoord.x);
-                float dstY = uOutSize.y - 1.0 - floor(gl_FragCoord.y);
-                vec2 scale = uInSize / uOutSize;
-                float srcX = (0.5 + dstX) * scale.x - 0.5;
-                float srcY = (0.5 + dstY) * scale.y - 0.5;
-                float fx = srcX - floor(srcX);
-                float fy = srcY - floor(srcY);
-                float phaseX = floor(fx * 64.0);
-                float phaseY = floor(fy * 64.0);
-                float bx = floor(srcX) - 2.0;
-                float by = floor(srcY) - 2.0;
-                float p00 = lumaAt(bx + 0.0, by + 0.0);
-                float p01 = lumaAt(bx + 1.0, by + 0.0);
-                float p02 = lumaAt(bx + 2.0, by + 0.0);
-                float p03 = lumaAt(bx + 3.0, by + 0.0);
-                float p04 = lumaAt(bx + 4.0, by + 0.0);
-                float p05 = lumaAt(bx + 5.0, by + 0.0);
-                float p10 = lumaAt(bx + 0.0, by + 1.0);
-                float p11 = lumaAt(bx + 1.0, by + 1.0);
-                float p12 = lumaAt(bx + 2.0, by + 1.0);
-                float p13 = lumaAt(bx + 3.0, by + 1.0);
-                float p14 = lumaAt(bx + 4.0, by + 1.0);
-                float p15 = lumaAt(bx + 5.0, by + 1.0);
-                float p20 = lumaAt(bx + 0.0, by + 2.0);
-                float p21 = lumaAt(bx + 1.0, by + 2.0);
-                float p22 = lumaAt(bx + 2.0, by + 2.0);
-                float p23 = lumaAt(bx + 3.0, by + 2.0);
-                float p24 = lumaAt(bx + 4.0, by + 2.0);
-                float p25 = lumaAt(bx + 5.0, by + 2.0);
-                float p30 = lumaAt(bx + 0.0, by + 3.0);
-                float p31 = lumaAt(bx + 1.0, by + 3.0);
-                float p32 = lumaAt(bx + 2.0, by + 3.0);
-                float p33 = lumaAt(bx + 3.0, by + 3.0);
-                float p34 = lumaAt(bx + 4.0, by + 3.0);
-                float p35 = lumaAt(bx + 5.0, by + 3.0);
-                float p40 = lumaAt(bx + 0.0, by + 4.0);
-                float p41 = lumaAt(bx + 1.0, by + 4.0);
-                float p42 = lumaAt(bx + 2.0, by + 4.0);
-                float p43 = lumaAt(bx + 3.0, by + 4.0);
-                float p44 = lumaAt(bx + 4.0, by + 4.0);
-                float p45 = lumaAt(bx + 5.0, by + 4.0);
-                float p50 = lumaAt(bx + 0.0, by + 5.0);
-                float p51 = lumaAt(bx + 1.0, by + 5.0);
-                float p52 = lumaAt(bx + 2.0, by + 5.0);
-                float p53 = lumaAt(bx + 3.0, by + 5.0);
-                float p54 = lumaAt(bx + 4.0, by + 5.0);
-                float p55 = lumaAt(bx + 5.0, by + 5.0);
-                vec4 e00 = edgeMap(p11, p12, p13, p21, p22, p23, p31, p32, p33);
-                vec4 e01 = edgeMap(p12, p13, p14, p22, p23, p24, p32, p33, p34);
-                vec4 e10 = edgeMap(p21, p22, p23, p31, p32, p33, p41, p42, p43);
-                vec4 e11 = edgeMap(p22, p23, p24, p32, p33, p34, p42, p43, p44);
-                vec4 w = mix(mix(e00, e01, fx), mix(e10, e11, fx), fy);
-                float baseWeight = 1.0 - w.x - w.y - w.z - w.w;
-                // The scaling taps once per pixel, not once per use.
-                float cy0 = coef(phaseY, 0.0).x;
-                float cx0 = coef(phaseX, 0.0).x;
-                float cy1 = coef(phaseY, 1.0).x;
-                float cx1 = coef(phaseX, 1.0).x;
-                float cy2 = coef(phaseY, 2.0).x;
-                float cx2 = coef(phaseX, 2.0).x;
-                float cy3 = coef(phaseY, 3.0).x;
-                float cx3 = coef(phaseX, 3.0).x;
-                float cy4 = coef(phaseY, 4.0).x;
-                float cx4 = coef(phaseX, 4.0).x;
-                float cy5 = coef(phaseY, 5.0).x;
-                float cx5 = coef(phaseX, 5.0).x;
-                float v0 = p00 * cy0 + p10 * cy1 + p20 * cy2 + p30 * cy3 + p40 * cy4 + p50 * cy5;
-                float v1 = p01 * cy0 + p11 * cy1 + p21 * cy2 + p31 * cy3 + p41 * cy4 + p51 * cy5;
-                float v2 = p02 * cy0 + p12 * cy1 + p22 * cy2 + p32 * cy3 + p42 * cy4 + p52 * cy5;
-                float v3 = p03 * cy0 + p13 * cy1 + p23 * cy2 + p33 * cy3 + p43 * cy4 + p53 * cy5;
-                float v4 = p04 * cy0 + p14 * cy1 + p24 * cy2 + p34 * cy3 + p44 * cy4 + p54 * cy5;
-                float v5 = p05 * cy0 + p15 * cy1 + p25 * cy2 + p35 * cy3 + p45 * cy4 + p55 * cy5;
-                float normal = v0 * cx0 + v1 * cx1 + v2 * cx2 + v3 * cx3 + v4 * cx4 + v5 * cx5;
-                float opY = normal * baseWeight;
-                if (w.x > 0.0) {
-                    opY += evalPoly6(
-                        mix(p02, p03, fx), mix(p12, p13, fx), mix(p22, p23, fx),
-                        mix(p32, p33, fx), mix(p42, p43, fx), mix(p52, p53, fx),
-                        phaseY) * w.x;
-                }
-                if (w.y > 0.0) {
-                    opY += evalPoly6(
-                        mix(p20, p30, fy), mix(p21, p31, fy), mix(p22, p32, fy),
-                        mix(p23, p33, fy), mix(p24, p34, fy), mix(p25, p35, fy),
-                        phaseX) * w.y;
-                }
-                if (w.z > 0.0) {
-                    float b45 = 0.5 + 0.5 * (fx - fy);
-                    float t1 = mix(p21, p12, b45);
-                    float t3 = mix(p32, p23, b45);
-                    float t5 = mix(p43, p34, b45);
-                    b45 -= 0.5;
-                    bool up = b45 >= 0.0;
-                    float k = abs(b45);
-                    float t0 = mix(p11, up ? p02 : p20, k);
-                    float t2 = mix(p22, up ? p13 : p31, k);
-                    float t4 = mix(p33, up ? p24 : p42, k);
-                    float t6 = mix(p44, up ? p35 : p53, k);
-                    float p45 = fx + fy;
-                    bool shift = p45 >= 1.0;
-                    if (shift) p45 -= 1.0;
-                    opY += (shift
-                        ? evalPoly6(t1, t2, t3, t4, t5, t6, floor(p45 * 64.0))
-                        : evalPoly6(t0, t1, t2, t3, t4, t5, floor(p45 * 64.0))) * w.z;
-                }
-                if (w.w > 0.0) {
-                    float b135 = 0.5 * (fx + fy);
-                    float t1 = mix(p31, p42, b135);
-                    float t3 = mix(p22, p33, b135);
-                    float t5 = mix(p13, p24, b135);
-                    b135 -= 0.5;
-                    bool up = b135 >= 0.0;
-                    float k = abs(b135);
-                    float t0 = mix(p41, up ? p52 : p30, k);
-                    float t2 = mix(p32, up ? p43 : p21, k);
-                    float t4 = mix(p23, up ? p34 : p12, k);
-                    float t6 = mix(p14, up ? p25 : p03, k);
-                    float p135 = 1.0 + (fx - fy);
-                    bool shift = p135 >= 1.0;
-                    if (shift) p135 -= 1.0;
-                    opY += (shift
-                        ? evalPoly6(t1, t2, t3, t4, t5, t6, floor(p135 * 64.0))
-                        : evalPoly6(t0, t1, t2, t3, t4, t5, floor(p135 * 64.0))) * w.w;
-                }
-                vec3 c = texture2D(uTex, vec2(srcX + 0.5, uInSize.y - srcY - 0.5) / uInSize).rgb;
-                gl_FragColor = vec4(clamp(c + (opY - lumaOf(c)), 0.0, 1.0), 1.0);
-            }
-        """
-
         /** How many distances the EWA table holds, and how its weights (-0.25..1) map into 0..1. */
         private const val EWA_TABLE_SIZE = 512
         private const val EWA_OFFSET = 0.25f
         private const val EWA_SPAN = 1.25f
 
-        // EWA Lanczos-sharp (see Ewa): the source pixels in a circle of uRadius around the position weigh by
-        // their distance, read from uTable; the result is pulled halfway into the four nearest pixels' range,
-        // as the Lanczos pass does.
-        private const val EWA = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform sampler2D uTable;
-            uniform vec2 uInSize;
-            uniform float uRadius;
-            varying vec2 vTex;
-            float weight(float d) {
-                if (d >= uRadius) return 0.0;
-                float i = floor(d / uRadius * 511.0 + 0.5);
-                vec4 t = texture2D(uTable, vec2((i + 0.5) / 512.0, 0.5));
-                return (t.r * 255.0 * 256.0 + t.g * 255.0) / 65535.0 * 1.25 - 0.25;
-            }
-            void main() {
-                vec2 pos = vTex * uInSize - 0.5;
-                vec2 f = fract(pos);
-                vec2 base = floor(pos);
-                vec3 sum = vec3(0.0);
-                float weights = 0.0;
-                vec3 lo = vec3(1.0);
-                vec3 hi = vec3(0.0);
-                for (int j = -3; j <= 4; j++) {
-                    for (int i = -3; i <= 4; i++) {
-                        vec2 offset = vec2(float(i), float(j));
-                        float w = weight(length(offset - f));
-                        if (w == 0.0) continue;
-                        vec3 c = texture2D(uTex, (base + offset + 0.5) / uInSize).rgb;
-                        sum += c * w;
-                        weights += w;
-                        if (i >= 0 && i <= 1 && j >= 0 && j <= 1) {
-                            lo = min(lo, c);
-                            hi = max(hi, c);
-                        }
-                    }
-                }
-                vec3 c = sum / weights;
-                gl_FragColor = vec4(mix(c, clamp(c, lo, hi), 0.5), 1.0);
-            }
-        """
-
-        // Lanczos-3 (a = 3), 6 × 6 taps around the position; the result is pulled halfway back into the range
-        // of the four nearest pixels, which holds back most of the ringing Lanczos leaves at hard edges.
-        // Bringing a picture down (see reduced and Downscaler): uKernel is the Downscaler's ordinal. Below
-        // Bicubic one sample, the texture's own filtering doing Nearest or Bilinear; from Bicubic on every pixel
-        // within the kernel's reach along uDir, weighed by Keys' cubic (a = -0.5), Lanczos-3, or by how much of
-        // it the new pixel covers (Area), the edge pixels repeated beyond the picture.
-        private const val DOWNSCALE = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform vec2 uInSize;
-            uniform vec2 uDir;
-            uniform float uScale;
-            uniform float uRadius;
-            uniform int uKernel;
-            varying vec2 vTex;
-            const float PI = 3.14159265;
-            float sinc(float x) {
-                if (abs(x) < 1e-4) return 1.0;
-                float p = PI * x;
-                return sin(p) / p;
-            }
-            void main() {
-                if (uKernel < 3) {
-                    gl_FragColor = texture2D(uTex, vTex);
-                    return;
-                }
-                float length = dot(uInSize, uDir);
-                float along = dot(vTex * uInSize, uDir);
-                float reach = uRadius * uScale;
-                float first = floor(along - reach);
-                vec2 across = vTex * (vec2(1.0) - uDir);
-                vec4 sum = vec4(0.0);
-                float total = 0.0;
-                for (int k = 0; k < 64; k++) {
-                    float i = first + float(k);
-                    if (i > along + reach) break;
-                    float x = (i + 0.5 - along) / uScale;
-                    float a = abs(x);
-                    float w;
-                    if (uKernel == 3) {
-                        w = a < 1.0
-                            ? (1.5 * a - 2.5) * a * a + 1.0
-                            : (a < 2.0 ? ((-0.5 * a + 2.5) * a - 4.0) * a + 2.0 : 0.0);
-                    } else if (uKernel == 4) {
-                        w = a < 3.0 ? sinc(x) * sinc(x / 3.0) : 0.0;
-                    } else {
-                        w = max(0.0, min(i + 1.0, along + 0.5 * uScale) - max(i, along - 0.5 * uScale));
-                    }
-                    float at = clamp(i + 0.5, 0.5, length - 0.5) / length;
-                    sum += w * texture2D(uTex, across + uDir * at);
-                    total += w;
-                }
-                gl_FragColor = sum / total;
-            }
-        """
-
-        private const val LANCZOS = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform vec2 uInSize;
-            uniform float uGrain;
-            uniform float uSeed;
-            // Film grain: a different random value at every pixel and frame, the same on all three channels;
-            // Dave Hoskins' "hash without sine" (MIT), which stays patternless at large coordinates.
-            vec3 grain(vec3 color) {
-                if (uGrain <= 0.0) return color;
-                vec3 p3 = fract(vec3(gl_FragCoord.xy, uSeed).xyz * 0.1031);
-                p3 += dot(p3, p3.zyx + 31.32);
-                float n = fract((p3.x + p3.y) * p3.z) - 0.5;
-                return clamp(color + n * 2.0 * uGrain, 0.0, 1.0);
-            }
-            varying vec2 vTex;
-            float lanczos(float x) {
-                x = abs(x);
-                if (x < 1e-5) return 1.0;
-                if (x >= 3.0) return 0.0;
-                float px = 3.14159265 * x;
-                return 3.0 * sin(px) * sin(px / 3.0) / (px * px);
-            }
-            void main() {
-                vec2 pos = vTex * uInSize - 0.5;
-                vec2 f = fract(pos);
-                vec2 base = floor(pos);
-                vec3 sum = vec3(0.0);
-                float weights = 0.0;
-                vec3 lo = vec3(1.0);
-                vec3 hi = vec3(0.0);
-                for (int j = -2; j <= 3; j++) {
-                    float wy = lanczos(float(j) - f.y);
-                    for (int i = -2; i <= 3; i++) {
-                        vec3 c = texture2D(uTex, (base + vec2(float(i), float(j)) + 0.5) / uInSize).rgb;
-                        float w = lanczos(float(i) - f.x) * wy;
-                        sum += c * w;
-                        weights += w;
-                        if (i >= 0 && i <= 1 && j >= 0 && j <= 1) {
-                            lo = min(lo, c);
-                            hi = max(hi, c);
-                        }
-                    }
-                }
-                vec3 c = sum / weights;
-                gl_FragColor = vec4(grain(mix(c, clamp(c, lo, hi), 0.5)), 1.0);
-            }
-        """
-
-        // AMD FidelityFX Super Resolution 1, EASU (edge-adaptive spatial upsampling), from ffx_fsr1.h
-        // (MIT, see THIRD-PARTY-NOTICE.FidelityFX-FSR.txt): the 12 texels around 'f' read one by one where
-        // AMD gathers them, the approximate reciprocals written exactly. Taps, as in the original:
-        //     b c
-        //   e f g h
-        //   i j k l
-        //     n o
-        private const val FSR_EASU = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform vec2 uInSize;
-            varying vec2 vTex;
-            vec2 fp;
-            vec3 tex(float x, float y) { return texture2D(uTex, (fp + vec2(x, y) + 0.5) / uInSize).rgb; }
-            float luma2(vec3 c) { return c.b * 0.5 + (c.r * 0.5 + c.g); }
-            void setF(inout vec2 dir, inout float len, float w, float lA, float lB, float lC, float lD, float lE) {
-                float dc = lD - lC;
-                float cb = lC - lB;
-                float lenX = 1.0 / max(max(abs(dc), abs(cb)), 1e-6);
-                float dirX = lD - lB;
-                dir.x += dirX * w;
-                lenX = clamp(abs(dirX) * lenX, 0.0, 1.0);
-                lenX *= lenX;
-                len += lenX * w;
-                float ec = lE - lC;
-                float ca = lC - lA;
-                float lenY = 1.0 / max(max(abs(ec), abs(ca)), 1e-6);
-                float dirY = lE - lA;
-                dir.y += dirY * w;
-                lenY = clamp(abs(dirY) * lenY, 0.0, 1.0);
-                lenY *= lenY;
-                len += lenY * w;
-            }
-            void tap(inout vec3 aC, inout float aW, vec2 off, vec2 dir, vec2 len, float lob, float clp, vec3 c) {
-                vec2 v = vec2(off.x * dir.x + off.y * dir.y, off.x * -dir.y + off.y * dir.x) * len;
-                float d2 = min(dot(v, v), clp);
-                float wB = 0.4 * d2 - 1.0;
-                float wA = lob * d2 - 1.0;
-                wB *= wB;
-                wA *= wA;
-                wB = 1.5625 * wB - 0.5625;
-                float w = wB * wA;
-                aC += c * w;
-                aW += w;
-            }
-            void main() {
-                vec2 pp = vTex * uInSize - 0.5;
-                fp = floor(pp);
-                pp -= fp;
-                vec3 b = tex(0.0, -1.0); vec3 c = tex(1.0, -1.0);
-                vec3 e = tex(-1.0, 0.0); vec3 f = tex(0.0, 0.0); vec3 g = tex(1.0, 0.0); vec3 h = tex(2.0, 0.0);
-                vec3 i = tex(-1.0, 1.0); vec3 j = tex(0.0, 1.0); vec3 k = tex(1.0, 1.0); vec3 l = tex(2.0, 1.0);
-                vec3 n = tex(0.0, 2.0); vec3 o = tex(1.0, 2.0);
-                float bL = luma2(b); float cL = luma2(c); float eL = luma2(e); float fL = luma2(f);
-                float gL = luma2(g); float hL = luma2(h); float iL = luma2(i); float jL = luma2(j);
-                float kL = luma2(k); float lL = luma2(l); float nL = luma2(n); float oL = luma2(o);
-                vec2 dir = vec2(0.0);
-                float len = 0.0;
-                setF(dir, len, (1.0 - pp.x) * (1.0 - pp.y), bL, eL, fL, gL, jL);
-                setF(dir, len, pp.x * (1.0 - pp.y), cL, fL, gL, hL, kL);
-                setF(dir, len, (1.0 - pp.x) * pp.y, fL, iL, jL, kL, nL);
-                setF(dir, len, pp.x * pp.y, gL, jL, kL, lL, oL);
-                vec2 dir2 = dir * dir;
-                float dirR = dir2.x + dir2.y;
-                bool zro = dirR < 1.0 / 32768.0;
-                dirR = zro ? 1.0 : inversesqrt(dirR);
-                dir.x = zro ? 1.0 : dir.x;
-                dir *= dirR;
-                len = len * 0.5;
-                len *= len;
-                float stretch = (dir.x * dir.x + dir.y * dir.y) / max(abs(dir.x), abs(dir.y));
-                vec2 len2 = vec2(1.0 + (stretch - 1.0) * len, 1.0 - 0.5 * len);
-                float lob = 0.5 + ((1.0 / 4.0 - 0.04) - 0.5) * len;
-                float clp = 1.0 / lob;
-                vec3 min4 = min(min(f, g), min(j, k));
-                vec3 max4 = max(max(f, g), max(j, k));
-                vec3 aC = vec3(0.0);
-                float aW = 0.0;
-                tap(aC, aW, vec2(0.0, -1.0) - pp, dir, len2, lob, clp, b);
-                tap(aC, aW, vec2(1.0, -1.0) - pp, dir, len2, lob, clp, c);
-                tap(aC, aW, vec2(-1.0, 1.0) - pp, dir, len2, lob, clp, i);
-                tap(aC, aW, vec2(0.0, 1.0) - pp, dir, len2, lob, clp, j);
-                tap(aC, aW, vec2(0.0, 0.0) - pp, dir, len2, lob, clp, f);
-                tap(aC, aW, vec2(-1.0, 0.0) - pp, dir, len2, lob, clp, e);
-                tap(aC, aW, vec2(1.0, 1.0) - pp, dir, len2, lob, clp, k);
-                tap(aC, aW, vec2(2.0, 1.0) - pp, dir, len2, lob, clp, l);
-                tap(aC, aW, vec2(2.0, 0.0) - pp, dir, len2, lob, clp, h);
-                tap(aC, aW, vec2(1.0, 0.0) - pp, dir, len2, lob, clp, g);
-                tap(aC, aW, vec2(1.0, 2.0) - pp, dir, len2, lob, clp, o);
-                tap(aC, aW, vec2(0.0, 2.0) - pp, dir, len2, lob, clp, n);
-                gl_FragColor = vec4(min(max4, max(min4, aC / aW)), 1.0);
-            }
-        """
-
-        // AMD FidelityFX Super Resolution 1, RCAS (robust contrast-adaptive sharpening), from ffx_fsr1.h
-        // (MIT): the strongest negative lobe that cannot clip, limited to FSR_RCAS_LIMIT = 0.25 - 1/16,
-        // times the strength; divisions guarded where AMD's reciprocals would meet zero.
-        private const val FSR_RCAS = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform vec2 uTexel;
-            uniform float uSharp;
-            uniform float uGrain;
-            uniform float uSeed;
-            // Film grain: a different random value at every pixel and frame, the same on all three channels;
-            // Dave Hoskins' "hash without sine" (MIT), which stays patternless at large coordinates.
-            vec3 grain(vec3 color) {
-                if (uGrain <= 0.0) return color;
-                vec3 p3 = fract(vec3(gl_FragCoord.xy, uSeed).xyz * 0.1031);
-                p3 += dot(p3, p3.zyx + 31.32);
-                float n = fract((p3.x + p3.y) * p3.z) - 0.5;
-                return clamp(color + n * 2.0 * uGrain, 0.0, 1.0);
-            }
-            varying vec2 vTex;
-            void main() {
-                vec3 b = texture2D(uTex, vTex - vec2(0.0, uTexel.y)).rgb;
-                vec3 d = texture2D(uTex, vTex - vec2(uTexel.x, 0.0)).rgb;
-                vec3 e = texture2D(uTex, vTex).rgb;
-                vec3 f = texture2D(uTex, vTex + vec2(uTexel.x, 0.0)).rgb;
-                vec3 h = texture2D(uTex, vTex + vec2(0.0, uTexel.y)).rgb;
-                vec3 mn4 = min(min(b, d), min(f, h));
-                vec3 mx4 = max(max(b, d), max(f, h));
-                vec3 hitMin = min(mn4, e) / max(4.0 * mx4, vec3(1e-5));
-                vec3 hitMax = (1.0 - max(mx4, e)) / min(4.0 * mn4 - 4.0, vec3(-1e-5));
-                vec3 lobeRGB = max(-hitMin, hitMax);
-                float lobe = max(-0.1875, min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0)) * uSharp;
-                vec3 c = (lobe * (b + d + h + f) + e) / (4.0 * lobe + 1.0);
-                gl_FragColor = vec4(grain(c), 1.0);
-            }
-        """
-
-        // Unsharp masking on the luma: the picture plus its difference from a blurred copy. Sharpness
-        // uses the eight nearest neighbours; clarity a ring six pixels out, which lifts texture and
-        // local contrast rather than edges. Rec. 709 luma weights.
-        private const val SHARPEN = """
-            precision highp float;
-            uniform sampler2D uTex;
-            uniform vec2 uTexel;
-            uniform float uSharpness;
-            uniform float uClarity;
-            uniform float uGrain;
-            uniform float uSeed;
-            // Film grain: a different random value at every pixel and frame, the same on all three channels;
-            // Dave Hoskins' "hash without sine" (MIT), which stays patternless at large coordinates.
-            vec3 grain(vec3 color) {
-                if (uGrain <= 0.0) return color;
-                vec3 p3 = fract(vec3(gl_FragCoord.xy, uSeed).xyz * 0.1031);
-                p3 += dot(p3, p3.zyx + 31.32);
-                float n = fract((p3.x + p3.y) * p3.z) - 0.5;
-                return clamp(color + n * 2.0 * uGrain, 0.0, 1.0);
-            }
-            varying vec2 vTex;
-            float luma(vec2 at) { return dot(texture2D(uTex, at).rgb, vec3(0.2126, 0.7152, 0.0722)); }
-            void main() {
-                vec3 color = texture2D(uTex, vTex).rgb;
-                float l = dot(color, vec3(0.2126, 0.7152, 0.0722));
-                float near = 0.0;
-                float far = 0.0;
-                for (int i = 0; i < 8; i++) {
-                    float angle = float(i) * 0.785398;
-                    vec2 direction = vec2(cos(angle), sin(angle));
-                    near += luma(vTex + direction * uTexel);
-                    far += luma(vTex + direction * uTexel * 6.0);
-                }
-                float boost = uSharpness * 2.0 * (l - near / 8.0) + uClarity * 0.8 * (l - far / 8.0);
-                gl_FragColor = vec4(grain(clamp(color + boost, 0.0, 1.0)), 1.0);
-            }
-        """
     }
 }

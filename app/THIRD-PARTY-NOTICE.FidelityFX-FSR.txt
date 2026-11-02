@@ -1,6 +1,6 @@
 AMD FidelityFX Super Resolution 1.0 (FSR 1)
 
-app/src/main/kotlin/com/hawkynt/mediadroid/player/VideoFilterStage.kt ports the EASU and RCAS passes of
+app/src/main/glsl/video/fsr-easu.frag and fsr-rcas.frag port the EASU and RCAS passes of
 ffx-fsr/ffx_fsr1.h from https://github.com/GPUOpen-Effects/FidelityFX-FSR to GLSL ES 2.0 shaders.
 
 Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
