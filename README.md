@@ -31,7 +31,7 @@ Media libraries on Android are usually either a raw file browser or a client of 
 - Covers from `folder.jpg` / `poster.jpg`, backdrops from `fanart.jpg`, logos and banners where present. A movie file's own `<name>.jpg` or `<name>-poster.jpg` is its poster; a season's cover is the `folder.jpg` in its folder or `seasonNN-poster.jpg` beside the show; episodes show their `<name>-thumb.jpg`.
 - A long press on any poster or file — or holding a remote's OK — tells what it is about without opening it: the title, year, length and genres, the description, director, cast, studio and rating, and whether that comes from the NFO or the file's own tags.
 - No art? The app pulls a still out of the video itself — episode thumbs and poster fallbacks, generated once and cached on device; from files Android cannot read itself (DV, RealMedia, WMV and the other containers the bundled FFmpeg demuxes) through FFmpeg. A show without a cover or backdrop is pictured by the first episode of its first regular season (never the specials), a season without a cover by its first episode's thumb or a still from it — on the wall and on the details screen alike.
-- Shows without `Season NN` folders are grouped into virtual seasons from `SxxExx` / `NxNN` file names; titles fall back to the folder and file names. Absolute numbering without seasons — `E3`, `E03`, `EP003`, common for anime — is season 1, and inside a `Season NN` folder a bare `E03` belongs to that season.
+- Shows without `Season NN` folders are grouped into virtual seasons from `SxxExx` / `NxNN` file names; titles fall back to the folder and file names. Absolute numbering without seasons — `E3`, `E03`, `EP003`, common for anime — is season 1, and inside a `Season NN` folder a bare `E03` belongs to that season. A folder whose videos all carry a number after the same name is a show too: zero-padded numbers (`sr.01.title`) are absolute episodes of season 1, three or four digits are season and episode the way Kodi reads them (`Show 101 - Title` is S01E01), and numbered names that extend the series' name (`sr.le.1.title`) are specials. The whole folder has to agree, so a numbered movie (`Blade Runner 2049`, `Rocky 2`, `Heat cd01`) stays a movie.
 - Release clutter in movie and show names is stripped: `The.Big.Short.2015.German.DL.1080p.BluRay.x264-GRP` reads `The Big Short (2015)`. Episodes are labelled `Episode 3`; a title comes from the episode NFO, or from the file name only in the clean forms `S01E03 - Title`, `1x03 - Title`, `E03 - Title` or `EP003 - Title`. Anything else stays `Episode 3` — rename the file or add an NFO to give it a title. An NFO title always wins.
 - A movie without an NFO title takes the title stored inside the file (Matroska `Title`, MP4 `©nam`) before its cleaned-up file or folder name.
 - Every video that is no episode is a movie, even without a year or an NFO (`Heat.mp4` is `Heat`); a folder holding one video is that movie, named after the folder. Trailers (`<name>-trailer.mkv`) and samples are skipped.
@@ -162,7 +162,11 @@ Requires JDK 21 and an Android SDK with platform 37; `local.properties` must poi
 ```bash
 ./gradlew assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew test            # parser, library, and binge-logic unit tests
+./build.sh                # signed release build: dist/MediaDroid.apk
+./buildnonlgpl.sh         # the same with the GPL + nonfree FFmpeg: dist/MediaDroid-nonlgpl.apk
 ```
+
+`build.sh` signs with the release key when `KEYSTORE` (or `KEYSTORE_BASE64`), `KEYSTORE_PASSWORD` and `KEY_ALIAS` are set — in the environment or in a git-ignored `signing.env` — and otherwise with the Android debug key, which installs on your own device but cannot update a release or nightly. The key itself lives only in the repository's secrets. `buildnonlgpl.sh` first builds FFmpeg with every decoder, demuxer and parser (`FULL=1 tools/ffmpeg/build.sh`, once, into `stage/ffmpeg-full`); that build is GPL and cannot be distributed under this licence, so it is for your own device only — see [tools/ffmpeg/README.md](tools/ffmpeg/README.md).
 
 ## 🤝 Contributing
 
