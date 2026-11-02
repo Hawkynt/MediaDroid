@@ -138,6 +138,10 @@ commit the captured expected output with a note saying what produced it.
   binge logic live in the cores; `:app` holds Compose screens and platform glue only. This is what keeps
   the fast tier device-free, and it is a rule, not a preference.
 - KDoc on public members; trailing commas where they read cleanly. No per-file licence headers in `.kt`.
+- Shaders live in files of their own, never in Kotlin strings: `app/src/main/glsl/<group>/<name>.vert|.frag|.agsl`,
+  compiled in by the `shaderSources` task as `Shaders.<GROUP>_<NAME>` (`video/fsr-easu.frag` →
+  `Shaders.VIDEO_FSR_EASU`); shared parts are `.glsl` files pulled in with `#include "name.glsl"`. Larger data — a
+  table copied from a reference, a request body — goes into a resource file beside its class, not into the source.
 - Versions come from the build date, never git tags and never a commit count: `app/build.gradle.kts`
   computes `versionCode` as `YYYYMMDD` and `versionName` as `YYYY.MM.DD` from the day the build runs, so
   the number only ever moves forward and no tag feeds it. The repo-level marker is the same date:

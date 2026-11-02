@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureControl
+import com.hawkynt.mediadroid.shaders.Shaders
 
 /**
  * The four picture sliders, neutral in the middle, then the filters: sharpness and clarity from off
@@ -207,31 +208,10 @@ fun View.applyPicture(picture: PictureAdjustment) {
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 private object PictureShader {
 
-    // Order and luma weights as in PictureAdjustment: saturation around grey, contrast around mid
-    // grey plus brightness, then the gamma curve. Colours arrive premultiplied.
-    private const val SOURCE = """
-        uniform shader content;
-        uniform float brightness;
-        uniform float contrast;
-        uniform float saturation;
-        uniform float inverseGamma;
-
-        half4 main(float2 position) {
-            half4 color = content.eval(position);
-            float alpha = color.a;
-            if (alpha <= 0.0) return color;
-            float3 rgb = color.rgb / alpha;
-            float luma = dot(rgb, float3(0.213, 0.715, 0.072));
-            rgb = mix(float3(luma), rgb, saturation);
-            rgb = (rgb - 0.5) * contrast + 0.5 + brightness;
-            rgb = pow(clamp(rgb, 0.0, 1.0), float3(inverseGamma));
-            return half4(half3(rgb * alpha), half(alpha));
-        }
-    """
 
     fun effect(picture: PictureAdjustment): RenderEffect {
         val u = picture.shaderUniforms()
-        val shader = RuntimeShader(SOURCE).apply {
+        val shader = RuntimeShader(Shaders.PICTURE_ADJUST).apply {
             setFloatUniform("brightness", u.brightness)
             setFloatUniform("contrast", u.contrast)
             setFloatUniform("saturation", u.saturation)
