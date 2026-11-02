@@ -107,6 +107,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 /** How long the controls stay up after the last touch, like the streaming apps' players. */
 private const val ControlsTimeoutMs = 3_000
 
+/** Compressed samples waiting for FFmpeg's video decoder: enough to keep it busy; the pictures ahead are set apart. */
+private const val FFMPEG_INPUT_BUFFERS = 8
+
 /** How the video fills the screen; maps onto Media3's resize modes. */
 enum class VideoFit(val label: String, val resizeMode: Int) {
     FIT("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT),
@@ -250,7 +253,32 @@ fun PlayerScreen(
                             allowedVideoJoiningTimeMs,
                             out,
                         )
-                        ffmpegVideoRenderer[0] = out.firstOrNull { it.name.startsWith("ExperimentalFfmpegVideo") }
+                        // FFmpeg's renderer again, keeping as many decoded pictures ahead as the household set
+                        // (Settings › Pictures kept ahead), instead of Media3's four.
+                        val at = out.indexOfFirst { it.name.startsWith("ExperimentalFfmpegVideo") }
+                        if (at >= 0) {
+                            val memory = android.app.ActivityManager.MemoryInfo()
+                            context.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memory)
+                            val buffer = com.hawkynt.mediadroid.player.DecodedBuffer(
+                                runCatching {
+                                    com.hawkynt.mediadroid.player.DecodedBuffer.Unit.valueOf(settings.bufferUnit)
+                                }.getOrDefault(com.hawkynt.mediadroid.player.DecodedBuffer.Unit.SECONDS),
+                                settings.bufferValue,
+                            )
+                            val frames = buffer.decoderFrames(
+                                com.hawkynt.mediadroid.player.DecodedBuffer.ceilingBytes(memory.totalMem),
+                            )
+                            out[at] = androidx.media3.decoder.ffmpeg.ExperimentalFfmpegVideoRenderer(
+                                allowedVideoJoiningTimeMs,
+                                eventHandler,
+                                com.hawkynt.mediadroid.player.PixelShapeListener(eventListener),
+                                MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY,
+                                Runtime.getRuntime().availableProcessors(),
+                                FFMPEG_INPUT_BUFFERS,
+                                frames,
+                            )
+                        }
+                        ffmpegVideoRenderer[0] = out.getOrNull(at)
                     }
 
                     // Real loudness fix for unnormalized streams: the settings dB
@@ -322,50 +350,13 @@ fun PlayerScreen(
             )
             .build()
     }
-    // TV boxes: the display switches to a whole multiple of the film's frame rate (no judder), and back.
+    // Every frame equally long on screen: the film's rate times the chosen speed decides the display mode (TV boxes,
+    // "Match the refresh rate") and the small speed change of Even frames, together (see PlaybackMath.evenPlayback).
     val displayActivity = remember(context) { context.findActivity() }
-    // Where it cannot, the speed changes a little so the frames fall evenly (see PlaybackMath.judderSpeed).
     var judderFactor by remember { mutableFloatStateOf(1f) }
     DisposableEffect(player) {
-        fun match() {
-            if (!settings.matchRefreshRate) return
-            val window = displayActivity?.window ?: return
-            val display = window.decorView.display ?: return
-            val frameRate = player.currentTracks.groups
-                .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
-                .firstNotNullOfOrNull { g ->
-                    (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it).frameRate }
-                }
-                ?: return
-            val current = display.mode
-            val sameSize = display.supportedModes.filter {
-                it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight
-            }
-            val rate = PlaybackMath.matchingRefreshRate(frameRate, sameSize.map { it.refreshRate }) ?: return
-            val mode = sameSize.firstOrNull { it.refreshRate == rate } ?: return
-            window.attributes = window.attributes.apply { preferredDisplayModeId = mode.modeId }
-        }
-        val listener = object : Player.Listener {
-            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) = match()
-        }
-        player.addListener(listener)
         onDispose {
-            player.removeListener(listener)
             displayActivity?.window?.let { it.attributes = it.attributes.apply { preferredDisplayModeId = 0 } }
-        }
-    }
-    // The frame rate against the refresh rate of the screen the picture is on, checked every few seconds:
-    // a display that switched modes, or a second screen, changes it.
-    LaunchedEffect(player) {
-        while (true) {
-            val frameRate = player.videoFormat?.frameRate ?: 0f
-            val refresh = PlayerWindow.displayRefreshHz
-                ?: displayActivity?.window?.decorView?.display?.refreshRate
-                ?: 0f
-            val direction = runCatching { PlaybackMath.JudderDirection.valueOf(settings.judderDirection) }
-                .getOrDefault(PlaybackMath.JudderDirection.NEAREST)
-            judderFactor = PlaybackMath.judderSpeed(frameRate, refresh, settings.judderLimitPercent / 100f, direction)
-            delay(3000)
         }
     }
     // Which decoders are at work, as Media3 reports them, for the info sheet.
@@ -484,6 +475,37 @@ fun PlayerScreen(
     var finished by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf<String?>(null) }
     var speed by remember { mutableStateOf(settings.defaultSpeed) }
+    // Checked again when the speed changes and every few seconds: a new video, a switched mode, a second screen.
+    LaunchedEffect(player, speed) {
+        while (true) {
+            val frameRate = player.videoFormat?.frameRate ?: 0f
+            val window = displayActivity?.window
+            val display = window?.decorView?.display
+            val onOtherScreen = PlayerWindow.displayRefreshHz
+            val current = onOtherScreen ?: display?.mode?.refreshRate ?: display?.refreshRate ?: 0f
+            val sameSize = display?.supportedModes.orEmpty().filter {
+                it.physicalWidth == display?.mode?.physicalWidth && it.physicalHeight == display.mode.physicalHeight
+            }
+            val direction = runCatching { PlaybackMath.JudderDirection.valueOf(settings.judderDirection) }
+                .getOrDefault(PlaybackMath.JudderDirection.NEAREST)
+            val plan = PlaybackMath.evenPlayback(
+                frameRate,
+                speed,
+                sameSize.map { it.refreshRate },
+                current,
+                canSwitch = settings.matchRefreshRate && onOtherScreen == null,
+                maxChange = settings.judderLimitPercent / 100f,
+                direction = direction,
+            )
+            if (window != null && settings.matchRefreshRate && onOtherScreen == null && plan.refreshHz != current) {
+                sameSize.firstOrNull { it.refreshRate == plan.refreshHz }?.let { mode ->
+                    window.attributes = window.attributes.apply { preferredDisplayModeId = mode.modeId }
+                }
+            }
+            judderFactor = plan.speedFactor
+            delay(3000)
+        }
+    }
     var subtitlesOn by remember { mutableStateOf(settings.subtitlesOn) }
     var audioPicker by remember { mutableStateOf(false) }
     var subtitlePicker by remember { mutableStateOf(false) }

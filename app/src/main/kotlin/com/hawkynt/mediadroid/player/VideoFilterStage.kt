@@ -60,7 +60,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // newest one waiting, the textures its planes go into, and whether the frame being drawn is one.
     private val yuvQueue = java.util.concurrent.ConcurrentLinkedDeque<Arrival>()
     private val pacer = FramePacer()
-    private val pumpYuv = Runnable { busy { pumpYuv() } }
+    private val pumpYuv = Runnable { waitForRefresh() }
+    private val onYuvVsync = android.view.Choreographer.FrameCallback { busy { pumpYuv(it) } }
+    private var yuvWaiting = false
+    private var lastVsyncNs = 0L
+    private var vsyncPeriodNs = DEFAULT_VSYNC_NS
     private val yuvTextures = IntArray(3)
     private var yuvProgram = 0
     private var yuvInput = false
@@ -277,25 +281,37 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         var counted = false
     }
 
-    /** Draws the oldest waiting picture when it is due, and comes back for the next. */
-    private fun pumpYuv() {
-        handler.removeCallbacks(pumpYuv)
+    /** Asks for the next screen refresh, once, while pictures wait. */
+    private fun waitForRefresh() {
+        if (yuvWaiting || yuvQueue.isEmpty()) return
+        yuvWaiting = true
+        vsync.postFrameCallback(onYuvVsync)
+    }
+
+    /**
+     * At a screen refresh ([frameTimeNanos]): the oldest waiting picture is drawn when the pacer has it due by
+     * half a refresh from now, so pictures fall on whole refreshes — with Even frames each one on the same
+     * number of them — and the next refresh is asked for while more wait.
+     */
+    private fun pumpYuv(frameTimeNanos: Long) {
+        yuvWaiting = false
+        val period = frameTimeNanos - lastVsyncNs
+        if (period in MIN_VSYNC_NS..MAX_VSYNC_NS) vsyncPeriodNs += (period - vsyncPeriodNs) / 8
+        lastVsyncNs = frameTimeNanos
         yuvQueue.forEach {
             if (!it.counted) {
                 it.counted = true
                 pacer.arrived(it.atNs)
             }
         }
-        val now = System.nanoTime()
-        val due = pacer.dueAt(now, yuvQueue.size)
-        if (due - now > 1_000_000L) {
-            handler.postDelayed(pumpYuv, (due - now) / 1_000_000L)
-            return
+        if (yuvQueue.isEmpty()) return
+        if (pacer.dueAt(frameTimeNanos, yuvQueue.size) - frameTimeNanos <= vsyncPeriodNs / 2) {
+            yuvQueue.pollFirst()?.let { arrival ->
+                pacer.shown(frameTimeNanos)
+                takeYuv(arrival.buffer)
+            }
         }
-        val arrival = yuvQueue.pollFirst() ?: return
-        pacer.shown(now)
-        takeYuv(arrival.buffer)
-        if (yuvQueue.isNotEmpty()) handler.post(pumpYuv)
+        waitForRefresh()
     }
 
     private fun takeYuv(buffer: VideoDecoderOutputBuffer) {
@@ -359,6 +375,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     fun release() {
         handler.removeCallbacks(pumpYuv)
+        vsync.removeFrameCallback(onYuvVsync)
         while (true) yuvQueue.pollFirst()?.buffer?.release() ?: break
         onThread {
             GLES20.glDeleteProgram(yuvProgram)
@@ -1781,6 +1798,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** Pictures from FFmpeg waiting to be drawn, beyond which the oldest is let go. */
         private const val MAX_YUV_QUEUED = 4
+
+        /** A screen refresh until the refreshes are measured (60 Hz), and the range a measured one may have. */
+        private const val DEFAULT_VSYNC_NS = 16_666_667L
+        private const val MIN_VSYNC_NS = 4_000_000L
+        private const val MAX_VSYNC_NS = 50_000_000L
 
         // YUV planes to RGB, as Media3's VideoDecoderGLSurfaceView does (Apache-2.0): luma less its 16/256
         // foot, chroma about its middle, through the colour space's matrix (BT601, BT709, BT2020 below).

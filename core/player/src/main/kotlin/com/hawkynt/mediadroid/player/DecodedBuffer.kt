@@ -40,7 +40,20 @@ data class DecodedBuffer(val unit: Unit, val value: Float) {
     fun seconds(size: PictureSize, frameRate: Float, ceilingBytes: Long): Float =
         frames(size, frameRate, ceilingBytes) / rate(frameRate)
 
+    /**
+     * The pictures a decoder is set up to keep ahead before the video is known: this setting for a 1080p film at
+     * 25 fps, but no more than [ceilingBytes] holds of 4K pictures, which a video may still decode to.
+     */
+    fun decoderFrames(ceilingBytes: Long): Int =
+        minOf(frames(FULL_HD, BASIS_RATE, ceilingBytes), (ceilingBytes / pictureBytes(UHD)).toInt())
+            .coerceAtLeast(MIN_FRAMES)
+
     companion object {
+        /** The picture and rate a setting is shown and counted for. */
+        val FULL_HD = PictureSize(1920, 1080)
+        const val BASIS_RATE = 25f
+        private val UHD = PictureSize(3840, 2160)
+
         /** Five seconds ahead, as far as memory allows. */
         val DEFAULT = DecodedBuffer(Unit.SECONDS, 5f)
 
