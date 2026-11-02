@@ -2,6 +2,8 @@ package com.hawkynt.mediadroid.ui
 
 import android.app.Presentation
 import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.os.Handler
@@ -63,6 +65,9 @@ class VideoPresentation(
             this.player = this@VideoPresentation.player
         }
         setContentView(playerView)
+        // What the picture leaves free is black, whatever colour the window's theme would give it.
+        playerView.setBackgroundColor(Color.BLACK)
+        window?.setBackgroundDrawable(ColorDrawable(Color.BLACK))
     }
 
     /** Hands the picture back: the player stops drawing here before the window goes. */
