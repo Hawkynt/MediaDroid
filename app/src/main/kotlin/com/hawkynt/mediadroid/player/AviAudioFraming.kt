@@ -19,6 +19,7 @@ import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.avi.AviExtractor
+import androidx.media3.extractor.mp3.Mp3Extractor
 import com.hawkynt.mediadroid.library.FsFile
 import java.io.EOFException
 
@@ -52,7 +53,11 @@ object AviAudioFraming {
         extractors.map { RecordingExtractor(it, uri.toString()) }.toTypedArray()
 
     private fun wrap(extractors: Array<Extractor>, uri: Uri?): Array<Extractor> = extractors.map {
-        val framed = if (it is AviExtractor) FramingExtractor(it) else it
+        val framed = when (it) {
+            is AviExtractor -> FramingExtractor(it)
+            is Mp3Extractor -> NotProgramStream(it)
+            else -> it
+        }
         if (uri != null) RecordingExtractor(framed, uri.toString()) else framed
     }.toTypedArray()
 
@@ -70,6 +75,22 @@ object AviAudioFraming {
         override fun seek(position: Long, timeUs: Long) = inner.seek(position, timeUs)
 
         override fun release() = inner.release()
+
+        override fun getUnderlyingImplementation(): Extractor = inner.underlyingImplementation
+    }
+
+    /**
+     * Media3's MP3 reader, kept off MPEG program streams: an MPEG-1 system stream, which Media3's program
+     * stream reader does not take, would otherwise go to it for the frame syncs of its MPEG sound — one
+     * MP3 track, no picture — instead of on to FFmpeg's demuxer.
+     */
+    private class NotProgramStream(private val inner: Extractor) : Extractor by inner {
+        override fun sniff(input: ExtractorInput): Boolean {
+            val header = ByteArray(ProgramStream.HEADER_BYTES)
+            val read = input.peekFully(header, 0, header.size, true)
+            input.resetPeekPosition()
+            return !(read && ProgramStream.opensWithPack(header)) && inner.sniff(input)
+        }
 
         override fun getUnderlyingImplementation(): Extractor = inner.underlyingImplementation
     }
