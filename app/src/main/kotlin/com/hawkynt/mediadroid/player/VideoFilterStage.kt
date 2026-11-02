@@ -102,6 +102,9 @@ class VideoFilterStage {
     private var decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
     private var filmPending: java.util.concurrent.Future<FilmVerdict>? = null
     private var filmGeneration = 0
+
+    // A new history waits to reach the worker: its first frame has no neighbours, so nothing is judged yet.
+    private var filmAfresh = false
     private val filmLumas = arrayOfNulls<Deinterlacer.Plane>(3)
     private var filmBank = 0
     private var filmPosition = 0
@@ -528,6 +531,7 @@ class VideoFilterStage {
             filmGeneration++
             filmLumas.fill(null)
             filmPosition = 0
+            filmAfresh = true
         }
         val step = if (width > MAX_FULL_FILM_WIDTH) 2 else 1
         val luma = packedLuma(frames[history[2]], width, height, step, 1)
@@ -539,8 +543,11 @@ class VideoFilterStage {
         filmLumas[1] = filmLumas[2]
         filmLumas[2] = luma
         if (historyCount < 2) return
-        val prevLuma = filmLumas[0] ?: filmLumas[1]!!
-        val curLuma = filmLumas[1]!!
+        // Film chosen with a history already running has no lumas of its own yet.
+        val curLuma = filmLumas[1] ?: return
+        val prevLuma = filmLumas[0] ?: curLuma
+        val restart = filmAfresh
+        filmAfresh = false
         val topFirst = fieldOrder.topFieldFirst
         val generation = filmGeneration
         val prev = if (historyCount >= 3) history[0] else history[1]
@@ -548,9 +555,9 @@ class VideoFilterStage {
         val next = history[2]
         val interval = frameIntervalNs
         filmPending = filmWorker.submit<FilmVerdict> {
-            if (afresh || fieldMatch.field != (if (topFirst) 1 else 0)) {
+            if (restart || fieldMatch.field != (if (topFirst) 1 else 0)) {
                 fieldMatch = Telecine.FieldMatch(topFirst)
-                if (afresh) decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
+                if (restart) decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
             }
             val started = System.nanoTime()
             val (matched, woven) = fieldMatch.add(prevLuma, curLuma, luma)

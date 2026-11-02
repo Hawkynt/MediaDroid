@@ -440,6 +440,13 @@ object Telecine {
 
         /** Adds the next frame; at the end of each cycle returns its verdict, otherwise null. */
         fun add(frame: Deinterlacer.Plane): Cycle? {
+            // Frames of another size are another video: nothing to compare with, a new cycle.
+            val before = queue.lastOrNull()?.first ?: last
+            val sameSize = before == null || (before.width == frame.width && before.height == frame.height)
+            if (!sameSize) {
+                queue.clear()
+                last = null
+            }
             val prev = queue.lastOrNull()?.first ?: last
             val metrics = if (prev == null) Metrics(Long.MAX_VALUE, Long.MAX_VALUE) else diffs(prev, frame)
             queue += frame to metrics
