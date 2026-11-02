@@ -75,6 +75,13 @@ data class DecodedBuffer(val unit: Unit, val value: Float) {
         /** The most memory the buffer may take on a device with [totalMemoryBytes]: a quarter of it. */
         fun ceilingBytes(totalMemoryBytes: Long): Long = totalMemoryBytes / 4
 
+        /**
+         * The memory a decoder's pictures may take: a quarter of the device's [totalMemoryBytes], and a quarter of
+         * the app's [heapBytes] — a decoder's buffers are direct buffers, which Android keeps in the app's heap.
+         */
+        fun decoderCeilingBytes(totalMemoryBytes: Long, heapBytes: Long): Long =
+            minOf(ceilingBytes(totalMemoryBytes), heapBytes / 4)
+
         /** A decoded picture's bytes: 8-bit YUV 4:2:0, a byte of luma and half a byte of colour a pixel. */
         fun pictureBytes(size: PictureSize): Long = size.width.toLong() * size.height * 3 / 2
 
