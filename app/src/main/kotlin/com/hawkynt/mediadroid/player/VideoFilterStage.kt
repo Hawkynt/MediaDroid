@@ -67,6 +67,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var vsyncPeriodNs = DEFAULT_VSYNC_NS
     private val yuvTextures = IntArray(3)
     private var yuvProgram = 0
+
+    // Anime4K (see Anime4k): its four convolution passes, the step back up to twice the size, and whether the
+    // graphics chip can draw into half-float textures, which the passes' values outside 0..1 need.
+    private val anime4kPrograms = IntArray(4)
+    private var anime4kDepthToSpace = 0
+    private var halfTargets = false
     private var yuvInput = false
     private val yuvColor = FloatArray(9)
     private var yuvChroma = 1f
@@ -100,7 +106,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var temporalProgram = 0
     private var weaveProgram = 0
     private var packProgram = 0
-    private val frames = Array(REDUCED + 1) { Frame() }
+    private val frames = Array(ANIME4K_B + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -379,6 +385,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         while (true) yuvQueue.pollFirst()?.buffer?.release() ?: break
         onThread {
             GLES20.glDeleteProgram(yuvProgram)
+            anime4kPrograms.forEach { GLES20.glDeleteProgram(it) }
+            GLES20.glDeleteProgram(anime4kDepthToSpace)
             GLES20.glDeleteTextures(3, yuvTextures, 0)
             releaseWindow()
             GLES20.glDeleteProgram(copyProgram)
@@ -497,6 +505,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         }
         yuvProgram = program(VERTEX, YUV)
+        val extensions = GLES20.glGetString(GLES20.GL_EXTENSIONS).orEmpty()
+        halfTargets = es3 &&
+            ("GL_EXT_color_buffer_half_float" in extensions || "GL_EXT_color_buffer_float" in extensions)
+        // A chip that cannot build Anime4K's programs gets FSR in its place rather than no picture at all.
+        halfTargets = halfTargets && runCatching {
+            listOf(Anime4k.ANIME4K_CONV_1, Anime4k.ANIME4K_CONV_2, Anime4k.ANIME4K_CONV_3, Anime4k.ANIME4K_CONV_4)
+                .forEachIndexed { i, fragment -> anime4kPrograms[i] = program(VERTEX, fragment) }
+            anime4kDepthToSpace = program(VERTEX, ANIME4K_DEPTH_TO_SPACE)
+        }.isSuccess
         inputSurface = Surface(surfaceTexture)
 
         copyProgram = program(VERTEX, COPY)
@@ -1314,6 +1331,36 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
                 }
+            } else if (picture.upscaler == PictureAdjustment.Upscaler.ANIME4K && halfTargets) {
+                // Anime4K: four convolutions at the picture's size into half-float textures taking turns, then
+                // twice the size — the picture's bilinear doubling plus the detail the network adds — and the
+                // screen's own scaling for whatever is left.
+                var input = source
+                anime4kPrograms.forEachIndexed { i, program ->
+                    val target = frames[if (i % 2 == 0) ANIME4K_A else ANIME4K_B].ensure(width, height, half = true)
+                    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
+                    GLES20.glViewport(0, 0, width, height)
+                    run(program, GLES20.GL_TEXTURE_2D, input.texture, identity) { p ->
+                        GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
+                    }
+                    input = target
+                }
+                val enlarged = frames[4].ensure(width * 2, height * 2)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
+                GLES20.glViewport(0, 0, width * 2, height * 2)
+                GLES20.glUseProgram(anime4kDepthToSpace)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, input.texture)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(anime4kDepthToSpace, "uLast"), 1)
+                run(anime4kDepthToSpace, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uLastSize"), width.toFloat(), height.toFloat())
+                }
+                onWindow(outWidth, outHeight)
+                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 0.5f / width, 0.5f / height)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
+                }
             } else {
                 // FSR 1: edge-adaptive upscaling to the screen's size, then contrast-adaptive sharpening on it.
                 val enlarged = frames[4].ensure(outWidth, outHeight)
@@ -1452,16 +1499,27 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         var height = 0
             private set
 
-        fun ensure(w: Int, h: Int): Frame {
-            if (w == width && h == height && texture != 0) return this
+        /** Whether the texture holds half floats (values outside 0..1, see Anime4K) rather than bytes. */
+        var half = false
+            private set
+
+        fun ensure(w: Int, h: Int, half: Boolean = false): Frame {
+            if (w == width && h == height && half == this.half && texture != 0) return this
             release()
             val ids = IntArray(1)
             GLES20.glGenTextures(1, ids, 0)
             texture = ids[0]
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
-            GLES20.glTexImage2D(
-                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, w, h, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null,
-            )
+            if (half) {
+                GLES30.glTexImage2D(
+                    GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA16F, w, h, 0, GLES30.GL_RGBA, GLES30.GL_HALF_FLOAT, null,
+                )
+            } else {
+                GLES20.glTexImage2D(
+                    GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, w, h, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null,
+                )
+            }
+            this.half = half
             GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
             GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
             GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
@@ -1555,6 +1613,37 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** A picture larger than 1080p brought down, and its first pass across, after the kept frames. */
         private const val REDUCED_ACROSS = KEPT_THIRD + 1
         private const val REDUCED = REDUCED_ACROSS + 1
+
+        /** Anime4K's two half-float textures, taking turns between its passes. */
+        private const val ANIME4K_A = REDUCED + 1
+        private const val ANIME4K_B = ANIME4K_A + 1
+
+        // Anime4K's last step (its Depth-to-Space, MIT, see Anime4k): each of the four channels of the last pass is
+        // one of the four pixels a picture pixel becomes, added to the picture's bilinear doubling on every colour.
+        // mpv counts rows downwards: its upper pair of the four (rows 0) is the upper half here, where v is larger.
+        private const val ANIME4K_DEPTH_TO_SPACE = """
+            precision highp float;
+            uniform sampler2D uTex;
+            uniform sampler2D uLast;
+            uniform vec2 uLastSize;
+            varying vec2 vTex;
+            void main() {
+                vec2 cell = vTex * uLastSize;
+                vec2 f = fract(cell);
+                vec4 c = texture2D(uLast, (floor(cell) + 0.5) / uLastSize);
+                float ix = f.x < 0.5 ? 0.0 : 1.0;
+                float iy = f.y < 0.5 ? 1.0 : 0.0;
+                float index = iy * 2.0 + ix;
+                vec4 pick = vec4(
+                    index == 0.0 ? 1.0 : 0.0,
+                    index == 1.0 ? 1.0 : 0.0,
+                    index == 2.0 ? 1.0 : 0.0,
+                    index == 3.0 ? 1.0 : 0.0
+                );
+                float detail = dot(c, pick);
+                gl_FragColor = vec4(texture2D(uTex, vTex).rgb + detail, 1.0);
+            }
+        """
 
         /** Motion runs two frames behind: a twelfth of a second at 24 frames a second. */
         private const val MAX_MOTION_LATENCY_MS = 250
