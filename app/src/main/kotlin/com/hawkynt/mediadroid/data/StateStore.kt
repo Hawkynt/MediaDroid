@@ -45,6 +45,8 @@ data class PictureOverride(
     val upscaler: String = "STANDARD",
     val interpolation: String = "OFF",
     val fieldRate: Boolean = false,
+    /** PictureAdjustment.Stereo name: one eye of a 3D video, kept per video only. */
+    val stereo: String = "OFF",
 )
 
 /**
@@ -253,6 +255,7 @@ class StateStore(context: Context) {
                 upscalerOf(it.upscaler),
                 interpolationOf(it.interpolation),
                 it.fieldRate,
+                runCatching { PictureAdjustment.Stereo.valueOf(it.stereo) }.getOrDefault(PictureAdjustment.Stereo.OFF),
             )
         }
             ?: defaultPicture()
@@ -275,6 +278,7 @@ class StateStore(context: Context) {
                 picture.upscaler.name,
                 picture.interpolation.name,
                 picture.fieldRate,
+                picture.stereo.name,
             )
         }
         save()

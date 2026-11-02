@@ -1823,7 +1823,7 @@ private fun PlayerPanel(
             )
             TextButton(onClick = onResetPicture) { Text("Reset", fontSize = 16.sp) }
         }
-        PictureSliders(picture, onChange = onPicture, onDone = onPictureDone)
+        PictureSliders(picture, onChange = onPicture, onDone = onPictureDone, stereo = true)
 
         PanelTitle("Subtitles & sound")
         Row(verticalAlignment = Alignment.CenterVertically) {
