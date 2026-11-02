@@ -111,7 +111,7 @@ fun BrowseScreen(
     onSeeAll: (HomeRow) -> Unit = {},
 ) {
     val maxAge = store.data.settings.maxAgeYears
-    val wall = LibraryQuery.browse(library.itemsIn(section), filter, maxAge)
+    val wall = LibraryQuery.browse(library.itemsIn(section), filter, maxAge, store.data.settings.hideUnrated)
     val items = row?.let { HomeRows.items(it, wall, store.marks) } ?: wall
     val continueItems = rememberContinueItems(library, store).filter {
         when (section) {
@@ -629,8 +629,7 @@ private fun rememberContinueItems(library: Library, store: StateStore): List<Con
     }
         .filter { entry ->
             // The max-age mode hides over-cap titles even from the resume row.
-            val age = entry.item.minAge
-            maxAge <= 0 || age == null || age <= maxAge
+            LibraryQuery.allowedAge(entry.item.minAge, maxAge, store.data.settings.hideUnrated)
         }
 }
 

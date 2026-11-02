@@ -82,6 +82,7 @@ data class Settings(
     var subtitleBox: Boolean = false,
     var audioLanguage: String = "",
     var maxAgeYears: Int = 0,                 // 0 = off, else hide content above
+    var hideUnrated: Boolean = false,         // with an age limit, hide content with no certification too
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
     var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout

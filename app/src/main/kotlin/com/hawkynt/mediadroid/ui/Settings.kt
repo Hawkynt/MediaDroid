@@ -410,6 +410,18 @@ fun SettingsScreen(
                 )
             }
         }
+        if (settings.maxAgeYears > 0) {
+            SwitchRow(
+                label = "Hide videos without an age rating",
+                detail = if (settings.hideUnrated) {
+                    "Only videos whose NFO gives an age at or below the limit are shown."
+                } else {
+                    "Videos whose NFO gives no age are shown; switch on to hide them as well."
+                },
+                checked = settings.hideUnrated,
+                onChange = { c -> update { it.hideUnrated = c } },
+            )
+        }
         Spacer(Modifier.height(32.dp))
     }
 }

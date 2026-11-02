@@ -52,16 +52,20 @@ object LibraryQuery {
     }
 
     /**
-     * Items a viewer of [maxAgeYears] may see: anything certified at or below the
-     * age, and anything with no certification at all (unknown is not forbidden).
-     * [maxAgeYears] of 0 means the max-age mode is off.
+     * Whether a viewer of [maxAgeYears] may see something certified for [minAge]: at or below the age, and with no
+     * certification at all unless [hideUnrated] (by default unknown is not forbidden). [maxAgeYears] of 0 means the
+     * max-age mode is off, and everything may be seen.
      */
-    fun filterByAge(items: List<MediaItem>, maxAgeYears: Int): List<MediaItem> {
+    fun allowedAge(minAge: Int?, maxAgeYears: Int, hideUnrated: Boolean = false): Boolean = when {
+        maxAgeYears <= 0 -> true
+        minAge == null -> !hideUnrated
+        else -> minAge <= maxAgeYears
+    }
+
+    /** Items a viewer of [maxAgeYears] may see (see [allowedAge]). */
+    fun filterByAge(items: List<MediaItem>, maxAgeYears: Int, hideUnrated: Boolean = false): List<MediaItem> {
         if (maxAgeYears <= 0) return items
-        return items.filter { item ->
-            val age = item.minAge
-            age == null || age <= maxAgeYears
-        }
+        return items.filter { allowedAge(it.minAge, maxAgeYears, hideUnrated) }
     }
 
     /** Items whose year falls in [from]..=[to]; null bounds are open. */
@@ -101,8 +105,13 @@ object LibraryQuery {
             .sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first.lowercase() })
 
     /** The poster wall: [items] cut down by the max-age mode and [filter], then sorted. */
-    fun browse(items: List<MediaItem>, filter: BrowseFilter, maxAgeYears: Int = 0): List<MediaItem> {
-        var result = filterByAge(items, maxAgeYears)
+    fun browse(
+        items: List<MediaItem>,
+        filter: BrowseFilter,
+        maxAgeYears: Int = 0,
+        hideUnrated: Boolean = false,
+    ): List<MediaItem> {
+        var result = filterByAge(items, maxAgeYears, hideUnrated)
         result = filterByGenres(result, filter.genres)
         filter.decade?.let { result = filterByYear(result, it, it + 9) }
         return sort(result, filter.sort)
