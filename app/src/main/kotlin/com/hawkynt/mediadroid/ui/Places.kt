@@ -59,7 +59,11 @@ fun PlacesScreen(
 ) {
     val sections = LibrarySection.entries.filter { library.itemsIn(it).isNotEmpty() }
     val shown = section.takeIf { it in sections } ?: sections.firstOrNull() ?: section
-    val items = LibraryQuery.filterByAge(library.itemsIn(shown), store.data.settings.maxAgeYears)
+    val items = LibraryQuery.filterByAge(
+        library.itemsIn(shown),
+        store.data.settings.maxAgeYears,
+        store.data.settings.hideUnrated,
+    )
     val places: List<Pair<String, Place<*>>> = when (kind) {
         PlaceKind.GENRES -> LibraryQuery.genrePlaces(items).map { it.key to it }
         PlaceKind.YEARS -> LibraryQuery.decadePlaces(items).map { "${it.key}s" to it }

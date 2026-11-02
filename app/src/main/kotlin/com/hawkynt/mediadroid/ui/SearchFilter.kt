@@ -39,7 +39,11 @@ fun SearchScreen(
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     onOpen: (MediaItem) -> Unit,
 ) {
-    val allowed = LibraryQuery.filterByAge(library.items, store.data.settings.maxAgeYears)
+    val allowed = LibraryQuery.filterByAge(
+        library.items,
+        store.data.settings.maxAgeYears,
+        store.data.settings.hideUnrated,
+    )
     val results = LibraryQuery.search(allowed, query)
 
     Column(modifier = Modifier.fillMaxSize()) {

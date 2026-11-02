@@ -42,6 +42,20 @@ class LibraryQueryTest {
     }
 
     @Test
+    fun ageFilterCanHideUnratedItemsToo() {
+        val rated = listOf(
+            Movie(title = "Kids Film", minAge = 6, path = "/m/kids", videoPath = "/m/kids/k.mkv"),
+            Movie(title = "Unrated Film", minAge = null, path = "/m/unrated", videoPath = "/m/unrated/u.mkv"),
+        )
+        assertEquals(listOf("Kids Film"), LibraryQuery.filterByAge(rated, 12, hideUnrated = true).map { it.title })
+        // Without an age limit nothing is hidden, rated or not.
+        assertEquals(rated, LibraryQuery.filterByAge(rated, 0, hideUnrated = true))
+        assertEquals(false, LibraryQuery.allowedAge(null, 12, hideUnrated = true))
+        assertEquals(true, LibraryQuery.allowedAge(null, 12, hideUnrated = false))
+        assertEquals(true, LibraryQuery.allowedAge(16, 0, hideUnrated = true))
+    }
+
+    @Test
     fun yearFilterKeepsOnlyDatedItemsInBounds() {
         assertEquals(
             listOf("Blade Runner 2049", "Breaking Bad"),
