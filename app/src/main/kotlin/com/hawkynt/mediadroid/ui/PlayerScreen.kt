@@ -37,10 +37,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
@@ -547,6 +550,7 @@ fun PlayerScreen(
             if (android.os.Build.VERSION.SDK_INT >= 28 && cutoutBefore != null) {
                 window?.attributes = window?.attributes?.apply { layoutInDisplayCutoutMode = cutoutBefore }
             }
+            window?.let { WindowCompat.setDecorFitsSystemWindows(it, true) }
             insets?.show(WindowInsetsCompat.Type.systemBars())
             hostView.keepScreenOn = false
         }
@@ -854,6 +858,8 @@ fun PlayerScreen(
                     android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
                 }
             }
+            // A window fitting the system's insets stays out of the cutout, whatever its mode.
+            WindowCompat.setDecorFitsSystemWindows(window, !useCutout)
         }
     }
 
@@ -1062,7 +1068,10 @@ fun PlayerScreen(
     } else {
         0f to 0f
     }
-    val safeArea = Modifier.padding(horizontal = insetX.dp, vertical = insetY.dp)
+    // The picture may reach into the camera cutout; the controls keep clear of it.
+    val safeArea = Modifier
+        .padding(horizontal = insetX.dp, vertical = insetY.dp)
+        .then(if (useCutout) Modifier.windowInsetsPadding(WindowInsets.displayCutout) else Modifier)
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1139,11 +1148,14 @@ fun PlayerScreen(
                 view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
                 if (!elsewhere) view.applyVideoLook(fit, zoom, pan, shownPicture)
                 val density = view.resources.displayMetrics.density
+                val cutout = view.rootWindowInsets
+                    ?.takeIf { useCutout && android.os.Build.VERSION.SDK_INT >= 28 }
+                    ?.displayCutout
                 view.findViewById<View>(androidx.media3.ui.R.id.exo_controller)?.setPadding(
-                    (insetX * density).toInt(),
-                    (insetY * density).toInt(),
-                    (insetX * density).toInt(),
-                    (insetY * density).toInt(),
+                    (insetX * density).toInt() + (cutout?.safeInsetLeft ?: 0),
+                    (insetY * density).toInt() + (cutout?.safeInsetTop ?: 0),
+                    (insetX * density).toInt() + (cutout?.safeInsetRight ?: 0),
+                    (insetY * density).toInt() + (cutout?.safeInsetBottom ?: 0),
                 )
             },
             modifier = Modifier.fillMaxSize(),
