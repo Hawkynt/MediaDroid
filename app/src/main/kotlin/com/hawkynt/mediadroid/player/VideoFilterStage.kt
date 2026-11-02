@@ -58,7 +58,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     // FFmpeg's pictures arrive as YUV planes (see setOutputBuffer) rather than through inputSurface: the
     // newest one waiting, the textures its planes go into, and whether the frame being drawn is one.
-    private val pendingYuv = java.util.concurrent.atomic.AtomicReference<VideoDecoderOutputBuffer?>(null)
+    private val yuvQueue = java.util.concurrent.ConcurrentLinkedDeque<Arrival>()
+    private val pacer = FramePacer()
+    private val pumpYuv = Runnable { busy { pumpYuv() } }
     private val yuvTextures = IntArray(3)
     private var yuvProgram = 0
     private var yuvInput = false
@@ -251,15 +253,42 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * A picture from a decoder that hands over YUV planes — the bundled FFmpeg's. They are uploaded as
      * textures here, which keeps the decoder clear of a window's buffer queue: on some devices a buffer the
      * processor writes into a window waits on the order of 100 ms to be free again. Called on the playback
-     * thread at the picture's release time; a picture still waiting when the next comes is let go unshown.
+     * thread up to 30 ms early and now and then two at once, so they wait in a short queue and are drawn evenly
+     * spaced (see [FramePacer]); far behind, the oldest is let go unshown.
      */
     override fun setOutputBuffer(outputBuffer: VideoDecoderOutputBuffer) {
-        pendingYuv.getAndSet(outputBuffer)?.release()
-        handler.post { busy { takeYuv() } }
+        yuvQueue.addLast(Arrival(outputBuffer, System.nanoTime()))
+        while (yuvQueue.size > MAX_YUV_QUEUED) yuvQueue.pollFirst()?.buffer?.release()
+        handler.post(pumpYuv)
     }
 
-    private fun takeYuv() {
-        val buffer = pendingYuv.getAndSet(null) ?: return
+    /** A picture handed over, with when; [counted] once the pacer has heard of it. */
+    private class Arrival(val buffer: VideoDecoderOutputBuffer, val atNs: Long) {
+        var counted = false
+    }
+
+    /** Draws the oldest waiting picture when it is due, and comes back for the next. */
+    private fun pumpYuv() {
+        handler.removeCallbacks(pumpYuv)
+        yuvQueue.forEach {
+            if (!it.counted) {
+                it.counted = true
+                pacer.arrived(it.atNs)
+            }
+        }
+        val now = System.nanoTime()
+        val due = pacer.dueAt(now, yuvQueue.size)
+        if (due - now > 1_000_000L) {
+            handler.postDelayed(pumpYuv, (due - now) / 1_000_000L)
+            return
+        }
+        val arrival = yuvQueue.pollFirst() ?: return
+        pacer.shown(now)
+        takeYuv(arrival.buffer)
+        if (yuvQueue.isNotEmpty()) handler.post(pumpYuv)
+    }
+
+    private fun takeYuv(buffer: VideoDecoderOutputBuffer) {
         try {
             val planes = buffer.yuvPlanes ?: return
             val strides = buffer.yuvStrides ?: return
@@ -319,7 +348,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     fun release() {
-        pendingYuv.getAndSet(null)?.release()
+        handler.removeCallbacks(pumpYuv)
+        while (true) yuvQueue.pollFirst()?.buffer?.release() ?: break
         onThread {
             GLES20.glDeleteProgram(yuvProgram)
             GLES20.glDeleteTextures(3, yuvTextures, 0)
@@ -1689,6 +1719,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 vTex = (uTexMatrix * aTexCoord).xy;
             }
         """
+
+        /** Pictures from FFmpeg waiting to be drawn, beyond which the oldest is let go. */
+        private const val MAX_YUV_QUEUED = 4
 
         // YUV planes to RGB, as Media3's VideoDecoderGLSurfaceView does (Apache-2.0): luma less its 16/256
         // foot, chroma about its middle, through the colour space's matrix (BT601, BT709, BT2020 below).
