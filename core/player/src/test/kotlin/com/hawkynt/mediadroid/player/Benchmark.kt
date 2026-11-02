@@ -37,6 +37,38 @@ fun main() {
         for (frame in woven) decimate.add(frame)
     }
     report("Film: combed score (scene changes only)", 1) { Telecine.combedScore(frames[2]) }
+
+    // Motion searches a DVD at half size (360 × 240), above 1280 pixels wide at a quarter (480 × 270 for 1080p;
+    // 960 × 540 is what half size would cost there).
+    for ((width, height) in listOf(360 to 240, 480 to 270, 960 to 540)) {
+        val pan = panning(width, height, 12)
+        report("Motion: search at $width × $height", pan.size - 1) {
+            val estimator = MotionInterpolation.Estimator(width, height)
+            for (k in 1 until pan.size) {
+                estimator.advance()
+                estimator.estimate(pan[k - 1], pan[k])
+            }
+        }
+    }
+}
+
+/** [count] frames of a textured picture panning 3 pixels right and 1 down a frame, with a box moving its own way. */
+private fun panning(width: Int, height: Int, count: Int): List<Deinterlacer.Plane> = (0 until count).map { t ->
+    Deinterlacer.Plane(
+        width,
+        height,
+        IntArray(width * height) { i ->
+            val x = i % width
+            val y = i / width
+            val bx = width / 2 - 5 * t
+            val by = height / 3 + 2 * t
+            if (x in bx until bx + width / 6 && y in by until by + height / 6) {
+                250 - ((x - bx) * 13 + (y - by) * 7) % 61
+            } else {
+                30 + (((x - 3 * t) * 37 + (y - t) * 91) % 97 * 2)
+            }
+        },
+    )
 }
 
 /** Runs [work] (covering [count] frames) until warm, then reports the best of the timed rounds per frame. */

@@ -36,15 +36,20 @@ data class PictureAdjustment(
      * Frame blending: between two frames the screen shows a mix of both, weighted by how far the clock
      * is between them — the screen's refresh rate instead of the film's frame rate, so motion steps
      * less. The strength is how much of the interval blends, centred on the change: [LOW] a quarter,
-     * [MEDIUM] half, [HIGH] all of it. A blend, not motion-compensated interpolation: moving edges
-     * soften rather than move.
+     * [MEDIUM] half, [HIGH] all of it — a blend, where moving edges soften rather than move. [MOTION] is
+     * motion-compensated (see [MotionInterpolation]): the pictures between are built along the motion,
+     * so moving edges move, over the whole interval.
      */
     enum class Interpolation(val label: String, private val window: Float) {
         OFF("Off", 0f),
         LOW("Low", 0.25f),
         MEDIUM("Medium", 0.5f),
         HIGH("High", 1f),
+        MOTION("Motion", 1f),
         ;
+
+        /** Built along the motion rather than blended. */
+        val isMotionCompensated: Boolean get() = this == MOTION
 
         /** How much of the next frame to show at [phase] (0 at the earlier frame's time, 1 at the next's). */
         fun weight(phase: Float): Float {
