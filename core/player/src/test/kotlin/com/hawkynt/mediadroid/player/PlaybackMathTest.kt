@@ -264,6 +264,36 @@ class PlaybackMathTest {
     }
 
     @Test
+    fun `a swipe from the middle of the screen sets a level`() {
+        assertTrue(PlaybackMath.startsLevelSwipe(540f, 1200f, 1080f, 2400f, sideBand = 70f, endBand = 180f))
+    }
+
+    @Test
+    fun `swipes from the top and bottom edges and the corners stay with Android`() {
+        fun starts(x: Float, y: Float) = PlaybackMath.startsLevelSwipe(x, y, 1080f, 2400f, 70f, 180f)
+        assertFalse(starts(540f, 100f))
+        assertFalse(starts(540f, 2300f))
+        assertFalse(starts(30f, 30f))
+        assertFalse(starts(1050f, 2380f))
+    }
+
+    @Test
+    fun `swipes from the side edges stay with the back gesture`() {
+        fun starts(x: Float) = PlaybackMath.startsLevelSwipe(x, 1200f, 1080f, 2400f, 70f, 180f)
+        assertFalse(starts(40f))
+        assertFalse(starts(1040f))
+        assertTrue(starts(70f))
+        assertTrue(starts(1010f))
+    }
+
+    @Test
+    fun `a level counts as boosted only above the device's maximum`() {
+        assertFalse(PlaybackMath.isBoosted(0.5f))
+        assertFalse(PlaybackMath.isBoosted(1f))
+        assertTrue(PlaybackMath.isBoosted(1.01f))
+    }
+
+    @Test
     fun `the sound waits for a picture frames behind by the video's own frame rate`() {
         assertEquals(80, PlaybackMath.pictureLatencyMs(frames = 2f, frameRate = 25f, measuredMs = 140))
         assertEquals(167, PlaybackMath.pictureLatencyMs(frames = 5f, frameRate = 29.97f, measuredMs = 0))

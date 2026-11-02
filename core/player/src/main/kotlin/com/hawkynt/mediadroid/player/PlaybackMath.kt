@@ -53,6 +53,17 @@ object PlaybackMath {
     /** Loudness gain for a volume level past the device maximum: the boost factor in dB (up to +18 dB). */
     fun boostDb(level: Float): Float = 20f * log10(boostFactor(level))
 
+    /** Whether [level] is past the device's own maximum (see [boostedLevel]). */
+    fun isBoosted(level: Float): Boolean = level > 1f
+
+    /**
+     * Whether a swipe from ([x], [y]) sets a level: not from within [sideBand] of the left and right edge, where
+     * Android's back gesture starts, nor within [endBand] of the top and bottom, where its status bar and
+     * navigation are reached — so the corners too stay with the system.
+     */
+    fun startsLevelSwipe(x: Float, y: Float, width: Float, height: Float, sideBand: Float, endBand: Float): Boolean =
+        x >= sideBand && x <= width - sideBand && y >= endBand && y <= height - endBand
+
     /** Gamma factor for a brightness level past the device maximum: the square root of the boost, at most ≈2.8. */
     fun gammaBoost(level: Float): Float = sqrt(boostFactor(level))
 

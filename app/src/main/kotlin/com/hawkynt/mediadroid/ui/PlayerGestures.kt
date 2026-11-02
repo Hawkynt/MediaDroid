@@ -9,7 +9,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.unit.dp
+import com.hawkynt.mediadroid.player.PlaybackMath
 import kotlin.math.abs
+
+/** How far in from the left and right edge the back gesture reaches. */
+private val SIDE_BAND = 28.dp
+
+/** How far in from the top and bottom edge the status bar and navigation are reached. */
+private val END_BAND = 72.dp
 
 /** Which half of the picture a gesture started on. */
 enum class Side { LEFT, RIGHT }
@@ -18,7 +26,8 @@ enum class Side { LEFT, RIGHT }
  * The touch language of the streaming apps' players, on the bare picture:
  * - tap: controls on or off,
  * - double tap: [onDoubleTap] with the half tapped (left back, right ahead),
- * - one-finger vertical swipe: [onSwipe] with the half and how far up, as a fraction of the height,
+ * - one-finger vertical swipe: [onSwipe] with the half and how far up, as a fraction of the height; not from
+ *   the screen's edges and corners, which stay with Android's own gestures,
  * - two fingers: [onPinch] with the zoom factor and the pan of this movement.
  */
 fun Modifier.playerGestures(
@@ -39,6 +48,14 @@ fun Modifier.playerGestures(
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
             val side = if (down.position.x < size.width / 2) Side.LEFT else Side.RIGHT
+            val mayLevel = PlaybackMath.startsLevelSwipe(
+                down.position.x,
+                down.position.y,
+                size.width.toFloat(),
+                size.height.toFloat(),
+                SIDE_BAND.toPx(),
+                END_BAND.toPx(),
+            )
             var swiping = false
             var travelled = Offset.Zero
             while (true) {
@@ -53,7 +70,7 @@ fun Modifier.playerGestures(
                 }
                 val change = pressed.first()
                 val delta = change.positionChange()
-                if (!swiping) {
+                if (!swiping && mayLevel) {
                     travelled += delta
                     // Only a mainly vertical movement past the slop is a swipe; a tap stays a tap.
                     if (abs(travelled.y) > slop && abs(travelled.y) > abs(travelled.x) * 1.5f) swiping = true

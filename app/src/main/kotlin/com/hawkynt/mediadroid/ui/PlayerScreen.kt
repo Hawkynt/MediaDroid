@@ -488,8 +488,11 @@ fun PlayerScreen(
     // Short-lived on-screen confirmation of a gesture: "+15 s", "Volume 40 %".
     var feedback by remember { mutableStateOf<String?>(null) }
     var feedbackStamp by remember { mutableIntStateOf(0) }
-    fun show(text: String) {
+    // Whether the shown text is a level past the device's maximum, which shows in the accent colour.
+    var feedbackBoosted by remember { mutableStateOf(false) }
+    fun show(text: String, boosted: Boolean = false) {
         feedback = text
+        feedbackBoosted = boosted
         feedbackStamp++
     }
     // Holding a skip button (on screen or on a remote) steps further the longer it is held; the target
@@ -889,13 +892,13 @@ fun PlayerScreen(
                         screenBrightness = brightness.coerceIn(0.01f, 1f)
                     }
                 }
-                show("Brightness ${PlaybackMath.percent(brightness)} %")
+                show("Brightness ${PlaybackMath.percent(brightness)} %", PlaybackMath.isBoosted(brightness))
             }
             Side.RIGHT -> {
                 volume = PlaybackMath.boostedLevel(volume, upFraction)
                 loudnessBoostDb = PlaybackMath.boostDb(volume)
                 audio.setStreamVolume(AudioManager.STREAM_MUSIC, (volume.coerceAtMost(1f) * maxVolume).roundToInt(), 0)
-                show("Volume ${PlaybackMath.percent(volume)} %")
+                show("Volume ${PlaybackMath.percent(volume)} %", PlaybackMath.isBoosted(volume))
             }
         }
     }
@@ -1184,7 +1187,7 @@ fun PlayerScreen(
         feedback?.takeIf { !inPip }?.let {
             Text(
                 it,
-                color = Color.White,
+                color = if (feedbackBoosted) com.hawkynt.mediadroid.ui.theme.MediaDroidColors.Amber else Color.White,
                 fontSize = 22.sp,
                 modifier = Modifier
                     .align(Alignment.Center)
