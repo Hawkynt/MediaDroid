@@ -60,6 +60,13 @@ class DecodedBufferTest {
     }
 
     @Test
+    fun `the decoder keeps the setting's frames for 1080p at 25 fps, few enough that 4K pictures fit too`() {
+        assertEquals(125, DecodedBuffer.DEFAULT.decoderFrames(ceilingBytes = 4 * gb))
+        // 1 GB: 1080p would allow 125, but 86 4K pictures already fill it.
+        assertEquals(86, DecodedBuffer.DEFAULT.decoderFrames(ceilingBytes = gb))
+    }
+
+    @Test
     fun `five seconds ahead by default`() {
         assertEquals(DecodedBuffer(Unit.SECONDS, 5f), DecodedBuffer.DEFAULT)
     }

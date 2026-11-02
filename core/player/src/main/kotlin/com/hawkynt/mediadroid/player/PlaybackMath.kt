@@ -249,6 +249,36 @@ object PlaybackMath {
         ) ?: 1f
     }
 
+    /** The screen's refresh rate to play at and the speed factor on top of the chosen speed (see [evenPlayback]). */
+    data class EvenPlan(val refreshHz: Float, val speedFactor: Float)
+
+    /**
+     * How to play a [frameRate] film at the chosen [speed] so every frame stays on screen equally long: the rate
+     * that matters is the two together. A display mode among [modes] that is a whole multiple of it is chosen —
+     * [current] first, as switching blanks the screen a moment, then the lowest — when [canSwitch]; otherwise the
+     * mode, [current] alone without switching, whose even rate is nearest within [maxChange] in [direction], with
+     * the speed factor that reaches it (see [judderSpeed]). Nothing within reach: [current] and the speed as it is.
+     */
+    fun evenPlayback(
+        frameRate: Float,
+        speed: Float,
+        modes: List<Float>,
+        current: Float,
+        canSwitch: Boolean,
+        maxChange: Float,
+        direction: JudderDirection,
+    ): EvenPlan {
+        val rate = frameRate * speed
+        if (rate <= 0f || current <= 0f) return EvenPlan(current, 1f)
+        val candidates = if (canSwitch) listOf(current) + modes.filter { it != current }.sorted() else listOf(current)
+        candidates.firstOrNull { matchingRefreshRate(rate, listOf(it)) != null }?.let { return EvenPlan(it, 1f) }
+        val reachable = candidates
+            .map { it to judderSpeed(rate, it, maxChange, direction) }
+            .filter { it.second != 1f }
+        val best = reachable.minByOrNull { kotlin.math.abs(it.second - 1f) } ?: return EvenPlan(current, 1f)
+        return EvenPlan(best.first, best.second)
+    }
+
     private const val MIN_EVEN_RATE = 10f
     private const val FITS = 0.001f
     private const val TIE = 1e-4f
