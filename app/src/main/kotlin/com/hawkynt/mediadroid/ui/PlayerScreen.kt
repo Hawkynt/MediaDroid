@@ -1045,6 +1045,8 @@ fun PlayerScreen(
     // The view's surface the stage draws into: a view gets a new one when the app comes back to the screen.
     val routedTexture = remember { arrayOfNulls<android.graphics.SurfaceTexture>(1) }
     fun routeVideo() {
+        // The demo library's videos never play: no stage, no routing.
+        if (demo) return
         val target = ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.videoSurfaceView)
             as? android.view.TextureView
         videoFrameRate[0] = player.videoFormat?.frameRate ?: -1f
