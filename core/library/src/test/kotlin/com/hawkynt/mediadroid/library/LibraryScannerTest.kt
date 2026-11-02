@@ -494,5 +494,40 @@ class LibraryScannerTest {
         assertEquals("Jonas looks for Mikkel.", season.plot)
         assertEquals(listOf("A boy goes missing.", "Ulrich searches."), season.episodes.map { it.plot })
     }
-}
 
+    @Test
+    fun showFoldersNumberedWithoutSxxExxAreShows() {
+        file("Shows/Bionic Six (1987)/Bionic Six 101 - Das erste Abenteuer.avi")
+        file("Shows/Bionic Six (1987)/Bionic Six 102 - Im Tal der Schatten.avi")
+        file("Shows/Bionic Six (1987)/Bionic Six 243 - Das war's Leute.avi")
+        file("Shows/Saber Rider and the Star Sheriffs (1987)/sr.01.die.star.sheriffs.avi")
+        file("Shows/Saber Rider and the Star Sheriffs (1987)/sr.02.der.vierbeinige.freund.avi")
+        file("Shows/Saber Rider and the Star Sheriffs (1987)/sr.40.das.red.wing.gefaengnis.avi")
+        file("Shows/Saber Rider and the Star Sheriffs (1987)/sr.le.1.taeuschungen.avi")
+
+        val library = LibraryScanner.scan(File(folder.root, "Shows"))
+        assertEquals(emptyList<Movie>(), library.movies)
+        val (bionic, saber) = library.shows.sortedBy { it.title }
+        assertEquals("Bionic Six" to 1987, bionic.title to bionic.year)
+        assertEquals(listOf(1, 2), bionic.seasons.map { it.number })
+        assertEquals(listOf(1, 2), bionic.seasons[0].episodes.map { it.number })
+        assertEquals(listOf(43), bionic.seasons[1].episodes.map { it.number })
+        assertEquals("Das erste Abenteuer", bionic.seasons[0].episodes[0].title)
+        assertEquals("Saber Rider and the Star Sheriffs" to 1987, saber.title to saber.year)
+        assertEquals(listOf(0, 1), saber.seasons.map { it.number })
+        assertEquals(listOf(1), saber.seasons[0].episodes.map { it.number })
+        assertEquals(listOf(1, 2, 40), saber.seasons[1].episodes.map { it.number })
+    }
+
+    @Test
+    fun numberedMoviesStayMovies() {
+        file("Movies/Rocky/Rocky 2.avi")
+        file("Movies/Rocky/Rocky 3.avi")
+        file("Movies/Heat/Heat cd01.avi")
+        file("Movies/Heat/Heat cd02.avi")
+
+        val library = LibraryScanner.scan(File(folder.root, "Movies"))
+        assertEquals(emptyList<Show>(), library.shows)
+        assertEquals(listOf("Heat", "Rocky 2", "Rocky 3"), library.movies.map { it.title }.sorted())
+    }
+}
