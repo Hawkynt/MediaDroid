@@ -102,6 +102,7 @@ data class PictureAdjustment(
      * a sharpened Jinc over a circle (see [Ewa]), alike at every angle, so diagonals keep no staircase;
      * [NIS] NVIDIA Image Scaling (see [Nis]): directional filters by edge, with luma-adaptive sharpening;
      * [ANIME4K] Anime4K's small convolutional network doubling the picture, made for line art and animation.
+     * [XBRZ] Zenju's xBRZ, scaling by rules 2× to 6×: smooth diagonals and curves for pixel art and cartoons.
      */
     enum class Upscaler(val label: String) {
         STANDARD("Standard"),
@@ -110,6 +111,7 @@ data class PictureAdjustment(
         EWA("EWA"),
         NIS("NIS"),
         ANIME4K("Anime4K"),
+        XBRZ("xBRZ"),
     }
 
     /**
