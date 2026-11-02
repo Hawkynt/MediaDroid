@@ -1904,7 +1904,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         // NVIDIA Image Scaling's NVScaler (MIT, see Nis, which it is transcribed from): per output pixel the 6 × 6
         // source luma, four directional edge strengths from the 3 × 3 around the nearest four pixels, a 6-tap
         // scaler blended with directional 6-tap filters that sharpen by luma and hold back ringing; the luma
-        // change is added to a bilinear tap of the colour. Rows count from the top, as in NIS.
+        // change is added to a bilinear tap of the colour. Rows count from the top, as in NIS. Every value is
+        // its own variable (pIJ is the luma of row I, column J) rather than an array: mobile graphics chips keep
+        // local arrays in memory, not registers, which made the pass about 18 times slower.
         private const val NIS = """
             precision highp float;
             uniform sampler2D uTex;
@@ -1923,19 +1925,19 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             uniform float uSharpLimitScale;
             varying vec2 vTex;
             // Both taps of a phase in one fetch: the scaling tap in x, the sharpening tap in y.
-            vec2 coef(float phase, int tap) {
-                vec4 t = texture2D(uCoef, vec2((float(tap) + 0.5) / 6.0, (phase + 0.5) / 64.0));
+            vec2 coef(float phase, float tap) {
+                vec4 t = texture2D(uCoef, vec2((tap + 0.5) / 6.0, (phase + 0.5) / 64.0));
                 return (vec2(t.r, t.b) * 255.0 * 256.0 + vec2(t.g, t.a) * 255.0) / 65535.0 * 2.5 - 1.0;
             }
             float lumaOf(vec3 c) { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
             float lumaAt(float column, float row) {
                 return lumaOf(texture2D(uTex, vec2(column + 0.5, uInSize.y - row - 0.5) / uInSize).rgb);
             }
-            vec4 edgeMap(float q[9]) {
-                float g0 = abs(q[0] + q[1] + q[2] - q[6] - q[7] - q[8]);
-                float g45 = abs(q[3] + q[0] + q[1] - q[7] - q[8] - q[5]);
-                float g90 = abs(q[0] + q[3] + q[6] - q[2] - q[5] - q[8]);
-                float g135 = abs(q[3] + q[6] + q[7] - q[1] - q[2] - q[5]);
+            vec4 edgeMap(float q0, float q1, float q2, float q3, float q4, float q5, float q6, float q7, float q8) {
+                float g0 = abs(q0 + q1 + q2 - q6 - q7 - q8);
+                float g45 = abs(q3 + q0 + q1 - q7 - q8 - q5);
+                float g90 = abs(q0 + q3 + q6 - q2 - q5 - q8);
+                float g135 = abs(q3 + q6 + q7 - q1 - q2 - q5);
                 float a = max(g0, g90);
                 float aMin = min(g0, g90);
                 float b = max(g45, g135);
@@ -1955,23 +1957,24 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     (c45135 && cG45) ? f45135 : 0.0,
                     (c45135 && !cG45) ? f45135 : 0.0);
             }
-            float evalPoly6(float px[6], float phase) {
-                float y = 0.0;
-                float usm = 0.0;
-                for (int i = 0; i < 6; i++) {
-                    vec2 c = coef(phase, i);
-                    y += c.x * px[i];
-                    usm += c.y * px[i];
-                }
+            float evalPoly6(float x0, float x1, float x2, float x3, float x4, float x5, float phase) {
+                vec2 c0 = coef(phase, 0.0);
+                vec2 c1 = coef(phase, 1.0);
+                vec2 c2 = coef(phase, 2.0);
+                vec2 c3 = coef(phase, 3.0);
+                vec2 c4 = coef(phase, 4.0);
+                vec2 c5 = coef(phase, 5.0);
+                float y = c0.x * x0 + c1.x * x1 + c2.x * x2 + c3.x * x3 + c4.x * x4 + c5.x * x5;
+                float usm = c0.y * x0 + c1.y * x1 + c2.y * x2 + c3.y * x3 + c4.y * x4 + c5.y * x5;
                 float yScale = 1.0 - clamp((y - uSharpStartY) * uSharpScaleY, 0.0, 1.0);
                 usm *= yScale * uSharpStrengthScale + uSharpStrengthMin;
                 float limit = (yScale * uSharpLimitScale + uSharpLimitMin) * y;
                 usm = min(limit, max(-limit, usm));
                 bool selector = phase <= 32.0;
-                float sel = selector ? px[0] : px[3];
-                float aCont = max(max(px[1], px[2]), sel) - min(min(px[1], px[2]), sel);
-                sel = selector ? px[2] : px[5];
-                float bCont = max(max(px[3], px[4]), sel) - min(min(px[3], px[4]), sel);
+                float sel = selector ? x0 : x3;
+                float aCont = max(max(x1, x2), sel) - min(min(x1, x2), sel);
+                sel = selector ? x2 : x5;
+                float bCont = max(max(x3, x4), sel) - min(min(x3, x4), sel);
                 float ratio = max(aCont, bCont) / (min(aCont, bCont) + 1.0 / 255.0);
                 usm *= 1.0 - clamp((ratio - uMinContrastRatio) * uRatioNorm, 0.0, 1.0);
                 return y + usm;
@@ -1986,83 +1989,120 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 float fy = srcY - floor(srcY);
                 float phaseX = floor(fx * 64.0);
                 float phaseY = floor(fy * 64.0);
-                float p[36];
-                for (int i = 0; i < 6; i++) {
-                    for (int j = 0; j < 6; j++) {
-                        p[i * 6 + j] = lumaAt(floor(srcX) - 2.0 + float(j), floor(srcY) - 2.0 + float(i));
-                    }
-                }
-                vec4 e[4];
-                float q[9];
-                for (int i = 0; i < 2; i++) {
-                    for (int j = 0; j < 2; j++) {
-                        for (int a = 0; a < 3; a++) {
-                            for (int b = 0; b < 3; b++) q[a * 3 + b] = p[(1 + i + a) * 6 + 1 + j + b];
-                        }
-                        e[i * 2 + j] = edgeMap(q);
-                    }
-                }
-                vec4 w = mix(mix(e[0], e[1], fx), mix(e[2], e[3], fx), fy);
+                float bx = floor(srcX) - 2.0;
+                float by = floor(srcY) - 2.0;
+                float p00 = lumaAt(bx + 0.0, by + 0.0);
+                float p01 = lumaAt(bx + 1.0, by + 0.0);
+                float p02 = lumaAt(bx + 2.0, by + 0.0);
+                float p03 = lumaAt(bx + 3.0, by + 0.0);
+                float p04 = lumaAt(bx + 4.0, by + 0.0);
+                float p05 = lumaAt(bx + 5.0, by + 0.0);
+                float p10 = lumaAt(bx + 0.0, by + 1.0);
+                float p11 = lumaAt(bx + 1.0, by + 1.0);
+                float p12 = lumaAt(bx + 2.0, by + 1.0);
+                float p13 = lumaAt(bx + 3.0, by + 1.0);
+                float p14 = lumaAt(bx + 4.0, by + 1.0);
+                float p15 = lumaAt(bx + 5.0, by + 1.0);
+                float p20 = lumaAt(bx + 0.0, by + 2.0);
+                float p21 = lumaAt(bx + 1.0, by + 2.0);
+                float p22 = lumaAt(bx + 2.0, by + 2.0);
+                float p23 = lumaAt(bx + 3.0, by + 2.0);
+                float p24 = lumaAt(bx + 4.0, by + 2.0);
+                float p25 = lumaAt(bx + 5.0, by + 2.0);
+                float p30 = lumaAt(bx + 0.0, by + 3.0);
+                float p31 = lumaAt(bx + 1.0, by + 3.0);
+                float p32 = lumaAt(bx + 2.0, by + 3.0);
+                float p33 = lumaAt(bx + 3.0, by + 3.0);
+                float p34 = lumaAt(bx + 4.0, by + 3.0);
+                float p35 = lumaAt(bx + 5.0, by + 3.0);
+                float p40 = lumaAt(bx + 0.0, by + 4.0);
+                float p41 = lumaAt(bx + 1.0, by + 4.0);
+                float p42 = lumaAt(bx + 2.0, by + 4.0);
+                float p43 = lumaAt(bx + 3.0, by + 4.0);
+                float p44 = lumaAt(bx + 4.0, by + 4.0);
+                float p45 = lumaAt(bx + 5.0, by + 4.0);
+                float p50 = lumaAt(bx + 0.0, by + 5.0);
+                float p51 = lumaAt(bx + 1.0, by + 5.0);
+                float p52 = lumaAt(bx + 2.0, by + 5.0);
+                float p53 = lumaAt(bx + 3.0, by + 5.0);
+                float p54 = lumaAt(bx + 4.0, by + 5.0);
+                float p55 = lumaAt(bx + 5.0, by + 5.0);
+                vec4 e00 = edgeMap(p11, p12, p13, p21, p22, p23, p31, p32, p33);
+                vec4 e01 = edgeMap(p12, p13, p14, p22, p23, p24, p32, p33, p34);
+                vec4 e10 = edgeMap(p21, p22, p23, p31, p32, p33, p41, p42, p43);
+                vec4 e11 = edgeMap(p22, p23, p24, p32, p33, p34, p42, p43, p44);
+                vec4 w = mix(mix(e00, e01, fx), mix(e10, e11, fx), fy);
                 float baseWeight = 1.0 - w.x - w.y - w.z - w.w;
                 // The scaling taps once per pixel, not once per use.
-                float cy[6];
-                float cx[6];
-                for (int i = 0; i < 6; i++) {
-                    cy[i] = coef(phaseY, i).x;
-                    cx[i] = coef(phaseX, i).x;
-                }
-                float normal = 0.0;
-                for (int j = 0; j < 6; j++) {
-                    float v = 0.0;
-                    for (int i = 0; i < 6; i++) v += p[i * 6 + j] * cy[i];
-                    normal += v * cx[j];
-                }
+                float cy0 = coef(phaseY, 0.0).x;
+                float cx0 = coef(phaseX, 0.0).x;
+                float cy1 = coef(phaseY, 1.0).x;
+                float cx1 = coef(phaseX, 1.0).x;
+                float cy2 = coef(phaseY, 2.0).x;
+                float cx2 = coef(phaseX, 2.0).x;
+                float cy3 = coef(phaseY, 3.0).x;
+                float cx3 = coef(phaseX, 3.0).x;
+                float cy4 = coef(phaseY, 4.0).x;
+                float cx4 = coef(phaseX, 4.0).x;
+                float cy5 = coef(phaseY, 5.0).x;
+                float cx5 = coef(phaseX, 5.0).x;
+                float v0 = p00 * cy0 + p10 * cy1 + p20 * cy2 + p30 * cy3 + p40 * cy4 + p50 * cy5;
+                float v1 = p01 * cy0 + p11 * cy1 + p21 * cy2 + p31 * cy3 + p41 * cy4 + p51 * cy5;
+                float v2 = p02 * cy0 + p12 * cy1 + p22 * cy2 + p32 * cy3 + p42 * cy4 + p52 * cy5;
+                float v3 = p03 * cy0 + p13 * cy1 + p23 * cy2 + p33 * cy3 + p43 * cy4 + p53 * cy5;
+                float v4 = p04 * cy0 + p14 * cy1 + p24 * cy2 + p34 * cy3 + p44 * cy4 + p54 * cy5;
+                float v5 = p05 * cy0 + p15 * cy1 + p25 * cy2 + p35 * cy3 + p45 * cy4 + p55 * cy5;
+                float normal = v0 * cx0 + v1 * cx1 + v2 * cx2 + v3 * cx3 + v4 * cx4 + v5 * cx5;
                 float opY = normal * baseWeight;
-                float t[7];
-                float d[6];
                 if (w.x > 0.0) {
-                    for (int i = 0; i < 6; i++) d[i] = mix(p[i * 6 + 2], p[i * 6 + 3], fx);
-                    opY += evalPoly6(d, phaseY) * w.x;
+                    opY += evalPoly6(
+                        mix(p02, p03, fx), mix(p12, p13, fx), mix(p22, p23, fx),
+                        mix(p32, p33, fx), mix(p42, p43, fx), mix(p52, p53, fx),
+                        phaseY) * w.x;
                 }
                 if (w.y > 0.0) {
-                    for (int i = 0; i < 6; i++) d[i] = mix(p[2 * 6 + i], p[3 * 6 + i], fy);
-                    opY += evalPoly6(d, phaseX) * w.y;
+                    opY += evalPoly6(
+                        mix(p20, p30, fy), mix(p21, p31, fy), mix(p22, p32, fy),
+                        mix(p23, p33, fy), mix(p24, p34, fy), mix(p25, p35, fy),
+                        phaseX) * w.y;
                 }
                 if (w.z > 0.0) {
                     float b45 = 0.5 + 0.5 * (fx - fy);
-                    t[1] = mix(p[2 * 6 + 1], p[1 * 6 + 2], b45);
-                    t[3] = mix(p[3 * 6 + 2], p[2 * 6 + 3], b45);
-                    t[5] = mix(p[4 * 6 + 3], p[3 * 6 + 4], b45);
+                    float t1 = mix(p21, p12, b45);
+                    float t3 = mix(p32, p23, b45);
+                    float t5 = mix(p43, p34, b45);
                     b45 -= 0.5;
                     bool up = b45 >= 0.0;
                     float k = abs(b45);
-                    t[0] = mix(p[1 * 6 + 1], up ? p[0 * 6 + 2] : p[2 * 6 + 0], k);
-                    t[2] = mix(p[2 * 6 + 2], up ? p[1 * 6 + 3] : p[3 * 6 + 1], k);
-                    t[4] = mix(p[3 * 6 + 3], up ? p[2 * 6 + 4] : p[4 * 6 + 2], k);
-                    t[6] = mix(p[4 * 6 + 4], up ? p[3 * 6 + 5] : p[5 * 6 + 3], k);
+                    float t0 = mix(p11, up ? p02 : p20, k);
+                    float t2 = mix(p22, up ? p13 : p31, k);
+                    float t4 = mix(p33, up ? p24 : p42, k);
+                    float t6 = mix(p44, up ? p35 : p53, k);
                     float p45 = fx + fy;
                     bool shift = p45 >= 1.0;
                     if (shift) p45 -= 1.0;
-                    for (int i = 0; i < 6; i++) d[i] = shift ? t[i + 1] : t[i];
-                    opY += evalPoly6(d, floor(p45 * 64.0)) * w.z;
+                    opY += (shift
+                        ? evalPoly6(t1, t2, t3, t4, t5, t6, floor(p45 * 64.0))
+                        : evalPoly6(t0, t1, t2, t3, t4, t5, floor(p45 * 64.0))) * w.z;
                 }
                 if (w.w > 0.0) {
                     float b135 = 0.5 * (fx + fy);
-                    t[1] = mix(p[3 * 6 + 1], p[4 * 6 + 2], b135);
-                    t[3] = mix(p[2 * 6 + 2], p[3 * 6 + 3], b135);
-                    t[5] = mix(p[1 * 6 + 3], p[2 * 6 + 4], b135);
+                    float t1 = mix(p31, p42, b135);
+                    float t3 = mix(p22, p33, b135);
+                    float t5 = mix(p13, p24, b135);
                     b135 -= 0.5;
                     bool up = b135 >= 0.0;
                     float k = abs(b135);
-                    t[0] = mix(p[4 * 6 + 1], up ? p[5 * 6 + 2] : p[3 * 6 + 0], k);
-                    t[2] = mix(p[3 * 6 + 2], up ? p[4 * 6 + 3] : p[2 * 6 + 1], k);
-                    t[4] = mix(p[2 * 6 + 3], up ? p[3 * 6 + 4] : p[1 * 6 + 2], k);
-                    t[6] = mix(p[1 * 6 + 4], up ? p[2 * 6 + 5] : p[0 * 6 + 3], k);
+                    float t0 = mix(p41, up ? p52 : p30, k);
+                    float t2 = mix(p32, up ? p43 : p21, k);
+                    float t4 = mix(p23, up ? p34 : p12, k);
+                    float t6 = mix(p14, up ? p25 : p03, k);
                     float p135 = 1.0 + (fx - fy);
                     bool shift = p135 >= 1.0;
                     if (shift) p135 -= 1.0;
-                    for (int i = 0; i < 6; i++) d[i] = shift ? t[i + 1] : t[i];
-                    opY += evalPoly6(d, floor(p135 * 64.0)) * w.w;
+                    opY += (shift
+                        ? evalPoly6(t1, t2, t3, t4, t5, t6, floor(p135 * 64.0))
+                        : evalPoly6(t0, t1, t2, t3, t4, t5, floor(p135 * 64.0))) * w.w;
                 }
                 vec3 c = texture2D(uTex, vec2(srcX + 0.5, uInSize.y - srcY - 0.5) / uInSize).rgb;
                 gl_FragColor = vec4(clamp(c + (opY - lumaOf(c)), 0.0, 1.0), 1.0);
