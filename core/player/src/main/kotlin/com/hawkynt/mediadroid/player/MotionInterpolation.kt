@@ -278,16 +278,16 @@ object MotionInterpolation {
     }
 
     /**
-     * vf_minterpolate.c `obmc_linear32`: the 32 × 32 weights for 16-pixel blocks, read from obmc-linear32.txt beside
-     * this class, a row a line.
+     * vf_minterpolate.c `obmc_linear32`, the 32 × 32 weights for 16-pixel blocks, row by row. FFmpeg writes it out
+     * as a table; it is a linear ramp times itself in steps of 4 — with a(i) = 2 · min(i, 31 − i) + 1, twice the
+     * distance from the window's edge to the middle of pixel i, a weight is 4 · round(a(x) · a(y) / 16), the same
+     * in all four quarters. The test holds it to FFmpeg's table.
      */
-    private val OBMC: IntArray = checkNotNull(MotionInterpolation::class.java.getResourceAsStream("obmc-linear32.txt"))
-        .bufferedReader().use { reader ->
-            reader.lineSequence().filterNot { it.startsWith("#") }.flatMap { it.trim().split(Regex(" +")) }
-                .filter { it.isNotEmpty() }.map { it.toInt() }.toList().toIntArray()
-        }
-        .also { check(it.size == BLOCK_WEIGHTS) { "obmc-linear32.txt holds ${it.size} weights, not $BLOCK_WEIGHTS" } }
+    private val OBMC = IntArray(OBMC_SIZE * OBMC_SIZE) { index ->
+        fun ramp(i: Int) = 2 * minOf(i, OBMC_SIZE - 1 - i) + 1
+        4 * ((ramp(index % OBMC_SIZE) * ramp(index / OBMC_SIZE) + 8) / 16)
+    }
 
-    /** 32 × 32. */
-    private const val BLOCK_WEIGHTS = 1024
+    /** The overlapped-block window's side: two 16-pixel blocks. */
+    private const val OBMC_SIZE = 32
 }

@@ -141,7 +141,8 @@ commit the captured expected output with a note saying what produced it.
 - Shaders live in files of their own, never in Kotlin strings: `app/src/main/glsl/<group>/<name>.vert|.frag|.agsl`,
   compiled in by the `shaderSources` task as `Shaders.<GROUP>_<NAME>` (`video/fsr-easu.frag` →
   `Shaders.VIDEO_FSR_EASU`); shared parts are `.glsl` files pulled in with `#include "name.glsl"`. Larger data — a
-  table copied from a reference, a request body — goes into a resource file beside its class, not into the source.
+  table copied from a reference, a request body — goes into a resource file beside its class, not into the source;
+  a table that follows a rule is computed from the rule instead, with the reference's table kept as the test's oracle.
 - Versions come from the build date, never git tags and never a commit count: `app/build.gradle.kts`
   computes `versionCode` as `YYYYMMDD` and `versionName` as `YYYY.MM.DD` from the day the build runs, so
   the number only ever moves forward and no tag feeds it. The repo-level marker is the same date:

@@ -97,4 +97,13 @@ class MotionInterpolationTest {
         assertEquals(0.25f, motion.weight(0.25f), 0f)
         assertEquals(1f, motion.weight(1.2f), 0f)
     }
+
+    @Test
+    fun `the overlapped-block weights are FFmpeg's obmc_linear32, every one`() {
+        // obmc-linear32.txt: the table as vf_minterpolate.c (FFmpeg 6.0) writes it out, a row a line.
+        val table = requireNotNull(javaClass.getResourceAsStream("/obmc-linear32.txt")).bufferedReader().readLines()
+            .filterNot { it.startsWith("#") }.flatMap { line -> line.trim().split(Regex(" +")).map { it.toInt() } }
+        assertEquals(1024, table.size)
+        assertArrayEquals(table.toIntArray(), IntArray(1024) { MotionInterpolation.obmcWeight(it) })
+    }
 }
