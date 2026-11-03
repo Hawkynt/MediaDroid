@@ -98,6 +98,16 @@ class PlaybackStatistics(private val capacity: Int = 240) {
         dropped++
     }
 
+    /**
+     * Playback stopped or jumped — a pause, a seek, buffering: the next picture starts the gaps afresh, so the time
+     * stopped counts as no frame time, while what was measured before stays.
+     */
+    @Synchronized
+    fun interrupted() {
+        lastArrival = null
+        lastShown = null
+    }
+
     /** Forgets everything, for a new video. */
     @Synchronized
     fun clear() {
