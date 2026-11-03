@@ -6,22 +6,22 @@ house standard; the "What this is" section is written for this project and the r
 
 ## What this is
 
-An Android media player: Kotlin, Jetpack Compose, Gradle (wrapper 9.6.0). It plays movies and shows
-straight from local storage — and, as the roadmap grows, from network shares (SMB, NFS, FTP/SFTP,
-WebDAV) and cloud folders — reading the Kodi-convention `.nfo` sidecars for titles, plots and art and
-`folder.jpg` / `poster.jpg` for covers — no media server, no account of ours, no re-scraping, no
-re-encoding. The
-Gradle modules are `:app` (the Compose app: onboarding, browse wall, details, search, filters,
-player with resume and binge) and four plain-JVM cores: `:core:imaging` (decoders for the picture formats
-Android cannot read: TIFF, TGA, PCX), `:core:nfo` (NFO XML parsing,
-the `SxxExx` / `NxNN` name convention, Kodi art discovery), `:core:library` (the folder scanner
-plus domain models, search / filter / group-by-decade) and `:core:player` (the binge queue). `:app` also ships
-`app/libs/lib-decoder-ffmpeg-release.aar` — the Media3 FFmpeg audio decoder extension (AC3/E-AC3/DTS/TrueHD on
-devices without them), built from androidx/media 1.11.1 with an LGPL-only FFmpeg; the recipe is in
-`tools/ffmpeg/README.md` and the attribution in `app/THIRD-PARTY-NOTICE.ffmpeg.txt`. The cores carry no Android
-dependency on purpose: the parsing, search and binge logic are pure and unit-tested without a device,
-and the screens sit on top of them. The bar is a household where nobody has to be taught the app —
-usable by a six-year-old and a grandparent, instant even on cheap hardware.
+An Android media player: Kotlin, Jetpack Compose, Gradle (wrapper 9.6.0). It plays movies and shows straight from local
+storage — and, as the roadmap grows, from network shares (SMB, NFS, FTP/SFTP, WebDAV) and cloud folders — reading the
+Kodi-convention `.nfo` sidecars for titles, plots and art and `folder.jpg` / `poster.jpg` for covers — no media server,
+no account of ours, no re-scraping, no re-encoding. The Gradle modules are `:app` (the Compose app: onboarding, browse
+wall, details, search, filters, player with resume and binge) and four plain-JVM cores: `:core:imaging` (decoders for
+the picture formats Android cannot read: TIFF, TGA, PCX), `:core:nfo` (NFO XML parsing, the `SxxExx` / `NxNN` name
+convention, Kodi art discovery), `:core:library` (the folder scanner plus domain models, search / filter /
+group-by-decade) and `:core:player` (the binge queue). `:app` also ships `app/libs/lib-decoder-ffmpeg-release.aar` — the
+Media3 FFmpeg audio decoder extension (AC3/E-AC3/DTS/TrueHD on devices without them), built from androidx/media 1.11.1
+with an LGPL-only FFmpeg; the recipe is in `tools/ffmpeg/README.md` and the attribution in
+`app/THIRD-PARTY-NOTICE.ffmpeg.txt`. `:app` also has a native part, `app/src/main/cpp` (CMake, NDK): the neural networks
+that run on ncnn — on the GPU through Vulkan or on the CPU — built against ncnn's prebuilt Android release, which the
+`ncnnPrebuilt` task fetches and checks against its digest; the attribution is in `app/THIRD-PARTY-NOTICE.ncnn.txt`. The
+cores carry no Android dependency on purpose: the parsing, search and binge logic are pure and unit-tested without a
+device, and the screens sit on top of them. The bar is a household where nobody has to be taught the app — usable by a
+six-year-old and a grandparent, instant even on cheap hardware.
 
 **The README is a forward-looking specification** — it is authoritative. The app is an early skeleton:
 the cores are built and tested, the UI is next. When code and spec disagree, the spec wins unless the
@@ -138,11 +138,12 @@ commit the captured expected output with a note saying what produced it.
   binge logic live in the cores; `:app` holds Compose screens and platform glue only. This is what keeps
   the fast tier device-free, and it is a rule, not a preference.
 - KDoc on public members; trailing commas where they read cleanly. No per-file licence headers in `.kt`.
-- Shaders live in files of their own, never in Kotlin strings: `app/src/main/glsl/<group>/<name>.vert|.frag|.agsl`,
-  compiled in by the `shaderSources` task as `Shaders.<GROUP>_<NAME>` (`video/fsr-easu.frag` →
-  `Shaders.VIDEO_FSR_EASU`); shared parts are `.glsl` files pulled in with `#include "name.glsl"`. Larger data — a
-  table copied from a reference, a request body — goes into a resource file beside its class, not into the source;
-  a table that follows a rule is computed from the rule instead, with the reference's table kept as the test's oracle.
+- Shaders live in files of their own, never in Kotlin strings: `app/src/main/glsl/<group>/<name>.vert|.frag|.agsl|.comp`
+  (`.comp`: an ncnn compute shader, handed to the native part), compiled in by the `shaderSources` task as
+  `Shaders.<GROUP>_<NAME>` (`video/fsr-easu.frag` → `Shaders.VIDEO_FSR_EASU`); shared parts are `.glsl` files pulled in
+  with `#include "name.glsl"`. Larger data — a table copied from a reference, a request body — goes into a resource file
+  beside its class, not into the source; a table that follows a rule is computed from the rule instead, with the
+  reference's table kept as the test's oracle.
 - Versions come from the build date, never git tags and never a commit count: `app/build.gradle.kts`
   computes `versionCode` as `YYYYMMDD` and `versionName` as `YYYY.MM.DD` from the day the build runs, so
   the number only ever moves forward and no tag feeds it. The repo-level marker is the same date:

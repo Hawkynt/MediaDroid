@@ -1074,7 +1074,7 @@ fun PlayerScreen(
             else -> it
         }.let { p ->
             // RIFE saved for a video plays without smooth motion once the household switched it off.
-            if (rifeSaved && !settings.neuralInterpolation) {
+            if (rifeSaved && !settings.neuralMotionReady) {
                 p.copy(interpolation = com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation.OFF)
             } else {
                 p
@@ -1136,13 +1136,15 @@ fun PlayerScreen(
             val active = stage
             active.statistics = if (statisticsShown) statistics else null
             active.appContext = context.applicationContext
-            active.neuralMotionUnit = if (settings.neuralInterpolation) {
+            active.neuralMotionUnit = if (settings.neuralMotionReady) {
                 runCatching {
                     com.hawkynt.mediadroid.player.NeuralUpscaler.Unit.valueOf(settings.neuralInterpolationUnit)
                 }.getOrNull()
             } else {
                 null
             }
+            active.neuralMotionTimes =
+                com.hawkynt.mediadroid.player.NeuralInterpolation.decode(settings.neuralInterpolationTimes)
             active.neuralUnit = if (settings.neuralUpscaling) {
                 runCatching {
                     com.hawkynt.mediadroid.player.NeuralUpscaler.Unit.valueOf(settings.neuralUnit)
@@ -1506,7 +1508,7 @@ fun PlayerScreen(
                 onPicture = { picture = it },
                 onPictureDone = { store.savePicture(queue[index].videoPath, picture) },
                 neural = settings.neuralUpscaling,
-                neuralMotion = settings.neuralInterpolation,
+                neuralMotion = settings.neuralMotionReady,
                 onResetPicture = {
                     store.savePicture(queue[index].videoPath, null)
                     picture = store.pictureFor(queue[index].videoPath)
