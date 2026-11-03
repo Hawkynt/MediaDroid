@@ -33,6 +33,8 @@ fun PictureSliders(
     modifier: Modifier = Modifier,
     /** Offer one eye of a 3D video; a choice for one video, not a household default. */
     stereo: Boolean = false,
+    /** Offer Real-ESRGAN: the household's self-test found the device fast enough (see NeuralUpscaling). */
+    neural: Boolean = false,
 ) {
     Column(modifier = modifier) {
         PictureControl.entries.forEach { control ->
@@ -117,7 +119,9 @@ fun PictureSliders(
         }
         Text("Upscaling", fontSize = 16.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PictureAdjustment.Upscaler.entries.forEach { upscaler ->
+            PictureAdjustment.Upscaler.entries.filter {
+                it != PictureAdjustment.Upscaler.NEURAL || neural || picture.upscaler == it
+            }.forEach { upscaler ->
                 FilterChip(
                     selected = picture.upscaler == upscaler,
                     onClick = {

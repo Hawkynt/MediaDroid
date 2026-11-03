@@ -33,6 +33,11 @@ android {
         compose = true
     }
 
+    // The neural upscaler's model is mapped straight from the APK, which needs it stored uncompressed.
+    androidResources {
+        noCompress += "tflite"
+    }
+
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
@@ -151,6 +156,10 @@ dependencies {
     // build of it (buildnonlgpl.sh passes the GPL one, for your own device only) without touching this file.
     implementation(files(providers.gradleProperty("ffmpegAar").getOrElse("libs/lib-decoder-ffmpeg-release.aar")))
     implementation(libs.coil.compose)
+    // Neural upscaling (Real-ESRGAN, see NeuralUpscaler): TensorFlow Lite with its GPU and NNAPI back-ends.
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.16.1")
     implementation(libs.serialization.json)
     debugImplementation(libs.compose.ui.tooling)
 

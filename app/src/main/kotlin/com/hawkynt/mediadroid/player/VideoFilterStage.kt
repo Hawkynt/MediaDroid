@@ -80,6 +80,22 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val xbrzPrograms = IntArray(3)
     private var xbrzTable = 0
     private var xbrzReady = false
+
+    // Real-ESRGAN (see NeuralUpscaler): opened on this thread on the unit the household's self-test chose, the
+    // picture read back for its tiles, and the RGB texture at four times the size their output goes into.
+    private var neural: NeuralUpscaler? = null
+    private var neuralRead: ByteBuffer? = null
+    private var neuralTexture = 0
+    private var neuralTextureWidth = 0
+    private var neuralTextureHeight = 0
+
+    /** Where Real-ESRGAN runs, from the household's self-test; null while neural upscaling is off. */
+    @Volatile
+    var neuralUnit: NeuralUpscaler.Unit? = null
+
+    /** The application, to open Real-ESRGAN's model from. */
+    @Volatile
+    var appContext: android.content.Context? = null
     private var yuvInput = false
     private val yuvColor = FloatArray(9)
     private var yuvChroma = 1f
@@ -419,6 +435,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             releaseWindow()
             GLES20.glDeleteProgram(copyProgram)
             GLES20.glDeleteProgram(adjustProgram)
+            neural?.close()
+            neural = null
+            if (neuralTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(neuralTexture), 0)
             GLES20.glDeleteProgram(deinterlaceProgram)
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(sharpenProgram)
@@ -1455,6 +1474,19 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
                 }
+            } else if (picture.upscaler == PictureAdjustment.Upscaler.NEURAL && es3 && neuralNet() != null) {
+                // Real-ESRGAN: four times the picture's size, tile by tile (see neuralPass), and the screen's own
+                // scaling for whatever is left.
+                val enlarged = neuralPass(source, width, height)
+                toScreen(outWidth, outHeight, adjusting)
+                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged, identity) { p ->
+                    val scale = NeuralUpscaling.SCALE
+                    GLES20.glUniform2f(
+                        GLES20.glGetUniformLocation(p, "uTexel"), 1f / (width * scale), 1f / (height * scale),
+                    )
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
+                }
             } else {
                 // FSR 1: edge-adaptive upscaling to the screen's size, then contrast-adaptive sharpening on it.
                 val enlarged = frames[4].ensure(outWidth, outHeight)
@@ -1518,6 +1550,73 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         return ids[0]
+    }
+
+    /** Real-ESRGAN on the unit asked for, opened here on first use or when the unit changes; null while off. */
+    private fun neuralNet(): NeuralUpscaler? {
+        val unit = neuralUnit
+        if (unit == null) {
+            neural?.close()
+            neural = null
+            return null
+        }
+        if (neural?.unit != unit) {
+            neural?.close()
+            neural = appContext?.let { NeuralUpscaler.open(it, unit) }
+        }
+        return neural
+    }
+
+    /**
+     * Real-ESRGAN over [source] ([width] × [height]): the picture read back, every tile through the network, and
+     * each tile's core uploaded straight from its output into an RGB texture four times the size — the unpack
+     * offsets pick the core out, so no copy goes through the processor. Returns that texture.
+     */
+    private fun neuralPass(source: Frame, width: Int, height: Int): Int {
+        val net = neural!!
+        val scale = NeuralUpscaling.SCALE
+        source.bind()
+        val bytes = width * height * 4
+        val read = neuralRead?.takeIf { it.capacity() == bytes }
+            ?: ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder()).also { neuralRead = it }
+        read.rewind()
+        GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, read)
+        val outWidth = width * scale
+        val outHeight = height * scale
+        if (neuralTexture == 0 || neuralTextureWidth != outWidth || neuralTextureHeight != outHeight) {
+            if (neuralTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(neuralTexture), 0)
+            val ids = IntArray(1)
+            GLES20.glGenTextures(1, ids, 0)
+            neuralTexture = ids[0]
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, neuralTexture)
+            GLES20.glTexImage2D(
+                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGB, outWidth, outHeight, 0, GLES20.GL_RGB,
+                GLES20.GL_UNSIGNED_BYTE, null,
+            )
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+            neuralTextureWidth = outWidth
+            neuralTextureHeight = outHeight
+        }
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, neuralTexture)
+        GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
+        GLES20.glPixelStorei(GLES30.GL_UNPACK_ROW_LENGTH, NeuralUpscaling.TILE * scale)
+        for (tile in NeuralUpscaling.tiles(width, height)) {
+            val rgb = net.run(read, width, height, tile)
+            GLES20.glPixelStorei(GLES30.GL_UNPACK_SKIP_PIXELS, (tile.coreX - tile.x) * scale)
+            GLES20.glPixelStorei(GLES30.GL_UNPACK_SKIP_ROWS, (tile.coreY - tile.y) * scale)
+            GLES20.glTexSubImage2D(
+                GLES20.GL_TEXTURE_2D, 0, tile.coreX * scale, tile.coreY * scale,
+                tile.coreWidth * scale, tile.coreHeight * scale, GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, rgb,
+            )
+        }
+        GLES20.glPixelStorei(GLES30.GL_UNPACK_ROW_LENGTH, 0)
+        GLES20.glPixelStorei(GLES30.GL_UNPACK_SKIP_PIXELS, 0)
+        GLES20.glPixelStorei(GLES30.GL_UNPACK_SKIP_ROWS, 0)
+        GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 4)
+        return neuralTexture
     }
 
     /**

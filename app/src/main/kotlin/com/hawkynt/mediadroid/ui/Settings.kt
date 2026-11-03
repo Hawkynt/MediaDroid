@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.data.Settings
+import kotlinx.coroutines.launch
 import com.hawkynt.mediadroid.data.StateStore
 
 /** The four digits spoken as words — a child who cannot read cannot enter them. */
@@ -350,7 +351,9 @@ fun SettingsScreen(
                     it.upscalerStrength = defaultPicture.upscalerStrength
                 }
             },
+            neural = settings.neuralUpscaling,
         )
+        NeuralUpscalingSetting(settings, update = { block -> update(block) })
 
         Spacer(Modifier.height(16.dp))
         Text("Languages", fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -512,5 +515,68 @@ private fun SliderRow(
         Text(label, fontSize = 18.sp, modifier = Modifier.width(120.dp))
         Slider(value = value, onValueChange = onValueChange, valueRange = range, modifier = Modifier.weight(1f))
         Text(valueText, fontSize = 16.sp, modifier = Modifier.width(64.dp))
+    }
+}
+
+/**
+ * Neural upscaling: switching it on runs the self-test (see NeuralUpscaler.selfTest) — a 576p picture through
+ * Real-ESRGAN on every unit of the device — and it stays on only where one keeps up with playback; otherwise it
+ * switches itself off again and says how long the device took.
+ */
+@Composable
+private fun NeuralUpscalingSetting(settings: Settings, update: ((Settings) -> Unit) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var testing by remember { mutableStateOf(false) }
+    var tooSlow by remember { mutableStateOf<String?>(null) }
+    val budget = com.hawkynt.mediadroid.player.NeuralUpscaling.BUDGET_MS.toInt()
+    SwitchRow(
+        label = "Neural upscaling (Real-ESRGAN)",
+        detail = when {
+            testing -> "Testing this device…"
+            settings.neuralUpscaling ->
+                "On, on this device's ${settings.neuralUnit}: a 576p picture takes ${settings.neuralMs.toInt()} ms. " +
+                    "Real-ESRGAN is offered as an upscaler in the player's gear."
+            else -> "A neural network enlarges small pictures with fine detail. Switching it on tests whether this " +
+                "device is fast enough: a 576p picture within $budget ms."
+        },
+        checked = settings.neuralUpscaling || testing,
+        onChange = { on ->
+            if (!on) {
+                update { it.neuralUpscaling = false }
+            } else if (!testing) {
+                testing = true
+                scope.launch {
+                    val results = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                        com.hawkynt.mediadroid.player.NeuralUpscaler.selfTest(context.applicationContext)
+                    }
+                    testing = false
+                    val best = results.firstOrNull()
+                    if (best != null && com.hawkynt.mediadroid.player.NeuralUpscaling.fastEnough(best.second)) {
+                        update {
+                            it.neuralUpscaling = true
+                            it.neuralUnit = best.first.name
+                            it.neuralMs = best.second.toFloat()
+                        }
+                    } else {
+                        update { it.neuralUpscaling = false }
+                        tooSlow = if (best == null) {
+                            "This device cannot run the network at all."
+                        } else {
+                            "This device is too slow: a 576p picture takes ${best.second.toInt()} ms on its fastest " +
+                                "unit (${best.first}), and playback allows $budget ms. Neural upscaling stays off."
+                        }
+                    }
+                }
+            }
+        },
+    )
+    tooSlow?.let { message ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { tooSlow = null },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { tooSlow = null }) { Text("OK") } },
+            title = { Text("Neural upscaling stays off") },
+            text = { Text(message) },
+        )
     }
 }

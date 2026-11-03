@@ -86,6 +86,9 @@ data class Settings(
     var audioLanguage: String = "",
     var maxAgeYears: Int = 0,                 // 0 = off, else hide content above
     var hideUnrated: Boolean = false,         // with an age limit, hide content with no certification too
+    var neuralUpscaling: Boolean = false,     // Real-ESRGAN offered as an upscaler; on only once the self-test passed
+    var neuralUnit: String = "",              // where the self-test found it fastest: NPU, GPU or CPU
+    var neuralMs: Float = 0f,                 // what one 576p picture took there in the self-test
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
     var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout
