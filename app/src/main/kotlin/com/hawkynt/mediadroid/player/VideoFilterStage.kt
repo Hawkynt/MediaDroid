@@ -161,6 +161,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // Motion the two before, a frame later, which leaves the motion search a whole frame's time.
     private val keptRing = intArrayOf(5, 6, KEPT_THIRD)
     private val keptAt = LongArray(3)
+
+    // Blending's steady timeline (see BlendTimeline): every kept frame's steady time, oldest first as keptAt.
+    private val blendTimeline = BlendTimeline()
+    private val keptSteady = LongArray(3)
     private var kept = 0
     private var blending = false
     private val vsync by lazy { android.view.Choreographer.getInstance() }
@@ -1076,6 +1080,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         keptRing[2] = oldest
         keptAt[0] = keptAt[1]
         keptAt[1] = keptAt[2]
+        keptSteady[0] = keptSteady[1]
+        keptSteady[1] = keptSteady[2]
         val target = frames[keptRing[2]].ensure(keptWidth, keptHeight)
         target.bind()
         run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
@@ -1084,6 +1090,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), picture.clarity)
         }
         keptAt[2] = System.nanoTime()
+        keptSteady[2] = blendTimeline.arrived(keptAt[2])
         kept = minOf(kept + 1, 3)
         val motion = picture.interpolation.isMotionCompensated
         if (motion) searchMotion(keptWidth, keptHeight) else motionLumas.fill(null)
@@ -1093,9 +1100,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             latencyMs = if (motion) {
                 (intervalMs * 2).toInt().coerceIn(0, MAX_MOTION_LATENCY_MS)
             } else {
-                (intervalMs / 2).toInt().coerceIn(0, MAX_LATENCY_MS)
+                // A frame and a quarter behind on the timeline, the mix centred half a frame before that.
+                val behindNs = blendTimeline.delayNs - blendTimeline.intervalNs / 2
+                (behindNs / 1_000_000L).toInt().coerceIn(0, MAX_LATENCY_MS)
             } + deinterlaceLatencyMs
-            latencyFrames = (if (motion) 2f else 0.5f) + deinterlaceFrames
+            latencyFrames = (if (motion) 2f else 0.75f) + deinterlaceFrames
         }
     }
 
@@ -1198,14 +1207,31 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             return
         }
         val motion = picture.interpolation.isMotionCompensated && kept == 3
-        // The pair shown: the two before the newest with Motion, otherwise the newest two.
-        val later = if (motion) 1 else 2
+        // The pair shown: with Motion the two before the newest, by the newest's arrival; when blending, the two
+        // around the point on the steady timeline the picture has reached (see BlendTimeline).
+        val oldestKept = 3 - kept
+        val (earlier, blendPhase) = if (!picture.interpolation.isMotionCompensated && kept >= 2) {
+            blendTimeline.position(frameTimeNanos, keptSteady.copyOfRange(oldestKept, 3))
+        } else {
+            0 to 1f
+        }
+        val later = when {
+            motion -> 1
+            picture.interpolation.isMotionCompensated || kept < 2 -> 2
+            else -> oldestKept + earlier + 1
+        }
         val current = keptRing[later]
         val previous = keptRing[if (kept >= 2) later - 1 else later]
         val width = frames[current].width
         val height = frames[current].height
         val interval = (keptAt[2] - keptAt[1]).takeIf { kept >= 2 && it > 0 } ?: 1L
-        val phase = (frameTimeNanos - keptAt[2]).toFloat() / interval
+        val phase = if (picture.interpolation.isMotionCompensated) {
+            (frameTimeNanos - keptAt[2]).toFloat() / interval
+        } else {
+            blendPhase
+        }
+        // Blending goes on while a later frame is to come into the mix; it waits only past the newest, whole.
+        val waiting = !picture.interpolation.isMotionCompensated && later == 2 && blendPhase >= 1f
         var weight = if (kept < 2) 1f else picture.interpolation.weight(phase)
         // Motion along the vectors once they are in for this pair; a cut switches half-way, as FFmpeg's does,
         // and without vectors the earlier frame stays until the later one is due.
@@ -1253,7 +1279,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             lastBlend = blendKey
             statistics?.pictureShown(frameTimeNanos)
         }
-        if (weight < 1f) startBlending()
+        if (picture.interpolation.isMotionCompensated) {
+            if (weight < 1f) startBlending()
+        } else if (!waiting) {
+            startBlending()
+        }
     }
 
     /** Steps 4 and 5: sharpness and clarity, and the picture onto the screen, enlarged as chosen. */
