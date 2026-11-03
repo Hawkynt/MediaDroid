@@ -1,7 +1,9 @@
 # RIFE for TensorFlow Lite
 
 How `app/src/main/assets/models/rife-4.25-lite-576p.tflite` is made from RIFE 4.25 lite
-([Practical-RIFE](https://github.com/hzwer/Practical-RIFE), MIT; its models under the same licence).
+([Practical-RIFE](https://github.com/hzwer/Practical-RIFE), MIT; its models under the same licence). The converted
+files — this TensorFlow Lite one and the ONNX before it — are also published, with these scripts, for others to use:
+[Hawkynt/mediadroid-models](https://huggingface.co/Hawkynt/mediadroid-models).
 
 1. A Python 3.12 environment with `torch==2.5.1+cpu`, `numpy<2`, `onnx==1.17.0`, `tensorflow-cpu==2.18.0`,
    `tf-keras==2.18.0`, `onnx2tf==1.26.3`, `onnx-graphsurgeon`, `sng4onnx`, `psutil`, `onnxslim==0.1.48`.
