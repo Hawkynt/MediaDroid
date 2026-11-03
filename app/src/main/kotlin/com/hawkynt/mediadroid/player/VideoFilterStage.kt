@@ -97,15 +97,21 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     @Volatile
     var neuralMotionUnit: NeuralUpscaler.Unit? = null
 
-    // RIFE (see NeuralInterpolator): opened on this thread, the two frames read back at its size, and the last two
-    // in-betweens with the later frame of the pair each belongs to (by its arrival, as keptAt holds it).
+    /**
+     * What RIFE took there in the self-test, per tested size by its height: the in-betweens are made at the
+     * material's size, or as large as the device keeps up with (see NeuralInterpolation.workingSize).
+     */
+    @Volatile
+    var neuralMotionTimes: Map<Int, Double> = emptyMap()
+
+    // RIFE (see NeuralInterpolator): opened on this thread, the two frames read back at the working size, and the
+    // last two in-betweens (at rifeSize) with the later frame of the pair each belongs to (by its arrival, as keptAt
+    // holds it).
     private var rife: NeuralInterpolator? = null
-    private val rifeRead = Array(2) {
-        ByteBuffer.allocateDirect(NeuralInterpolation.WIDTH * NeuralInterpolation.HEIGHT * 4)
-            .order(ByteOrder.nativeOrder())
-    }
+    private val rifeRead = arrayOf(ByteBuffer.allocateDirect(0), ByteBuffer.allocateDirect(0))
     private val rifeTextures = IntArray(2)
     private val rifeFor = LongArray(2)
+    private var rifeSize = NeuralInterpolation.Size(0, 0)
 
     /** The application, to open Real-ESRGAN's model from. */
     @Volatile
@@ -452,6 +458,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             rife?.close()
             rife = null
             if (rifeTextures[0] != 0) GLES20.glDeleteTextures(2, rifeTextures, 0)
+            rifeTextures.fill(0)
+            rifeSize = NeuralInterpolation.Size(0, 0)
             neural?.close()
             neural = null
             if (neuralTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(neuralTexture), 0)
@@ -1139,7 +1147,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         keptAt[2] = System.nanoTime()
         keptSteady[2] = blendTimeline.arrived(keptAt[2])
         kept = minOf(kept + 1, 3)
-        if (picture.interpolation.isNeural && kept >= 2) rifeBetween(frames[keptRing[1]], frames[keptRing[2]])
+        if (picture.interpolation.isNeural && kept >= 2) {
+            rifeBetween(frames[keptRing[1]], frames[keptRing[2]], keptWidth, keptHeight)
+        }
         val motion = picture.interpolation.isMotionCompensated
         if (motion) searchMotion(keptWidth, keptHeight) else motionLumas.fill(null)
         // Blending runs half a frame behind, Motion two frames; the sound is told to wait as long.
@@ -1595,13 +1605,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
-     * RIFE's in-between of [earlier] and [later]: both brought to its size and read back, the network run, and the
-     * result uploaded into the in-between texture not holding the pair before, marked with the later frame.
+     * RIFE's in-between of [earlier] and [later] ([frameWidth] × [frameHeight]): both brought to the working size and
+     * read back, the network run, and the result uploaded into the in-between texture not holding the pair before,
+     * marked with the later frame. Nothing where the device keeps up with no size for this material.
      */
-    private fun rifeBetween(earlier: Frame, later: Frame) {
+    private fun rifeBetween(earlier: Frame, later: Frame, frameWidth: Int, frameHeight: Int) {
         val net = rifeNet() ?: return
-        val w = NeuralInterpolation.WIDTH
-        val h = NeuralInterpolation.HEIGHT
+        val size = NeuralInterpolation.workingSize(frameWidth, frameHeight, neuralMotionTimes) ?: return
+        val w = size.width
+        val h = size.height
         val target = frames[RIFE_INPUT].ensure(w, h)
         listOf(earlier, later).forEachIndexed { i, frame ->
             target.bind()
@@ -1610,13 +1622,17 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
             }
+            if (rifeRead[i].capacity() < w * h * 4) {
+                rifeRead[i] = ByteBuffer.allocateDirect(w * h * 4).order(ByteOrder.nativeOrder())
+            }
             rifeRead[i].rewind()
             GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, rifeRead[i])
             rifeRead[i].rewind()
         }
-        val rgb = net.run(rifeRead[0], rifeRead[1])
-        if (rifeTextures[0] == 0) {
-            GLES20.glGenTextures(2, rifeTextures, 0)
+        val rgb = net.run(rifeRead[0], rifeRead[1], w, h) ?: return
+        if (rifeTextures[0] == 0) GLES20.glGenTextures(2, rifeTextures, 0)
+        if (size != rifeSize) {
+            // A new size (other material, or the first): both in-betweens anew, neither holding a pair yet.
             rifeTextures.forEach {
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, it)
                 GLES20.glTexImage2D(
@@ -1627,6 +1643,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
             }
+            rifeFor.fill(0L)
+            rifeSize = size
         }
         // Into the slot of the older pair: the newer one may still be on screen.
         val slot = if (rifeFor[0] <= rifeFor[1]) 0 else 1
@@ -1940,7 +1958,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** The picture at the screen's size before the colour correction, when one is set. */
         private const val ADJUSTED = XBRZ_DECISIONS + 1
 
-        /** A frame brought to RIFE's size, to read back for it. */
+        /** A frame brought to RIFE's working size, to read back for it. */
         private const val RIFE_INPUT = ADJUSTED + 1
 
         /** Width of xBRZ's pattern table, one texel a cell of the largest block — as glsl/xbrz/scale.frag reads it. */

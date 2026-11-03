@@ -352,7 +352,7 @@ fun SettingsScreen(
                 }
             },
             neural = settings.neuralUpscaling,
-            neuralMotion = settings.neuralInterpolation,
+            neuralMotion = settings.neuralMotionReady,
         )
         NeuralUpscalingSetting(settings, update = { block -> update(block) })
 
@@ -549,25 +549,37 @@ private fun NeuralUpscalingSetting(settings: Settings, update: ((Settings) -> Un
         },
         onOff = { update { it.neuralUpscaling = false } },
     )
+    // RIFE's self-test times each size (see NeuralInterpolator.selfTest); the switch judges the smallest, and what
+    // the fastest unit took per size is kept for the player to pick the working size from.
+    var timings by remember { mutableStateOf(emptyList<com.hawkynt.mediadroid.player.NeuralInterpolator.Timing>()) }
+    val times = com.hawkynt.mediadroid.player.NeuralInterpolation.decode(settings.neuralInterpolationTimes)
+    val upTo = times.filterValues { com.hawkynt.mediadroid.player.NeuralInterpolation.fastEnough(it) }.keys.maxOrNull()
     SelfTestedSwitch(
         label = "Neural frame interpolation (RIFE)",
         idle = "A neural network builds the picture between two frames along the motion, doubling the frame rate. " +
-            "Switching it on tests whether this device is fast enough: a 576p in-between within " +
-            "${com.hawkynt.mediadroid.player.NeuralInterpolation.BUDGET_MS.toInt()} ms.",
-        on = if (settings.neuralInterpolation) {
-            "On, on this device's ${settings.neuralInterpolationUnit}: a 576p in-between takes " +
-                "${settings.neuralInterpolationMs.toInt()} ms. RIFE is offered under smooth motion in the player's gear."
+            "Switching it on tests whether this device is fast enough: an in-between within " +
+            "${com.hawkynt.mediadroid.player.NeuralInterpolation.BUDGET_MS.toInt()} ms, from 480p up to 1080p.",
+        on = if (settings.neuralMotionReady) {
+            "On, on this device's ${settings.neuralInterpolationUnit}: an in-between takes " +
+                times.entries.joinToString(", ") { (height, ms) -> "${ms.toInt()} ms at ${height}p" } + ". " +
+                "Material up to ${upTo}p is interpolated at its own size, larger material made smaller for it. " +
+                "RIFE is offered under smooth motion in the player's gear."
         } else {
             null
         },
-        what = "a 576p in-between",
+        what = "a 480p in-between",
         budgetMs = com.hawkynt.mediadroid.player.NeuralInterpolation.BUDGET_MS,
-        test = { com.hawkynt.mediadroid.player.NeuralInterpolator.selfTest(it) },
-        onPassed = { unit, ms ->
+        test = { context ->
+            com.hawkynt.mediadroid.player.NeuralInterpolator.selfTest(context)
+                .also { timings = it }
+                .map { it.unit to it.msByHeight.values.first() }
+        },
+        onPassed = { unit, _ ->
+            val measured = timings.first { it.unit == unit }.msByHeight
             update {
                 it.neuralInterpolation = true
                 it.neuralInterpolationUnit = unit.name
-                it.neuralInterpolationMs = ms.toFloat()
+                it.neuralInterpolationTimes = com.hawkynt.mediadroid.player.NeuralInterpolation.encode(measured)
             }
         },
         onOff = { update { it.neuralInterpolation = false } },

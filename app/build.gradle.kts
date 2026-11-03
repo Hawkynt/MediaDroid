@@ -1,4 +1,7 @@
+import java.net.URI
+import java.security.MessageDigest
 import java.time.LocalDate
+import javax.inject.Inject
 
 plugins {
     alias(libs.plugins.android.application)
@@ -6,6 +9,10 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.roborazzi)
 }
+
+// ncnn (Tencent, BSD-3-Clause): the prebuilt Android release the native part builds against, fetched by ncnnPrebuilt.
+val ncnnVersion = "20261020"
+val ncnnRoot = layout.buildDirectory.dir("ncnn/$ncnnVersion")
 
 android {
     // BouncyCastle's modules (for SMB and SFTP) each carry the same licence file; one copy is kept.
@@ -16,6 +23,7 @@ android {
     }
     namespace = "com.hawkynt.mediadroid"
     compileSdk = 37
+    ndkVersion = "30.0.16248370"
 
     defaultConfig {
         applicationId = "com.hawkynt.mediadroid"
@@ -27,6 +35,24 @@ android {
         val today = LocalDate.now()
         versionCode = today.year * 10000 + today.monthValue * 100 + today.dayOfMonth
         versionName = "%04d.%02d.%02d".format(today.year, today.monthValue, today.dayOfMonth)
+
+        // The native part (src/main/cpp: neural networks on ncnn) for every ABI ncnn's release has and Android uses.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+        }
+        externalNativeBuild {
+            cmake {
+                arguments += "-DNCNN_ROOT=${ncnnRoot.get().asFile.absolutePath}"
+                arguments += "-DANDROID_STL=c++_static"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildFeatures {
@@ -44,7 +70,57 @@ android {
 }
 
 /**
- * The shaders under src/main/glsl compiled in: one Kotlin string constant per `.vert`, `.frag` or `.agsl` file, named
+ * ncnn's prebuilt Android release, downloaded once into the build directory and checked against its digest before it
+ * is unpacked (the archive's top folder dropped), for the CMake build of src/main/cpp.
+ */
+abstract class NcnnPrebuilt : DefaultTask() {
+    @get:Input
+    abstract val url: Property<String>
+
+    @get:Input
+    abstract val sha256: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @get:Inject
+    abstract val archives: ArchiveOperations
+
+    @get:Inject
+    abstract val files: FileSystemOperations
+
+    @TaskAction
+    fun fetch() {
+        val zip = File(temporaryDir, "ncnn.zip")
+        URI(url.get()).toURL().openStream().use { input -> zip.outputStream().use { input.copyTo(it) } }
+        val digest = MessageDigest.getInstance("SHA-256").digest(zip.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        check(digest == sha256.get()) { "ncnn's archive has the digest $digest, not ${sha256.get()}" }
+        val target = outputDir.get().asFile
+        files.delete { delete(target) }
+        files.copy {
+            from(archives.zipTree(zip))
+            into(target)
+            eachFile { path = path.substringAfter('/') }
+            includeEmptyDirs = false
+        }
+        zip.delete()
+    }
+}
+
+val ncnnPrebuilt = tasks.register<NcnnPrebuilt>("ncnnPrebuilt") {
+    url.set("https://github.com/Tencent/ncnn/releases/download/$ncnnVersion/ncnn-$ncnnVersion-android-vulkan.zip")
+    sha256.set("6e0c5f9b397faf32b923de2ef6210af9bf375851869dceff06a8005331981086")
+    outputDir.set(ncnnRoot)
+}
+
+tasks.configureEach {
+    if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) dependsOn(ncnnPrebuilt)
+}
+
+/**
+ * The shaders under src/main/glsl compiled in: one Kotlin string constant per `.vert`, `.frag`, `.agsl` or `.comp`
+ * (an ncnn compute shader, handed to the native part) file, named
  * after its path (`video/fsr-easu.frag` → `Shaders.VIDEO_FSR_EASU`), in the generated object
  * `com.hawkynt.mediadroid.shaders.Shaders`. A line `#include "name.glsl"` is replaced by that file, beside the
  * shader; `.glsl` files are such shared parts only and get no constant of their own.
@@ -81,7 +157,7 @@ abstract class ShaderSources : DefaultTask() {
             append('"')
         }
         val shaders = root.walkTopDown()
-            .filter { it.isFile && it.extension in setOf("vert", "frag", "agsl") }
+            .filter { it.isFile && it.extension in setOf("vert", "frag", "agsl", "comp") }
             .sortedBy { it.relativeTo(root).invariantSeparatorsPath }
         val out = outputDir.get().asFile.resolve("com/hawkynt/mediadroid/shaders/Shaders.kt")
         out.parentFile.mkdirs()

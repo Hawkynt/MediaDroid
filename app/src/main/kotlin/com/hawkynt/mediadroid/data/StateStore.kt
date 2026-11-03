@@ -90,8 +90,8 @@ data class Settings(
     var neuralUnit: String = "",              // where the self-test found it fastest: NPU, GPU or CPU
     var neuralMs: Float = 0f,                 // what one 576p picture took there in the self-test
     var neuralInterpolation: Boolean = false, // RIFE offered for smooth motion; on only once its self-test passed
-    var neuralInterpolationUnit: String = "", // where its self-test found it fastest: NPU, GPU or CPU
-    var neuralInterpolationMs: Float = 0f,    // what one 576p in-between took there in the self-test
+    var neuralInterpolationUnit: String = "", // where its self-test found it fastest: GPU or CPU
+    var neuralInterpolationTimes: String = "", // what an in-between took there per tested size: "480=12.5;576=…"
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
     var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout
@@ -101,7 +101,13 @@ data class Settings(
     var bufferValue: Float = 5f,              // in bufferUnit
     var downscaler: String = "BILINEAR",     // Downscaler name: how video larger than 1080p is brought down
     var softwareVideoDecoding: Boolean = false, // FFmpeg before the device's decoders: last resort, drains the battery
-)
+) {
+    /**
+     * RIFE is on and its self-test measured this device — a switch left on from before the measurements per size
+     * counts as off until it is tested again.
+     */
+    val neuralMotionReady: Boolean get() = neuralInterpolation && neuralInterpolationTimes.isNotEmpty()
+}
 
 @Serializable
 data class AppData(
