@@ -973,6 +973,7 @@ fun PlayerScreen(
         val display = externalDisplay
         if (onSecondScreen && display != null) {
             presentation = VideoPresentation(context, display, player).also { it.show() }
+            darkPhone.secondScreen(true)
             PlayerWindow.elsewhere = true
             PlayerWindow.displayRefreshHz = display.refreshRate
             com.hawkynt.mediadroid.player.PlaybackService.start(context)
@@ -999,6 +1000,16 @@ fun PlayerScreen(
                 playerView?.player = null
                 playerView?.player = queuePlayer
             }
+        }
+    }
+
+    // With the film on the other screen the phone goes dark by itself once the controls hide — black and empty
+    // at the lowest brightness, nothing left on it to burn in — until a touch lights it up again.
+    val filmElsewhere = presentation?.isShowing == true
+    LaunchedEffect(controlsVisible, panelOpen, filmElsewhere, askingToLock) {
+        if (filmElsewhere && !controlsVisible && !panelOpen && !askingToLock) {
+            darkPhone.controlsHidden()
+            if (darkPhone.dark) phoneDark = true
         }
     }
 
@@ -1249,12 +1260,6 @@ fun PlayerScreen(
 
         presentation?.let { shown ->
             if (shown.isShowing) shown.playerView.applyVideoLook(fit, zoom, pan, shownPicture)
-            if (!controlsVisible) Text(
-                "Playing on ${externalDisplay?.name ?: "the other screen"}",
-                color = Color.White,
-                fontSize = 20.sp,
-                modifier = Modifier.align(Alignment.Center),
-            )
         }
         // The bare picture listens for gestures; with the controls up, touches go to the controls.
         if (!controlsVisible && !panelOpen && !inPip) {
