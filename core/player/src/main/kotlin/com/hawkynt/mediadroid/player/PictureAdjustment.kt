@@ -81,10 +81,16 @@ data class PictureAdjustment(
         MEDIUM("Medium", 0.5f),
         HIGH("High", 1f),
         MOTION("Motion", 1f),
+
+        /** RIFE's network makes the in-between (see [NeuralInterpolation]); where its self-test passed. */
+        RIFE("RIFE", 1f),
         ;
 
         /** Built along the motion rather than blended. */
         val isMotionCompensated: Boolean get() = this == MOTION
+
+        /** Made by a neural network (see [NeuralInterpolation]). */
+        val isNeural: Boolean get() = this == RIFE
 
         /** How much of the next frame to show at [phase] (0 at the earlier frame's time, 1 at the next's). */
         fun weight(phase: Float): Float {

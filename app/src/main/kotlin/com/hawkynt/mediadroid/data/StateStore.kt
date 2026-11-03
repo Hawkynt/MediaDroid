@@ -89,6 +89,9 @@ data class Settings(
     var neuralUpscaling: Boolean = false,     // Real-ESRGAN offered as an upscaler; on only once the self-test passed
     var neuralUnit: String = "",              // where the self-test found it fastest: NPU, GPU or CPU
     var neuralMs: Float = 0f,                 // what one 576p picture took there in the self-test
+    var neuralInterpolation: Boolean = false, // RIFE offered for smooth motion; on only once its self-test passed
+    var neuralInterpolationUnit: String = "", // where its self-test found it fastest: NPU, GPU or CPU
+    var neuralInterpolationMs: Float = 0f,    // what one 576p in-between took there in the self-test
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
     var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout

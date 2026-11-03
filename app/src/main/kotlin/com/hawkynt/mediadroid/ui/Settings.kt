@@ -352,6 +352,7 @@ fun SettingsScreen(
                 }
             },
             neural = settings.neuralUpscaling,
+            neuralMotion = settings.neuralInterpolation,
         )
         NeuralUpscalingSetting(settings, update = { block -> update(block) })
 
@@ -519,52 +520,107 @@ private fun SliderRow(
 }
 
 /**
- * Neural upscaling: switching it on runs the self-test (see NeuralUpscaler.selfTest) — a 576p picture through
- * Real-ESRGAN on every unit of the device — and it stays on only where one keeps up with playback; otherwise it
- * switches itself off again and says how long the device took.
+ * Neural upscaling and neural frame interpolation: switching either on runs its self-test (see
+ * NeuralUpscaler.selfTest, NeuralInterpolator.selfTest) on every unit of the device, and it stays on only where one
+ * keeps up with playback; otherwise it switches itself off again and says how long the device took.
  */
 @Composable
 private fun NeuralUpscalingSetting(settings: Settings, update: ((Settings) -> Unit) -> Unit) {
+    SelfTestedSwitch(
+        label = "Neural upscaling (Real-ESRGAN)",
+        idle = "A neural network enlarges small pictures with fine detail. Switching it on tests whether this device " +
+            "is fast enough: a 576p picture within " +
+            "${com.hawkynt.mediadroid.player.NeuralUpscaling.BUDGET_MS.toInt()} ms.",
+        on = if (settings.neuralUpscaling) {
+            "On, on this device's ${settings.neuralUnit}: a 576p picture takes ${settings.neuralMs.toInt()} ms. " +
+                "Real-ESRGAN is offered as an upscaler in the player's gear."
+        } else {
+            null
+        },
+        what = "a 576p picture",
+        budgetMs = com.hawkynt.mediadroid.player.NeuralUpscaling.BUDGET_MS,
+        test = { com.hawkynt.mediadroid.player.NeuralUpscaler.selfTest(it) },
+        onPassed = { unit, ms ->
+            update {
+                it.neuralUpscaling = true
+                it.neuralUnit = unit.name
+                it.neuralMs = ms.toFloat()
+            }
+        },
+        onOff = { update { it.neuralUpscaling = false } },
+    )
+    SelfTestedSwitch(
+        label = "Neural frame interpolation (RIFE)",
+        idle = "A neural network builds the picture between two frames along the motion, doubling the frame rate. " +
+            "Switching it on tests whether this device is fast enough: a 576p in-between within " +
+            "${com.hawkynt.mediadroid.player.NeuralInterpolation.BUDGET_MS.toInt()} ms.",
+        on = if (settings.neuralInterpolation) {
+            "On, on this device's ${settings.neuralInterpolationUnit}: a 576p in-between takes " +
+                "${settings.neuralInterpolationMs.toInt()} ms. RIFE is offered under smooth motion in the player's gear."
+        } else {
+            null
+        },
+        what = "a 576p in-between",
+        budgetMs = com.hawkynt.mediadroid.player.NeuralInterpolation.BUDGET_MS,
+        test = { com.hawkynt.mediadroid.player.NeuralInterpolator.selfTest(it) },
+        onPassed = { unit, ms ->
+            update {
+                it.neuralInterpolation = true
+                it.neuralInterpolationUnit = unit.name
+                it.neuralInterpolationMs = ms.toFloat()
+            }
+        },
+        onOff = { update { it.neuralInterpolation = false } },
+    )
+}
+
+/**
+ * A switch that tests the device before it stays on: [test] times [what] on every unit, fastest first; the fastest
+ * within [budgetMs] passes ([onPassed]), otherwise the switch stays off and a dialog says what the device took.
+ */
+@Composable
+private fun SelfTestedSwitch(
+    label: String,
+    idle: String,
+    on: String?,
+    what: String,
+    budgetMs: Double,
+    test: (android.content.Context) -> List<Pair<com.hawkynt.mediadroid.player.NeuralUpscaler.Unit, Double>>,
+    onPassed: (com.hawkynt.mediadroid.player.NeuralUpscaler.Unit, Double) -> Unit,
+    onOff: () -> Unit,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var testing by remember { mutableStateOf(false) }
     var tooSlow by remember { mutableStateOf<String?>(null) }
-    val budget = com.hawkynt.mediadroid.player.NeuralUpscaling.BUDGET_MS.toInt()
     SwitchRow(
-        label = "Neural upscaling (Real-ESRGAN)",
+        label = label,
         detail = when {
             testing -> "Testing this device…"
-            settings.neuralUpscaling ->
-                "On, on this device's ${settings.neuralUnit}: a 576p picture takes ${settings.neuralMs.toInt()} ms. " +
-                    "Real-ESRGAN is offered as an upscaler in the player's gear."
-            else -> "A neural network enlarges small pictures with fine detail. Switching it on tests whether this " +
-                "device is fast enough: a 576p picture within $budget ms."
+            on != null -> on
+            else -> idle
         },
-        checked = settings.neuralUpscaling || testing,
-        onChange = { on ->
-            if (!on) {
-                update { it.neuralUpscaling = false }
+        checked = on != null || testing,
+        onChange = { checked ->
+            if (!checked) {
+                onOff()
             } else if (!testing) {
                 testing = true
                 scope.launch {
                     val results = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                        com.hawkynt.mediadroid.player.NeuralUpscaler.selfTest(context.applicationContext)
+                        test(context.applicationContext)
                     }
                     testing = false
                     val best = results.firstOrNull()
-                    if (best != null && com.hawkynt.mediadroid.player.NeuralUpscaling.fastEnough(best.second)) {
-                        update {
-                            it.neuralUpscaling = true
-                            it.neuralUnit = best.first.name
-                            it.neuralMs = best.second.toFloat()
-                        }
+                    if (best != null && best.second <= budgetMs) {
+                        onPassed(best.first, best.second)
                     } else {
-                        update { it.neuralUpscaling = false }
+                        onOff()
                         tooSlow = if (best == null) {
                             "This device cannot run the network at all."
                         } else {
-                            "This device is too slow: a 576p picture takes ${best.second.toInt()} ms on its fastest " +
-                                "unit (${best.first}), and playback allows $budget ms. Neural upscaling stays off."
+                            "This device is too slow: $what takes ${best.second.toInt()} ms on its fastest unit " +
+                                "(${best.first}), and playback allows ${budgetMs.toInt()} ms. It stays off."
                         }
                     }
                 }
@@ -575,7 +631,7 @@ private fun NeuralUpscalingSetting(settings: Settings, update: ((Settings) -> Un
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { tooSlow = null },
             confirmButton = { androidx.compose.material3.TextButton(onClick = { tooSlow = null }) { Text("OK") } },
-            title = { Text("Neural upscaling stays off") },
+            title = { Text("$label stays off") },
             text = { Text(message) },
         )
     }

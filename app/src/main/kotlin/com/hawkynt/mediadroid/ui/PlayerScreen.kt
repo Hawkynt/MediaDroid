@@ -1067,10 +1067,18 @@ fun PlayerScreen(
     ).copy(gamma = picture.gamma * gammaBoost).let {
         // Real-ESRGAN saved for a video plays as Standard once the household switched neural upscaling off.
         val neuralSaved = it.upscaler == com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.NEURAL
-        if (neuralSaved && !settings.neuralUpscaling) {
-            it.copy(upscaler = com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.STANDARD)
-        } else {
-            it
+        val rifeSaved = it.interpolation.isNeural
+        when {
+            neuralSaved && !settings.neuralUpscaling ->
+                it.copy(upscaler = com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.STANDARD)
+            else -> it
+        }.let { p ->
+            // RIFE saved for a video plays without smooth motion once the household switched it off.
+            if (rifeSaved && !settings.neuralInterpolation) {
+                p.copy(interpolation = com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation.OFF)
+            } else {
+                p
+            }
         }
     }
     // The picture filters' GL stage (see VideoFilterStage): the player draws into it while a filter is
@@ -1128,6 +1136,13 @@ fun PlayerScreen(
             val active = stage
             active.statistics = if (statisticsShown) statistics else null
             active.appContext = context.applicationContext
+            active.neuralMotionUnit = if (settings.neuralInterpolation) {
+                runCatching {
+                    com.hawkynt.mediadroid.player.NeuralUpscaler.Unit.valueOf(settings.neuralInterpolationUnit)
+                }.getOrNull()
+            } else {
+                null
+            }
             active.neuralUnit = if (settings.neuralUpscaling) {
                 runCatching {
                     com.hawkynt.mediadroid.player.NeuralUpscaler.Unit.valueOf(settings.neuralUnit)
@@ -1491,6 +1506,7 @@ fun PlayerScreen(
                 onPicture = { picture = it },
                 onPictureDone = { store.savePicture(queue[index].videoPath, picture) },
                 neural = settings.neuralUpscaling,
+                neuralMotion = settings.neuralInterpolation,
                 onResetPicture = {
                     store.savePicture(queue[index].videoPath, null)
                     picture = store.pictureFor(queue[index].videoPath)
@@ -1921,6 +1937,8 @@ private fun PlayerPanel(
     onResetPicture: () -> Unit,
     /** Offer Real-ESRGAN among the upscalers (the household's self-test passed). */
     neural: Boolean = false,
+    /** Offer RIFE under smooth motion (its self-test passed). */
+    neuralMotion: Boolean = false,
     onAudioTrack: () -> Unit,
     onSubtitleTrack: () -> Unit,
     onClose: () -> Unit,
@@ -1975,7 +1993,10 @@ private fun PlayerPanel(
             )
             TextButton(onClick = onResetPicture) { Text("Reset", fontSize = 16.sp) }
         }
-        PictureSliders(picture, onChange = onPicture, onDone = onPictureDone, stereo = true, neural = neural)
+        PictureSliders(
+            picture, onChange = onPicture, onDone = onPictureDone, stereo = true, neural = neural,
+            neuralMotion = neuralMotion,
+        )
 
         PanelTitle("Subtitles & sound")
         Row(verticalAlignment = Alignment.CenterVertically) {
