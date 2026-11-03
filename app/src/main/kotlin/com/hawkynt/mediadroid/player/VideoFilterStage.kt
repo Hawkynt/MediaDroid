@@ -124,6 +124,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // alone is uneven (25 fps on 60 Hz arrives 33 and 50 ms apart).
     private var frameIntervalNs = 0L
     private var shownAt = 0L
+
+    /** The refresh an FFmpeg picture is drawn for: its time is the picture's, not the clock's once drawn. */
+    private var yuvRefreshNs = 0L
     private var deinterlaceLatencyMs = 0
     private var deinterlaceFrames = 0f
     private val secondField = Runnable { busy { drawSecondField() } }
@@ -323,6 +326,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         if (pacer.dueAt(frameTimeNanos, yuvQueue.size) - frameTimeNanos <= refresh.periodNs / 2) {
             yuvQueue.pollFirst()?.let { arrival ->
                 pacer.shown(frameTimeNanos)
+                yuvRefreshNs = frameTimeNanos
                 takeYuv(arrival.buffer)
             }
         }
@@ -568,7 +572,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private fun draw(redraw: Boolean) {
         if (!redraw) {
             if (yuvInput) {
-                frameTimestamp = System.nanoTime()
+                frameTimestamp = yuvRefreshNs
             } else {
                 surfaceTexture.updateTexImage()
                 surfaceTexture.getTransformMatrix(texMatrix)
@@ -602,7 +606,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         output(source, source.width, source.height, picture)
         if (!redraw) EGLExt.eglPresentationTimeANDROID(display, window, shownAt)
         EGL14.eglSwapBuffers(display, window)
-        if (!redraw) statistics?.pictureShown(System.nanoTime())
+        // On screen at the refresh it is meant for; the clock once drawing is done wanders by milliseconds.
+        if (!redraw) statistics?.pictureShown(shownAt)
         // At field rate the other field follows half a frame later, as its own picture.
         if (!redraw && picture.isFieldRate && historyCount >= 2) {
             val halfMs = frameIntervalNs / 2_000_000L
@@ -618,7 +623,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val source = filtered(picture, width, height, fresh = false, secondField = true)
         output(source, source.width, source.height, picture)
         EGL14.eglSwapBuffers(display, window)
-        statistics?.pictureShown(System.nanoTime())
+        statistics?.pictureShown(shownAt + frameIntervalNs / 2)
     }
 
     /**
@@ -847,7 +852,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val stepNs = verdict.intervalNs * Telecine.CYCLE / shown
         val start = android.os.SystemClock.uptimeMillis()
         (0 until Telecine.CYCLE).filter { it != cycle.drop }.forEachIndexed { j, position ->
-            handler.postAtTime({ busy { showFilm(base + position) } }, filmToken, start + j * stepNs / 1_000_000L)
+            // uptimeMillis and nanoTime run on the same monotonic clock: the slot's time is the picture's.
+            val atNs = start * 1_000_000L + j * stepNs
+            handler.postAtTime({ busy { showFilm(base + position, atNs) } }, filmToken, start + j * stepNs / 1_000_000L)
         }
         latencyMs = (verdict.intervalNs * Telecine.CYCLE / 1_000_000L).toInt().coerceIn(0, MAX_FILM_LATENCY_MS)
         latencyFrames = Telecine.CYCLE.toFloat()
@@ -855,8 +862,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         filmPosition = 0
     }
 
-    /** One of Film's kept frames onto the screen, through the rest of the filters. */
-    private fun showFilm(slot: Int) {
+    /** One of Film's kept frames onto the screen, through the rest of the filters, for [atNs]; null redraws it. */
+    private fun showFilm(slot: Int, atNs: Long? = null) {
         val picture = filters
         if (window == EGL14.EGL_NO_SURFACE || picture.deinterlace != PictureAdjustment.Deinterlace.FILM) return
         val frame = frames[slot]
@@ -868,7 +875,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val source = denoised(picture, shrunk, shrunk.width, shrunk.height)
         output(source, source.width, source.height, picture)
         EGL14.eglSwapBuffers(display, window)
-        statistics?.pictureShown(System.nanoTime())
+        atNs?.let { statistics?.pictureShown(it) }
     }
 
     /**
@@ -1244,7 +1251,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val blendKey = keptAt[later] * 4099 + (weight * 1024).toLong()
         if (blendKey != lastBlend) {
             lastBlend = blendKey
-            statistics?.pictureShown(System.nanoTime())
+            statistics?.pictureShown(frameTimeNanos)
         }
         if (weight < 1f) startBlending()
     }
