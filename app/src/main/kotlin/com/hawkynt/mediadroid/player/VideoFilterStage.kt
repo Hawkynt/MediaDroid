@@ -640,13 +640,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         deinterlaceFrames = 0f
         shownAt = frameTimestamp
         val copied = frames[0].ensure(width, height)
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, copied.framebuffer)
-        GLES20.glViewport(0, 0, width, height)
+        copied.bind()
         copyInput()
         var source = copied
         if (picture.deinterlace != PictureAdjustment.Deinterlace.OFF) {
             val woven = frames[2].ensure(width, height)
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, woven.framebuffer)
+            woven.bind()
             run(deinterlaceProgram, GLES20.GL_TEXTURE_2D, copied.texture, identity) { p ->
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
                 GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMode"), picture.deinterlace.ordinal)
@@ -695,8 +694,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         secondField: Boolean,
         bwdif: Boolean,
     ) {
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
-        GLES20.glViewport(0, 0, target.width, target.height)
+        target.bind()
         GLES20.glUseProgram(temporalProgram)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prev.texture)
@@ -826,8 +824,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 Telecine.Match.UPPER -> next to 1 - verdict.field
                 Telecine.Match.CURRENT -> cur to -1
             }
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, slot.framebuffer)
-            GLES20.glViewport(0, 0, width, height)
+            slot.bind()
             GLES20.glUseProgram(weaveProgram)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, other.texture)
@@ -904,8 +901,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             framesToJudge = FRAMES_TO_JUDGE
         }
         newest.ensure(width, height)
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, newest.framebuffer)
-        GLES20.glViewport(0, 0, width, height)
+        newest.bind()
         copyInput()
         historyCount = minOf(historyCount + 1, 3)
         return afresh
@@ -944,8 +940,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val rows = height / stepY
         val texels = (columns + 3) / 4
         val target = frames[PACKED_LUMA].ensure(texels, rows)
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
-        GLES20.glViewport(0, 0, texels, rows)
+        target.bind()
         run(packProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uStep"), stepX.toFloat(), stepY.toFloat())
@@ -1031,8 +1026,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     /** One pass of [reduced]: [from] into [target] along ([dirX], [dirY]), [scale] old pixels to a new one. */
     private fun downscalePass(from: Frame, target: Frame, scaler: Downscaler, dirX: Float, dirY: Float, scale: Float) {
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
-        GLES20.glViewport(0, 0, target.width, target.height)
+        target.bind()
         run(downscaleProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uInSize"), from.width.toFloat(), from.height.toFloat())
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uDir"), dirX, dirY)
@@ -1048,7 +1042,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val kernel = picture.denoiseKernel()
         if (kernel != null) {
             val denoised = frames[1].ensure(width, height)
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, denoised.framebuffer)
+            denoised.bind()
             run(denoiseProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
                 val radius = kernel.radius
@@ -1075,8 +1069,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         keptAt[0] = keptAt[1]
         keptAt[1] = keptAt[2]
         val target = frames[keptRing[2]].ensure(keptWidth, keptHeight)
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
-        GLES20.glViewport(0, 0, keptWidth, keptHeight)
+        target.bind()
         run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / keptWidth, 1f / keptHeight)
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), picture.sharpness)
@@ -1216,8 +1209,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }
         EGL14.eglMakeCurrent(display, idle, idle, context)
         val mixed = frames[7].ensure(width, height)
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, mixed.framebuffer)
-        GLES20.glViewport(0, 0, width, height)
+        mixed.bind()
         val program = if (alongMotion) motionProgram else blendProgram
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
@@ -1277,7 +1269,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             // 4: sharpness and clarity at the picture's own size, then 5: enlarged onto the screen.
             if (picture.sharpness > 0f || picture.clarity > 0f) {
                 val sharpened = frames[3].ensure(width, height)
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, sharpened.framebuffer)
+                sharpened.bind()
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, sharpen)
                 source = sharpened
             }
@@ -1293,8 +1285,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 val midWidth = minOf(outWidth, width * 2)
                 val midHeight = minOf(outHeight, height * 2)
                 val enlarged = frames[4].ensure(midWidth, midHeight)
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
-                GLES20.glViewport(0, 0, midWidth, midHeight)
+                enlarged.bind()
                 GLES20.glUseProgram(nisProgram)
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, nisTable)
@@ -1330,8 +1321,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 val midWidth = minOf(outWidth, width * 2)
                 val midHeight = minOf(outHeight, height * 2)
                 val enlarged = frames[4].ensure(midWidth, midHeight)
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
-                GLES20.glViewport(0, 0, midWidth, midHeight)
+                enlarged.bind()
                 GLES20.glUseProgram(ewaProgram)
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ewaTable)
@@ -1353,16 +1343,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 var input = source
                 anime4kPrograms.forEachIndexed { i, program ->
                     val target = frames[if (i % 2 == 0) ANIME4K_A else ANIME4K_B].ensure(width, height, half = true)
-                    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, target.framebuffer)
-                    GLES20.glViewport(0, 0, width, height)
+                    target.bind()
                     run(program, GLES20.GL_TEXTURE_2D, input.texture, identity) { p ->
                         GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
                     }
                     input = target
                 }
                 val enlarged = frames[4].ensure(width * 2, height * 2)
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
-                GLES20.glViewport(0, 0, width * 2, height * 2)
+                enlarged.bind()
                 GLES20.glUseProgram(anime4kDepthToSpace)
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, input.texture)
@@ -1386,20 +1374,17 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
                 }
                 val corners = frames[XBRZ_CORNERS].ensure(width + 1, height + 1)
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, corners.framebuffer)
-                GLES20.glViewport(0, 0, width + 1, height + 1)
+                corners.bind()
                 run(xbrzPrograms[0], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
                 val decisions = frames[XBRZ_DECISIONS].ensure(width, height)
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, decisions.framebuffer)
-                GLES20.glViewport(0, 0, width, height)
+                decisions.bind()
                 GLES20.glUseProgram(xbrzPrograms[1])
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, corners.texture)
                 GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[1], "uCorners"), 1)
                 run(xbrzPrograms[1], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
                 val enlarged = frames[4].ensure(width * factor, height * factor)
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
-                GLES20.glViewport(0, 0, width * factor, height * factor)
+                enlarged.bind()
                 GLES20.glUseProgram(xbrzPrograms[2])
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, decisions.texture)
@@ -1422,8 +1407,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             } else {
                 // FSR 1: edge-adaptive upscaling to the screen's size, then contrast-adaptive sharpening on it.
                 val enlarged = frames[4].ensure(outWidth, outHeight)
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, enlarged.framebuffer)
-                GLES20.glViewport(0, 0, outWidth, outHeight)
+                enlarged.bind()
                 run(easuProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
                 onWindow(outWidth, outHeight)
                 run(rcasProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
@@ -1590,6 +1574,16 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** Whether the texture holds half floats (values outside 0..1, see Anime4K) rather than bytes. */
         var half = false
             private set
+
+        /**
+         * Draws into this frame from here on, over the whole of it: the framebuffer bound and the viewport set to
+         * the frame's own size together, so a pass never inherits the viewport of the one before — a smaller one
+         * (Film's luma packing) left part of the frame stale, a larger one (the screen's) drew a corner zoomed.
+         */
+        fun bind() {
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, framebuffer)
+            GLES20.glViewport(0, 0, width, height)
+        }
 
         fun ensure(w: Int, h: Int, half: Boolean = false): Frame {
             if (w == width && h == height && half == this.half && texture != 0) return this
