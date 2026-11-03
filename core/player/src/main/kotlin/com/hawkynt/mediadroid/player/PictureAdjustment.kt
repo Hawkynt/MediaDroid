@@ -101,6 +101,8 @@ data class PictureAdjustment(
      * [NIS] NVIDIA Image Scaling (see [Nis]): directional filters by edge, with luma-adaptive sharpening;
      * [ANIME4K] Anime4K's small convolutional network doubling the picture, made for line art and animation.
      * [XBRZ] Zenju's xBRZ, scaling by rules 2× to 6×: smooth diagonals and curves for pixel art and cartoons.
+     * [NEURAL] Real-ESRGAN's compact network (see [NeuralUpscaling]), four times the picture's size — offered only
+     * where the household's self-test found the device fast enough.
      */
     enum class Upscaler(val label: String) {
         STANDARD("Standard"),
@@ -110,6 +112,7 @@ data class PictureAdjustment(
         NIS("NIS"),
         ANIME4K("Anime4K"),
         XBRZ("xBRZ"),
+        NEURAL("Real-ESRGAN"),
     }
 
     /**

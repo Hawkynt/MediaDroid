@@ -1064,7 +1064,15 @@ fun PlayerScreen(
         picture,
         com.hawkynt.mediadroid.player.PlaybackMath.EvenPlan(0f, judderFactor, evenReachable),
         reducingJudder,
-    ).copy(gamma = picture.gamma * gammaBoost)
+    ).copy(gamma = picture.gamma * gammaBoost).let {
+        // Real-ESRGAN saved for a video plays as Standard once the household switched neural upscaling off.
+        val neuralSaved = it.upscaler == com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.NEURAL
+        if (neuralSaved && !settings.neuralUpscaling) {
+            it.copy(upscaler = com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.STANDARD)
+        } else {
+            it
+        }
+    }
     // The picture filters' GL stage (see VideoFilterStage): the player draws into it while a filter is
     // set — not for HDR, which it would flatten — and it draws into the view that shows the picture,
     // on the phone or the second screen; otherwise the player draws straight into that view.
@@ -1119,6 +1127,14 @@ fun PlayerScreen(
         if (wanted) {
             val active = stage
             active.statistics = if (statisticsShown) statistics else null
+            active.appContext = context.applicationContext
+            active.neuralUnit = if (settings.neuralUpscaling) {
+                runCatching {
+                    com.hawkynt.mediadroid.player.NeuralUpscaler.Unit.valueOf(settings.neuralUnit)
+                }.getOrNull()
+            } else {
+                null
+            }
             active.filters = shownPicture
             active.downscaler = runCatching { com.hawkynt.mediadroid.player.Downscaler.valueOf(settings.downscaler) }
                 .getOrDefault(com.hawkynt.mediadroid.player.Downscaler.DEFAULT)
@@ -1474,6 +1490,7 @@ fun PlayerScreen(
                 picture = picture,
                 onPicture = { picture = it },
                 onPictureDone = { store.savePicture(queue[index].videoPath, picture) },
+                neural = settings.neuralUpscaling,
                 onResetPicture = {
                     store.savePicture(queue[index].videoPath, null)
                     picture = store.pictureFor(queue[index].videoPath)
@@ -1902,6 +1919,8 @@ private fun PlayerPanel(
     onPicture: (PictureAdjustment) -> Unit,
     onPictureDone: () -> Unit,
     onResetPicture: () -> Unit,
+    /** Offer Real-ESRGAN among the upscalers (the household's self-test passed). */
+    neural: Boolean = false,
     onAudioTrack: () -> Unit,
     onSubtitleTrack: () -> Unit,
     onClose: () -> Unit,
@@ -1956,7 +1975,7 @@ private fun PlayerPanel(
             )
             TextButton(onClick = onResetPicture) { Text("Reset", fontSize = 16.sp) }
         }
-        PictureSliders(picture, onChange = onPicture, onDone = onPictureDone, stereo = true)
+        PictureSliders(picture, onChange = onPicture, onDone = onPictureDone, stereo = true, neural = neural)
 
         PanelTitle("Subtitles & sound")
         Row(verticalAlignment = Alignment.CenterVertically) {
