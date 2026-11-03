@@ -124,14 +124,13 @@ enum class VideoFit(val label: String, val resizeMode: Int) {
  * Fit, zoom and picture correction on the video frame inside a player view only — the controls
  * and subtitles drawn above it are neither scaled nor tinted.
  */
-private fun PlayerView.applyVideoLook(fit: VideoFit, zoom: Float, pan: Offset, picture: PictureAdjustment) {
+private fun PlayerView.applyVideoLook(fit: VideoFit, zoom: Float, pan: Offset) {
     resizeMode = fit.resizeMode
     val frame = findViewById<View>(androidx.media3.ui.R.id.exo_content_frame) ?: return
     frame.scaleX = zoom
     frame.scaleY = zoom
     frame.translationX = pan.x
     frame.translationY = pan.y
-    frame.applyPicture(picture)
 }
 
 /**
@@ -1070,14 +1069,36 @@ fun PlayerScreen(
     // set — not for HDR, which it would flatten — and it draws into the view that shows the picture,
     // on the phone or the second screen; otherwise the player draws straight into that view.
     val filterStage = remember { arrayOfNulls<com.hawkynt.mediadroid.player.VideoFilterStage>(1) }
-    val routedTo = remember { arrayOfNulls<android.view.TextureView>(1) }
-    // The view's surface the stage draws into: a view gets a new one when the app comes back to the screen.
-    val routedTexture = remember { arrayOfNulls<android.graphics.SurfaceTexture>(1) }
+    val routedTo = remember { arrayOfNulls<android.view.SurfaceView>(1) }
+    // A SurfaceView's surface goes when the view leaves the screen and comes anew: the stage lets go of it before
+    // it is destroyed (setOutput returns once it has), and the picture is routed again into the new one.
+    val watchedViews = remember { java.util.WeakHashMap<android.view.SurfaceView, Unit>() }
+    fun watch(view: android.view.SurfaceView) {
+        if (watchedViews.containsKey(view)) return
+        watchedViews[view] = Unit
+        view.holder.addCallback(
+            object : android.view.SurfaceHolder.Callback {
+                override fun surfaceCreated(holder: android.view.SurfaceHolder) {
+                    routeAtOnce[0]?.invoke()
+                }
+
+                override fun surfaceChanged(holder: android.view.SurfaceHolder, format: Int, w: Int, h: Int) = Unit
+
+                override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {
+                    if (routedTo[0] === view) {
+                        filterStage[0]?.setOutput(null)
+                        routedTo[0] = null
+                    }
+                }
+            },
+        )
+    }
     fun routeVideo() {
         // The demo library's videos never play: no stage, no routing.
         if (demo) return
         val target = ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.videoSurfaceView)
-            as? android.view.TextureView
+            as? android.view.SurfaceView
+        target?.let { watch(it) }
         videoFrameRate[0] = player.videoFormat?.frameRate ?: -1f
         val transfer = player.videoFormat?.colorInfo?.colorTransfer
         val hdr = transfer == C.COLOR_TRANSFER_ST2084 || transfer == C.COLOR_TRANSFER_HLG
@@ -1086,7 +1107,8 @@ fun PlayerScreen(
         // at the stage before it starts, on every round — any new surface given to the player points it back —
         // so even its first pictures never take the slow window path; idle while a device decoder plays.
         val ffmpegVideo = videoDecoder?.startsWith("ffmpeg", ignoreCase = true) == true
-        val wanted = (ffmpegVideo || (shownPicture.hasFilters && !hdr)) && target != null && target.isAvailable
+        val wanted = (ffmpegVideo || (shownPicture.hasFilters && !hdr)) && target != null &&
+            target.holder.surface.isValid
         val stage = filterStage[0] ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { filterStage[0] = it }
         ffmpegVideoRenderer[0]?.let { renderer ->
             player.createMessage(renderer)
@@ -1101,7 +1123,7 @@ fun PlayerScreen(
             active.downscaler = runCatching { com.hawkynt.mediadroid.player.Downscaler.valueOf(settings.downscaler) }
                 .getOrDefault(com.hawkynt.mediadroid.player.Downscaler.DEFAULT)
             active.setVideoSize(player.videoSize.width, player.videoSize.height)
-            if (routedTo[0] !== target || routedTexture[0] !== target?.surfaceTexture) {
+            if (routedTo[0] !== target) {
                 player.setVideoSurface(active.inputSurface)
                 ffmpegVideoRenderer[0]?.let { renderer ->
                     player.createMessage(renderer)
@@ -1110,28 +1132,24 @@ fun PlayerScreen(
                         .send()
                 }
                 // Taken on a later round when the view's surface is not free yet.
-                if (active.setOutput(android.view.Surface(target!!.surfaceTexture))) {
-                    routedTo[0] = target
-                    routedTexture[0] = target.surfaceTexture
-                }
+                if (active.setOutput(target!!.holder.surface)) routedTo[0] = target
             }
         } else if (routedTo[0] != null) {
             stage.setOutput(null)
             routedTo[0] = null
-            routedTexture[0] = null
-            target?.let { player.setVideoTextureView(it) }
+            target?.let { player.setVideoSurfaceView(it) }
         }
     }
     freshSurface[0] = {
         val stage = filterStage[0]
         val view = routedTo[0] ?: ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)
-            ?.videoSurfaceView as? android.view.TextureView)
+            ?.videoSurfaceView as? android.view.SurfaceView)
         if (stage != null && routedTo[0] != null) {
             stage.renewInput { player.setVideoSurface(it) }
         } else if (view != null) {
             // The player makes its own surface over the view's, and lets the old one go.
-            player.clearVideoTextureView(view)
-            player.setVideoTextureView(view)
+            player.clearVideoSurfaceView(view)
+            player.setVideoSurfaceView(view)
         }
     }
     androidx.compose.runtime.SideEffect { filterStage[0]?.filters = shownPicture }
@@ -1267,7 +1285,7 @@ fun PlayerScreen(
                 // last frame it got; it is hidden so the phone stays black behind the controls.
                 val elsewhere = presentation?.isShowing == true
                 view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
-                if (!elsewhere) view.applyVideoLook(fit, zoom, pan, shownPicture)
+                if (!elsewhere) view.applyVideoLook(fit, zoom, pan)
                 val density = view.resources.displayMetrics.density
                 val cutout = view.rootWindowInsets
                     ?.takeIf { useCutout && android.os.Build.VERSION.SDK_INT >= 28 }
@@ -1283,7 +1301,7 @@ fun PlayerScreen(
         )
 
         presentation?.let { shown ->
-            if (shown.isShowing) shown.playerView.applyVideoLook(fit, zoom, pan, shownPicture)
+            if (shown.isShowing) shown.playerView.applyVideoLook(fit, zoom, pan)
         }
         // The bare picture listens for gestures; with the controls up, touches go to the controls.
         if (!controlsVisible && !panelOpen && !inPip) {

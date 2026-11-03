@@ -98,6 +98,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val identity = FloatArray(16).also { android.opengl.Matrix.setIdentityM(it, 0) }
 
     private var copyProgram = 0
+    private var adjustProgram = 0
     private var deinterlaceProgram = 0
     private var denoiseProgram = 0
     private var sharpenProgram = 0
@@ -113,7 +114,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var temporalProgram = 0
     private var weaveProgram = 0
     private var packProgram = 0
-    private val frames = Array(XBRZ_DECISIONS + 1) { Frame() }
+    private val frames = Array(ADJUSTED + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -214,9 +215,17 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // The last blend drawn, so a refresh that changes nothing does not count as a new picture.
     private var lastBlend = -1L
 
-    /** The filters to run; read on every frame. */
+    /**
+     * The filters to run; read on every frame. A change redraws the picture on screen at once, so the colour or a
+     * filter set while paused shows without waiting for the next frame.
+     */
     @Volatile
     var filters: PictureAdjustment = PictureAdjustment.Neutral
+        set(value) {
+            if (value == field) return
+            field = value
+            handler.post { busy { if (hasFrame && window != EGL14.EGL_NO_SURFACE) draw(redraw = true) } }
+        }
 
     /** How a picture larger than 1080p is brought down after deinterlacing (see [reduced]). */
     @Volatile
@@ -409,6 +418,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteTextures(3, yuvTextures, 0)
             releaseWindow()
             GLES20.glDeleteProgram(copyProgram)
+            GLES20.glDeleteProgram(adjustProgram)
             GLES20.glDeleteProgram(deinterlaceProgram)
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(sharpenProgram)
@@ -541,6 +551,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         inputSurface = Surface(surfaceTexture)
 
         copyProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_COPY)
+        adjustProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_ADJUST)
         deinterlaceProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEINTERLACE)
         denoiseProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DENOISE)
         sharpenProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_SHARPEN)
@@ -1293,6 +1304,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         grainToShow = filters.grain
         val outWidth = query(EGL14.EGL_WIDTH)
         val outHeight = query(EGL14.EGL_HEIGHT)
+        // The colour correction is the last pass: the rest is drawn at the screen's size into a frame of its own.
+        val adjusting = !picture.isColorNeutral
         val upscaling = picture.upscales && outWidth > width
         val sharpen: (Int) -> Unit = { p ->
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
@@ -1301,7 +1314,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }
         if (!upscaling) {
             // 4: sharpness and clarity, drawn onto the screen at its size by its own bilinear scaling.
-            onWindow(outWidth, outHeight)
+            toScreen(outWidth, outHeight, adjusting)
             run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, sharpen)
         } else {
             // 4: sharpness and clarity at the picture's own size, then 5: enlarged onto the screen.
@@ -1315,7 +1328,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uInSize"), width.toFloat(), height.toFloat())
             }
             if (picture.upscaler == PictureAdjustment.Upscaler.LANCZOS) {
-                onWindow(outWidth, outHeight)
+                toScreen(outWidth, outHeight, adjusting)
                 run(lanczosProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
             } else if (picture.upscaler == PictureAdjustment.Upscaler.NIS) {
                 // NVIDIA Image Scaling to at most twice the picture's size, as NIS allows, and the screen's own
@@ -1347,7 +1360,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     set("uSharpLimitMin", config.sharpLimitMin)
                     set("uSharpLimitScale", config.sharpLimitScale)
                 }
-                onWindow(outWidth, outHeight)
+                toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / midWidth, 1f / midHeight)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
@@ -1368,7 +1381,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     inSize(p)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), Ewa.RADIUS.toFloat())
                 }
-                onWindow(outWidth, outHeight)
+                toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / midWidth, 1f / midHeight)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
@@ -1396,7 +1409,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 run(anime4kDepthToSpace, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uLastSize"), width.toFloat(), height.toFloat())
                 }
-                onWindow(outWidth, outHeight)
+                toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 0.5f / width, 0.5f / height)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
@@ -1434,7 +1447,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     size(p)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFactor"), factor.toFloat())
                 }
-                onWindow(outWidth, outHeight)
+                toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
                     val texelX = 1f / (width * factor)
                     val texelY = 1f / (height * factor)
@@ -1447,7 +1460,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 val enlarged = frames[4].ensure(outWidth, outHeight)
                 enlarged.bind()
                 run(easuProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
-                onWindow(outWidth, outHeight)
+                toScreen(outWidth, outHeight, adjusting)
                 run(rcasProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / outWidth, 1f / outHeight)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharp"), RCAS_SHARPNESS)
@@ -1466,6 +1479,17 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
                 }
                 GLES20.glDisable(GLES20.GL_BLEND)
+            }
+        }
+        if (adjusting) {
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            GLES20.glViewport(0, 0, outWidth, outHeight)
+            val u = picture.shaderUniforms()
+            run(adjustProgram, GLES20.GL_TEXTURE_2D, frames[ADJUSTED].texture, identity) { p ->
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uBrightness"), u.brightness)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uContrast"), u.contrast)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSaturation"), u.saturation)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uInverseGamma"), u.inverseGamma)
             }
         }
     }
@@ -1555,6 +1579,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         return ids[0]
+    }
+
+    /**
+     * Draws the picture at the screen's size from here on: onto the screen, or with a colour correction set
+     * ([adjusting]) into the frame it is corrected from (see output).
+     */
+    private fun toScreen(width: Int, height: Int, adjusting: Boolean) {
+        onWindow(width, height)
+        if (adjusting) frames[ADJUSTED].ensure(width, height).bind()
     }
 
     /** Draws onto the screen from here on. */
@@ -1719,6 +1752,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** xBRZ's corners and decisions between its passes (see glsl/xbrz). */
         private const val XBRZ_CORNERS = ANIME4K_B + 1
         private const val XBRZ_DECISIONS = XBRZ_CORNERS + 1
+
+        /** The picture at the screen's size before the colour correction, when one is set. */
+        private const val ADJUSTED = XBRZ_DECISIONS + 1
 
         /** Width of xBRZ's pattern table, one texel a cell of the largest block — as glsl/xbrz/scale.frag reads it. */
         private const val XBRZ_TABLE_WIDTH = 36
