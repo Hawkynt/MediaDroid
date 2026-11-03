@@ -40,4 +40,44 @@ class DarkPhoneTest {
         assertFalse(phone.dark)
         assertTrue(phone.leave())
     }
+
+    @Test
+    fun `on a second screen the phone goes dark once the controls hide, without arming the lock`() {
+        val phone = DarkPhone()
+        phone.secondScreen(true)
+        phone.controlsHidden()
+        assertTrue(phone.dark)
+        assertFalse(phone.leave())
+    }
+
+    @Test
+    fun `a touch lights it up, and it goes dark again when the controls hide again`() {
+        val phone = DarkPhone()
+        phone.secondScreen(true)
+        phone.controlsHidden()
+        phone.touch()
+        assertFalse(phone.dark)
+        phone.controlsHidden()
+        assertTrue(phone.dark)
+    }
+
+    @Test
+    fun `with the film on the phone itself hidden controls leave it lit`() {
+        val phone = DarkPhone()
+        phone.controlsHidden()
+        assertFalse(phone.dark)
+        phone.secondScreen(true)
+        phone.secondScreen(false)
+        phone.controlsHidden()
+        assertFalse(phone.dark)
+    }
+
+    @Test
+    fun `the film back on the phone lights it up`() {
+        val phone = DarkPhone()
+        phone.secondScreen(true)
+        phone.controlsHidden()
+        phone.secondScreen(false)
+        assertFalse(phone.dark)
+    }
 }
