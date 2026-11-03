@@ -249,15 +249,31 @@ object PlaybackMath {
         ) ?: 1f
     }
 
-    /** The screen's refresh rate to play at and the speed factor on top of the chosen speed (see [evenPlayback]). */
-    data class EvenPlan(val refreshHz: Float, val speedFactor: Float)
+    /**
+     * The screen's refresh rate to play at and the speed factor on top of the chosen speed (see [evenPlayback]);
+     * [even] is false when neither reaches a rate at which every frame stays on screen equally long.
+     */
+    data class EvenPlan(val refreshHz: Float, val speedFactor: Float, val even: Boolean = true)
+
+    /**
+     * [picture] as shown under [plan]: with judder reduction on ([reducingJudder]) and no even rate within reach,
+     * the screen's every refresh gets an in-between blended by the time between the two frames (Smooth motion's
+     * High), so motion runs evenly at the speed as chosen — unless the video has smooth motion of its own.
+     */
+    fun smoothedWhenUneven(picture: PictureAdjustment, plan: EvenPlan, reducingJudder: Boolean): PictureAdjustment =
+        if (reducingJudder && !plan.even && picture.interpolation == PictureAdjustment.Interpolation.OFF) {
+            picture.copy(interpolation = PictureAdjustment.Interpolation.HIGH)
+        } else {
+            picture
+        }
 
     /**
      * How to play a [frameRate] film at the chosen [speed] so every frame stays on screen equally long: the rate
      * that matters is the two together. A display mode among [modes] that is a whole multiple of it is chosen —
      * [current] first, as switching blanks the screen a moment, then the lowest — when [canSwitch]; otherwise the
      * mode, [current] alone without switching, whose even rate is nearest within [maxChange] in [direction], with
-     * the speed factor that reaches it (see [judderSpeed]). Nothing within reach: [current] and the speed as it is.
+     * the speed factor that reaches it (see [judderSpeed]). Nothing within reach: [current] and the speed as it is,
+     * not [EvenPlan.even] (see [smoothedWhenUneven]).
      */
     fun evenPlayback(
         frameRate: Float,
@@ -275,7 +291,8 @@ object PlaybackMath {
         val reachable = candidates
             .map { it to judderSpeed(rate, it, maxChange, direction) }
             .filter { it.second != 1f }
-        val best = reachable.minByOrNull { kotlin.math.abs(it.second - 1f) } ?: return EvenPlan(current, 1f)
+        val best = reachable.minByOrNull { kotlin.math.abs(it.second - 1f) }
+            ?: return EvenPlan(current, 1f, even = false)
         return EvenPlan(best.first, best.second)
     }
 

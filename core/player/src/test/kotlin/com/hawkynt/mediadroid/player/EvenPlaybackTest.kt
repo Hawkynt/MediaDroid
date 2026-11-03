@@ -39,11 +39,44 @@ class EvenPlaybackTest {
 
     @Test
     fun `nothing within reach leaves the screen as it is and the speed alone`() {
-        assertEquals(PlaybackMath.EvenPlan(60f, 1f), plan(37.5f, 1f, listOf(60f), current = 60f))
+        assertEquals(PlaybackMath.EvenPlan(60f, 1f, even = false), plan(37.5f, 1f, listOf(60f), current = 60f))
     }
 
     @Test
     fun `between two equally good modes the current one stays`() {
         assertEquals(PlaybackMath.EvenPlan(120f, 1f), plan(30f, 1f, listOf(60f, 120f), current = 120f))
+    }
+
+    @Test
+    fun `23,976 fps at 1,75x on a 60 Hz-only screen cannot play evenly within 5 percent`() {
+        val plan = plan(23.976f, 1.75f, listOf(60f), current = 60f)
+        assertEquals(false, plan.even)
+        assertEquals(1f, plan.speedFactor)
+    }
+
+    @Test
+    fun `a plan that reaches an even rate says so`() {
+        assertEquals(true, plan(25f, 1f, listOf(60f, 120f), current = 60f).even)
+        assertEquals(true, plan(29.97f, 1f, listOf(60f), current = 60f).even)
+    }
+
+    private val still = PictureAdjustment()
+
+    @Test
+    fun `out of reach, the picture blends in-betweens at the screen's rate`() {
+        val uneven = PlaybackMath.EvenPlan(60f, 1f, even = false)
+        assertEquals(
+            PictureAdjustment.Interpolation.HIGH,
+            PlaybackMath.smoothedWhenUneven(still, uneven, reducingJudder = true).interpolation,
+        )
+    }
+
+    @Test
+    fun `an even plan, no judder reduction, or the video's own smooth motion leave the picture as it is`() {
+        val uneven = PlaybackMath.EvenPlan(60f, 1f, even = false)
+        assertEquals(still, PlaybackMath.smoothedWhenUneven(still, PlaybackMath.EvenPlan(60f, 1f), true))
+        assertEquals(still, PlaybackMath.smoothedWhenUneven(still, uneven, reducingJudder = false))
+        val own = still.copy(interpolation = PictureAdjustment.Interpolation.MOTION)
+        assertEquals(own, PlaybackMath.smoothedWhenUneven(own, uneven, reducingJudder = true))
     }
 }

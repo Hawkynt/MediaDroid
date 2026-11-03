@@ -364,6 +364,8 @@ fun PlayerScreen(
     // "Match the refresh rate") and the small speed change of Even frames, together (see PlaybackMath.evenPlayback).
     val displayActivity = remember(context) { context.findActivity() }
     var judderFactor by remember { mutableFloatStateOf(1f) }
+    // False while no even rate is within reach (see PlaybackMath.smoothedWhenUneven).
+    var evenReachable by remember { mutableStateOf(true) }
     DisposableEffect(player) {
         onDispose {
             displayActivity?.window?.let { it.attributes = it.attributes.apply { preferredDisplayModeId = 0 } }
@@ -517,6 +519,7 @@ fun PlayerScreen(
                 }
             }
             judderFactor = plan.speedFactor
+            evenReachable = plan.even
             delay(3000)
         }
     }
@@ -1057,7 +1060,12 @@ fun PlayerScreen(
 
     val current = queue[index]
     // The video's own picture correction, with the brightness swipe's gamma on top once past the maximum.
-    val shownPicture = picture.copy(gamma = picture.gamma * gammaBoost)
+    val reducingJudder = settings.judderLimitPercent > 0 || settings.matchRefreshRate
+    val shownPicture = com.hawkynt.mediadroid.player.PlaybackMath.smoothedWhenUneven(
+        picture,
+        com.hawkynt.mediadroid.player.PlaybackMath.EvenPlan(0f, judderFactor, evenReachable),
+        reducingJudder,
+    ).copy(gamma = picture.gamma * gammaBoost)
     // The picture filters' GL stage (see VideoFilterStage): the player draws into it while a filter is
     // set — not for HDR, which it would flatten — and it draws into the view that shows the picture,
     // on the phone or the second screen; otherwise the player draws straight into that view.
