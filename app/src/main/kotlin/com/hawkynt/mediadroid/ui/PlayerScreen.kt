@@ -1139,6 +1139,22 @@ fun PlayerScreen(
         onDispose { if (statisticsShown) player.clearVideoFrameMetadataListener(listener) }
     }
     LaunchedEffect(index) { statistics.clear() }
+    // A pause, a seek or buffering is no frame time: the statistics start their gaps afresh after one.
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!isPlaying) statistics.interrupted()
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) = statistics.interrupted()
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
     // The loop asks the latest composition's routing, with the picture and screens as they are now.
     val routeNow by androidx.compose.runtime.rememberUpdatedState({ routeVideo() })
     routeAtOnce[0] = { routeNow() }

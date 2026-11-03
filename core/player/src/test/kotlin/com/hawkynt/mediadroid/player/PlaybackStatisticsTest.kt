@@ -90,4 +90,21 @@ class PlaybackStatisticsTest {
         stats.graphics(30 * ms)
         assertArrayEquals(floatArrayOf(12f, 30f), stats.snapshot().graphicsMs, 1e-6f)
     }
+
+    @Test
+    fun `a pause is no frame time — the gap across it does not count, what came before stays`() {
+        val stats = PlaybackStatistics()
+        repeat(11) { stats.frameArrived(it * 40 * ms) }
+        repeat(11) { stats.pictureShown(it * 40 * ms) }
+        stats.interrupted()
+        // Playing again two seconds later.
+        repeat(11) { stats.frameArrived((2400 + it * 40) * ms) }
+        repeat(11) { stats.pictureShown((2400 + it * 40) * ms) }
+        val s = stats.snapshot()
+        assertEquals(20, s.frameTimesMs.size)
+        assertEquals(25f, s.framesPerSecond, 1e-3f)
+        assertEquals(0f, s.jitterMs, 1e-3f)
+        assertEquals(25f, s.shownPerSecond, 1e-3f)
+        assertEquals(0f, s.judderPercent, 1e-3f)
+    }
 }
