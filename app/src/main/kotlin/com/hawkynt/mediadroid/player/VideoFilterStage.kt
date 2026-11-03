@@ -93,6 +93,20 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     @Volatile
     var neuralUnit: NeuralUpscaler.Unit? = null
 
+    /** Where RIFE runs, from the household's self-test; null while neural frame interpolation is off. */
+    @Volatile
+    var neuralMotionUnit: NeuralUpscaler.Unit? = null
+
+    // RIFE (see NeuralInterpolator): opened on this thread, the two frames read back at its size, and the last two
+    // in-betweens with the later frame of the pair each belongs to (by its arrival, as keptAt holds it).
+    private var rife: NeuralInterpolator? = null
+    private val rifeRead = Array(2) {
+        ByteBuffer.allocateDirect(NeuralInterpolation.WIDTH * NeuralInterpolation.HEIGHT * 4)
+            .order(ByteOrder.nativeOrder())
+    }
+    private val rifeTextures = IntArray(2)
+    private val rifeFor = LongArray(2)
+
     /** The application, to open Real-ESRGAN's model from. */
     @Volatile
     var appContext: android.content.Context? = null
@@ -130,7 +144,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var temporalProgram = 0
     private var weaveProgram = 0
     private var packProgram = 0
-    private val frames = Array(ADJUSTED + 1) { Frame() }
+    private val frames = Array(RIFE_INPUT + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -435,6 +449,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             releaseWindow()
             GLES20.glDeleteProgram(copyProgram)
             GLES20.glDeleteProgram(adjustProgram)
+            rife?.close()
+            rife = null
+            if (rifeTextures[0] != 0) GLES20.glDeleteTextures(2, rifeTextures, 0)
             neural?.close()
             neural = null
             if (neuralTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(neuralTexture), 0)
@@ -1122,6 +1139,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         keptAt[2] = System.nanoTime()
         keptSteady[2] = blendTimeline.arrived(keptAt[2])
         kept = minOf(kept + 1, 3)
+        if (picture.interpolation.isNeural && kept >= 2) rifeBetween(frames[keptRing[1]], frames[keptRing[2]])
         val motion = picture.interpolation.isMotionCompensated
         if (motion) searchMotion(keptWidth, keptHeight) else motionLumas.fill(null)
         // Blending runs half a frame behind, Motion two frames; the sound is told to wait as long.
@@ -1272,12 +1290,21 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             weight = if (phase < due) 0f else 1f
         }
         EGL14.eglMakeCurrent(display, idle, idle, context)
+        // RIFE: through the in-between at the half (see NeuralInterpolation.mix), where it is in for this pair.
+        var previousTexture = frames[previous].texture
+        var currentTexture = frames[current].texture
+        val rifeSlot = if (picture.interpolation.isNeural && kept >= 2) rifeFor.indexOf(keptAt[later]) else -1
+        if (rifeSlot >= 0) {
+            val mix = NeuralInterpolation.mix(phase)
+            if (mix.towardsMiddle) currentTexture = rifeTextures[rifeSlot] else previousTexture = rifeTextures[rifeSlot]
+            weight = mix.weight
+        }
         val mixed = frames[7].ensure(width, height)
         mixed.bind()
         val program = if (alongMotion) motionProgram else blendProgram
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, frames[previous].texture)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, previousTexture)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uPrevious"), 1)
         if (alongMotion) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
@@ -1287,7 +1314,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, obmcTexture)
             GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uObmc"), 3)
         }
-        run(program, GLES20.GL_TEXTURE_2D, frames[current].texture, identity) { p ->
+        run(program, GLES20.GL_TEXTURE_2D, currentTexture, identity) { p ->
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWeight"), weight)
             GLES20.glUniform1f(
                 GLES20.glGetUniformLocation(p, "uAlpha"),
@@ -1550,6 +1577,64 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         return ids[0]
+    }
+
+    /** RIFE on the unit asked for, opened here on first use or when the unit changes; null while off. */
+    private fun rifeNet(): NeuralInterpolator? {
+        val unit = neuralMotionUnit
+        if (unit == null) {
+            rife?.close()
+            rife = null
+            return null
+        }
+        if (rife?.unit != unit) {
+            rife?.close()
+            rife = appContext?.let { NeuralInterpolator.open(it, unit) }
+        }
+        return rife
+    }
+
+    /**
+     * RIFE's in-between of [earlier] and [later]: both brought to its size and read back, the network run, and the
+     * result uploaded into the in-between texture not holding the pair before, marked with the later frame.
+     */
+    private fun rifeBetween(earlier: Frame, later: Frame) {
+        val net = rifeNet() ?: return
+        val w = NeuralInterpolation.WIDTH
+        val h = NeuralInterpolation.HEIGHT
+        val target = frames[RIFE_INPUT].ensure(w, h)
+        listOf(earlier, later).forEachIndexed { i, frame ->
+            target.bind()
+            run(sharpenProgram, GLES20.GL_TEXTURE_2D, frame.texture, identity) { p ->
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
+            }
+            rifeRead[i].rewind()
+            GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, rifeRead[i])
+            rifeRead[i].rewind()
+        }
+        val rgb = net.run(rifeRead[0], rifeRead[1])
+        if (rifeTextures[0] == 0) {
+            GLES20.glGenTextures(2, rifeTextures, 0)
+            rifeTextures.forEach {
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, it)
+                GLES20.glTexImage2D(
+                    GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGB, w, h, 0, GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, null,
+                )
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+            }
+        }
+        // Into the slot of the older pair: the newer one may still be on screen.
+        val slot = if (rifeFor[0] <= rifeFor[1]) 0 else 1
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, rifeTextures[slot])
+        GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
+        GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, rgb)
+        GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 4)
+        rifeFor[slot] = keptAt[2]
     }
 
     /** Real-ESRGAN on the unit asked for, opened here on first use or when the unit changes; null while off. */
@@ -1854,6 +1939,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** The picture at the screen's size before the colour correction, when one is set. */
         private const val ADJUSTED = XBRZ_DECISIONS + 1
+
+        /** A frame brought to RIFE's size, to read back for it. */
+        private const val RIFE_INPUT = ADJUSTED + 1
 
         /** Width of xBRZ's pattern table, one texel a cell of the largest block — as glsl/xbrz/scale.frag reads it. */
         private const val XBRZ_TABLE_WIDTH = 36
