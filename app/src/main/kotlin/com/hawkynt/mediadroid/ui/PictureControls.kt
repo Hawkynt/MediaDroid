@@ -1,12 +1,5 @@
 package com.hawkynt.mediadroid.ui
 
-import android.graphics.ColorMatrixColorFilter
-import android.graphics.Paint
-import android.graphics.RenderEffect
-import android.graphics.RuntimeShader
-import android.os.Build
-import android.view.View
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -25,7 +18,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureControl
-import com.hawkynt.mediadroid.shaders.Shaders
 
 /**
  * The four picture sliders, neutral in the middle, then the filters: sharpness and clarity from off
@@ -186,37 +178,5 @@ fun PictureSliders(
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    }
-}
-
-/**
- * Applies [picture] to this view — the video frame inside the player, so the controls drawn above
- * it keep their colours. Android 13 and newer run a small shader with a true gamma curve; older
- * devices get the colour-matrix approximation through a hardware layer.
- */
-fun View.applyPicture(picture: PictureAdjustment) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        setRenderEffect(if (picture.isColorNeutral) null else PictureShader.effect(picture))
-    } else if (picture.isColorNeutral) {
-        setLayerType(View.LAYER_TYPE_NONE, null)
-    } else {
-        val paint = Paint().apply { colorFilter = ColorMatrixColorFilter(picture.colorMatrix()) }
-        setLayerType(View.LAYER_TYPE_HARDWARE, paint)
-    }
-}
-
-@RequiresApi(Build.VERSION_CODES.TIRAMISU)
-private object PictureShader {
-
-
-    fun effect(picture: PictureAdjustment): RenderEffect {
-        val u = picture.shaderUniforms()
-        val shader = RuntimeShader(Shaders.PICTURE_ADJUST).apply {
-            setFloatUniform("brightness", u.brightness)
-            setFloatUniform("contrast", u.contrast)
-            setFloatUniform("saturation", u.saturation)
-            setFloatUniform("inverseGamma", u.inverseGamma)
-        }
-        return RenderEffect.createRuntimeShaderEffect(shader, "content")
     }
 }
