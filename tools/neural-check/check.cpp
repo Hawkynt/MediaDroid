@@ -1,12 +1,12 @@
 // The desktop check of the app's neural frame interpolation (app/src/main/cpp/networks.cpp): the self-test's frames
-// (as NeuralInterpolator.kt makes them) through RIFE, DAIN and XVFI on the CPU and, where there is one, the Vulkan
-// GPU — the in-between against the frame truly halfway, the time it took, and the memory the process peaked at.
+// (as NeuralInterpolator.kt makes them) through RIFE, DAIN, XVFI and FLAVR on the CPU and, where there is one, the
+// Vulkan GPU — the in-between against the frame truly halfway, the time it took, and the memory the process peaked
+// at; and the upscalers on a drawing.
 //
 // neural_check <glsl/ncnn folder> <RIFE model folder> <DAIN model folder> <XVFI model folder> [size ...]
 // FLAVR_DIR, WAIFU2X_DIR and REALCUGAN_DIR, where set, add those networks. NEURAL_CHECK_UNIT=CPU or GPU runs only
-// that unit,
-// NEURAL_CHECK_NETWORK=RIFE, DAIN, XVFI, waifu2x or Real-CUGAN only that network. NEURAL_CHECK_DUMP=<folder> writes
-// the upscalers' pictures there.
+// that unit, NEURAL_CHECK_NETWORK=RIFE, DAIN, XVFI, FLAVR, waifu2x or Real-CUGAN only that network.
+// NEURAL_CHECK_DUMP=<folder> writes the upscalers' pictures there.
 #include <sys/resource.h>
 
 #include <chrono>
