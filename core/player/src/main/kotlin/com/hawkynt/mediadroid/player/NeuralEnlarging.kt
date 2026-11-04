@@ -1,13 +1,13 @@
 package com.hawkynt.mediadroid.player
 
 /**
- * The upscalers made by networks the app carries on ncnn (waifu2x's CUnet, Real-CUGAN's SE model, as nihui's ncnn
- * ports run them): twice the picture's size, the screen's scaling doing the rest. Like the other neural choices, one
- * is taken only where a self-test finds the device runs it right and fast enough.
+ * The upscalers made by networks on ncnn (waifu2x's CUnet, Real-CUGAN's SE model, RealSR's DF2K_JPEG model, as nihui's
+ * ncnn ports run them): twice the picture's size, RealSR four times, the screen's scaling doing the rest. Like the
+ * other neural choices, one is taken only where a self-test finds the device runs it right and fast enough.
  */
 object NeuralEnlarging {
-    /** How much larger the networks make a picture. */
-    const val SCALE = 2
+    /** How much larger [upscaler] makes a picture: RealSR four times, the others twice. */
+    fun scale(upscaler: PictureAdjustment.Upscaler): Int = if (upscaler == PictureAdjustment.Upscaler.REALSR) 4 else 2
 
     /** What one 576p picture may take: a frame at 25 frames a second. */
     const val BUDGET_MS = 40.0

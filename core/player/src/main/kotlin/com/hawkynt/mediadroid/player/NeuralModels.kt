@@ -92,11 +92,34 @@ object NeuralModels {
         ),
     )
 
+    /** CAIN, as nihui's cain-ncnn-vulkan converted it (MIT; models/cain), copied unchanged. */
+    val CAIN = Download(
+        "cain",
+        listOf(
+            File("cain.param", 60_912, "bb652c63ce444c010f47c0767964880453315bd4a5b9b172fc25667899c23986"),
+            File("cain.bin", 85_635_100, "4fcb9e35dd1bab1ef4b42cd04b299030e11213a14d1067c9c7ec3896dd6c3536"),
+        ),
+    )
+
+    /** RealSR's DF2K_JPEG model, as nihui's realsr-ncnn-vulkan converted it (MIT; models-DF2K_JPEG), unchanged. */
+    val REALSR = Download(
+        "realsr",
+        listOf(
+            File("x4.param", 115_993, "a7f31e75518ad279c179202bf77da9eca3141124a67e5261d97235849e6cc323"),
+            File("x4.bin", 33_424_520, "e862e88c3f346a3b8506d839633f5e2a16461bb8bfb3e211152f40d807a4f51c"),
+        ),
+    )
+
+    /** What [upscaler] needs downloaded; null for one the app carries itself. */
+    fun download(upscaler: PictureAdjustment.Upscaler): Download? =
+        if (upscaler == PictureAdjustment.Upscaler.REALSR) REALSR else null
+
     /** What [network] needs downloaded; null for a network the app carries itself. */
     fun download(network: PictureAdjustment.Interpolation): Download? = when (network) {
         PictureAdjustment.Interpolation.DAIN -> DAIN
         PictureAdjustment.Interpolation.XVFI -> XVFI
         PictureAdjustment.Interpolation.FLAVR -> FLAVR
+        PictureAdjustment.Interpolation.CAIN -> CAIN
         else -> null
     }
 }

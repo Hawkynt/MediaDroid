@@ -42,13 +42,15 @@ class NeuralModelsTest {
     }
 
     @Test
-    fun `the neural smooth-motion choices are RIFE, DAIN, XVFI and FLAVR, only RIFE in the app itself`() {
+    fun `the neural smooth-motion choices are RIFE, DAIN, XVFI, FLAVR, CAIN and IFRNet, RIFE and IFRNet in the app`() {
         assertEquals(
             listOf(
                 PictureAdjustment.Interpolation.RIFE,
                 PictureAdjustment.Interpolation.DAIN,
                 PictureAdjustment.Interpolation.XVFI,
                 PictureAdjustment.Interpolation.FLAVR,
+                PictureAdjustment.Interpolation.CAIN,
+                PictureAdjustment.Interpolation.IFRNET,
             ),
             PictureAdjustment.Interpolation.entries.filter { it.isNeural },
         )
@@ -56,6 +58,16 @@ class NeuralModelsTest {
         assertEquals(NeuralModels.DAIN, NeuralModels.download(PictureAdjustment.Interpolation.DAIN))
         assertEquals(NeuralModels.XVFI, NeuralModels.download(PictureAdjustment.Interpolation.XVFI))
         assertEquals(NeuralModels.FLAVR, NeuralModels.download(PictureAdjustment.Interpolation.FLAVR))
+        assertEquals(NeuralModels.CAIN, NeuralModels.download(PictureAdjustment.Interpolation.CAIN))
+        assertEquals(null, NeuralModels.download(PictureAdjustment.Interpolation.IFRNET))
+    }
+
+    @Test
+    fun `RealSR is fetched, waifu2x and Real-CUGAN are carried`() {
+        assertEquals(NeuralModels.REALSR, NeuralModels.download(PictureAdjustment.Upscaler.REALSR))
+        assertEquals(null, NeuralModels.download(PictureAdjustment.Upscaler.WAIFU2X))
+        assertEquals(listOf("x4.param", "x4.bin"), NeuralModels.REALSR.files.map { it.name })
+        assertEquals(listOf("cain.param", "cain.bin"), NeuralModels.CAIN.files.map { it.name })
     }
 
     @Test
