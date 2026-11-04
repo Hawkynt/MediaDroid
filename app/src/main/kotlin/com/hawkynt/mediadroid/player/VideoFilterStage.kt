@@ -808,7 +808,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         next: Frame,
         secondField: Boolean,
         bwdif: Boolean,
-    ) {
+    ) = exact(prev.texture, cur.texture, next.texture) {
         target.bind()
         GLES20.glUseProgram(temporalProgram)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
@@ -940,13 +940,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 Telecine.Match.CURRENT -> cur to -1
             }
             slot.bind()
-            GLES20.glUseProgram(weaveProgram)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, other.texture)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(weaveProgram, "uOther"), 1)
-            run(weaveProgram, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
-                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRows"), rows.toFloat())
+            exact(cur.texture, other.texture) {
+                GLES20.glUseProgram(weaveProgram)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, other.texture)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(weaveProgram, "uOther"), 1)
+                run(weaveProgram, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRows"), rows.toFloat())
+                }
             }
         }
 
@@ -1058,10 +1060,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val texels = (columns + 3) / 4
         val target = frames[PACKED_LUMA].ensure(texels, rows)
         target.bind()
-        run(packProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uStep"), stepX.toFloat(), stepY.toFloat())
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSd"), if (height <= SD_HEIGHT) 1 else 0)
+        exact(from.texture) {
+            run(packProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uStep"), stepX.toFloat(), stepY.toFloat())
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSd"), if (height <= SD_HEIGHT) 1 else 0)
+            }
         }
         return Triple(columns, rows, texels)
     }
@@ -1589,27 +1593,29 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
                 }
                 val corners = frames[XBRZ_CORNERS].ensure(width + 1, height + 1)
-                corners.bind()
-                run(xbrzPrograms[0], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
                 val decisions = frames[XBRZ_DECISIONS].ensure(width, height)
-                decisions.bind()
-                GLES20.glUseProgram(xbrzPrograms[1])
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, corners.texture)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[1], "uCorners"), 1)
-                run(xbrzPrograms[1], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
                 val enlarged = frames[4].ensure(width * factor, height * factor)
-                enlarged.bind()
-                GLES20.glUseProgram(xbrzPrograms[2])
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, decisions.texture)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uDecisions"), 1)
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, xbrzTable)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uTable"), 2)
-                run(xbrzPrograms[2], GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                    size(p)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFactor"), factor.toFloat())
+                exact(source.texture, corners.texture, decisions.texture) {
+                    corners.bind()
+                    run(xbrzPrograms[0], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
+                    decisions.bind()
+                    GLES20.glUseProgram(xbrzPrograms[1])
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, corners.texture)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[1], "uCorners"), 1)
+                    run(xbrzPrograms[1], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
+                    enlarged.bind()
+                    GLES20.glUseProgram(xbrzPrograms[2])
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, decisions.texture)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uDecisions"), 1)
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, xbrzTable)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uTable"), 2)
+                    run(xbrzPrograms[2], GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                        size(p)
+                        GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFactor"), factor.toFloat())
+                    }
                 }
                 toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
@@ -2016,6 +2022,27 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private fun surfaceHeight() = if (window != EGL14.EGL_NO_SURFACE) query(EGL14.EGL_HEIGHT) else 1
 
     /** Draws a full-screen quad with [program] sampling [texture]; [uniforms] sets the rest. */
+    /**
+     * [block] with [textures] sampled nearest instead of linearly: for the passes that read exact pixels (YADIF and
+     * BWDIF, Film's weave, the luma read back, xBRZ). Through linear filtering a texel's centre addressed a hair off
+     * — as a GPU's division may — blends in 1/256 of the neighbour, which moves YADIF's choices by up to 139 steps;
+     * nearest tolerates half a texel. The textures are linear again afterwards.
+     */
+    private inline fun <T> exact(vararg textures: Int, block: () -> T): T {
+        sampling(textures, GLES20.GL_NEAREST)
+        try {
+            return block()
+        } finally {
+            sampling(textures, GLES20.GL_LINEAR)
+        }
+    }
+
+    private fun sampling(textures: IntArray, mode: Int) = textures.forEach {
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, it)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, mode)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, mode)
+    }
+
     private fun run(program: Int, target: Int, texture: Int, matrix: FloatArray, uniforms: (Int) -> Unit) {
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
