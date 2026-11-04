@@ -43,6 +43,18 @@ std::unique_ptr<Interpolator> openDain(const Loader& load, bool gpu);
 // the CPU; null where it does not load.
 std::unique_ptr<Interpolator> openXvfi(const Loader& load, bool gpu);
 
+// A network that enlarges an RGBA picture (w x h, rows as stored) to twice its size as RGB bytes: waifu2x or
+// Real-CUGAN (see enlarger.cpp).
+struct Enlarger {
+    virtual ~Enlarger() = default;
+    virtual int enlarge(const unsigned char* rgba, int w, int h, unsigned char* rgb) = 0;
+};
+
+// waifu2x's CUnet (its "noise1_scale2.0x_model") and Real-CUGAN's SE model (its "up2x-conservative"), on the GPU or the
+// CPU; null where they do not load.
+std::unique_ptr<Enlarger> openWaifu2x(const Loader& load, bool gpu);
+std::unique_ptr<Enlarger> openRealCugan(const Loader& load, bool gpu);
+
 // [net]'s options for the GPU or the CPU: on the GPU half floats to store, full floats to compute with.
 void configure(ncnn::Net& net, bool vulkan);
 

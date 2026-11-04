@@ -3,7 +3,9 @@
 // GPU — the in-between against the frame truly halfway, the time it took, and the memory the process peaked at.
 //
 // neural_check <glsl/ncnn folder> <RIFE model folder> <DAIN model folder> <XVFI model folder> [size ...]
-// NEURAL_CHECK_UNIT=CPU or GPU runs only that unit, NEURAL_CHECK_NETWORK=RIFE, DAIN or XVFI only that network.
+// WAIFU2X_DIR and REALCUGAN_DIR, where set, add those upscalers. NEURAL_CHECK_UNIT=CPU or GPU runs only that unit,
+// NEURAL_CHECK_NETWORK=RIFE, DAIN, XVFI, waifu2x or Real-CUGAN only that network. NEURAL_CHECK_DUMP=<folder> writes
+// the upscalers' pictures there.
 #include <sys/resource.h>
 
 #include <chrono>
@@ -14,6 +16,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "networks.h"
@@ -112,6 +115,81 @@ void reuse(const char* name, mediadroid::Interpolator& net, int w, int h) {
                 name, w, h, fresh == kept ? "agrees" : "DIFFERS", afresh, again);
 }
 
+// The upscalers' test picture (NeuralEnlarger.drawing): flat colours with round edges, as drawings are — discs of
+// 7 to 20 pixels' radius on a 24-pixel grid, each its own colour, on a light ground.
+std::vector<unsigned char> drawing(int w, int h) {
+    std::vector<unsigned char> rgba(static_cast<size_t>(w) * h * 4);
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            const int cx = x / 24;
+            const int cy = y / 24;
+            const int dx = x - (cx * 24 + 12);
+            const int dy = y - (cy * 24 + 12);
+            const int radius = 7 + level(cx, cy, 3) % 14;
+            unsigned char* p = &rgba[(static_cast<size_t>(y) * w + x) * 4];
+            const bool inside = dx * dx + dy * dy <= radius * radius;
+            for (int c = 0; c < 3; c++) p[c] = static_cast<unsigned char>(inside ? level(cx, cy, c) : 230);
+            p[3] = 255;
+        }
+    }
+    return rgba;
+}
+
+// An upscaler on a drawing: the picture box-filtered down to half and enlarged again, against the original — and,
+// for scale, the half picture's pixels just doubled.
+void enlarge(const char* name, mediadroid::Enlarger& net, int w, int h) {
+    const auto full = drawing(w * 2, h * 2);
+    std::vector<unsigned char> half(static_cast<size_t>(w) * h * 4);
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            for (int c = 0; c < 4; c++) {
+                int sum = 0;
+                for (int dy = 0; dy < 2; dy++) {
+                    for (int dx = 0; dx < 2; dx++) {
+                        sum += full[((static_cast<size_t>(y) * 2 + dy) * w * 2 + x * 2 + dx) * 4 + c];
+                    }
+                }
+                half[(static_cast<size_t>(y) * w + x) * 4 + c] = static_cast<unsigned char>((sum + 2) / 4);
+            }
+        }
+    }
+    std::vector<unsigned char> rgb(static_cast<size_t>(w) * h * 4 * 3);
+    const auto start = std::chrono::steady_clock::now();
+    const int ran = net.enlarge(half.data(), w, h, rgb.data());
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    if (ran != 0) {
+        std::printf("%s %dx%d: failed (%d)\n", name, w, h, ran);
+        return;
+    }
+    if (const char* dump = std::getenv("NEURAL_CHECK_DUMP")) {
+        auto ppm = [&](const std::string& file, const unsigned char* data, int pw, int ph, int stride) {
+            std::FILE* f = std::fopen((std::string(dump) + "/" + file).c_str(), "wb");
+            std::fprintf(f, "P6\n%d %d\n255\n", pw, ph);
+            for (int i = 0; i < pw * ph; i++) std::fwrite(data + static_cast<size_t>(i) * stride, 1, 3, f);
+            std::fclose(f);
+        };
+        const std::string base = std::string(name).substr(0, std::string(name).find(' '));
+        ppm(base + "-full.ppm", full.data(), w * 2, h * 2, 4);
+        ppm(base + "-half.ppm", half.data(), w, h, 4);
+        ppm(base + "-out.ppm", rgb.data(), w * 2, h * 2, 3);
+    }
+    double network = 0;
+    double doubled = 0;
+    long count = 0;
+    for (int y = 8; y < h * 2 - 8; y++) {
+        for (int x = 8; x < w * 2 - 8; x++) {
+            for (int c = 0; c < 3; c++) {
+                const int truth = full[(static_cast<size_t>(y) * w * 2 + x) * 4 + c];
+                network += std::abs(rgb[(static_cast<size_t>(y) * w * 2 + x) * 3 + c] - truth);
+                doubled += std::abs(half[(static_cast<size_t>(y / 2) * w + x / 2) * 4 + c] - truth);
+                count++;
+            }
+        }
+    }
+    std::printf("%s %dx%d -> %dx%d: off by %.2f, pixels doubled by %.2f; %.0f ms; peak %ld MB\n", name, w, h, w * 2,
+                h * 2, network / count, doubled / count, ms, peakMb());
+}
+
 std::string read(const std::filesystem::path& path) {
     std::ifstream in(path);
     std::stringstream text;
@@ -162,6 +240,25 @@ int main(int argc, char** argv) {
                 check((network + " " + unit).c_str(), *net, side, side);
                 reuse((network + " " + unit).c_str(), *net, side, side);
             }
+        }
+    }
+    for (bool onGpu : {false, true}) {
+        if (onGpu && !gpu) continue;
+        const char* unit = onGpu ? "GPU" : "CPU";
+        const char* onlyUnit = std::getenv("NEURAL_CHECK_UNIT");
+        if (onlyUnit != nullptr && std::string(onlyUnit) != unit) continue;
+        for (const auto& [network, open, env] : {
+                 std::make_tuple(std::string("waifu2x"), &mediadroid::openWaifu2x, "WAIFU2X_DIR"),
+                 std::make_tuple(std::string("Real-CUGAN"), &mediadroid::openRealCugan, "REALCUGAN_DIR")}) {
+            const char* dir = std::getenv(env);
+            const char* only = std::getenv("NEURAL_CHECK_NETWORK");
+            if (dir == nullptr || (only != nullptr && network != only)) continue;
+            auto net = (*open)(files(dir), onGpu);
+            if (!net) {
+                std::printf("%s on the %s: does not load\n", network.c_str(), unit);
+                continue;
+            }
+            for (int side : sizes) enlarge((network + " " + unit).c_str(), *net, side, side);
         }
     }
     return 0;

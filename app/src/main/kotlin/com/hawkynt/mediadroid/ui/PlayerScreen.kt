@@ -1065,11 +1065,12 @@ fun PlayerScreen(
         com.hawkynt.mediadroid.player.PlaybackMath.EvenPlan(0f, judderFactor, evenReachable),
         reducingJudder,
     ).copy(gamma = picture.gamma * gammaBoost).let {
-        // Real-ESRGAN saved for a video plays as Standard once the household switched neural upscaling off.
+        // A neural upscaler saved for a video plays as Standard where this device has not passed its test.
         val neuralSaved = it.upscaler == com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.NEURAL
         val rifeSaved = it.interpolation.isNeural
         when {
-            neuralSaved && !settings.neuralUpscaling ->
+            neuralSaved && !settings.neuralUpscaling ||
+                it.upscaler.isEnlarger && it.upscaler !in settings.neuralEnlargersOffered ->
                 it.copy(upscaler = com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.STANDARD)
             else -> it
         }.let { p ->
@@ -1137,6 +1138,8 @@ fun PlayerScreen(
             active.statistics = if (statisticsShown) statistics else null
             active.appContext = context.applicationContext
             active.neuralMotion = settings.neuralMotionOffered.associateWith { settings.neuralMotionPassed(it)!! }
+            active.neuralEnlargers =
+                settings.neuralEnlargersOffered.associateWith { settings.neuralEnlargerPassed(it)!! }
             active.neuralUnit = if (settings.neuralUpscaling) {
                 runCatching {
                     com.hawkynt.mediadroid.player.NeuralUpscaler.Unit.valueOf(settings.neuralUnit)

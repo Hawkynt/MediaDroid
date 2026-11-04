@@ -31,18 +31,18 @@ class NeuralTestService : Service() {
     private val requests = Messenger(
         Handler(Looper.getMainLooper()) { message ->
             val reply = message.replyTo
-            val network = message.data.getString(NETWORK)
-                ?.let { runCatching { PictureAdjustment.Interpolation.valueOf(it) }.getOrNull() }
+            val name = message.data.getString(NETWORK).orEmpty()
+            val upscaling = message.data.getBoolean(UPSCALING)
             val unit = message.data.getString(UNIT)?.let { runCatching { NeuralUpscaler.Unit.valueOf(it) }.getOrNull() }
-            if (reply != null && network != null && unit != null && !busy) {
+            if (reply != null && unit != null && !busy) {
                 busy = true
-                thread(name = "neural-test") { test(reply, network, unit) }
+                thread(name = "neural-test") { test(reply, name, upscaling, unit) }
             }
             true
         },
     )
 
-    private fun test(reply: Messenger, network: PictureAdjustment.Interpolation, unit: NeuralUpscaler.Unit) {
+    private fun test(reply: Messenger, name: String, upscaling: Boolean, unit: NeuralUpscaler.Unit) {
         fun send(what: Int, height: Int = 0, ms: Double = 0.0, passed: String? = null) {
             val message = Message.obtain(null, what, height, Process.myPid()).apply {
                 data = Bundle().apply {
@@ -53,16 +53,18 @@ class NeuralTestService : Service() {
             runCatching { reply.send(message) }
         }
         send(STARTED)
-        val timing = NeuralInterpolator.selfTest(
-            applicationContext,
-            network,
-            unit,
-            object : NeuralInterpolator.Companion.Progress {
-                override fun running(height: Int) = send(RUNNING, height)
+        val progress = object : NeuralInterpolator.Companion.Progress {
+            override fun running(height: Int) = send(RUNNING, height)
 
-                override fun timed(height: Int, ms: Double) = send(TIMED, height, ms)
-            },
-        )
+            override fun timed(height: Int, ms: Double) = send(TIMED, height, ms)
+        }
+        val timing = if (upscaling) {
+            runCatching { PictureAdjustment.Upscaler.valueOf(name) }.getOrNull()
+                ?.let { NeuralEnlarger.selfTest(applicationContext, it, unit, progress) }
+        } else {
+            runCatching { PictureAdjustment.Interpolation.valueOf(name) }.getOrNull()
+                ?.let { NeuralInterpolator.selfTest(applicationContext, it, unit, progress) }
+        }
         // The app ends the process on this answer — whatever the network left behind, memory or a lost GPU, goes
         // with it.
         send(RESULT, passed = timing?.let { NeuralInterpolation.Passed(it.unit.name, it.msByHeight).encode() })
@@ -86,6 +88,7 @@ class NeuralTestService : Service() {
         private const val TIMED = 4
         private const val RESULT = 5
         private const val NETWORK = "network"
+        private const val UPSCALING = "upscaling"
         private const val UNIT = "unit"
         private const val MS = "ms"
         private const val PASSED = "passed"
@@ -93,20 +96,27 @@ class NeuralTestService : Service() {
         private const val GONE_WAIT_MS = 3000L
 
         /**
-         * [network]'s self-test on the GPU, then the CPU unless the GPU kept up, each in a fresh test process, all of it
-         * within [NeuralInterpolation.MAX_WAIT_MS]; blocks until both answered, ended or were cut short — not on the
-         * main thread.
+         * [network]'s self-test on the GPU, then the CPU unless the GPU kept up, each in a fresh test process, all
+         * of it within [NeuralInterpolation.MAX_WAIT_MS]; blocks until both answered, ended or were cut short — not
+         * on the main thread.
          */
-        fun selfTest(context: Context, network: PictureAdjustment.Interpolation): Outcome {
+        fun selfTest(context: Context, network: PictureAdjustment.Interpolation): Outcome =
+            selfTest(context, network.name, upscaling = false) { NeuralInterpolation.fastEnough(it) }
+
+        /** [upscaler]'s self-test (waifu2x, Real-CUGAN; see NeuralEnlarger.selfTest), the same way. */
+        fun selfTest(context: Context, upscaler: PictureAdjustment.Upscaler): Outcome =
+            selfTest(context, upscaler.name, upscaling = true) { NeuralEnlarging.fastEnough(it) }
+
+        private fun selfTest(context: Context, name: String, upscaling: Boolean, fast: (Double) -> Boolean): Outcome {
             val timings = ArrayList<NeuralInterpolator.Timing>()
             var ended = 0
             // All of it within NeuralInterpolation.MAX_WAIT_MS: the GPU until half of it, the CPU until the end.
             val start = System.nanoTime()
             val units = listOf(NeuralUpscaler.Unit.GPU, NeuralUpscaler.Unit.CPU)
             for ((i, unit) in units.withIndex()) {
-                if (timings.any { NeuralInterpolation.fastEnough(it.msByHeight.values.first()) }) break
+                if (timings.any { fast(it.msByHeight.values.first()) }) break
                 val until = start + (NeuralInterpolation.MAX_WAIT_MS * 1e6 * (i + 1) / units.size).toLong()
-                when (val one = selfTest(context, network, unit, until)) {
+                when (val one = selfTest(context, name, upscaling, unit, until)) {
                     null -> ended++
                     else -> one.timing?.let { timings += it }
                 }
@@ -127,7 +137,8 @@ class NeuralTestService : Service() {
          */
         private fun selfTest(
             context: Context,
-            network: PictureAdjustment.Interpolation,
+            networkName: String,
+            upscaling: Boolean,
             unit: NeuralUpscaler.Unit,
             until: Long,
         ): Answer? {
@@ -167,7 +178,8 @@ class NeuralTestService : Service() {
                 override fun onServiceConnected(name: ComponentName, binder: IBinder) {
                     val request = Message.obtain(null, TEST).apply {
                         data = Bundle().apply {
-                            putString(NETWORK, network.name)
+                            putString(NETWORK, networkName)
+                            putBoolean(UPSCALING, upscaling)
                             putString(UNIT, unit.name)
                         }
                         replyTo = replies
@@ -195,7 +207,9 @@ class NeuralTestService : Service() {
                     if (answer == null) {
                         // Out of time, far beyond the budget already: cut short, the size being made (the smallest
                         // while still loading) counting as having taken as long as a whole test may.
-                        val height = runningHeight.takeIf { it != 0 } ?: NeuralInterpolation.TEST_SIZES.first().height
+                        val smallest =
+                            if (upscaling) PictureCheck.HEIGHT else NeuralInterpolation.TEST_SIZES.first().height
+                        val height = runningHeight.takeIf { it != 0 } ?: smallest
                         times[height] = NeuralInterpolation.MAX_WAIT_MS
                         answer = Answer(NeuralInterpolator.Timing(unit, LinkedHashMap(times)))
                     }

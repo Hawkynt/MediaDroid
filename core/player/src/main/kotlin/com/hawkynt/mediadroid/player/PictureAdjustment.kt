@@ -146,6 +146,15 @@ data class PictureAdjustment(
         ANIME4K("Anime4K", "A small neural network for cartoons and anime: line art kept crisp when doubled."),
         XBRZ("xBRZ", "Rules for pixel art and cartoons: smooth diagonals and curves, flat areas left flat."),
         NEURAL("Real-ESRGAN", "A neural network enlarging four times with fine detail: the heaviest; tested first."),
+        WAIFU2X(
+            "waifu2x",
+            "A neural network for drawings and anime, twice the size with noise lightly removed; tested first.",
+        ),
+        REALCUGAN("Real-CUGAN", "bilibili's network for anime, twice the size, edges crisp and clean; tested first."),
+        ;
+
+        /** Enlarged by a network the app carries on ncnn, twice the size (see [NeuralEnlarging]). */
+        val isEnlarger: Boolean get() = this == WAIFU2X || this == REALCUGAN
     }
 
     /**

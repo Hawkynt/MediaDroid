@@ -15,7 +15,7 @@ find_package(ncnn REQUIRED)
 set(APP_CPP "${CMAKE_CURRENT_SOURCE_DIR}/../../app/src/main/cpp")
 add_executable(neural_check check.cpp
     "${APP_CPP}/networks.cpp" "${APP_CPP}/shaders.cpp" "${APP_CPP}/warp_layer.cpp" "${APP_CPP}/dain_layers.cpp"
-    "${APP_CPP}/xvfi.cpp")
+    "${APP_CPP}/xvfi.cpp" "${APP_CPP}/enlarger.cpp")
 target_include_directories(neural_check PRIVATE "${APP_CPP}" "${NCNN_ROOT}/include/ncnn")
 find_package(OpenMP REQUIRED)
 target_link_libraries(neural_check ncnn OpenMP::OpenMP_CXX)
