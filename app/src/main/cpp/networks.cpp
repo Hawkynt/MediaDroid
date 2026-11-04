@@ -1,6 +1,7 @@
 #include "networks.h"
 
 #include <mutex>
+#include <type_traits>
 #include <string>
 
 #include <gpu.h>
@@ -18,18 +19,6 @@ int roundUp(int value, int step) {
     return (value + step - 1) / step * step;
 }
 
-// Options for a network on the GPU or the CPU: on the GPU half floats to store, full floats to compute with — in
-// half floats the sampling positions of a large frame lose too much.
-void configure(ncnn::Net& net, bool vulkan) {
-    ncnn::Option& opt = net.opt;
-    opt.use_vulkan_compute = vulkan;
-    opt.use_fp16_packed = vulkan;
-    opt.use_fp16_storage = vulkan;
-    opt.use_fp16_arithmetic = false;
-    opt.use_bf16_storage = false;
-    opt.num_threads = vulkan ? 1 : 4;
-    if (vulkan) net.set_vulkan_device(ncnn::get_gpu_device());
-}
 
 // [rgba] (w x h, rows as stored) as a three-plane picture in 0..1 in the [order] ncnn names, padded at the right and
 // bottom to [paddedW] x [paddedH] by [border] (ncnn::BORDER_*).
@@ -106,7 +95,16 @@ struct Dain : Interpolator {
         return ex;
     }
 
-    // The four networks in turn, as dain-ncnn-vulkan's process_notile runs them.
+    // On the CPU, a frame and what is worked out from it alone (its depth and context), kept for the next pair. On
+    // the GPU nothing is kept: ncnn hands the memory of a call's blobs to the next call.
+    struct Frame {
+        long long id = 0;
+        ncnn::Mat depth, ctx;
+    };
+    Frame kept[2];
+
+    // The four networks in turn, as dain-ncnn-vulkan's process_notile runs them; depth and context of a frame
+    // already kept (on the CPU, by its id) are not worked out again.
     template <typename M>
     int run(const M& in0, const M& in1, float time, M& out, ncnn::VkAllocator* blobs, ncnn::VkAllocator* staging,
             ncnn::VkCompute* cmd) {
@@ -123,12 +121,30 @@ struct Dain : Interpolator {
             put(ex, "input1", second);
             failed |= take(ex, "flow", result, cmd);
         };
-        one(depthnet, in0, "depth", depth0);
-        one(depthnet, in1, "depth", depth1);
+        auto perFrame = [&](const M& in, long long id, const Frame* other, M& depth, M& ctx) {
+            if constexpr (std::is_same_v<M, ncnn::Mat>) {
+                for (Frame& f : kept) {
+                    if (id != 0 && f.id == id && f.depth.w == in.w && f.depth.h == in.h) {
+                        depth = f.depth;
+                        ctx = f.ctx;
+                        return &f;
+                    }
+                }
+                one(depthnet, in, "depth", depth);
+                one(ctxnet, in, "ctx", ctx);
+                Frame& slot = &kept[0] == other ? kept[1] : kept[0];
+                slot = Frame{id, depth, ctx};
+                return &slot;
+            } else {
+                one(depthnet, in, "depth", depth);
+                one(ctxnet, in, "ctx", ctx);
+                return static_cast<Frame*>(nullptr);
+            }
+        };
+        const Frame* first = perFrame(in0, earlierId, nullptr, depth0, ctx0);
+        perFrame(in1, laterId, first, depth1, ctx1);
         pair(in0, in1, flow0);
         pair(in1, in0, flow1);
-        one(ctxnet, in0, "ctx", ctx0);
-        one(ctxnet, in1, "ctx", ctx1);
         if (failed) return -2;
         ncnn::Mat flow0Weight(1);
         ncnn::Mat flow1Weight(1);
@@ -190,6 +206,18 @@ struct Dain : Interpolator {
 };
 
 }  // namespace
+
+// In half floats the sampling positions of a large frame lose too much: on the GPU they only store.
+void configure(ncnn::Net& net, bool vulkan) {
+    ncnn::Option& opt = net.opt;
+    opt.use_vulkan_compute = vulkan;
+    opt.use_fp16_packed = vulkan;
+    opt.use_fp16_storage = vulkan;
+    opt.use_fp16_arithmetic = false;
+    opt.use_bf16_storage = false;
+    opt.num_threads = vulkan ? 1 : 4;
+    if (vulkan) net.set_vulkan_device(ncnn::get_gpu_device());
+}
 
 bool gpuReady() {
     std::call_once(gpuOnce, [] { ncnn::create_gpu_instance(); });
