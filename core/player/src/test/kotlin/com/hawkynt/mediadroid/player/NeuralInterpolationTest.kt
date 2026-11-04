@@ -73,6 +73,14 @@ class NeuralInterpolationTest {
     }
 
     @Test
+    fun `a self-test waits at most two seconds for one in-between, far beyond the budget already`() {
+        assertEquals(2000.0, NeuralInterpolation.MAX_WAIT_MS, 0.0)
+        assertTrue(NeuralInterpolation.cutShort(2000.0))
+        assertFalse(NeuralInterpolation.cutShort(1999.0))
+        assertFalse(NeuralInterpolation.fastEnough(NeuralInterpolation.MAX_WAIT_MS))
+    }
+
+    @Test
     fun `a passed self-test is kept per network as its unit and times, and read back`() {
         val passed = NeuralInterpolation.Passed("GPU", mapOf(480 to 5.5, 720 to 11.25))
         assertEquals("GPU|480=5.5;720=11.25", passed.encode())

@@ -90,13 +90,19 @@ data class PictureAdjustment(
          * its self-test passed, after downloading it (see [NeuralModels]).
          */
         DAIN("DAIN", 1f),
+
+        /**
+         * XVFI's network makes the in-between from flows estimated coarse to fine (see [NeuralInterpolation]); where
+         * its self-test passed, after downloading it (see [NeuralModels]).
+         */
+        XVFI("XVFI", 1f),
         ;
 
         /** Built along the motion rather than blended. */
         val isMotionCompensated: Boolean get() = this == MOTION
 
         /** Made by a neural network (see [NeuralInterpolation]). */
-        val isNeural: Boolean get() = this == RIFE || this == DAIN
+        val isNeural: Boolean get() = this == RIFE || this == DAIN || this == XVFI
 
         /** How much of the next frame to show at [phase] (0 at the earlier frame's time, 1 at the next's). */
         fun weight(phase: Float): Float {
