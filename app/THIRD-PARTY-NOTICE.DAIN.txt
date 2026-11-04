@@ -1,0 +1,58 @@
+DAIN, by Wenbo Bao and others (https://github.com/baowenbo/DAIN; the paper: Depth-Aware Video Frame Interpolation,
+CVPR 2019), as ncnn runs it: dain-ncnn-vulkan, by nihui (https://github.com/nihui/dain-ncnn-vulkan).
+
+The model is not in the app: switched on in Settings, it is fetched from huggingface.co/Hawkynt/mediadroid-models
+(dain/), where dain-ncnn-vulkan's models/best files lie unchanged, each file checked against its SHA-256 digest (see
+core/player/.../NeuralModels.kt). The layers the model calls — dain.Correlation, dain.OpticalFlowWarp,
+dain.DepthFlowProjection, dain.FilterInterpolation (app/src/main/cpp/dain_layers.cpp and
+app/src/main/glsl/ncnn/dain-*.comp) — are converted from dain-ncnn-vulkan's, and app/src/main/cpp/networks.cpp runs
+the four networks the way its DAIN::process_notile does.
+
+DAIN:
+
+MIT License
+
+Copyright (c) 2019 Wenbo Bao
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+dain-ncnn-vulkan:
+
+The MIT License (MIT)
+
+Copyright (c) 2020 nihui
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

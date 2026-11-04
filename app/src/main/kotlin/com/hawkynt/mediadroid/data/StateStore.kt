@@ -89,9 +89,9 @@ data class Settings(
     var neuralUpscaling: Boolean = false,     // Real-ESRGAN offered as an upscaler; on only once the self-test passed
     var neuralUnit: String = "",              // where the self-test found it fastest: NPU, GPU or CPU
     var neuralMs: Float = 0f,                 // what one 576p picture took there in the self-test
-    var neuralInterpolation: Boolean = false, // RIFE offered for smooth motion; on only once its self-test passed
-    var neuralInterpolationUnit: String = "", // where its self-test found it fastest: GPU or CPU
-    var neuralInterpolationTimes: String = "", // what an in-between took there per tested size: "480=12.5;576=…"
+    // Neural smooth motion by network (RIFE, DAIN): offered once its self-test passed, kept as where it ran fastest
+    // and what an in-between took there per tested size ("GPU|480=12.5;576=…", see NeuralInterpolation.Passed).
+    var neuralMotion: Map<String, String> = emptyMap(),
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
     var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout
@@ -102,11 +102,16 @@ data class Settings(
     var downscaler: String = "BILINEAR",     // Downscaler name: how video larger than 1080p is brought down
     var softwareVideoDecoding: Boolean = false, // FFmpeg before the device's decoders: last resort, drains the battery
 ) {
-    /**
-     * RIFE is on and its self-test measured this device — a switch left on from before the measurements per size
-     * counts as off until it is tested again.
-     */
-    val neuralMotionReady: Boolean get() = neuralInterpolation && neuralInterpolationTimes.isNotEmpty()
+    /** What [network]'s self-test found where it passed; null while it is off. */
+    fun neuralMotionPassed(
+        network: com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation,
+    ): com.hawkynt.mediadroid.player.NeuralInterpolation.Passed? =
+        neuralMotion[network.name]?.let { com.hawkynt.mediadroid.player.NeuralInterpolation.Passed.decode(it) }
+
+    /** The neural smooth-motion choices this household's device passed. */
+    val neuralMotionOffered: Set<com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation>
+        get() = com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation.entries
+            .filter { it.isNeural && neuralMotionPassed(it) != null }.toSet()
 }
 
 @Serializable

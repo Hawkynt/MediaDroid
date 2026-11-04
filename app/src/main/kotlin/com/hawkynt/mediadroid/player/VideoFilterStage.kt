@@ -93,16 +93,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     @Volatile
     var neuralUnit: NeuralUpscaler.Unit? = null
 
-    /** Where RIFE runs, from the household's self-test; null while neural frame interpolation is off. */
-    @Volatile
-    var neuralMotionUnit: NeuralUpscaler.Unit? = null
-
     /**
-     * What RIFE took there in the self-test, per tested size by its height: the in-betweens are made at the
-     * material's size, or as large as the device keeps up with (see NeuralInterpolation.workingSize).
+     * The neural smooth-motion networks (RIFE, DAIN) the household's self-test passed: where each runs and what an
+     * in-between took there per tested size — the in-betweens are made at the material's size, or as large as the
+     * device keeps up with (see NeuralInterpolation.workingSize). A network not in it is off.
      */
     @Volatile
-    var neuralMotionTimes: Map<Int, Double> = emptyMap()
+    var neuralMotion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed> = emptyMap()
 
     // RIFE (see NeuralInterpolator): opened on this thread, the two frames read back at the working size, and the
     // last two in-betweens (at rifeSize) with the later frame of the pair each belongs to (by its arrival, as keptAt
@@ -1148,7 +1145,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         keptSteady[2] = blendTimeline.arrived(keptAt[2])
         kept = minOf(kept + 1, 3)
         if (picture.interpolation.isNeural && kept >= 2) {
-            rifeBetween(frames[keptRing[1]], frames[keptRing[2]], keptWidth, keptHeight)
+            rifeBetween(picture.interpolation, frames[keptRing[1]], frames[keptRing[2]], keptWidth, keptHeight)
         }
         val motion = picture.interpolation.isMotionCompensated
         if (motion) searchMotion(keptWidth, keptHeight) else motionLumas.fill(null)
@@ -1589,29 +1586,39 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         return ids[0]
     }
 
-    /** RIFE on the unit asked for, opened here on first use or when the unit changes; null while off. */
-    private fun rifeNet(): NeuralInterpolator? {
-        val unit = neuralMotionUnit
+    /**
+     * The picture's neural network on the unit its self-test chose, opened here on first use or when either changes;
+     * null while it is off.
+     */
+    private fun rifeNet(network: PictureAdjustment.Interpolation): NeuralInterpolator? {
+        val unit = neuralMotion[network]?.let { runCatching { NeuralUpscaler.Unit.valueOf(it.unit) }.getOrNull() }
         if (unit == null) {
             rife?.close()
             rife = null
             return null
         }
-        if (rife?.unit != unit) {
+        if (rife?.unit != unit || rife?.network != network) {
             rife?.close()
-            rife = appContext?.let { NeuralInterpolator.open(it, unit) }
+            rife = appContext?.let { NeuralInterpolator.open(it, network, unit) }
         }
         return rife
     }
 
     /**
-     * RIFE's in-between of [earlier] and [later] ([frameWidth] × [frameHeight]): both brought to the working size and
-     * read back, the network run, and the result uploaded into the in-between texture not holding the pair before,
-     * marked with the later frame. Nothing where the device keeps up with no size for this material.
+     * [network]'s in-between of [earlier] and [later] ([frameWidth] × [frameHeight]): both brought to the working size
+     * and read back, the network run, and the result uploaded into the in-between texture not holding the pair
+     * before, marked with the later frame. Nothing where the device keeps up with no size for this material.
      */
-    private fun rifeBetween(earlier: Frame, later: Frame, frameWidth: Int, frameHeight: Int) {
-        val net = rifeNet() ?: return
-        val size = NeuralInterpolation.workingSize(frameWidth, frameHeight, neuralMotionTimes) ?: return
+    private fun rifeBetween(
+        network: PictureAdjustment.Interpolation,
+        earlier: Frame,
+        later: Frame,
+        frameWidth: Int,
+        frameHeight: Int,
+    ) {
+        val net = rifeNet(network) ?: return
+        val times = neuralMotion[net.network]?.msByHeight ?: return
+        val size = NeuralInterpolation.workingSize(frameWidth, frameHeight, times) ?: return
         val w = size.width
         val h = size.height
         val target = frames[RIFE_INPUT].ensure(w, h)

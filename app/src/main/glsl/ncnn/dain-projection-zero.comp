@@ -1,0 +1,25 @@
+// DAIN's depth-aware flow projection, step 1 of 4 (after dain-ncnn-vulkan's DepthFlowProjection, MIT, see
+// app/THIRD-PARTY-NOTICE.DAIN.txt): the sums cleared — the weighted flow as two half floats in one word, the
+// weights as one float.
+#version 450
+
+#if NCNN_fp16_storage
+#extension GL_EXT_shader_16bit_storage: require
+#endif
+#if NCNN_fp16_arithmetic
+#extension GL_EXT_shader_explicit_arithmetic_types_float16: require
+#endif
+
+layout (binding = 0) writeonly buffer fxydm_blob { uint fxydm_blob_data[]; };
+layout (binding = 1) writeonly buffer count_blob { uint count_blob_data[]; };
+
+layout (push_constant) uniform parameter {
+    int w;
+} p;
+
+void main() {
+    int gx = int(gl_GlobalInvocationID.x);
+    if (gx >= p.w || int(gl_GlobalInvocationID.y) >= 1 || int(gl_GlobalInvocationID.z) >= 1) return;
+    fxydm_blob_data[gx] = packHalf2x16(vec2(0.f, 0.f));
+    count_blob_data[gx] = floatBitsToUint(0.f);
+}

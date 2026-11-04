@@ -84,13 +84,19 @@ data class PictureAdjustment(
 
         /** RIFE's network makes the in-between (see [NeuralInterpolation]); where its self-test passed. */
         RIFE("RIFE", 1f),
+
+        /**
+         * DAIN's networks make the in-between, weighing nearer objects by depth (see [NeuralInterpolation]); where
+         * its self-test passed, after downloading it (see [NeuralModels]).
+         */
+        DAIN("DAIN", 1f),
         ;
 
         /** Built along the motion rather than blended. */
         val isMotionCompensated: Boolean get() = this == MOTION
 
         /** Made by a neural network (see [NeuralInterpolation]). */
-        val isNeural: Boolean get() = this == RIFE
+        val isNeural: Boolean get() = this == RIFE || this == DAIN
 
         /** How much of the next frame to show at [phase] (0 at the earlier frame's time, 1 at the next's). */
         fun weight(phase: Float): Float {

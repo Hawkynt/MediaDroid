@@ -1,0 +1,46 @@
+// DAIN's correlation for ncnn on Vulkan (after dain-ncnn-vulkan's, MIT, see app/THIRD-PARTY-NOTICE.DAIN.txt): for
+// each of the 9 x 9 displacements up to 4 pixels, the features of the first blob times those of the second there,
+// averaged over the channels. Both blobs come bordered by 4 zeros on every side.
+#version 450
+
+#if NCNN_fp16_storage
+#extension GL_EXT_shader_16bit_storage: require
+#endif
+#if NCNN_fp16_arithmetic
+#extension GL_EXT_shader_explicit_arithmetic_types_float16: require
+#endif
+
+layout (binding = 0) readonly buffer a_blob { sfp a_blob_data[]; };
+layout (binding = 1) readonly buffer b_blob { sfp b_blob_data[]; };
+layout (binding = 2) writeonly buffer top_blob { sfp top_blob_data[]; };
+
+layout (push_constant) uniform parameter {
+    int w;
+    int h;
+    int c;
+    int cstep;
+    int outw;
+    int outh;
+    int outc;
+    int outcstep;
+} p;
+
+void main() {
+    int gx = int(gl_GlobalInvocationID.x);
+    int gy = int(gl_GlobalInvocationID.y);
+    int gz = int(gl_GlobalInvocationID.z);
+    if (gx >= p.outw || gy >= p.outh || gz >= p.outc) return;
+
+    // The displacement: down tj, across ti, from -4 (0) to +4 (8).
+    int tj = gz / 9;
+    int ti = gz % 9;
+    int a = (gy + 4) * p.w + gx + 4;
+    int b = (gy + tj) * p.w + gx + ti;
+    afp sum = afp(0.f);
+    for (int z = 0; z < p.c; z++) {
+        sum += buffer_ld1(a_blob_data, a) * buffer_ld1(b_blob_data, b);
+        a += p.cstep;
+        b += p.cstep;
+    }
+    buffer_st1(top_blob_data, gz * p.outcstep + gy * p.outw + gx, sum / afp(p.c));
+}
