@@ -45,6 +45,15 @@ class PictureAdjustmentTest {
     }
 
     @Test
+    fun `ACNet is a shader network like Anime4K, carried in the app`() {
+        val acnet = PictureAdjustment.Upscaler.ACNET
+        assertEquals("ACNet", acnet.label)
+        assertFalse(acnet.isEnlarger)
+        assertEquals(null, NeuralModels.download(acnet))
+        assertTrue(PictureAdjustment(upscaler = acnet).hasFilters)
+    }
+
+    @Test
     fun `frame blending weighs the next frame by how far the clock is between the two`() {
         val off = PictureAdjustment.Interpolation.OFF
         val high = PictureAdjustment.Interpolation.HIGH
