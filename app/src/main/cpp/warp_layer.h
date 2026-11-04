@@ -12,7 +12,8 @@ namespace mediadroid {
 // pixels) points from each pixel: bilinear, coordinates clamped to the picture (shader: glsl/ncnn/warp.comp).
 class WarpLayer : public ncnn::Layer {
 public:
-    WarpLayer();
+    // [flowFirst]: the flow is the first blob and the image the second, as IFRNet's ifrnet.Warp takes them.
+    explicit WarpLayer(bool flowFirst = false);
     int create_pipeline(const ncnn::Option& opt) override;
     int destroy_pipeline(const ncnn::Option& opt) override;
     int forward(const std::vector<ncnn::Mat>& bottoms, std::vector<ncnn::Mat>& tops,
@@ -21,9 +22,11 @@ public:
                 const ncnn::Option& opt) const override;
 
 private:
+    bool flowFirst;
     ncnn::Pipeline* pipeline = nullptr;
 };
 
 ncnn::Layer* createWarpLayer(void* userdata);
+ncnn::Layer* createFlowFirstWarpLayer(void* userdata);
 
 }  // namespace mediadroid

@@ -7,7 +7,7 @@
 
 namespace mediadroid {
 
-WarpLayer::WarpLayer() {
+WarpLayer::WarpLayer(bool flowFirst) : flowFirst(flowFirst) {
     one_blob_only = false;
     support_inplace = false;
     support_vulkan = true;
@@ -27,8 +27,8 @@ int WarpLayer::destroy_pipeline(const ncnn::Option&) {
 
 int WarpLayer::forward(const std::vector<ncnn::Mat>& bottoms, std::vector<ncnn::Mat>& tops,
                        const ncnn::Option& opt) const {
-    const ncnn::Mat& image = bottoms[0];
-    const ncnn::Mat& flow = bottoms[1];
+    const ncnn::Mat& image = bottoms[flowFirst ? 1 : 0];
+    const ncnn::Mat& flow = bottoms[flowFirst ? 0 : 1];
     const int w = image.w;
     const int h = image.h;
     ncnn::Mat& top = tops[0];
@@ -65,8 +65,8 @@ int WarpLayer::forward(const std::vector<ncnn::Mat>& bottoms, std::vector<ncnn::
 
 int WarpLayer::forward(const std::vector<ncnn::VkMat>& bottoms, std::vector<ncnn::VkMat>& tops,
                        ncnn::VkCompute& cmd, const ncnn::Option& opt) const {
-    const ncnn::VkMat& image = bottoms[0];
-    const ncnn::VkMat& flow = bottoms[1];
+    const ncnn::VkMat& image = bottoms[flowFirst ? 1 : 0];
+    const ncnn::VkMat& flow = bottoms[flowFirst ? 0 : 1];
     ncnn::VkMat& top = tops[0];
     top.create(image.w, image.h, image.c, image.elemsize, image.elempack, opt.blob_vkallocator);
     if (top.empty()) return -100;
@@ -83,6 +83,10 @@ int WarpLayer::forward(const std::vector<ncnn::VkMat>& bottoms, std::vector<ncnn
 
 ncnn::Layer* createWarpLayer(void*) {
     return new WarpLayer();
+}
+
+ncnn::Layer* createFlowFirstWarpLayer(void*) {
+    return new WarpLayer(true);
 }
 
 }  // namespace mediadroid
