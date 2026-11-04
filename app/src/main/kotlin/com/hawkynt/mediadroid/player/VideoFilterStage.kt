@@ -224,6 +224,19 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var obmcTexture = 0
     private val onVsync = android.view.Choreographer.FrameCallback { busy { blend(it) } }
 
+    /**
+     * Whether each picture is waited for until the graphics chip has drawn it — for PictureChecker's dry run, so
+     * the thread's busy time holds the chip's work too; in playback the chip works on while the thread goes on.
+     */
+    @Volatile
+    var waitForGpu = false
+
+    /** Hands the picture drawn to the window, waiting for the graphics chip first where [waitForGpu] asks to. */
+    private fun swap() {
+        if (waitForGpu) GLES20.glFinish()
+        EGL14.eglSwapBuffers(display, window)
+    }
+
     /** Where the decoder draws. */
     lateinit var inputSurface: Surface
         private set
@@ -440,9 +453,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     fun release() {
         handler.removeCallbacks(pumpYuv)
-        vsync.removeFrameCallback(onYuvVsync)
         while (true) yuvQueue.pollFirst()?.buffer?.release() ?: break
         onThread {
+            // On this thread, the vsync's own: a caller's may have no looper to make one on.
+            vsync.removeFrameCallback(onYuvVsync)
             GLES20.glDeleteProgram(yuvProgram)
             anime4kPrograms.forEach { GLES20.glDeleteProgram(it) }
             GLES20.glDeleteProgram(anime4kDepthToSpace)
@@ -661,7 +675,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         latencyFrames = deinterlaceFrames
         output(source, source.width, source.height, picture)
         if (!redraw) EGLExt.eglPresentationTimeANDROID(display, window, shownAt)
-        EGL14.eglSwapBuffers(display, window)
+        swap()
         // On screen at the refresh it is meant for; the clock once drawing is done wanders by milliseconds.
         if (!redraw) statistics?.pictureShown(shownAt)
         // At field rate the other field follows half a frame later, as its own picture.
@@ -678,7 +692,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val (width, height) = eyeSize()
         val source = filtered(picture, width, height, fresh = false, secondField = true)
         output(source, source.width, source.height, picture)
-        EGL14.eglSwapBuffers(display, window)
+        swap()
         statistics?.pictureShown(shownAt + frameIntervalNs / 2)
     }
 
@@ -930,7 +944,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val shrunk = reduced(frame)
         val source = denoised(picture, shrunk, shrunk.width, shrunk.height)
         output(source, source.width, source.height, picture)
-        EGL14.eglSwapBuffers(display, window)
+        swap()
         atNs?.let { statistics?.pictureShown(it) }
     }
 
@@ -1336,7 +1350,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uScale"), gridScale[k].toFloat())
         }
         output(mixed, width, height, picture.copy(sharpness = 0f, clarity = 0f))
-        EGL14.eglSwapBuffers(display, window)
+        swap()
         // A new picture when the pair or the mix changed.
         val blendKey = keptAt[later] * 4099 + (weight * 1024).toLong()
         if (blendKey != lastBlend) {

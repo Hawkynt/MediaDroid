@@ -1499,8 +1499,7 @@ fun PlayerScreen(
                 picture = picture,
                 onPicture = { picture = it },
                 onPictureDone = { store.savePicture(queue[index].videoPath, picture) },
-                neural = settings.neuralUpscaling,
-                neuralMotion = settings.neuralMotionOffered,
+                check = pictureCheck(context, store),
                 onResetPicture = {
                     store.savePicture(queue[index].videoPath, null)
                     picture = store.pictureFor(queue[index].videoPath)
@@ -1929,10 +1928,8 @@ private fun PlayerPanel(
     onPicture: (PictureAdjustment) -> Unit,
     onPictureDone: () -> Unit,
     onResetPicture: () -> Unit,
-    /** Offer Real-ESRGAN among the upscalers (the household's self-test passed). */
-    neural: Boolean = false,
-    /** Offer RIFE under smooth motion (its self-test passed). */
-    neuralMotion: Set<com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation> = emptySet(),
+    /** Tries a choice of deinterlacing, upscaling or smooth motion before it is taken (see pictureCheck). */
+    check: PictureTry = { _, _ -> PictureVerdict(true) },
     onAudioTrack: () -> Unit,
     onSubtitleTrack: () -> Unit,
     onClose: () -> Unit,
@@ -1988,8 +1985,7 @@ private fun PlayerPanel(
             TextButton(onClick = onResetPicture) { Text("Reset", fontSize = 16.sp) }
         }
         PictureSliders(
-            picture, onChange = onPicture, onDone = onPictureDone, stereo = true, neural = neural,
-            neuralMotion = neuralMotion,
+            picture, onChange = onPicture, onDone = onPictureDone, stereo = true, check = check,
         )
 
         PanelTitle("Subtitles & sound")

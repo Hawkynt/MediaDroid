@@ -75,27 +75,39 @@ data class PictureAdjustment(
      * motion-compensated (see [MotionInterpolation]): the pictures between are built along the motion,
      * so moving edges move, over the whole interval.
      */
-    enum class Interpolation(val label: String, private val window: Float) {
-        OFF("Off", 0f),
-        LOW("Low", 0.25f),
-        MEDIUM("Medium", 0.5f),
-        HIGH("High", 1f),
-        MOTION("Motion", 1f),
+    enum class Interpolation(val label: String, private val window: Float, val description: String) {
+        OFF("Off", 0f, "Every frame shown as it is, for as long as it lasts."),
+        LOW("Low", 0.25f, "A short blend where one frame meets the next: steadier pans, nearly as sharp."),
+        MEDIUM("Medium", 0.5f, "Half of each frame blended into the next: smoother pans, a little softer."),
+        HIGH("High", 1f, "Each refresh shows the two frames mixed by the time between: the smoothest blend."),
+        MOTION(
+            "Motion",
+            1f,
+            "The pictures between built along the motion (FFmpeg's minterpolate): edges move, not soften.",
+        ),
 
         /** RIFE's network makes the in-between (see [NeuralInterpolation]); where its self-test passed. */
-        RIFE("RIFE", 1f),
+        RIFE("RIFE", 1f, "A neural network builds the picture between two frames along the motion; tested first."),
 
         /**
          * DAIN's networks make the in-between, weighing nearer objects by depth (see [NeuralInterpolation]); where
          * its self-test passed, after downloading it (see [NeuralModels]).
          */
-        DAIN("DAIN", 1f),
+        DAIN(
+            "DAIN",
+            1f,
+            "Heavier networks weighing depth, so what passes in front stays in front; fetched and tested.",
+        ),
 
         /**
          * XVFI's network makes the in-between from flows estimated coarse to fine (see [NeuralInterpolation]); where
          * its self-test passed, after downloading it (see [NeuralModels]).
          */
-        XVFI("XVFI", 1f),
+        XVFI(
+            "XVFI",
+            1f,
+            "A network finding motion coarse to fine, for large movements; fetched and tested; not for sale.",
+        ),
         ;
 
         /** Built along the motion rather than blended. */
@@ -122,15 +134,18 @@ data class PictureAdjustment(
      * [NEURAL] Real-ESRGAN's compact network (see [NeuralUpscaling]), four times the picture's size — offered only
      * where the household's self-test found the device fast enough.
      */
-    enum class Upscaler(val label: String) {
-        STANDARD("Standard"),
-        LANCZOS("Lanczos"),
-        FSR("FSR"),
-        EWA("EWA"),
-        NIS("NIS"),
-        ANIME4K("Anime4K"),
-        XBRZ("xBRZ"),
-        NEURAL("Real-ESRGAN"),
+    enum class Upscaler(val label: String, val description: String) {
+        STANDARD("Standard", "The screen's own smooth enlarging: soft, and the lightest on the device."),
+        LANCZOS("Lanczos", "A sharper classic filter (Lanczos-3): crisper edges, a little ringing held back."),
+        FSR(
+            "FSR",
+            "AMD FidelityFX Super Resolution: edges enlarged along their direction, then sharpened gently.",
+        ),
+        EWA("EWA", "A round sharpened filter (libplacebo's EWA Lanczos): diagonals without a staircase."),
+        NIS("NIS", "NVIDIA Image Scaling: directional filters by edge, sharpening that holds back ringing."),
+        ANIME4K("Anime4K", "A small neural network for cartoons and anime: line art kept crisp when doubled."),
+        XBRZ("xBRZ", "Rules for pixel art and cartoons: smooth diagonals and curves, flat areas left flat."),
+        NEURAL("Real-ESRGAN", "A neural network enlarging four times with fine detail: the heaviest; tested first."),
     }
 
     /**
@@ -143,14 +158,14 @@ data class PictureAdjustment(
      * [FILM] undoes 3:2 pulldown (see [Telecine]) — for film on NTSC video, 24 frames a second spread
      * over 30: the fields matched back into whole film frames and the repeated one of every five dropped.
      */
-    enum class Deinterlace(val label: String) {
-        OFF("Off"),
-        AUTO("Auto"),
-        BLEND("Blend"),
-        BOB("Bob"),
-        YADIF("YADIF"),
-        BWDIF("BWDIF"),
-        FILM("Film"),
+    enum class Deinterlace(val label: String, val description: String) {
+        OFF("Off", "The picture as it comes: for progressive video, the lightest."),
+        AUTO("Auto", "Rebuilds the second field's lines only where the picture combs; progressive video passes."),
+        BLEND("Blend", "Both fields mixed: no combing, a little blur where things move."),
+        BOB("Bob", "One field at a time, its lines doubled: sharp motion, finer detail flickers."),
+        YADIF("YADIF", "FFmpeg's YADIF: the frames before and after weighed, so still parts keep full detail."),
+        BWDIF("BWDIF", "FFmpeg's BWDIF: like YADIF with finer filters, the best detail in motion."),
+        FILM("Film", "For films on NTSC video: the film's own 24 frames put back together, shown evenly."),
         ;
 
         /** Whether it needs the neighbouring frames, and so can show every field as a picture of its own. */
