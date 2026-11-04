@@ -1544,12 +1544,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
                 }
             } else if (picture.upscaler.isEnlarger && enlargerNet(picture.upscaler) != null) {
-                // waifu2x or Real-CUGAN: twice the picture's size (see enlargerPass), the screen's own scaling for
-                // whatever is left.
+                // waifu2x, Real-CUGAN or RealSR: two or four times the picture's size (see enlargerPass), the
+                // screen's own scaling for whatever is left.
                 val enlarged = enlargerPass(source, width, height)
                 toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged, identity) { p ->
-                    val scale = NeuralEnlarging.SCALE
+                    val scale = NeuralEnlarging.scale(picture.upscaler)
                     GLES20.glUniform2f(
                         GLES20.glGetUniformLocation(p, "uTexel"), 1f / (width * scale), 1f / (height * scale),
                     )
@@ -1745,7 +1745,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      */
     private fun enlargerPass(source: Frame, width: Int, height: Int): Int {
         val net = enlarger!!
-        val scale = NeuralEnlarging.SCALE
+        val scale = NeuralEnlarging.scale(net.upscaler)
         source.bind()
         val bytes = width * height * 4
         val read = enlargerRead?.takeIf { it.capacity() == bytes }

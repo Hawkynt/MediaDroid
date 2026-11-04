@@ -75,6 +75,15 @@ private suspend fun neuralEnlarging(
     val upscaler = picture.upscaler
     val settings = store.data.settings
     if (!upscaler.isEnlarger || settings.neuralEnlargerPassed(upscaler) != null) return null
+    // Fetched once, its digests checked then; after that the files' sizes are enough.
+    NeuralModels.download(upscaler)?.takeUnless { ModelStore.ready(context, it) }?.let { download ->
+        if (!ModelStore.fetch(context, download) { say("Fetching ${upscaler.label}… ${(it * 100).toInt()} %") }) {
+            return PictureVerdict(
+                false,
+                "${upscaler.label} could not be fetched. Is the device online? The upscaler stays as it was.",
+            )
+        }
+    }
     say("Testing ${upscaler.label} on this device…")
     val timings = when (val outcome = NeuralTestService.selfTest(context, upscaler)) {
         NeuralTestService.Outcome.Ended -> return PictureVerdict(

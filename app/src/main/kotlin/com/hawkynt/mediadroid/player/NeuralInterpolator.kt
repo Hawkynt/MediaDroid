@@ -70,8 +70,17 @@ internal object NativeInterpolation {
     /** Frees the network. */
     external fun close(handle: Long)
 
-    /** waifu2x or Real-CUGAN ([realCugan]) from the asset folder [dir], on the GPU or the CPU; 0 where not loaded. */
-    external fun openEnlarger(assets: AssetManager, dir: String, realCugan: Boolean, gpu: Boolean): Long
+    /**
+     * An upscaler — [kind] 0 waifu2x, 1 Real-CUGAN, 2 RealSR — from the folder [dir], in [assets] where given, else
+     * of downloaded files; on the GPU or the CPU; 0 where not loaded.
+     */
+    external fun openEnlarger(assets: AssetManager?, dir: String, kind: Int, gpu: Boolean): Long
+
+    /** CAIN from the folder [dir] of downloaded files, on the GPU or the CPU; 0 where it does not load. */
+    external fun openCain(dir: String, gpu: Boolean): Long
+
+    /** IFRNet from the asset folder [dir], on the GPU or the CPU; 0 where it does not load. */
+    external fun openIfrnet(assets: AssetManager, dir: String, gpu: Boolean): Long
 
     /** The RGBA [picture] ([width] × [height]) at twice its size into [out] as RGB; 0 when it ran. */
     external fun enlarge(handle: Long, picture: ByteBuffer, width: Int, height: Int, out: ByteBuffer): Int
@@ -128,6 +137,7 @@ class NeuralInterpolator private constructor(
 
     companion object {
         private const val RIFE = "models/rife-4.25-lite"
+        private const val IFRNET = "models/ifrnet-s"
 
         /** In-betweens timed per size in the self-test, in a stream after one pair to warm up. */
         private const val SAMPLE_RUNS = 2
@@ -146,9 +156,11 @@ class NeuralInterpolator private constructor(
             if (gpu && !NativeInterpolation.hasGpu()) return null
             val handle = when (network) {
                 PictureAdjustment.Interpolation.RIFE -> NativeInterpolation.openRife(context.assets, RIFE, gpu)
+                PictureAdjustment.Interpolation.IFRNET -> NativeInterpolation.openIfrnet(context.assets, IFRNET, gpu)
                 PictureAdjustment.Interpolation.DAIN,
                 PictureAdjustment.Interpolation.XVFI,
                 PictureAdjustment.Interpolation.FLAVR,
+                PictureAdjustment.Interpolation.CAIN,
                 -> {
                     val download = NeuralModels.download(network) ?: return null
                     if (!com.hawkynt.mediadroid.data.ModelStore.ready(context, download)) return null
@@ -156,6 +168,7 @@ class NeuralInterpolator private constructor(
                     when (network) {
                         PictureAdjustment.Interpolation.DAIN -> NativeInterpolation.openDain(dir, gpu)
                         PictureAdjustment.Interpolation.XVFI -> NativeInterpolation.openXvfi(dir, gpu)
+                        PictureAdjustment.Interpolation.CAIN -> NativeInterpolation.openCain(dir, gpu)
                         else -> NativeInterpolation.openFlavr(dir, gpu)
                     }
                 }
