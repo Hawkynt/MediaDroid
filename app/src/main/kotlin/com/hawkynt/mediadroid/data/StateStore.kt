@@ -89,8 +89,9 @@ data class Settings(
     var neuralUpscaling: Boolean = false,     // Real-ESRGAN offered as an upscaler; on only once the self-test passed
     var neuralUnit: String = "",              // where the self-test found it fastest: NPU, GPU or CPU
     var neuralMs: Float = 0f,                 // what one 576p picture took there in the self-test
-    // Neural smooth motion by network (RIFE, DAIN): offered once its self-test passed, kept as where it ran fastest
-    // and what an in-between took there per tested size ("GPU|480=12.5;576=…", see NeuralInterpolation.Passed).
+    // Neural smooth motion by network (RIFE, DAIN, XVFI): offered once its self-test passed, kept as where it ran
+    // fastest and what an in-between took there per tested size ("GPU|480=12.5;576=…", see
+    // NeuralInterpolation.Passed).
     var neuralMotion: Map<String, String> = emptyMap(),
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits

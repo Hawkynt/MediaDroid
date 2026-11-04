@@ -94,9 +94,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     var neuralUnit: NeuralUpscaler.Unit? = null
 
     /**
-     * The neural smooth-motion networks (RIFE, DAIN) the household's self-test passed: where each runs and what an
-     * in-between took there per tested size — the in-betweens are made at the material's size, or as large as the
-     * device keeps up with (see NeuralInterpolation.workingSize). A network not in it is off.
+     * The neural smooth-motion networks (RIFE, DAIN, XVFI) the household's self-test passed: where each runs and
+     * what an in-between took there per tested size — the in-betweens are made at the material's size, or as large
+     * as the device keeps up with (see NeuralInterpolation.workingSize). A network not in it is off.
      */
     @Volatile
     var neuralMotion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed> = emptyMap()
@@ -1636,7 +1636,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, rifeRead[i])
             rifeRead[i].rewind()
         }
-        val rgb = net.run(rifeRead[0], rifeRead[1], w, h) ?: return
+        // The frames' arrivals are their ids: the later frame of this pair is the earlier of the next.
+        val rgb = net.run(rifeRead[0], rifeRead[1], w, h, keptAt[1], keptAt[2]) ?: return
         if (rifeTextures[0] == 0) GLES20.glGenTextures(2, rifeTextures, 0)
         if (size != rifeSize) {
             // A new size (other material, or the first): both in-betweens anew, neither holding a pair yet.

@@ -42,7 +42,13 @@ internal object NativeInterpolation {
     /** DAIN from the folder [dir] of downloaded files, on the GPU or the CPU; 0 where it does not load. */
     external fun openDain(dir: String, gpu: Boolean): Long
 
-    /** The in-between at [time] of the RGBA frames [earlier] and [later] into [out] as RGB; 0 when it ran. */
+    /** XVFI from the folder [dir] of downloaded files, on the GPU or the CPU; 0 where it does not load. */
+    external fun openXvfi(dir: String, gpu: Boolean): Long
+
+    /**
+     * The in-between at [time] of the RGBA frames [earlier] and [later] into [out] as RGB; 0 when it ran. The ids
+     * ([earlierId], [laterId]; 0 where not known) let a frame met again keep what was worked out from it alone.
+     */
     external fun between(
         handle: Long,
         earlier: ByteBuffer,
@@ -51,6 +57,8 @@ internal object NativeInterpolation {
         height: Int,
         time: Float,
         out: ByteBuffer,
+        earlierId: Long,
+        laterId: Long,
     ): Int
 
     /** Frees the network. */
@@ -58,7 +66,7 @@ internal object NativeInterpolation {
 }
 
 /**
- * A neural frame interpolation network (RIFE, DAIN; see app/THIRD-PARTY-NOTICE.RIFE.txt and .DAIN.txt) on ncnn, on
+ * A neural frame interpolation network (RIFE, DAIN, XVFI; see app/THIRD-PARTY-NOTICE.*.txt) on ncnn, on
  * the device's GPU (Vulkan) or its CPU, at any size: two RGBA frames in, the in-between halfway as RGB bytes out. A
  * network belongs to the thread that opened it.
  */
@@ -74,11 +82,20 @@ class NeuralInterpolator private constructor(
 
     /**
      * The in-between of the RGBA frames [earlier] and [later], [width] × [height] with rows as stored, as RGB bytes
-     * in the same row order — valid until the next call; null where the network failed.
+     * in the same row order — valid until the next call; null where the network failed. Frames with ids
+     * ([earlierId], [laterId]: the same frame the same id, 0 for none) are worked on once: the later frame of one
+     * pair, the earlier of the next, keeps its features.
      */
-    fun run(earlier: ByteBuffer, later: ByteBuffer, width: Int, height: Int): ByteBuffer? {
+    fun run(
+        earlier: ByteBuffer,
+        later: ByteBuffer,
+        width: Int,
+        height: Int,
+        earlierId: Long = 0,
+        laterId: Long = 0,
+    ): ByteBuffer? {
         if (out.capacity() < width * height * 3) out = ByteBuffer.allocateDirect(width * height * 3)
-        val ran = NativeInterpolation.between(handle, earlier, later, width, height, 0.5f, out)
+        val ran = NativeInterpolation.between(handle, earlier, later, width, height, 0.5f, out, earlierId, laterId)
         return if (ran == 0) out.also { it.rewind() } else null
     }
 
@@ -93,7 +110,7 @@ class NeuralInterpolator private constructor(
     companion object {
         private const val RIFE = "models/rife-4.25-lite"
 
-        /** In-betweens timed per size in the self-test, after one to warm up. */
+        /** In-betweens timed per size in the self-test, in a stream after one pair to warm up. */
         private const val SAMPLE_RUNS = 2
 
         /**
@@ -110,47 +127,62 @@ class NeuralInterpolator private constructor(
             if (gpu && !NativeInterpolation.hasGpu()) return null
             val handle = when (network) {
                 PictureAdjustment.Interpolation.RIFE -> NativeInterpolation.openRife(context.assets, RIFE, gpu)
-                PictureAdjustment.Interpolation.DAIN -> {
-                    val download = NeuralModels.DAIN
+                PictureAdjustment.Interpolation.DAIN, PictureAdjustment.Interpolation.XVFI -> {
+                    val download = NeuralModels.download(network) ?: return null
                     if (!com.hawkynt.mediadroid.data.ModelStore.ready(context, download)) return null
                     val dir = com.hawkynt.mediadroid.data.ModelStore.folder(context, download).absolutePath
-                    NativeInterpolation.openDain(dir, gpu)
+                    if (network == PictureAdjustment.Interpolation.DAIN) {
+                        NativeInterpolation.openDain(dir, gpu)
+                    } else {
+                        NativeInterpolation.openXvfi(dir, gpu)
+                    }
                 }
                 else -> 0L
             }
             return if (handle == 0L) null else NeuralInterpolator(handle, network, unit)
         }
 
+        /** What a self-test tells as it goes, for whoever waits on it to cut it short (see NeuralTestService). */
+        interface Progress {
+            /** An in-between at the test size of [height] is being made. */
+            fun running(height: Int)
+
+            /** One at [height] took [ms]. */
+            fun timed(height: Int, ms: Double)
+        }
+
         /**
-         * The self-test of [network]: on each unit that can run it and computes it right (see [check]), what one
-         * in-between takes at each of [NeuralInterpolation.TEST_SIZES], smallest first and only on while the last
-         * kept up — the fastest unit at the smallest size first; the CPU is left out once the GPU kept up. Takes
-         * seconds, more for the heavier networks; not on the main thread.
+         * The self-test of [network] on [unit]: whether the unit computes it right (see [check]), and what one
+         * in-between takes there at each of [NeuralInterpolation.TEST_SIZES], smallest first and only on while the
+         * last kept up; null where the unit cannot run it, or runs it wrong. Each run is told to [progress] before it
+         * starts, so a run beyond [NeuralInterpolation.MAX_WAIT_MS] can be cut short from outside. Not on the main
+         * thread.
          */
-        fun selfTest(context: Context, network: PictureAdjustment.Interpolation): List<Timing> {
-            val timings = ArrayList<Timing>()
-            for (unit in listOf(NeuralUpscaler.Unit.GPU, NeuralUpscaler.Unit.CPU)) {
-                if (timings.any { NeuralInterpolation.fastEnough(it.msByHeight.values.first()) }) break
-                val timing = open(context, network, unit)?.use { net ->
-                    val checkMs = check(net) ?: return@use null
-                    // The check timed a smaller picture already: far too slow there, the smallest size is estimated
-                    // from it by its pixels instead of waiting minutes for it.
-                    val smallest = NeuralInterpolation.TEST_SIZES.first()
-                    val estimate = checkMs * smallest.area / (CHECK_SIDE * CHECK_SIDE)
-                    if (estimate > FAR_TOO_SLOW * NeuralInterpolation.BUDGET_MS) {
-                        return@use Timing(unit, mapOf(smallest.height to estimate))
-                    }
-                    val times = LinkedHashMap<Int, Double>()
-                    for (size in NeuralInterpolation.TEST_SIZES) {
-                        val ms = time(net, size) ?: break
-                        times[size.height] = ms
-                        if (!NeuralInterpolation.fastEnough(ms)) break
-                    }
-                    if (times.isEmpty()) null else Timing(unit, times)
-                }
-                if (timing != null) timings += timing
+        fun selfTest(
+            context: Context,
+            network: PictureAdjustment.Interpolation,
+            unit: NeuralUpscaler.Unit,
+            progress: Progress,
+        ): Timing? = open(context, network, unit)?.use { net ->
+            val smallest = NeuralInterpolation.TEST_SIZES.first()
+            progress.running(smallest.height)
+            val checkMs = check(net) ?: return@use null
+            // The check timed a smaller picture already: far too slow there, the smallest size is estimated from it
+            // by its pixels instead of waiting for it.
+            val estimate = checkMs * smallest.area / (CHECK_SIDE * CHECK_SIDE)
+            if (estimate > FAR_TOO_SLOW * NeuralInterpolation.BUDGET_MS) {
+                progress.timed(smallest.height, estimate)
+                return@use Timing(unit, mapOf(smallest.height to estimate))
             }
-            return timings.sortedBy { it.msByHeight.values.first() }
+            val times = LinkedHashMap<Int, Double>()
+            for (size in NeuralInterpolation.TEST_SIZES) {
+                progress.running(size.height)
+                val ms = time(net, size) ?: break
+                times[size.height] = ms
+                progress.timed(size.height, ms)
+                if (!NeuralInterpolation.fastEnough(ms)) break
+            }
+            if (times.isEmpty()) null else Timing(unit, times)
         }
 
         /**
@@ -164,6 +196,8 @@ class NeuralInterpolator private constructor(
             val first = testFrame(w, h, 0)
             val middle = testFrame(w, h, 1)
             val last = testFrame(w, h, 2)
+            // Once to warm up — the first run sets the unit up (on the GPU its pipelines), which is no measure.
+            net.run(first, last, w, h) ?: return null
             val start = System.nanoTime()
             val between = net.run(first, last, w, h) ?: return null
             val ms = (System.nanoTime() - start) / 1e6
@@ -196,16 +230,19 @@ class NeuralInterpolator private constructor(
         /** The margin the check leaves out. */
         private const val EDGE = 24
 
-        // One in-between of two test frames at [size], from a few after one to warm up; null where it failed.
+        // One in-between at [size] as playback makes them: a stream of test frames, each pair sharing its earlier
+        // frame with the pair before (and so its features, by the frames' ids); the first pair warms up, the pairs
+        // after it are timed. Null where it failed.
         private fun time(net: NeuralInterpolator, size: NeuralInterpolation.Size): Double? {
-            val frames = Array(2) { shift -> testFrame(size.width, size.height, shift * 2) }
+            val frames = Array(SAMPLE_RUNS + 2) { k -> testFrame(size.width, size.height, k * 2) }
+            fun pair(k: Int) = net.run(frames[k], frames[k + 1], size.width, size.height, k + 1L, k + 2L)
             val warm = System.nanoTime()
-            net.run(frames[0], frames[1], size.width, size.height) ?: return null
+            pair(0) ?: return null
             // Far too slow already warming up: that is answer enough, without waiting for more of it.
             val warmMs = (System.nanoTime() - warm) / 1e6
             if (warmMs > FAR_TOO_SLOW * NeuralInterpolation.BUDGET_MS) return warmMs
             val start = System.nanoTime()
-            repeat(SAMPLE_RUNS) { net.run(frames[0], frames[1], size.width, size.height) ?: return null }
+            for (k in 1..SAMPLE_RUNS) pair(k) ?: return null
             return (System.nanoTime() - start) / 1e6 / SAMPLE_RUNS
         }
 
