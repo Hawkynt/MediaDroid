@@ -70,6 +70,21 @@ object NeuralInterpolation {
         if (height != null && ms != null) height to ms else null
     }.toMap()
 
+    /** A passed self-test: the [unit] (GPU or CPU) the network ran fastest on and what it took there per size. */
+    data class Passed(val unit: String, val msByHeight: Map<Int, Double>) {
+        /** As text to keep: `GPU|480=5.5;720=11.25`. */
+        fun encode(): String = "$unit|${NeuralInterpolation.encode(msByHeight)}"
+
+        companion object {
+            /** What [encode] wrote, read back; null where it does not read or holds no times. */
+            fun decode(text: String): Passed? {
+                val unit = text.substringBefore('|', "")
+                val times = NeuralInterpolation.decode(text.substringAfter('|', ""))
+                return if (unit.isEmpty() || times.isEmpty()) null else Passed(unit, times)
+            }
+        }
+    }
+
     /** What to mix: the earlier frame and the in-between ([towardsMiddle]), or the in-between and the later frame. */
     data class Mix(val towardsMiddle: Boolean, val weight: Float)
 

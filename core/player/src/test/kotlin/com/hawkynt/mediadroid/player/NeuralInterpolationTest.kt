@@ -73,6 +73,15 @@ class NeuralInterpolationTest {
     }
 
     @Test
+    fun `a passed self-test is kept per network as its unit and times, and read back`() {
+        val passed = NeuralInterpolation.Passed("GPU", mapOf(480 to 5.5, 720 to 11.25))
+        assertEquals("GPU|480=5.5;720=11.25", passed.encode())
+        assertEquals(passed, NeuralInterpolation.Passed.decode("GPU|480=5.5;720=11.25"))
+        assertNull(NeuralInterpolation.Passed.decode("GPU|"))
+        assertNull(NeuralInterpolation.Passed.decode("nonsense"))
+    }
+
+    @Test
     fun `what the self-test measured is kept as text and read back`() {
         val text = NeuralInterpolation.encode(mapOf(480 to 5.5, 720 to 11.25))
         assertEquals("480=5.5;720=11.25", text)
