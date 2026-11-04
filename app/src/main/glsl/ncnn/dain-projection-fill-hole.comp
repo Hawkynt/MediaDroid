@@ -1,0 +1,72 @@
+// DAIN's depth-aware flow projection, step 4 of 4 (after dain-ncnn-vulkan's DepthFlowProjection, MIT, see
+// app/THIRD-PARTY-NOTICE.DAIN.txt): a pixel nothing landed on takes the mean flow of the nearest pixel something
+// landed on to its left, right, top and bottom, as far as those exist.
+#version 450
+
+#if NCNN_fp16_storage
+#extension GL_EXT_shader_16bit_storage: require
+#endif
+#if NCNN_fp16_arithmetic
+#extension GL_EXT_shader_explicit_arithmetic_types_float16: require
+#endif
+
+layout (binding = 0) readonly buffer count_blob { uint count_blob_data[]; };
+layout (binding = 1) buffer top_blob { sfp top_blob_data[]; };
+
+layout (push_constant) uniform parameter {
+    int w;
+    int h;
+    int c;
+    int cstep;
+} p;
+
+bool landed(int x, int y) {
+    return uintBitsToFloat(count_blob_data[y * p.w + x]) > 0.f;
+}
+
+void main() {
+    int gx = int(gl_GlobalInvocationID.x);
+    int gy = int(gl_GlobalInvocationID.y);
+    if (gx >= p.w || gy >= p.h || int(gl_GlobalInvocationID.z) >= 1) return;
+    if (landed(gx, gy)) return;
+
+    afp fx = afp(0.f);
+    afp fy = afp(0.f);
+    afp found = afp(0.f);
+    for (int x = gx - 1; x >= 0; x--) {
+        if (landed(x, gy)) {
+            fx += buffer_ld1(top_blob_data, gy * p.w + x);
+            fy += buffer_ld1(top_blob_data, p.cstep + gy * p.w + x);
+            found += afp(1.f);
+            break;
+        }
+    }
+    for (int x = gx + 1; x <= p.w - 1; x++) {
+        if (landed(x, gy)) {
+            fx += buffer_ld1(top_blob_data, gy * p.w + x);
+            fy += buffer_ld1(top_blob_data, p.cstep + gy * p.w + x);
+            found += afp(1.f);
+            break;
+        }
+    }
+    for (int y = gy - 1; y >= 0; y--) {
+        if (landed(gx, y)) {
+            fx += buffer_ld1(top_blob_data, y * p.w + gx);
+            fy += buffer_ld1(top_blob_data, p.cstep + y * p.w + gx);
+            found += afp(1.f);
+            break;
+        }
+    }
+    for (int y = gy + 1; y <= p.h - 1; y++) {
+        if (landed(gx, y)) {
+            fx += buffer_ld1(top_blob_data, y * p.w + gx);
+            fy += buffer_ld1(top_blob_data, p.cstep + y * p.w + gx);
+            found += afp(1.f);
+            break;
+        }
+    }
+    if (found > afp(0.f)) {
+        buffer_st1(top_blob_data, gy * p.w + gx, fx / found);
+        buffer_st1(top_blob_data, p.cstep + gy * p.w + gx, fy / found);
+    }
+}

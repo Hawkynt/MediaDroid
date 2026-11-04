@@ -1,0 +1,48 @@
+// DAIN's optical-flow warp for ncnn on Vulkan (after dain-ncnn-vulkan's OpticalFlowWarp, MIT, see
+// app/THIRD-PARTY-NOTICE.DAIN.txt): each value of a blob sampled where the flow points from its pixel, bilinear; a
+// sample that leaves the picture is 0.
+#version 450
+
+#if NCNN_fp16_storage
+#extension GL_EXT_shader_16bit_storage: require
+#endif
+#if NCNN_fp16_arithmetic
+#extension GL_EXT_shader_explicit_arithmetic_types_float16: require
+#endif
+
+layout (binding = 0) readonly buffer image_blob { sfp image_blob_data[]; };
+layout (binding = 1) readonly buffer flow_blob { sfp flow_blob_data[]; };
+layout (binding = 2) writeonly buffer top_blob { sfp top_blob_data[]; };
+
+layout (push_constant) uniform parameter {
+    int w;
+    int h;
+    int c;
+    int cstep;
+} p;
+
+void main() {
+    int gx = int(gl_GlobalInvocationID.x);
+    int gy = int(gl_GlobalInvocationID.y);
+    int gz = int(gl_GlobalInvocationID.z);
+    if (gx >= p.w || gy >= p.h || gz >= p.c) return;
+
+    afp sampleX = afp(gx) + buffer_ld1(flow_blob_data, gy * p.w + gx);
+    afp sampleY = afp(gy) + buffer_ld1(flow_blob_data, p.cstep + gy * p.w + gx);
+    int x0 = int(floor(sampleX));
+    int y0 = int(floor(sampleY));
+    afp v = afp(0.f);
+    if (x0 >= 0 && y0 >= 0 && x0 < p.w - 1 && y0 < p.h - 1) {
+        afp alpha = sampleX - afp(x0);
+        afp beta = sampleY - afp(y0);
+        int plane = gz * p.cstep;
+        afp v0 = buffer_ld1(image_blob_data, plane + y0 * p.w + x0);
+        afp v1 = buffer_ld1(image_blob_data, plane + y0 * p.w + x0 + 1);
+        afp v2 = buffer_ld1(image_blob_data, plane + (y0 + 1) * p.w + x0);
+        afp v3 = buffer_ld1(image_blob_data, plane + (y0 + 1) * p.w + x0 + 1);
+        afp top = v0 * (afp(1.f) - alpha) + v1 * alpha;
+        afp bottom = v2 * (afp(1.f) - alpha) + v3 * alpha;
+        v = top * (afp(1.f) - beta) + bottom * beta;
+    }
+    buffer_st1(top_blob_data, gz * p.cstep + gy * p.w + gx, v);
+}

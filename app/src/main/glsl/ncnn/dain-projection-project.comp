@@ -1,0 +1,66 @@
+// DAIN's depth-aware flow projection, step 2 of 4 (after dain-ncnn-vulkan's DepthFlowProjection, MIT, see
+// app/THIRD-PARTY-NOTICE.DAIN.txt): every pixel adds its flow, reversed and weighted by its depth, and the weight to
+// the four pixels around where it lands; landing outside, it adds nothing. The sums are added to atomically.
+#version 450
+
+#if NCNN_fp16_storage
+#extension GL_EXT_shader_16bit_storage: require
+#endif
+#if NCNN_fp16_arithmetic
+#extension GL_EXT_shader_explicit_arithmetic_types_float16: require
+#endif
+
+layout (binding = 0) readonly buffer flow_blob { sfp flow_blob_data[]; };
+layout (binding = 1) readonly buffer depth_blob { sfp depth_blob_data[]; };
+layout (binding = 2) coherent buffer fxydm_blob { uint fxydm_blob_data[]; };
+layout (binding = 3) coherent buffer count_blob { uint count_blob_data[]; };
+
+layout (push_constant) uniform parameter {
+    int w;
+    int h;
+    int cstep;
+} p;
+
+// Adds x to the two half floats in the word at mem[id], retrying until no other invocation came between.
+#define atomic_add_vec2(mem, id, x) { \
+    uint seen = atomicAdd(mem[id], uint(0)); \
+    uint was = atomicCompSwap(mem[id], seen, packHalf2x16(unpackHalf2x16(seen) + x)); \
+    while (was != seen) { \
+        seen = was; \
+        was = atomicCompSwap(mem[id], seen, packHalf2x16(unpackHalf2x16(seen) + x)); \
+    } \
+}
+
+// Adds x to the float in the word at mem[id], the same way.
+#define atomic_add_float(mem, id, x) { \
+    uint seen = atomicAdd(mem[id], uint(0)); \
+    uint was = atomicCompSwap(mem[id], seen, floatBitsToUint(uintBitsToFloat(seen) + x)); \
+    while (was != seen) { \
+        seen = was; \
+        was = atomicCompSwap(mem[id], seen, floatBitsToUint(uintBitsToFloat(seen) + x)); \
+    } \
+}
+
+void main() {
+    int gx = int(gl_GlobalInvocationID.x);
+    int gy = int(gl_GlobalInvocationID.y);
+    if (gx >= p.w || gy >= p.h || int(gl_GlobalInvocationID.z) >= 1) return;
+
+    int gi = gy * p.w + gx;
+    afp depth = buffer_ld1(depth_blob_data, gi);
+    afp flowX = buffer_ld1(flow_blob_data, gi);
+    afp flowY = buffer_ld1(flow_blob_data, p.cstep + gi);
+    int x0 = int(floor(afp(gx) + flowX));
+    int y0 = int(floor(afp(gy) + flowY));
+    if (x0 < 0 || y0 < 0 || x0 >= p.w - 1 || y0 >= p.h - 1) return;
+
+    vec2 weighted = vec2(-flowX, -flowY) * depth;
+    atomic_add_vec2(fxydm_blob_data, y0 * p.w + x0, weighted);
+    atomic_add_vec2(fxydm_blob_data, y0 * p.w + x0 + 1, weighted);
+    atomic_add_vec2(fxydm_blob_data, (y0 + 1) * p.w + x0, weighted);
+    atomic_add_vec2(fxydm_blob_data, (y0 + 1) * p.w + x0 + 1, weighted);
+    atomic_add_float(count_blob_data, y0 * p.w + x0, float(depth));
+    atomic_add_float(count_blob_data, y0 * p.w + x0 + 1, float(depth));
+    atomic_add_float(count_blob_data, (y0 + 1) * p.w + x0, float(depth));
+    atomic_add_float(count_blob_data, (y0 + 1) * p.w + x0 + 1, float(depth));
+}

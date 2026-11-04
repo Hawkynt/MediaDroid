@@ -3,11 +3,9 @@
 #include <algorithm>
 #include <cmath>
 
-#include <gpu.h>
+#include "shaders.h"
 
 namespace mediadroid {
-
-std::string warpShader;
 
 WarpLayer::WarpLayer() {
     one_blob_only = false;
@@ -17,11 +15,8 @@ WarpLayer::WarpLayer() {
 
 int WarpLayer::create_pipeline(const ncnn::Option& opt) {
     if (!vkdev) return 0;
-    std::vector<uint32_t> spirv;
-    if (ncnn::compile_spirv_module(warpShader.c_str(), opt, spirv) != 0) return -1;
-    pipeline = new ncnn::Pipeline(vkdev);
-    pipeline->set_optimal_local_size_xyz();
-    return pipeline->create(spirv.data(), spirv.size() * 4, std::vector<ncnn::vk_specialization_type>());
+    pipeline = mediadroid::pipeline(vkdev, "warp", opt);
+    return pipeline ? 0 : -1;
 }
 
 int WarpLayer::destroy_pipeline(const ncnn::Option&) {

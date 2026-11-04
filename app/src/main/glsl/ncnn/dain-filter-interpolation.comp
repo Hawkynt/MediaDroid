@@ -1,0 +1,67 @@
+// DAIN's filter interpolation for ncnn on Vulkan (after dain-ncnn-vulkan's FilterInterpolation, MIT, see
+// app/THIRD-PARTY-NOTICE.DAIN.txt), the image a channel a plane: each value sampled where the flow
+// points from its pixel through the network's own 4 x 4 filter for that pixel, its four 2 x 2 corners mixed
+// bilinearly; where the flow leaves the picture or reaches more than half across it, the value stays. The filter
+// weights come four to a word.
+#version 450
+
+#if NCNN_fp16_storage
+#extension GL_EXT_shader_16bit_storage: require
+#endif
+#if NCNN_fp16_arithmetic
+#extension GL_EXT_shader_explicit_arithmetic_types_float16: require
+#endif
+
+layout (binding = 0) readonly buffer image_blob { sfp image_blob_data[]; };
+layout (binding = 1) readonly buffer flow_blob { sfp flow_blob_data[]; };
+layout (binding = 2) readonly buffer filter_blob { sfpvec4 filter_blob_data[]; };
+layout (binding = 3) writeonly buffer top_blob { sfp top_blob_data[]; };
+
+layout (push_constant) uniform parameter {
+    int w;
+    int h;
+    int c;
+    int cstep;
+    int filter_cstep;
+} p;
+
+void main() {
+    int gx = int(gl_GlobalInvocationID.x);
+    int gy = int(gl_GlobalInvocationID.y);
+    int gz = int(gl_GlobalInvocationID.z);
+    if (gx >= p.w || gy >= p.h || gz >= p.c) return;
+
+    int plane = gz * p.cstep;
+    afp flowX = buffer_ld1(flow_blob_data, gy * p.w + gx);
+    afp flowY = buffer_ld1(flow_blob_data, p.cstep + gy * p.w + gx);
+    afp sampleX = afp(gx) + flowX;
+    afp sampleY = afp(gy) + flowY;
+    afp v;
+    if (sampleX < afp(0.f) || sampleY < afp(0.f) || sampleX >= afp(p.w - 1) || sampleY >= afp(p.h - 1)
+        || abs(flowX) > afp(p.w) / afp(2.f) || abs(flowY) > afp(p.h) / afp(2.f)) {
+        v = buffer_ld1(image_blob_data, plane + gy * p.w + gx);
+    } else {
+        int x1 = int(floor(sampleX));
+        int y1 = int(floor(sampleY));
+        afp alpha = sampleX - afp(x1);
+        afp beta = sampleY - afp(y1);
+        int xs[4] = int[4](max(x1 - 1, 0), min(x1, p.w - 1), min(x1 + 1, p.w - 1), min(x1 + 2, p.w - 1));
+        int ys[4] = int[4](max(y1 - 1, 0), min(y1, p.h - 1), min(y1 + 1, p.h - 1), min(y1 + 2, p.h - 1));
+        // Row r of the filter, its four weights left to right.
+        afpvec4 f[4];
+        for (int r = 0; r < 4; r++) f[r] = buffer_ld4(filter_blob_data, r * p.filter_cstep + gy * p.w + gx);
+        afp corner[4];
+        for (int k = 0; k < 4; k++) {
+            int r = (k / 2) * 2;
+            int col = (k % 2) * 2;
+            corner[k] = buffer_ld1(image_blob_data, plane + ys[r] * p.w + xs[col]) * f[r][col]
+                + buffer_ld1(image_blob_data, plane + ys[r] * p.w + xs[col + 1]) * f[r][col + 1]
+                + buffer_ld1(image_blob_data, plane + ys[r + 1] * p.w + xs[col]) * f[r + 1][col]
+                + buffer_ld1(image_blob_data, plane + ys[r + 1] * p.w + xs[col + 1]) * f[r + 1][col + 1];
+        }
+        afp top = corner[0] * (afp(1.f) - alpha) + corner[1] * alpha;
+        afp bottom = corner[2] * (afp(1.f) - alpha) + corner[3] * alpha;
+        v = top * (afp(1.f) - beta) + bottom * beta;
+    }
+    buffer_st1(top_blob_data, plane + gy * p.w + gx, v);
+}
