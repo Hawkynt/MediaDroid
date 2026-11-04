@@ -148,6 +148,8 @@ data class PictureAdjustment(
      * [GSR] Qualcomm's Snapdragon Game Super Resolution 1: a single pass, bilinear plus an edge-directed
      * correction of the green channel's 12 neighbours, made for mobile GPUs;
      * [ANIME4K] Anime4K's small convolutional network doubling the picture, made for line art and animation.
+     * [ACNET] Anime4KCPP's ACNet (F8B4): a VGG-style network of eight channels doubling the picture's luma, the
+     * colour following from the picture's bilinear doubling.
      * [XBRZ] Zenju's xBRZ, scaling by rules 2× to 6×: smooth diagonals and curves for pixel art and cartoons.
      * [NEURAL] Real-ESRGAN's compact network (see [NeuralUpscaling]), four times the picture's size — offered only
      * where the household's self-test found the device fast enough.
@@ -163,6 +165,7 @@ data class PictureAdjustment(
         NIS("NIS", "NVIDIA Image Scaling: directional filters by edge, sharpening that holds back ringing."),
         GSR("GSR", "Snapdragon Game Super Resolution: one quick pass, edges sharpened by their direction."),
         ANIME4K("Anime4K", "A small neural network for cartoons and anime: line art kept crisp when doubled."),
+        ACNET("ACNet", "Anime4KCPP's small network on the picture's brightness: anime doubled, lines clean."),
         XBRZ("xBRZ", "Rules for pixel art and cartoons: smooth diagonals and curves, flat areas left flat."),
         NEURAL("Real-ESRGAN", "A neural network enlarging four times with fine detail: the heaviest; tested first."),
         WAIFU2X(

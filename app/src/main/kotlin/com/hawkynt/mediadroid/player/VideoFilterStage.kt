@@ -76,6 +76,21 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var anime4kDepthToSpace = 0
     private var halfTargets = false
 
+    // ACNet (see glsl/acnet): its eleven convolution passes and the pixel shuffle to twice the size — built when first
+    // picked, so the stage starts as quickly as ever; null until then, false where the chip cannot build them.
+    private val acnetPrograms = IntArray(11)
+    private var acnetShuffle = 0
+    private var acnetBuilt: Boolean? = null
+
+    private fun acnetReady(): Boolean = halfTargets && (acnetBuilt ?: runCatching {
+        listOf(
+            Shaders.ACNET_CONV_1, Shaders.ACNET_CONV_2, Shaders.ACNET_CONV_3, Shaders.ACNET_CONV_4,
+            Shaders.ACNET_CONV_5, Shaders.ACNET_CONV_6, Shaders.ACNET_CONV_7, Shaders.ACNET_CONV_8,
+            Shaders.ACNET_CONV_9, Shaders.ACNET_CONV_10, Shaders.ACNET_CONV_11,
+        ).forEachIndexed { i, fragment -> acnetPrograms[i] = program(Shaders.VIDEO_VERTEX, fragment) }
+        acnetShuffle = program(Shaders.VIDEO_VERTEX, Shaders.ACNET_PIXEL_SHUFFLE)
+    }.isSuccess.also { acnetBuilt = it })
+
     // xBRZ (see glsl/xbrz): its three passes, the table of its patterns' shares, and whether the programs built.
     private val xbrzPrograms = IntArray(3)
     private var xbrzTable = 0
@@ -163,7 +178,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var temporalProgram = 0
     private var weaveProgram = 0
     private var packProgram = 0
-    private val frames = Array(RIFE_INPUT + 1) { Frame() }
+    private val frames = Array(ACNET_D + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -476,6 +491,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(yuvProgram)
             anime4kPrograms.forEach { GLES20.glDeleteProgram(it) }
             GLES20.glDeleteProgram(anime4kDepthToSpace)
+            acnetPrograms.forEach { GLES20.glDeleteProgram(it) }
+            GLES20.glDeleteProgram(acnetShuffle)
+            acnetBuilt = null
             xbrzPrograms.forEach { GLES20.glDeleteProgram(it) }
             GLES20.glDeleteTextures(1, intArrayOf(xbrzTable), 0)
             GLES20.glDeleteTextures(3, yuvTextures, 0)
@@ -1510,6 +1528,52 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
                 }
+            } else if (picture.upscaler == PictureAdjustment.Upscaler.ACNET && acnetReady()) {
+                // ACNet: eleven convolutions at the picture's size over eight channels — a layer is two half-float
+                // textures, written one pass each, the layers taking turns between two pairs — then twice the size:
+                // the network's luma put into the picture's bilinear doubling, and the screen's own scaling for
+                // whatever is left.
+                val pairs = arrayOf(
+                    arrayOf(frames[ANIME4K_A], frames[ANIME4K_B]),
+                    arrayOf(frames[ACNET_C], frames[ACNET_D]),
+                )
+                acnetPrograms.forEachIndexed { i, program ->
+                    // The head (0) into the first pair, each body block (1 to 4) from one pair into the other, the
+                    // last convolution (5) into the second; every layer's two halves read the whole layer before.
+                    val layer = if (i < 2) 0 else (i - 2) / 2 + 1
+                    val into = pairs[layer % 2]
+                    val from = pairs[1 - layer % 2]
+                    into[i % 2].ensure(width, height, half = true).bind()
+                    if (layer > 0) {
+                        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, from[1].texture)
+                    }
+                    if (i == acnetPrograms.lastIndex) {
+                        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+                        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, source.texture)
+                    }
+                    val input = if (layer == 0) source.texture else from[0].texture
+                    run(program, GLES20.GL_TEXTURE_2D, input, identity) { p ->
+                        GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
+                        GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uTex1"), 1)
+                        GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPicture"), 2)
+                    }
+                }
+                val enlarged = frames[4].ensure(width * 2, height * 2)
+                enlarged.bind()
+                GLES20.glUseProgram(acnetShuffle)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, pairs[1][0].texture)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(acnetShuffle, "uLast"), 1)
+                run(acnetShuffle, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uLastSize"), width.toFloat(), height.toFloat())
+                }
+                toScreen(outWidth, outHeight, adjusting)
+                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 0.5f / width, 0.5f / height)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
+                }
             } else if (picture.upscaler == PictureAdjustment.Upscaler.XBRZ && xbrzReady) {
                 // xBRZ by the whole factor that reaches the screen's size, 2 to 6, the screen's own scaling then
                 // bringing it the rest of the way: the corners where pixels meet, what each pixel draws in its
@@ -2095,6 +2159,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** A frame brought to RIFE's working size, to read back for it. */
         private const val RIFE_INPUT = ADJUSTED + 1
+
+        /** ACNet's second pair of half-float textures; its first pair is Anime4K's two. */
+        private const val ACNET_C = RIFE_INPUT + 1
+        private const val ACNET_D = ACNET_C + 1
 
         /** Width of xBRZ's pattern table, one texel a cell of the largest block — as glsl/xbrz/scale.frag reads it. */
         private const val XBRZ_TABLE_WIDTH = 36
