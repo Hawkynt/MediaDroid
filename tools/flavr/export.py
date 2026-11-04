@@ -4,8 +4,9 @@
   body  in0 (4D: 3 channels x 4 frames x H x W, their mean taken away) -> out (64 x 4 x H x W)
   head  in0 (256 x H x W: body's four times folded into channels, time major) -> out (3 x H x W, mean still away)
 
-The 3D layers are ncnn's Convolution3D, Deconvolution3D and Pooling3D; SE gating is a global average, an InnerProduct
-with a sigmoid and a per-channel multiplication. The weights load as tensors only.
+The 3D layers are written as 2D ones over the four frames (see Graph.conv3d), so ncnn runs them on its fast 2D paths
+and its GPU, the weights stored once; SE gating is a global average, an InnerProduct with a sigmoid and a per-channel
+multiplication. The weights load as tensors only.
 """
 import os
 import struct
@@ -16,6 +17,8 @@ import torch
 import torch.nn as nn
 
 from flavr_net import BasicBlock, SEGating, load
+
+FRAMES = 4
 
 
 class Graph:
@@ -47,41 +50,97 @@ class Graph:
     def floats(self, b):
         self.weights += b.detach().float().numpy().astype("<f4").tobytes()
 
+    # Crop's sizes not limited (its default, 0, would leave nothing): only the offsets cut.
+    WHOLE = "3=-233 4=-233 14=-233 5=-233"
+
+    # The 3D layers as 2D ones. A blob is 4D — width, height, the four frames (ncnn's depth), channels. For a layer
+    # with a temporal kernel of 3, the frames before and after each are stacked into its channels (zeros beyond the
+    # first and the last), so the time part of the kernel becomes channels of a 2D one; each frame gets zero rows below
+    # it, enough that the 2D kernel cannot reach from one frame into the next; the four frames are put one below the
+    # other as one tall picture for an ordinary 2D layer — ncnn's fast paths, its GPU among them, the weights stored
+    # once — and the result put back into frames, the rows added cut away.
+
+    def frames(self, x, first, count):
+        """Frames [first, first + count) of the 4D blob [x]."""
+        return self.layer("Crop", [x], f"13={first} 15={FRAMES - first - count} {Graph.WHOLE}")
+
+    def stacked(self, x, order):
+        """[x] with the frame before and after each in its channels: (prev, cur, next) or (next, cur, prev)."""
+        zero = self.layer("BinaryOp", [self.frames(x, 0, 1)], "0=2 1=1 2=0.000000e+00")
+        prev = self.layer("Concat", [zero, self.frames(x, 0, FRAMES - 1)], "0=1")
+        zero2 = self.layer("BinaryOp", [self.frames(x, 0, 1)], "0=2 1=1 2=0.000000e+00")
+        nxt = self.layer("Concat", [self.frames(x, 1, FRAMES - 1), zero2], "0=1")
+        parts = [prev, x, nxt] if order == "forward" else [nxt, x, prev]
+        return self.layer("Concat", parts, "0=0")
+
+    def tall(self, x, gap, channels):
+        """The 4D blob [x] ([channels] deep) as one tall 2D picture, [gap] zero rows below each frame."""
+        if gap:
+            x = self.layer("Padding", [x], f"0=0 1={gap} 2=0 3=0 4=0")
+        return self.layer("Reshape", [x], f"0=0 1=-1 2={channels}")
+
+    def untall(self, x, gap, channels):
+        """A tall 2D picture ([channels] deep) back into the four frames, the [gap] rows below each cut away."""
+        y = self.layer("Reshape", [x], f"0=0 1=-1 11={FRAMES} 2={channels}")
+        return self.layer("Crop", [y], f"7={gap} {Graph.WHOLE}") if gap else y
+
+    @staticmethod
+    def gap(pad, stride):
+        """Rows enough below each frame for a kernel reaching [pad] rows, a multiple of [stride]."""
+        g = pad
+        while g % stride:
+            g += 1
+        return g
+
     def conv3d(self, x, conv, act=0):
         out_c, in_c, kd, kh, kw = conv.weight.shape
         sd, sh, sw = conv.stride
         pd, ph, pw = conv.padding
+        assert sd == 1 and sh == sw and ph == pw and (kd, pd) in ((1, 0), (3, 1))
         bias = conv.bias is not None
-        p = (f"0={out_c} 1={kw} 11={kh} 21={kd} 3={sw} 13={sh} 23={sd} 4={pw} 14={ph} 24={pd} "
-             f"5={int(bias)} 6={conv.weight.numel()}")
+        w = conv.weight
+        if kd == 3:
+            x = self.stacked(x, "forward")
+            # Channel block k of the 2D kernel is time k of the 3D one: (out, 3, in, kh, kw).
+            w = w.permute(0, 2, 1, 3, 4).reshape(out_c, 3 * in_c, kh, kw)
+        else:
+            w = w.reshape(out_c, in_c, kh, kw)
+        gap = self.gap(ph, sh)
+        p = f"0={out_c} 1={kw} 11={kh} 3={sw} 13={sh} 4={pw} 14={ph} 5={int(bias)} 6={w.numel()}"
         if act == 1:
             p += " 9=1"
-        y = self.layer("Convolution3D", [x], p)
-        self.half(conv.weight)
+        y = self.layer("Convolution", [self.tall(x, gap, w.shape[1])], p)
+        self.half(w)
         if bias:
             self.floats(conv.bias)
-        return y
+        return self.untall(y, gap // sh, out_c)
 
     def deconv3d(self, x, conv):
         in_c, out_c, kd, kh, kw = conv.weight.shape
         sd, sh, sw = conv.stride
         pd, ph, pw = conv.padding
-        p = (f"0={out_c} 1={kw} 11={kh} 21={kd} 3={sw} 13={sh} 23={sd} 4={pw} 14={ph} 24={pd} "
-             f"5=1 6={conv.weight.numel()}")
-        y = self.layer("Deconvolution3D", [x], p)
-        # ncnn takes a transposed convolution's weights as out x in x kernel; PyTorch keeps them in x out x kernel.
-        self.half(conv.weight.permute(1, 0, 2, 3, 4).contiguous())
+        assert (kd, sd, pd) == (3, 1, 1) and sh == sw and ph == pw
+        # A transposed kernel takes frame t + 1 - k at time k: (next, cur, prev), channel block k of the 2D kernel.
+        x = self.stacked(x, "backward")
+        # ncnn takes a transposed kernel as out x in x kh x kw; PyTorch keeps it in x out x kernel.
+        w = conv.weight.permute(1, 2, 0, 3, 4).reshape(out_c, 3 * in_c, kh, kw)
+        gap = 1
+        p = f"0={out_c} 1={kw} 11={kh} 3={sw} 13={sh} 4={pw} 14={ph} 5=1 6={w.numel()}"
+        y = self.layer("Deconvolution", [self.tall(x, gap, 3 * in_c)], p)
+        self.half(w)
         self.floats(conv.bias)
-        return y
+        return self.untall(y, gap * sh, out_c)
 
     def se(self, x, gating):
         conv = gating.attn_layer[0]
         c = conv.weight.shape[0]
-        pooled = self.layer("Pooling3D", [x], "0=1 4=1")
+        # All frames are the same size, so the average over the tall picture is the average over the frames.
+        t = self.tall(x, 0, c)
+        pooled = self.layer("Pooling", [t], "0=1 4=1")
         attention = self.layer("InnerProduct", [pooled], f"0={c} 1=1 2={c * c} 9=4")
         self.half(conv.weight.reshape(c, c))
         self.floats(conv.bias)
-        return self.layer("BinaryOp", [x, attention], "0=2")
+        return self.untall(self.layer("BinaryOp", [t, attention], "0=2"), 0, c)
 
     def relu(self, x, slope=0.0):
         return self.layer("ReLU", [x], f"0={slope:.6e}" if slope else "")
