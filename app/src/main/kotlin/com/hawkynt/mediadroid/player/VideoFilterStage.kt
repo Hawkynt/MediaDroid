@@ -1442,7 +1442,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             }
             if (picture.upscaler == PictureAdjustment.Upscaler.LANCZOS) {
                 toScreen(outWidth, outHeight, adjusting)
-                run(lanczosProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
+                run(lanczosProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                    inSize(p)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uAntiring"), ANTIRING)
+                }
             } else if (picture.upscaler == PictureAdjustment.Upscaler.GSR) {
                 // Snapdragon GSR: one pass straight to the screen's size, any ratio.
                 toScreen(outWidth, outHeight, adjusting)
@@ -1501,6 +1504,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glUniform1i(GLES20.glGetUniformLocation(ewaProgram, "uTable"), 1)
                 run(ewaProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
                     inSize(p)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uAntiring"), ANTIRING)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), Ewa.RADIUS.toFloat())
                 }
                 toScreen(outWidth, outHeight, adjusting)
@@ -2260,6 +2264,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         private const val NIS_SPAN = 2.5f
 
         /** How many distances the EWA table holds, and how its weights (-0.25..1) map into 0..1. */
+        /**
+         * How far Lanczos and EWA pull their result into the range of the four nearest pixels: halfway, so ringing
+         * at hard edges is held back without flattening fine detail.
+         */
+        private const val ANTIRING = 0.5f
+
         private const val EWA_TABLE_SIZE = 512
         private const val EWA_OFFSET = 0.25f
         private const val EWA_SPAN = 1.25f
