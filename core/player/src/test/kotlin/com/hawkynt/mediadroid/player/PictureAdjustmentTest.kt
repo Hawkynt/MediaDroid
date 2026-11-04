@@ -36,6 +36,15 @@ class PictureAdjustmentTest {
     }
 
     @Test
+    fun `Snapdragon GSR is a one-pass shader upscaler, no network to fetch`() {
+        val gsr = PictureAdjustment.Upscaler.GSR
+        assertEquals("GSR", gsr.label)
+        assertFalse(gsr.isEnlarger)
+        assertEquals(null, NeuralModels.download(gsr))
+        assertTrue(PictureAdjustment(upscaler = gsr).hasFilters)
+    }
+
+    @Test
     fun `frame blending weighs the next frame by how far the clock is between the two`() {
         val off = PictureAdjustment.Interpolation.OFF
         val high = PictureAdjustment.Interpolation.HIGH

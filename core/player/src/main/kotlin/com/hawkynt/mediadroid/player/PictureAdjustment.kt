@@ -145,6 +145,8 @@ data class PictureAdjustment(
      * Resolution 1 — edge-adaptive upscaling (EASU) and robust contrast-adaptive sharpening (RCAS); [EWA]
      * a sharpened Jinc over a circle (see [Ewa]), alike at every angle, so diagonals keep no staircase;
      * [NIS] NVIDIA Image Scaling (see [Nis]): directional filters by edge, with luma-adaptive sharpening;
+     * [GSR] Qualcomm's Snapdragon Game Super Resolution 1: a single pass, bilinear plus an edge-directed
+     * correction of the green channel's 12 neighbours, made for mobile GPUs;
      * [ANIME4K] Anime4K's small convolutional network doubling the picture, made for line art and animation.
      * [XBRZ] Zenju's xBRZ, scaling by rules 2× to 6×: smooth diagonals and curves for pixel art and cartoons.
      * [NEURAL] Real-ESRGAN's compact network (see [NeuralUpscaling]), four times the picture's size — offered only
@@ -159,6 +161,7 @@ data class PictureAdjustment(
         ),
         EWA("EWA", "A round sharpened filter (libplacebo's EWA Lanczos): diagonals without a staircase."),
         NIS("NIS", "NVIDIA Image Scaling: directional filters by edge, sharpening that holds back ringing."),
+        GSR("GSR", "Snapdragon Game Super Resolution: one quick pass, edges sharpened by their direction."),
         ANIME4K("Anime4K", "A small neural network for cartoons and anime: line art kept crisp when doubled."),
         XBRZ("xBRZ", "Rules for pixel art and cartoons: smooth diagonals and curves, flat areas left flat."),
         NEURAL("Real-ESRGAN", "A neural network enlarging four times with fine detail: the heaviest; tested first."),

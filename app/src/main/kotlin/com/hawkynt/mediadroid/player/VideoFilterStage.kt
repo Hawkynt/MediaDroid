@@ -151,6 +151,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var denoiseProgram = 0
     private var sharpenProgram = 0
     private var lanczosProgram = 0
+    private var gsrProgram = 0
     private var downscaleProgram = 0
     private var ewaProgram = 0
     private var ewaTable = 0
@@ -496,6 +497,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(sharpenProgram)
             GLES20.glDeleteProgram(lanczosProgram)
+            GLES20.glDeleteProgram(gsrProgram)
             GLES20.glDeleteProgram(downscaleProgram)
             GLES20.glDeleteProgram(ewaProgram)
             GLES20.glDeleteTextures(1, intArrayOf(ewaTable), 0)
@@ -629,6 +631,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         denoiseProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DENOISE)
         sharpenProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_SHARPEN)
         lanczosProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_LANCZOS)
+        gsrProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_SGSR)
         downscaleProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DOWNSCALE)
         ewaProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_EWA)
         ewaTable = ewaTable()
@@ -1418,6 +1421,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             if (picture.upscaler == PictureAdjustment.Upscaler.LANCZOS) {
                 toScreen(outWidth, outHeight, adjusting)
                 run(lanczosProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
+            } else if (picture.upscaler == PictureAdjustment.Upscaler.GSR) {
+                // Snapdragon GSR: one pass straight to the screen's size, any ratio.
+                toScreen(outWidth, outHeight, adjusting)
+                run(gsrProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
             } else if (picture.upscaler == PictureAdjustment.Upscaler.NIS) {
                 // NVIDIA Image Scaling to at most twice the picture's size, as NIS allows, and the screen's own
                 // bilinear scaling for whatever is left.
