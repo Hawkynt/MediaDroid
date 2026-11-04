@@ -763,6 +763,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             run(deinterlaceProgram, GLES20.GL_TEXTURE_2D, copied.texture, identity) { p ->
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
                 GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMode"), picture.deinterlace.ordinal)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uHeight"), height.toFloat())
+                // The first field stays, the second is rebuilt: the field order decides which rows those are.
+                GLES20.glUniform1f(
+                    GLES20.glGetUniformLocation(p, "uParity"),
+                    Deinterlacer.rebuiltParity(false, fieldOrder.topFieldFirst).toFloat(),
+                )
             }
             source = woven
         }

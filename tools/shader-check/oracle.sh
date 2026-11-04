@@ -139,6 +139,23 @@ for matrix in 601 709; do
   done
 done
 
+# Bob and Auto: the first field stays for either field order — a frame whose top field is 200 and bottom field 50
+# has to come out all 200 top field first and all 50 bottom field first.
+python3 -I - "$W" <<'PY'
+import sys
+w, h = 64, 48
+open(f'{sys.argv[1]}/fields.ppm', 'wb').write(b'P6\n%d %d\n255\n' % (w, h) +
+                                              b''.join(bytes([200 if y % 2 == 0 else 50] * w * 3) for y in range(h)))
+for v in (200, 50):
+    open(f'{sys.argv[1]}/flat{v}.ppm', 'wb').write(b'P6\n%d %d\n255\n' % (w, h) + bytes([v] * w * h * 3))
+PY
+for tff in 1 0; do
+  first=$([ $tff = 1 ] && echo 200 || echo 50)
+  "$C" deinterlace "$W/fields.ppm" "$W/bob.ppm" 3 $tff
+  order=$([ $tff = 1 ] && echo top || echo bottom)
+  check "Bob keeps the first field ($order first)" "$W/bob.ppm" "$W/flat$first.ppm" 0 0 1
+done
+
 # Lanczos and EWA: their kernels against libplacebo's lanczos and ewa_lanczossharp, antiringing off on both sides
 # (ours pulls into the four nearest pixels' range, libplacebo's weighs a soft minimum and maximum: not the same rule).
 for size in "480 360" "640 480"; do
