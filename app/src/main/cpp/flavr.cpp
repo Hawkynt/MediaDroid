@@ -87,12 +87,8 @@ struct Flavr : Interpolator {
 }  // namespace
 
 std::unique_ptr<Interpolator> openFlavr(const Loader& load, bool gpu) {
-    // ncnn's 3D layers run on the CPU only; asked for the GPU, there is none to give.
-    if (gpu) return nullptr;
     auto flavr = std::make_unique<Flavr>();
-    for (ncnn::Net* net : {&flavr->body, &flavr->head}) {
-        configure(*net, false);
-    }
+    for (ncnn::Net* net : {&flavr->body, &flavr->head}) configure(*net, gpu && gpuReady());
     if (load(flavr->body, "body") != 0 || load(flavr->head, "head") != 0) return nullptr;
     return flavr;
 }

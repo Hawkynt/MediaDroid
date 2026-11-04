@@ -59,8 +59,8 @@ struct Enlarger {
 std::unique_ptr<Enlarger> openWaifu2x(const Loader& load, bool gpu);
 std::unique_ptr<Enlarger> openRealCugan(const Loader& load, bool gpu);
 
-// FLAVR (its 3D "body" and 2D "head"; see flavr.cpp), on the CPU — ncnn's 3D layers have no Vulkan path; null where
-// it does not load.
+// FLAVR (its "body", the 3D part written as 2D layers over the four frames, and its "head"; see flavr.cpp), on the
+// GPU or the CPU; null where it does not load.
 std::unique_ptr<Interpolator> openFlavr(const Loader& load, bool gpu);
 
 // [net]'s options for the GPU or the CPU: on the GPU half floats to store, full floats to compute with.

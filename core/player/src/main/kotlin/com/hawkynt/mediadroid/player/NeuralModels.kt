@@ -79,13 +79,14 @@ object NeuralModels {
     )
 
     /**
-     * FLAVR, the 2x model (Apache-2.0), as tools/flavr/export.py writes its 3D body and 2D head out for ncnn.
+     * FLAVR, the 2x model (Apache-2.0), as tools/flavr/export.py writes it out for ncnn: its 3D part as 2D layers
+     * over the four frames, and its 2D head.
      */
     val FLAVR = Download(
         "flavr",
         listOf(
-            File("body.param", 8_033, "cb035f00b24a7c2edced09f7aacf54b486925c8e8ab0f2b5e34d079536451742"),
-            File("body.bin", 84_077_848, "d85e09c6774465d2f4fd77233c32b8d18f47c80a533ff155020aafdd8e0ed5c1"),
+            File("body.param", 33_394, "dc2da53ed365ef18d7f1ca72e572aa6bff81a2d2c4b2ac439c995bfb5f467ef6"),
+            File("body.bin", 84_077_848, "3c09b1938d55530e65aaec54f4c54022c38d52a2340b1bc40b8fa751f2b56350"),
             File("head.param", 304, "c5aa1dc47fbc382d97d58eef6d0de22995c49afb63ebaee98408861d1bf3bddb"),
             File("head.bin", 51_604, "1737f4ddf5a086eab6562192fdfcfec4cf09de8cddb9e8596c76c6a71a31e76c"),
         ),
