@@ -11,7 +11,15 @@
 //   shader_check fsr-easu <in.ppm> <out.ppm> <width> <height>
 //                                                           its EASU alone
 //   shader_check fsr-rcas <in.ppm> <out.ppm>                its RCAS alone, at the picture's own size
+//   shader_check ewa <in.ppm> <out.ppm> <width> <height> <antiring>
+//                                                           glsl/video/ewa.frag to that size (at most twice)
+//   shader_check lanczos <in.ppm> <out.ppm> <width> <height> <antiring>
+//                                                           glsl/video/lanczos.frag to that size
 //   shader_check nis <in.ppm> <out.ppm> <width> <height>    glsl/video/nis.frag to that size (at most twice)
+//   shader_check temporal <prev.ppm> <cur.ppm> <next.ppm> <out.ppm> <yadif|bwdif> <tff 0|1> <second 0|1>
+//                                                           glsl/video/temporal.frag: one field of cur rebuilt
+//   shader_check xbrz <in.ppm> <out.ppm> <factor> <table.bin>
+//                                                           glsl/xbrz to factor (2..6) times the size
 //   shader_check anime4k <in.ppm> <out.ppm>                 glsl/anime4k to twice the size
 //   shader_check acnet <in.ppm> <out.ppm>                   glsl/acnet to twice the size
 //   shader_check compare <a.ppm> <b.ppm> <max> <mean> [border]
@@ -190,6 +198,33 @@ void draw(GLuint prog, const Target& into, GLuint input) {
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
+// YADIF or BWDIF as VideoFilterStage.rebuildField runs it: [cur] with one field rebuilt from [prev], [cur], [next];
+// the field as Deinterlacer.rebuiltParity picks it.
+Picture temporal(const Picture& prev, const Picture& cur, const Picture& next, bool bwdif, bool tff, bool second) {
+    GLuint prog = appProgram("video/temporal.frag");
+    Target p = upload(prev), c = upload(cur), n = upload(next);
+    // The stage reads these exact pixels nearest (VideoFilterStage.exact).
+    for (GLuint t : {p.texture, c.texture, n.texture}) {
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+    Target out = target(cur.width, cur.height);
+    glUseProgram(prog);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, p.texture);
+    glUniform1i(glGetUniformLocation(prog, "uPrev"), 1);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, n.texture);
+    glUniform1i(glGetUniformLocation(prog, "uNext"), 2);
+    glUniform2f(glGetUniformLocation(prog, "uSize"), float(cur.width), float(cur.height));
+    glUniform1i(glGetUniformLocation(prog, "uSecond"), second ? 1 : 0);
+    glUniform1f(glGetUniformLocation(prog, "uParity"), float((tff ? 1 : 0) ^ (second ? 0 : 1)));
+    glUniform1i(glGetUniformLocation(prog, "uBwdif"), bwdif ? 1 : 0);
+    draw(prog, out, c.texture);
+    return download(out);
+}
+
 // Bilinear scaling, the screen's own: what an upscaler has to differ from for a match with its oracle to mean much.
 Picture plain(const Picture& in, int w, int h) {
     GLuint prog = program(appShader("video/vertex.vert"),
@@ -318,6 +353,100 @@ Picture nis(const Picture& in, int w, int h) {
     return download(out);
 }
 
+// EWA Lanczos-sharp as the stage runs it: Ewa's weights in a 512-texel table packed as VideoFilterStage.ewaTable()
+// packs them, two bytes each, (w + 0.25) / 1.25; the weights as Ewa defines them (libplacebo's ewa_lanczossharp), J1
+// taken exactly here where Ewa uses Abramowitz & Stegun's polynomial (under 1e-7 apart, below the table's steps).
+Picture ewa(const Picture& in, int w, int h, float antiring) {
+    const double jincZero3 = 3.2383154841662362076499, blur = 0.98125058372237073562493;
+    const double jincZero1 = 1.2196698912665045, pi = 3.14159265358979323846;
+    const double radius = double(float(jincZero3 * blur));
+    auto jinc = [&](double x) { return x < 1e-8 ? 1.0 : 2.0 * std::cyl_bessel_j(1.0, x * pi) / (x * pi); };
+    const int size = 512;
+    std::vector<uint8_t> table(size * 4, 0);
+    for (int i = 0; i < size; i++) {
+        const double x = radius * i / (size - 1);
+        const float weight = float(x > radius ? 0.0 : jinc(x / blur) * jinc(x / radius * jincZero1));
+        const int v = std::clamp(int((weight + 0.25f) / 1.25f * 65535.0f), 0, 65535);
+        table[i * 4] = uint8_t(v >> 8);
+        table[i * 4 + 1] = uint8_t(v & 0xFF);
+    }
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, table.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    GLuint prog = appProgram("video/ewa.frag");
+    Target source = upload(in);
+    Target out = target(w, h);
+    glUseProgram(prog);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glUniform1i(glGetUniformLocation(prog, "uTable"), 1);
+    glUniform2f(glGetUniformLocation(prog, "uInSize"), float(in.width), float(in.height));
+    glUniform1f(glGetUniformLocation(prog, "uRadius"), float(radius));
+    glUniform1f(glGetUniformLocation(prog, "uAntiring"), antiring);
+    draw(prog, out, source.texture);
+    return download(out);
+}
+
+// Lanczos-3 as the stage runs it, one pass to the size given, with [antiring].
+Picture lanczos(const Picture& in, int w, int h, float antiring) {
+    GLuint prog = appProgram("video/lanczos.frag");
+    Target source = upload(in);
+    Target out = target(w, h);
+    glUseProgram(prog);
+    glUniform2f(glGetUniformLocation(prog, "uInSize"), float(in.width), float(in.height));
+    glUniform1f(glGetUniformLocation(prog, "uAntiring"), antiring);
+    draw(prog, out, source.texture);
+    return download(out);
+}
+
+// xBRZ as the stage runs it: corners at (w + 1) × (h + 1), the decisions at the picture's size, then [factor] times
+// the size, every texture read nearest; the patterns from [tablePath] (xbrz-table.py, from the app's own Xbrz.kt).
+Picture xbrz(const Picture& in, int factor, const std::string& tablePath) {
+    const std::string bytes = readFile(tablePath);
+    if (bytes.size() != 36 * 25 * 4) fail("the xBRZ table is not 36 × 25 texels");
+    GLuint table;
+    glGenTextures(1, &table);
+    glBindTexture(GL_TEXTURE_2D, table);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 36, 25, 0, GL_RGBA, GL_UNSIGNED_BYTE, bytes.data());
+    const int w = in.width, h = in.height;
+    Target source = upload(in);
+    Target corners = target(w + 1, h + 1);
+    Target decisions = target(w, h);
+    Target out = target(w * factor, h * factor);
+    for (GLuint t : {table, source.texture, corners.texture, decisions.texture}) {
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+    auto size = [&](GLuint p) { glUniform2f(glGetUniformLocation(p, "uSize"), float(w), float(h)); };
+    GLuint first = appProgram("xbrz/corners.frag");
+    glUseProgram(first);
+    size(first);
+    draw(first, corners, source.texture);
+    GLuint second = appProgram("xbrz/decisions.frag");
+    glUseProgram(second);
+    size(second);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, corners.texture);
+    glUniform1i(glGetUniformLocation(second, "uCorners"), 1);
+    draw(second, decisions, source.texture);
+    GLuint third = appProgram("xbrz/scale.frag");
+    glUseProgram(third);
+    size(third);
+    glUniform1f(glGetUniformLocation(third, "uFactor"), float(factor));
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, decisions.texture);
+    glUniform1i(glGetUniformLocation(third, "uDecisions"), 1);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, table);
+    glUniform1i(glGetUniformLocation(third, "uTable"), 2);
+    draw(third, out, source.texture);
+    return download(out);
+}
+
 // The last step of Anime4K and ACNet: [last]'s four channels as the four pixels of each picture pixel, with the
 // picture's bilinear doubling.
 Picture toTwice(GLuint prog, const Target& source, const Target& last) {
@@ -408,10 +537,18 @@ int main(int argc, char** argv) {
     else if (sized("gsr")) writePpm(a[2], gsr(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4])));
     else if (sized("fsr")) writePpm(a[2], fsr(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4])));
     else if (sized("fsr-easu")) writePpm(a[2], fsr(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4]), true));
+    else if (a.size() == 6 && a[0] == "ewa")
+        writePpm(a[2], ewa(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4]), std::stof(a[5])));
+    else if (a.size() == 6 && a[0] == "lanczos")
+        writePpm(a[2], lanczos(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4]), std::stof(a[5])));
     else if (sized("nis")) writePpm(a[2], nis(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4])));
     else if (a.size() == 6 && a[0] == "gsr-qualcomm")
         writePpm(a[3], gsrQualcomm(a[1], readPpm(a[2]), std::stoi(a[4]), std::stoi(a[5])));
     else if (a.size() == 3 && a[0] == "fsr-rcas") writePpm(a[2], rcasOnly(readPpm(a[1])));
+    else if (a.size() == 8 && a[0] == "temporal")
+        writePpm(a[4], temporal(readPpm(a[1]), readPpm(a[2]), readPpm(a[3]), a[5] == "bwdif", a[6] == "1",
+                                a[7] == "1"));
+    else if (a.size() == 5 && a[0] == "xbrz") writePpm(a[2], xbrz(readPpm(a[1]), std::stoi(a[3]), a[4]));
     else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));
     else if (a.size() == 3 && a[0] == "acnet") writePpm(a[2], acnet(readPpm(a[1])));
     else fail("usage: see the head of tools/shader-check/check.cpp");

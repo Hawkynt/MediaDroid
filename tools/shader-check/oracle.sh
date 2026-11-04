@@ -22,7 +22,8 @@ fetch NVIDIAGameWorks/NVIDIAImageScaling 35e13ba316c98eeecf16f37eae70ce88019911f
 fetch bloc97/Anime4K 7684e9586f8dcc738af08a1cdceb024cc184f426 glsl/Upscale/Anime4K_Upscale_CNN_x2_S.glsl
 fetch TianZerL/ACNetGLSL c6e5940cef3d2c15bebbe407da6b4e0c68ce50ad glsl/acnet/acnet_f8b4.glsl
 
-cmake -S "$HERE" -B "$B" -DORACLE_DIR="$O" >/dev/null && cmake --build "$B" -j >/dev/null || { echo "build failed"; exit 2; }
+cmake -S "$HERE" -B "$B" -DORACLE_DIR="$O" >/dev/null && cmake --build "$B" -j >/dev/null ||
+  { echo "build failed"; exit 2; }
 C=$B/shader_check
 Q=$B/shader_oracle
 failed=0
@@ -80,7 +81,63 @@ for size in "400 300" "480 360" "560 420" "640 480"; do
 done
 differs "NIS against bilinear" "$W/nis.ppm" "$W/plain-2x.ppm"
 
-command -v ffmpeg >/dev/null || { echo "Anime4K and ACNet need FFmpeg with libplacebo"; exit 2; }
+# xBRZ: against the original's own output (core/imaging's references, which Xbrz is held to too), every factor; the
+# patterns read from the app's Xbrz.kt.
+python3 -I "$HERE/xbrz-table.py" "$HERE/../../core/imaging/src/main/kotlin/com/hawkynt/mediadroid/imaging/Xbrz.kt" \
+  "$W/xbrz-table.bin"
+command -v ffmpeg >/dev/null || { echo "the rest needs FFmpeg with libplacebo"; exit 2; }
+for name in shapes noise gradient; do
+  ref="$HERE/../../core/imaging/src/test/resources/xbrz"
+  ffmpeg -loglevel error -y -i "$ref/$name.png" -pix_fmt rgb24 "$W/xbrz-$name.ppm"
+  for factor in 2 3 4 5 6; do
+    ffmpeg -loglevel error -y -i "$ref/$name-${factor}x.png" -pix_fmt rgb24 "$W/xbrz-ref.ppm"
+    "$C" xbrz "$W/xbrz-$name.ppm" "$W/xbrz.ppm" $factor "$W/xbrz-table.bin"
+    check "xBRZ $name ${factor}× against the original" "$W/xbrz.ppm" "$W/xbrz-ref.ppm" 0 0
+  done
+done
+
+# YADIF and BWDIF: against FFmpeg's own filters on planar RGB, both field orders and both fields, PAL and NTSC sizes;
+# then once more with every read addressed 1/256 texel off, as a GPU's division may land — nearest sampling has to
+# keep it byte for byte.
+mkdir -p "$W/nudged/video"
+sed 's|vec2(x + 0.5, uSize.y - y - 0.5) / uSize|vec2(x + 0.5 - 0.004, uSize.y - y - 0.5 + 0.004) / uSize|' \
+  "$HERE/../../app/src/main/glsl/video/temporal.frag" > "$W/nudged/video/temporal.frag"
+cp "$HERE/../../app/src/main/glsl/video/vertex.vert" "$W/nudged/video/"
+for size in "720 576" "720 480"; do
+  "$C" picture "$W/interlaced-source.ppm" $size
+  python3 -I "$HERE/fields.py" "$W/interlaced-source.ppm" "$W/field"
+  for method in yadif bwdif; do
+    for tff in 1 0; do
+      parity=$([ $tff = 1 ] && echo tff || echo bff)
+      ffmpeg -loglevel error -y -framerate 25 -i "$W/field%d.ppm" -start_number 0 \
+        -vf "format=gbrp,$method=mode=send_field:parity=$parity:deint=all,format=rgb24" "$W/ffmpeg-%d.ppm"
+      for second in 0 1; do
+        "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/temporal.ppm" $method $tff $second
+        check "${method^^} ${size/ /×} $parity field $((second + 1)) against FFmpeg" "$W/temporal.ppm" \
+          "$W/ffmpeg-$((2 + second)).ppm" 0 0
+      done
+    done
+    SHADER_CHECK_GLSL="$W/nudged" "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/temporal.ppm" \
+      $method 0 0
+    check "${method^^} ${size/ /×} read 1/256 texel off, against FFmpeg" "$W/temporal.ppm" "$W/ffmpeg-2.ppm" 0 0
+  done
+  differs "YADIF against the woven frame" "$W/temporal.ppm" "$W/field1.ppm"
+done
+
+# Lanczos and EWA: their kernels against libplacebo's lanczos and ewa_lanczossharp, antiringing off on both sides
+# (ours pulls into the four nearest pixels' range, libplacebo's weighs a soft minimum and maximum: not the same rule).
+for size in "480 360" "640 480"; do
+  for kernel in lanczos ewa; do
+    "$C" $kernel "$W/picture.ppm" "$W/$kernel.ppm" $size 0
+    scaler=$([ $kernel = ewa ] && echo ewa_lanczossharp || echo lanczos)
+    scale="libplacebo=w=${size% *}:h=${size#* }:upscaler=$scaler:antiringing=0:dithering=none:sigmoid=false"
+    ffmpeg -loglevel error -y -i "$W/picture.ppm" -vf "format=gbrp,$scale:format=gbrp,format=rgb24" \
+      -frames:v 1 "$W/$kernel-libplacebo.ppm"
+    label=$([ $kernel = ewa ] && echo EWA || echo Lanczos)
+    check "$label kernel ${size/ /×} against libplacebo" "$W/$kernel.ppm" "$W/$kernel-libplacebo.ppm" 2 0.1 4
+  done
+done
+differs "Lanczos against bilinear" "$W/lanczos.ppm" "$W/plain-2x.ppm"
 
 # Anime4K: its mpv shader in libplacebo, on RGB, where its MAIN hook sees the same values the stage does.
 "$C" anime4k "$W/picture.ppm" "$W/anime4k.ppm"
