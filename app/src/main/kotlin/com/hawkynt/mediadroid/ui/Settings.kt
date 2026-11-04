@@ -352,7 +352,7 @@ fun SettingsScreen(
                 }
             },
             neural = settings.neuralUpscaling,
-            neuralMotion = settings.neuralMotionReady,
+            neuralMotion = settings.neuralMotionOffered,
         )
         NeuralUpscalingSetting(settings, update = { block -> update(block) })
 
@@ -539,7 +539,7 @@ private fun NeuralUpscalingSetting(settings: Settings, update: ((Settings) -> Un
         },
         what = "a 576p picture",
         budgetMs = com.hawkynt.mediadroid.player.NeuralUpscaling.BUDGET_MS,
-        test = { com.hawkynt.mediadroid.player.NeuralUpscaler.selfTest(it) },
+        test = { context, _ -> com.hawkynt.mediadroid.player.NeuralUpscaler.selfTest(context) },
         onPassed = { unit, ms ->
             update {
                 it.neuralUpscaling = true
@@ -549,46 +549,100 @@ private fun NeuralUpscalingSetting(settings: Settings, update: ((Settings) -> Un
         },
         onOff = { update { it.neuralUpscaling = false } },
     )
-    // RIFE's self-test times each size (see NeuralInterpolator.selfTest); the switch judges the smallest, and what
-    // the fastest unit took per size is kept for the player to pick the working size from.
-    var timings by remember { mutableStateOf(emptyList<com.hawkynt.mediadroid.player.NeuralInterpolator.Timing>()) }
-    val times = com.hawkynt.mediadroid.player.NeuralInterpolation.decode(settings.neuralInterpolationTimes)
-    val upTo = times.filterValues { com.hawkynt.mediadroid.player.NeuralInterpolation.fastEnough(it) }.keys.maxOrNull()
-    SelfTestedSwitch(
-        label = "Neural frame interpolation (RIFE)",
-        idle = "A neural network builds the picture between two frames along the motion, doubling the frame rate. " +
-            "Switching it on tests whether this device is fast enough: an in-between within " +
-            "${com.hawkynt.mediadroid.player.NeuralInterpolation.BUDGET_MS.toInt()} ms, from 480p up to 1080p.",
-        on = if (settings.neuralMotionReady) {
-            "On, on this device's ${settings.neuralInterpolationUnit}: an in-between takes " +
-                times.entries.joinToString(", ") { (height, ms) -> "${ms.toInt()} ms at ${height}p" } + ". " +
-                "Material up to ${upTo}p is interpolated at its own size, larger material made smaller for it. " +
-                "RIFE is offered under smooth motion in the player's gear."
-        } else {
-            null
-        },
-        what = "a 480p in-between",
-        budgetMs = com.hawkynt.mediadroid.player.NeuralInterpolation.BUDGET_MS,
-        test = { context ->
-            com.hawkynt.mediadroid.player.NeuralInterpolator.selfTest(context)
-                .also { timings = it }
-                .map { it.unit to it.msByHeight.values.first() }
-        },
-        onPassed = { unit, _ ->
-            val measured = timings.first { it.unit == unit }.msByHeight
-            update {
-                it.neuralInterpolation = true
-                it.neuralInterpolationUnit = unit.name
-                it.neuralInterpolationTimes = com.hawkynt.mediadroid.player.NeuralInterpolation.encode(measured)
-            }
-        },
-        onOff = { update { it.neuralInterpolation = false } },
+    NeuralMotionSwitch(
+        com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation.RIFE,
+        "A neural network builds the picture between two frames along the motion, doubling the frame rate.",
+        settings,
+        update,
+    )
+    NeuralMotionSwitch(
+        com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation.DAIN,
+        "A heavier neural network builds the picture between two frames, weighing nearer objects by their depth, " +
+            "so whatever passes in front stays in front.",
+        settings,
+        update,
     )
 }
 
 /**
- * A switch that tests the device before it stays on: [test] times [what] on every unit, fastest first; the fastest
- * within [budgetMs] passes ([onPassed]), otherwise the switch stays off and a dialog says what the device took.
+ * Neural smooth motion by [network]: switching it on fetches the network where the app does not carry it (see
+ * NeuralModels, ModelStore), then runs its self-test in a process of its own (NeuralTestService), which times each
+ * size; the switch judges the smallest, and what the fastest unit took per size is kept for the player to pick the
+ * working size from.
+ */
+@Composable
+private fun NeuralMotionSwitch(
+    network: com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation,
+    about: String,
+    settings: Settings,
+    update: ((Settings) -> Unit) -> Unit,
+) {
+    var timings by remember { mutableStateOf(emptyList<com.hawkynt.mediadroid.player.NeuralInterpolator.Timing>()) }
+    var fetchFailed by remember { mutableStateOf(false) }
+    var testEnded by remember { mutableStateOf(false) }
+    val passed = settings.neuralMotionPassed(network)
+    val download = com.hawkynt.mediadroid.player.NeuralModels.download(network)
+    val fetchNote = download?.let { " It is fetched first (${it.bytes / 1_000_000} MB)." } ?: ""
+    SelfTestedSwitch(
+        label = "Neural frame interpolation (${network.label})",
+        idle = "$about Switching it on tests whether this device is fast enough: an in-between within " +
+            "${com.hawkynt.mediadroid.player.NeuralInterpolation.BUDGET_MS.toInt()} ms, from 480p up to 1080p." +
+            fetchNote,
+        on = passed?.let { result ->
+            val upTo = result.msByHeight
+                .filterValues { com.hawkynt.mediadroid.player.NeuralInterpolation.fastEnough(it) }.keys.maxOrNull()
+            "On, on this device's ${result.unit}: an in-between takes " +
+                result.msByHeight.entries.joinToString(", ") { (height, ms) -> "${ms.toInt()} ms at ${height}p" } +
+                ". Material up to ${upTo}p is interpolated at its own size, larger material made smaller for it. " +
+                "${network.label} is offered under smooth motion in the player's gear."
+        },
+        what = "a 480p in-between",
+        budgetMs = com.hawkynt.mediadroid.player.NeuralInterpolation.BUDGET_MS,
+        none = {
+            if (fetchFailed) {
+                "${network.label} could not be fetched. Is the device online? It stays off."
+            } else if (testEnded) {
+                "${network.label} needed more than this device can give — memory or graphics — and the test was " +
+                    "ended. It stays off."
+            } else {
+                "This device cannot run the network at all."
+            }
+        },
+        test = { context, say ->
+            fetchFailed = download != null && !com.hawkynt.mediadroid.data.ModelStore.fetch(context, download) {
+                say("Fetching ${network.label}… ${(it * 100).toInt()} %")
+            }
+            say("Testing this device…")
+            testEnded = false
+            if (fetchFailed) {
+                emptyList()
+            } else {
+                val outcome = com.hawkynt.mediadroid.player.NeuralTestService.selfTest(context, network)
+                testEnded = outcome == com.hawkynt.mediadroid.player.NeuralTestService.Outcome.Ended
+                timings = (outcome as? com.hawkynt.mediadroid.player.NeuralTestService.Outcome.Ran)?.timings.orEmpty()
+                timings.map { it.unit to it.msByHeight.values.first() }
+            }
+        },
+        onPassed = { unit, _ ->
+            val measured = timings.first { it.unit == unit }.msByHeight
+            val passedNow = com.hawkynt.mediadroid.player.NeuralInterpolation.Passed(unit.name, measured)
+            update { it.neuralMotion = it.neuralMotion + (network.name to passedNow.encode()) }
+        },
+        onOff = { update { it.neuralMotion = it.neuralMotion - network.name } },
+    )
+}
+
+/** [ms] as a person reads it: milliseconds, then seconds, then minutes. */
+private fun duration(ms: Double): String = when {
+    ms < 10_000 -> "${ms.toInt()} ms"
+    ms < 120_000 -> "${(ms / 1000).toInt()} seconds"
+    else -> "${(ms / 60_000).toInt()} minutes"
+}
+
+/**
+ * A switch that tests the device before it stays on: [test] times [what] on every unit, fastest first, and may say
+ * what it is doing meanwhile; the fastest within [budgetMs] passes ([onPassed]), otherwise the switch stays off and a
+ * dialog says what the device took — or, where no unit ran it, [none].
  */
 @Composable
 private fun SelfTestedSwitch(
@@ -597,18 +651,23 @@ private fun SelfTestedSwitch(
     on: String?,
     what: String,
     budgetMs: Double,
-    test: (android.content.Context) -> List<Pair<com.hawkynt.mediadroid.player.NeuralUpscaler.Unit, Double>>,
+    test: (
+        android.content.Context,
+        (String) -> Unit,
+    ) -> List<Pair<com.hawkynt.mediadroid.player.NeuralUpscaler.Unit, Double>>,
     onPassed: (com.hawkynt.mediadroid.player.NeuralUpscaler.Unit, Double) -> Unit,
     onOff: () -> Unit,
+    none: () -> String = { "This device cannot run the network at all." },
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var testing by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("Testing this device…") }
     var tooSlow by remember { mutableStateOf<String?>(null) }
     SwitchRow(
         label = label,
         detail = when {
-            testing -> "Testing this device…"
+            testing -> status
             on != null -> on
             else -> idle
         },
@@ -618,9 +677,10 @@ private fun SelfTestedSwitch(
                 onOff()
             } else if (!testing) {
                 testing = true
+                status = "Testing this device…"
                 scope.launch {
                     val results = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                        test(context.applicationContext)
+                        test(context.applicationContext) { said -> scope.launch { status = said } }
                     }
                     testing = false
                     val best = results.firstOrNull()
@@ -629,9 +689,9 @@ private fun SelfTestedSwitch(
                     } else {
                         onOff()
                         tooSlow = if (best == null) {
-                            "This device cannot run the network at all."
+                            none()
                         } else {
-                            "This device is too slow: $what takes ${best.second.toInt()} ms on its fastest unit " +
+                            "This device is too slow: $what takes ${duration(best.second)} on its fastest unit " +
                                 "(${best.first}), and playback allows ${budgetMs.toInt()} ms. It stays off."
                         }
                     }

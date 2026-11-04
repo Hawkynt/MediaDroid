@@ -35,8 +35,8 @@ fun PictureSliders(
     stereo: Boolean = false,
     /** Offer Real-ESRGAN: the household's self-test found the device fast enough (see NeuralUpscaling). */
     neural: Boolean = false,
-    /** Offer RIFE under smooth motion: its self-test passed (see NeuralInterpolation). */
-    neuralMotion: Boolean = false,
+    /** The neural networks to offer under smooth motion: their self-tests passed (see NeuralInterpolation). */
+    neuralMotion: Set<com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation> = emptySet(),
 ) {
     Column(modifier = modifier) {
         PictureControl.entries.forEach { control ->
@@ -154,7 +154,7 @@ fun PictureSliders(
         Text("Smooth motion", fontSize = 16.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PictureAdjustment.Interpolation.entries.filter {
-                !it.isNeural || neuralMotion || picture.interpolation == it
+                !it.isNeural || it in neuralMotion || picture.interpolation == it
             }.forEach { strength ->
                 FilterChip(
                     selected = picture.interpolation == strength,

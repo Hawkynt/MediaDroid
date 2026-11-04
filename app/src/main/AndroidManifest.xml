@@ -54,6 +54,11 @@
             android:name=".player.PlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <!-- The neural self-tests, in a process of their own: a network too much for the device ends only that. -->
+        <service
+            android:name=".player.NeuralTestService"
+            android:exported="false"
+            android:process=":neuraltest" />
     </application>
 
 </manifest>
