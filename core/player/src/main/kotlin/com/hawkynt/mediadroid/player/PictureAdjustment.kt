@@ -108,13 +108,23 @@ data class PictureAdjustment(
             1f,
             "A network finding motion coarse to fine, for large movements; fetched and tested; not for sale.",
         ),
+
+        /**
+         * FLAVR's network makes the in-between from four frames at once with 3D convolutions (see
+         * [NeuralInterpolation]); where its self-test passed, after downloading it (see [NeuralModels]).
+         */
+        FLAVR(
+            "FLAVR",
+            1f,
+            "A network looking at four frames at once, motion learned without flow; the heaviest; fetched and tested.",
+        ),
         ;
 
         /** Built along the motion rather than blended. */
         val isMotionCompensated: Boolean get() = this == MOTION
 
         /** Made by a neural network (see [NeuralInterpolation]). */
-        val isNeural: Boolean get() = this == RIFE || this == DAIN || this == XVFI
+        val isNeural: Boolean get() = this == RIFE || this == DAIN || this == XVFI || this == FLAVR
 
         /** How much of the next frame to show at [phase] (0 at the earlier frame's time, 1 at the next's). */
         fun weight(phase: Float): Float {

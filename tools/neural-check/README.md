@@ -29,6 +29,8 @@ On an Intel HD Graphics 520 laptop (Core i5, 2016) at 256 × 256 — a plain ble
 | XVFI | CPU | 1.27 | 1.1 s | 0.8 GB |
 | XVFI | GPU | 1.27 | 1.5 s | |
 
+| FLAVR (`FLAVR_DIR`) | CPU | 5.23 | 46 s | 0.6 GB |
+
 The upscalers (with `WAIFU2X_DIR` and `REALCUGAN_DIR` set to `app/src/main/assets/models/waifu2x-cunet` and
 `realcugan-se`) enlarge a drawing — discs of flat colour — shrunk to half: at 128 × 128, waifu2x is off from the
 original by 2.42 per value and Real-CUGAN by 8.85 (it sharpens hard edges with halos), pixels merely doubled by

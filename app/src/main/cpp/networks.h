@@ -26,6 +26,10 @@ struct Interpolator {
     // earlier of the next — keeps what was worked out from it alone (features, depth) instead of working it out again.
     long long earlierId = 0;
     long long laterId = 0;
+    // The frames before the earlier one and after the later one, for a network that looks at four (FLAVR); null
+    // where not known — the pair's own frames stand in.
+    const unsigned char* before = nullptr;
+    const unsigned char* after = nullptr;
     virtual int between(const unsigned char* first, const unsigned char* second, int w, int h, float time,
                         unsigned char* rgb) = 0;
 };
@@ -54,6 +58,10 @@ struct Enlarger {
 // CPU; null where they do not load.
 std::unique_ptr<Enlarger> openWaifu2x(const Loader& load, bool gpu);
 std::unique_ptr<Enlarger> openRealCugan(const Loader& load, bool gpu);
+
+// FLAVR (its 3D "body" and 2D "head"; see flavr.cpp), on the CPU — ncnn's 3D layers have no Vulkan path; null where
+// it does not load.
+std::unique_ptr<Interpolator> openFlavr(const Loader& load, bool gpu);
 
 // [net]'s options for the GPU or the CPU: on the GPU half floats to store, full floats to compute with.
 void configure(ncnn::Net& net, bool vulkan);

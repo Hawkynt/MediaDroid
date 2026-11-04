@@ -10,7 +10,7 @@ set(ncnn_DIR "${NCNN_ROOT}/${ANDROID_ABI}/lib/cmake/ncnn")
 find_package(ncnn REQUIRED)
 
 add_library(mediadroid_neural SHARED
-    interpolator.cpp networks.cpp shaders.cpp warp_layer.cpp dain_layers.cpp xvfi.cpp enlarger.cpp)
+    interpolator.cpp networks.cpp shaders.cpp warp_layer.cpp dain_layers.cpp xvfi.cpp enlarger.cpp flavr.cpp)
 target_compile_options(mediadroid_neural PRIVATE -fopenmp)
 target_link_libraries(mediadroid_neural ncnn android -fopenmp -static-openmp)
 # 16 KB pages, as Android 15 devices may use.

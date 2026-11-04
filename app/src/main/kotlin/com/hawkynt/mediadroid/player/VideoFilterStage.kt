@@ -105,7 +105,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // last two in-betweens (at rifeSize) with the later frame of the pair each belongs to (by its arrival, as keptAt
     // holds it).
     private var rife: NeuralInterpolator? = null
-    private val rifeRead = arrayOf(ByteBuffer.allocateDirect(0), ByteBuffer.allocateDirect(0))
+    private val rifeRead = Array(3) { ByteBuffer.allocateDirect(0) }
     private val rifeTextures = IntArray(2)
     private val rifeFor = LongArray(2)
     private var rifeSize = NeuralInterpolation.Size(0, 0)
@@ -1177,7 +1177,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         keptSteady[2] = blendTimeline.arrived(keptAt[2])
         kept = minOf(kept + 1, 3)
         if (picture.interpolation.isNeural && kept >= 2) {
-            rifeBetween(picture.interpolation, frames[keptRing[1]], frames[keptRing[2]], keptWidth, keptHeight)
+            rifeBetween(
+                picture.interpolation, frames[keptRing[1]], frames[keptRing[2]], keptWidth, keptHeight,
+                before = frames[keptRing[0]].takeIf { kept >= 3 },
+            )
         }
         val motion = picture.interpolation.isMotionCompensated
         if (motion) searchMotion(keptWidth, keptHeight) else motionLumas.fill(null)
@@ -1660,6 +1663,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         later: Frame,
         frameWidth: Int,
         frameHeight: Int,
+        before: Frame? = null,
     ) {
         val net = rifeNet(network) ?: return
         val times = neuralMotion[net.network]?.msByHeight ?: return
@@ -1667,7 +1671,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val w = size.width
         val h = size.height
         val target = frames[RIFE_INPUT].ensure(w, h)
-        listOf(earlier, later).forEachIndexed { i, frame ->
+        // FLAVR looks at the frame before the pair too; the one after it would cost another frame's wait, so the
+        // later frame stands in for it.
+        val looked = if (network == PictureAdjustment.Interpolation.FLAVR && before != null) {
+            listOf(earlier, later, before)
+        } else {
+            listOf(earlier, later)
+        }
+        looked.forEachIndexed { i, frame ->
             target.bind()
             run(sharpenProgram, GLES20.GL_TEXTURE_2D, frame.texture, identity) { p ->
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
@@ -1682,7 +1693,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             rifeRead[i].rewind()
         }
         // The frames' arrivals are their ids: the later frame of this pair is the earlier of the next.
-        val rgb = net.run(rifeRead[0], rifeRead[1], w, h, keptAt[1], keptAt[2]) ?: return
+        val rgb = net.run(
+            rifeRead[0], rifeRead[1], w, h, keptAt[1], keptAt[2], before = rifeRead[2].takeIf { looked.size > 2 },
+        ) ?: return
         if (rifeTextures[0] == 0) GLES20.glGenTextures(2, rifeTextures, 0)
         if (size != rifeSize) {
             // A new size (other material, or the first): both in-betweens anew, neither holding a pair yet.

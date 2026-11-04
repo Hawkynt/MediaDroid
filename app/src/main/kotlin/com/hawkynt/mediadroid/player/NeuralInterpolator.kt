@@ -45,9 +45,13 @@ internal object NativeInterpolation {
     /** XVFI from the folder [dir] of downloaded files, on the GPU or the CPU; 0 where it does not load. */
     external fun openXvfi(dir: String, gpu: Boolean): Long
 
+    /** FLAVR from the folder [dir] of downloaded files, on the CPU only; 0 where it does not load. */
+    external fun openFlavr(dir: String, gpu: Boolean): Long
+
     /**
      * The in-between at [time] of the RGBA frames [earlier] and [later] into [out] as RGB; 0 when it ran. The ids
-     * ([earlierId], [laterId]; 0 where not known) let a frame met again keep what was worked out from it alone.
+     * ([earlierId], [laterId]; 0 where not known) let a frame met again keep what was worked out from it alone. A
+     * network that looks at four frames (FLAVR) takes the frames [before] and [after] the pair where given.
      */
     external fun between(
         handle: Long,
@@ -59,6 +63,8 @@ internal object NativeInterpolation {
         out: ByteBuffer,
         earlierId: Long,
         laterId: Long,
+        before: ByteBuffer?,
+        after: ByteBuffer?,
     ): Int
 
     /** Frees the network. */
@@ -102,9 +108,13 @@ class NeuralInterpolator private constructor(
         height: Int,
         earlierId: Long = 0,
         laterId: Long = 0,
+        before: ByteBuffer? = null,
+        after: ByteBuffer? = null,
     ): ByteBuffer? {
         if (out.capacity() < width * height * 3) out = ByteBuffer.allocateDirect(width * height * 3)
-        val ran = NativeInterpolation.between(handle, earlier, later, width, height, 0.5f, out, earlierId, laterId)
+        val ran = NativeInterpolation.between(
+            handle, earlier, later, width, height, 0.5f, out, earlierId, laterId, before, after,
+        )
         return if (ran == 0) out.also { it.rewind() } else null
     }
 
@@ -136,14 +146,17 @@ class NeuralInterpolator private constructor(
             if (gpu && !NativeInterpolation.hasGpu()) return null
             val handle = when (network) {
                 PictureAdjustment.Interpolation.RIFE -> NativeInterpolation.openRife(context.assets, RIFE, gpu)
-                PictureAdjustment.Interpolation.DAIN, PictureAdjustment.Interpolation.XVFI -> {
+                PictureAdjustment.Interpolation.DAIN,
+                PictureAdjustment.Interpolation.XVFI,
+                PictureAdjustment.Interpolation.FLAVR,
+                -> {
                     val download = NeuralModels.download(network) ?: return null
                     if (!com.hawkynt.mediadroid.data.ModelStore.ready(context, download)) return null
                     val dir = com.hawkynt.mediadroid.data.ModelStore.folder(context, download).absolutePath
-                    if (network == PictureAdjustment.Interpolation.DAIN) {
-                        NativeInterpolation.openDain(dir, gpu)
-                    } else {
-                        NativeInterpolation.openXvfi(dir, gpu)
+                    when (network) {
+                        PictureAdjustment.Interpolation.DAIN -> NativeInterpolation.openDain(dir, gpu)
+                        PictureAdjustment.Interpolation.XVFI -> NativeInterpolation.openXvfi(dir, gpu)
+                        else -> NativeInterpolation.openFlavr(dir, gpu)
                     }
                 }
                 else -> 0L
@@ -205,10 +218,13 @@ class NeuralInterpolator private constructor(
             val first = testFrame(w, h, 0)
             val middle = testFrame(w, h, 1)
             val last = testFrame(w, h, 2)
+            // The frames either side of the pair, for a network that looks at four (FLAVR).
+            val before = testFrame(w, h, -2)
+            val after = testFrame(w, h, 4)
             // Once to warm up — the first run sets the unit up (on the GPU its pipelines), which is no measure.
-            net.run(first, last, w, h) ?: return null
+            net.run(first, last, w, h, before = before, after = after) ?: return null
             val start = System.nanoTime()
-            val between = net.run(first, last, w, h) ?: return null
+            val between = net.run(first, last, w, h, before = before, after = after) ?: return null
             val ms = (System.nanoTime() - start) / 1e6
             var networkError = 0L
             var blendError = 0L
@@ -247,7 +263,10 @@ class NeuralInterpolator private constructor(
         // after it are timed. Null where it failed.
         private fun time(net: NeuralInterpolator, size: NeuralInterpolation.Size): Double? {
             val frames = Array(SAMPLE_RUNS + 2) { k -> testFrame(size.width, size.height, k * 2) }
-            fun pair(k: Int) = net.run(frames[k], frames[k + 1], size.width, size.height, k + 1L, k + 2L)
+            fun pair(k: Int) = net.run(
+                frames[k], frames[k + 1], size.width, size.height, k + 1L, k + 2L,
+                before = frames.getOrNull(k - 1), after = frames.getOrNull(k + 2),
+            )
             val warm = System.nanoTime()
             pair(0) ?: return null
             // Far too slow already warming up: that is answer enough, without waiting for more of it.

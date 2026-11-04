@@ -1,5 +1,5 @@
 // The JNI side of NativeInterpolation (NeuralInterpolator.kt): the networks of networks.h for the app, RIFE from
-// its assets, DAIN and XVFI from their downloaded files.
+// its assets, DAIN, XVFI and FLAVR from their downloaded files.
 #include <jni.h>
 
 #include <android/asset_manager_jni.h>
@@ -80,10 +80,21 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_openXvfi(JNIEnv* env, job
         gpu));
 }
 
+JNIEXPORT jlong JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_openFlavr(JNIEnv* env, jobject, jstring dir, jboolean gpu) {
+    const std::string base = text(env, dir);
+    return handle(mediadroid::openFlavr(
+        [&](ncnn::Net& net, const char* name) {
+            const std::string path = base + "/" + name;
+            return net.load_param((path + ".param").c_str()) != 0 || net.load_model((path + ".bin").c_str()) != 0;
+        },
+        gpu));
+}
+
 JNIEXPORT jint JNICALL
 Java_com_hawkynt_mediadroid_player_NativeInterpolation_between(
     JNIEnv* env, jobject, jlong handle, jobject earlier, jobject later, jint w, jint h, jfloat time, jobject out,
-    jlong earlierId, jlong laterId) {
+    jlong earlierId, jlong laterId, jobject before, jobject after) {
     auto* it = reinterpret_cast<mediadroid::Interpolator*>(handle);
     const auto* first = static_cast<const unsigned char*>(env->GetDirectBufferAddress(earlier));
     const auto* second = static_cast<const unsigned char*>(env->GetDirectBufferAddress(later));
@@ -91,7 +102,11 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_between(
     if (it == nullptr || first == nullptr || second == nullptr || rgb == nullptr) return -1;
     it->earlierId = earlierId;
     it->laterId = laterId;
-    return it->between(first, second, w, h, time, rgb);
+    it->before = before ? static_cast<const unsigned char*>(env->GetDirectBufferAddress(before)) : nullptr;
+    it->after = after ? static_cast<const unsigned char*>(env->GetDirectBufferAddress(after)) : nullptr;
+    const int ran = it->between(first, second, w, h, time, rgb);
+    it->before = it->after = nullptr;
+    return ran;
 }
 
 JNIEXPORT void JNICALL
