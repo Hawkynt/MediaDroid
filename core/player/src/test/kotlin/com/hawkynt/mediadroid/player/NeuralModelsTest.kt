@@ -42,17 +42,28 @@ class NeuralModelsTest {
     }
 
     @Test
-    fun `the neural smooth-motion choices are RIFE, DAIN and XVFI, only RIFE in the app itself`() {
+    fun `the neural smooth-motion choices are RIFE, DAIN, XVFI and FLAVR, only RIFE in the app itself`() {
         assertEquals(
             listOf(
                 PictureAdjustment.Interpolation.RIFE,
                 PictureAdjustment.Interpolation.DAIN,
                 PictureAdjustment.Interpolation.XVFI,
+                PictureAdjustment.Interpolation.FLAVR,
             ),
             PictureAdjustment.Interpolation.entries.filter { it.isNeural },
         )
         assertEquals(null, NeuralModels.download(PictureAdjustment.Interpolation.RIFE))
         assertEquals(NeuralModels.DAIN, NeuralModels.download(PictureAdjustment.Interpolation.DAIN))
         assertEquals(NeuralModels.XVFI, NeuralModels.download(PictureAdjustment.Interpolation.XVFI))
+        assertEquals(NeuralModels.FLAVR, NeuralModels.download(PictureAdjustment.Interpolation.FLAVR))
+    }
+
+    @Test
+    fun `FLAVR comes from the repository as its 3D body and 2D head`() {
+        assertEquals("flavr", NeuralModels.FLAVR.folder)
+        assertEquals(
+            listOf("body.param", "body.bin", "head.param", "head.bin"),
+            NeuralModels.FLAVR.files.map { it.name },
+        )
     }
 }

@@ -3,7 +3,8 @@
 // GPU — the in-between against the frame truly halfway, the time it took, and the memory the process peaked at.
 //
 // neural_check <glsl/ncnn folder> <RIFE model folder> <DAIN model folder> <XVFI model folder> [size ...]
-// WAIFU2X_DIR and REALCUGAN_DIR, where set, add those upscalers. NEURAL_CHECK_UNIT=CPU or GPU runs only that unit,
+// FLAVR_DIR, WAIFU2X_DIR and REALCUGAN_DIR, where set, add those networks. NEURAL_CHECK_UNIT=CPU or GPU runs only
+// that unit,
 // NEURAL_CHECK_NETWORK=RIFE, DAIN, XVFI, waifu2x or Real-CUGAN only that network. NEURAL_CHECK_DUMP=<folder> writes
 // the upscalers' pictures there.
 #include <sys/resource.h>
@@ -61,13 +62,19 @@ long peakMb() {
 }
 
 void check(const char* name, mediadroid::Interpolator& net, int w, int h) {
+    const auto before = frame(w, h, -2);
     const auto first = frame(w, h, 0);
     const auto middle = frame(w, h, 1);
     const auto last = frame(w, h, 2);
+    const auto after = frame(w, h, 4);
     std::vector<unsigned char> rgb(static_cast<size_t>(w) * h * 3);
+    // The frames either side of the pair, for a network that looks at four (FLAVR).
+    net.before = before.data();
+    net.after = after.data();
     const auto start = std::chrono::steady_clock::now();
     const int ran = net.between(first.data(), last.data(), w, h, 0.5f, rgb.data());
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    net.before = net.after = nullptr;
     if (ran != 0) {
         std::printf("%s %dx%d: failed (%d)\n", name, w, h, ran);
         return;
@@ -227,10 +234,16 @@ int main(int argc, char** argv) {
         for (const auto& [network, open] : {
                  std::make_pair(std::string("RIFE"), &mediadroid::openRife),
                  std::make_pair(std::string("DAIN"), &mediadroid::openDain),
-                 std::make_pair(std::string("XVFI"), &mediadroid::openXvfi)}) {
+                 std::make_pair(std::string("XVFI"), &mediadroid::openXvfi),
+                 std::make_pair(std::string("FLAVR"), &mediadroid::openFlavr)}) {
             const char* only = std::getenv("NEURAL_CHECK_NETWORK");
             if (only != nullptr && network != only) continue;
-            const std::string dir = network == "RIFE" ? argv[2] : network == "DAIN" ? argv[3] : argv[4];
+            const char* flavrDir = std::getenv("FLAVR_DIR");
+            if (network == "FLAVR" && flavrDir == nullptr) continue;
+            const std::string dir = network == "RIFE" ? argv[2]
+                : network == "DAIN"                     ? argv[3]
+                : network == "XVFI"                     ? argv[4]
+                                                        : flavrDir;
             auto net = (*open)(files(dir), onGpu);
             if (!net) {
                 std::printf("%s on the %s: does not load\n", network.c_str(), unit);
