@@ -12,11 +12,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.PictureCheck
 import com.hawkynt.mediadroid.player.PictureControl
 
 /**
@@ -33,10 +39,11 @@ fun PictureSliders(
     modifier: Modifier = Modifier,
     /** Offer one eye of a 3D video; a choice for one video, not a household default. */
     stereo: Boolean = false,
-    /** Offer Real-ESRGAN: the household's self-test found the device fast enough (see NeuralUpscaling). */
-    neural: Boolean = false,
-    /** The neural networks to offer under smooth motion: their self-tests passed (see NeuralInterpolation). */
-    neuralMotion: Set<com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation> = emptySet(),
+    /**
+     * Tries a choice of deinterlacing, upscaling or smooth motion before it is taken (see pictureCheck); a choice it
+     * refuses is not taken, and why shows below its row. Takes everything by default.
+     */
+    check: PictureTry = { _, _ -> PictureVerdict(true) },
 ) {
     Column(modifier = modifier) {
         PictureControl.entries.forEach { control ->
@@ -95,15 +102,18 @@ fun PictureSliders(
             valueRange = -1f..1f,
             onValueChangeFinished = onDone,
         )
+        val take = { taken: PictureAdjustment ->
+            onChange(taken)
+            onDone()
+        }
+        val deinterlace = remember { Trial() }
         Text("Deinterlace", fontSize = 16.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PictureAdjustment.Deinterlace.entries.forEach { mode ->
                 FilterChip(
                     selected = picture.deinterlace == mode,
-                    onClick = {
-                        onChange(picture.copy(deinterlace = mode))
-                        onDone()
-                    },
+                    enabled = deinterlace.trying == null,
+                    onClick = { deinterlace.pick(picture, picture.copy(deinterlace = mode), mode.label, check, take) },
                     label = { Text(mode.label, fontSize = 15.sp) },
                 )
             }
@@ -111,29 +121,34 @@ fun PictureSliders(
             if (picture.deinterlace.isTemporal) {
                 FilterChip(
                     selected = picture.fieldRate,
+                    enabled = deinterlace.trying == null,
                     onClick = {
-                        onChange(picture.copy(fieldRate = !picture.fieldRate))
-                        onDone()
+                        val fields = picture.copy(fieldRate = !picture.fieldRate)
+                        deinterlace.pick(picture, fields, "Every field", check, take)
                     },
                     label = { Text("Every field", fontSize = 15.sp) },
                 )
             }
         }
+        deinterlace.Below(
+            if (picture.isFieldRate) "Both fields of every frame shown, each as a picture: motion as the camera saw it."
+            else picture.deinterlace.description,
+        )
+        val upscaling = remember { Trial() }
         Text("Upscaling", fontSize = 16.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PictureAdjustment.Upscaler.entries.filter {
-                it != PictureAdjustment.Upscaler.NEURAL || neural || picture.upscaler == it
-            }.forEach { upscaler ->
+            PictureAdjustment.Upscaler.entries.forEach { upscaler ->
                 FilterChip(
                     selected = picture.upscaler == upscaler,
+                    enabled = upscaling.trying == null,
                     onClick = {
-                        onChange(picture.copy(upscaler = upscaler))
-                        onDone()
+                        upscaling.pick(picture, picture.copy(upscaler = upscaler), upscaler.label, check, take)
                     },
                     label = { Text(upscaler.label, fontSize = 15.sp) },
                 )
             }
         }
+        upscaling.Below(picture.upscaler.description)
         // How much of the upscaler shows: 0 % plain scaling, 100 % the upscaler alone.
         if (picture.upscaler != PictureAdjustment.Upscaler.STANDARD) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -151,21 +166,21 @@ fun PictureSliders(
                 onValueChangeFinished = onDone,
             )
         }
+        val motion = remember { Trial() }
         Text("Smooth motion", fontSize = 16.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PictureAdjustment.Interpolation.entries.filter {
-                !it.isNeural || it in neuralMotion || picture.interpolation == it
-            }.forEach { strength ->
+            PictureAdjustment.Interpolation.entries.forEach { strength ->
                 FilterChip(
                     selected = picture.interpolation == strength,
+                    enabled = motion.trying == null,
                     onClick = {
-                        onChange(picture.copy(interpolation = strength))
-                        onDone()
+                        motion.pick(picture, picture.copy(interpolation = strength), strength.label, check, take)
                     },
                     label = { Text(strength.label, fontSize = 15.sp) },
                 )
             }
         }
+        motion.Below(picture.interpolation.description)
         if (stereo) {
             Text("3D as 2D: one eye", fontSize = 16.sp)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -185,6 +200,62 @@ fun PictureSliders(
             "Filters run on the graphics chip; HDR videos skip them.",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * One row's choice being tried: which ([trying], what the check says meanwhile), or why the last one was refused.
+ */
+private class Trial {
+    var trying by mutableStateOf<String?>(null)
+    var status by mutableStateOf("")
+    var refused by mutableStateOf<String?>(null)
+    private var job: kotlinx.coroutines.Job? = null
+
+    /**
+     * Picks [candidate] (labelled [label]) over [current]: taken at once where it only takes work away
+     * (PictureCheck.needed), else tried with [check] first and taken ([take]) only where the device keeps up.
+     */
+    fun pick(
+        current: PictureAdjustment,
+        candidate: PictureAdjustment,
+        label: String,
+        check: PictureTry,
+        take: (PictureAdjustment) -> Unit,
+    ) {
+        if (trying != null || PictureCheck.key(current) == PictureCheck.key(candidate)) return
+        refused = null
+        if (!PictureCheck.needed(current, candidate)) {
+            take(candidate)
+            return
+        }
+        trying = label
+        status = "Trying $label on this device…"
+        job = kotlinx.coroutines.MainScope().launch {
+            val verdict = check(candidate) { said -> launch { status = "$label: $said" } }
+            trying = null
+            if (verdict.keepsUp) take(candidate) else refused = "$label: ${verdict.message}"
+        }
+    }
+
+    /** Below the row: what is being tried, why the last choice was refused, or what the chosen one does. */
+    @Composable
+    fun Below(description: String) {
+        val text = when {
+            trying != null -> status
+            refused != null -> refused!!
+            else -> description
+        }
+        Text(
+            text,
+            fontSize = 13.sp,
+            color = if (trying == null && refused != null) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.padding(bottom = 6.dp),
         )
     }
 }
