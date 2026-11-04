@@ -152,11 +152,11 @@ of its own, within two seconds of the tap. All of it runs on the graphics chip b
 | Choice | Kind | From |
 | --- | --- | --- |
 | Lanczos | Lanczos-3 filter | — |
-| FSR | edge-adaptive upscaling and sharpening | [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) |
+| FSR | edge-adaptive upscaling and sharpening | [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) — RCAS bit for bit, EASU within 1/255 ([check](tools/shader-check)) |
 | EWA | a sharpened Jinc over a circle | [libplacebo](https://code.videolan.org/videolan/libplacebo)'s EWA Lanczos-sharp |
-| NIS | directional filters and luma sharpening | [NVIDIA Image Scaling](https://github.com/NVIDIAGameWorks/NVIDIAImageScaling) |
+| NIS | directional filters and luma sharpening | [NVIDIA Image Scaling](https://github.com/NVIDIAGameWorks/NVIDIAImageScaling) — within 1/255 ([check](tools/shader-check)) |
 | GSR | one pass, edge-directed, any ratio | [Snapdragon Game Super Resolution 1](https://github.com/quic/snapdragon-gsr) — bit for bit ([check](tools/shader-check)) |
-| Anime4K | a small network for line art, 2× | [bloc97/Anime4K](https://github.com/bloc97/Anime4K) |
+| Anime4K | a small network for line art, 2× | [bloc97/Anime4K](https://github.com/bloc97/Anime4K) — within 1/255 of libplacebo ([check](tools/shader-check)) |
 | ACNet | a small network on the luma, for anime, 2× | [TianZerL/ACNetGLSL](https://github.com/TianZerL/ACNetGLSL) (F8B4), from [Anime4KCPP](https://github.com/TianZerL/Anime4KCPP) — within 1/255 of libplacebo ([check](tools/shader-check)) |
 | xBRZ | rules for pixel art and cartoons, 2–6× | [Zenju's xBRZ](https://sourceforge.net/projects/xbrz/) — pixel for pixel |
 | Real-ESRGAN | neural, 4×, in tiles (TFLite: NPU, GPU or CPU) | [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), [Qualcomm's export](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) |

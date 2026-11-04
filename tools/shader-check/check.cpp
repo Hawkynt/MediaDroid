@@ -1,62 +1,36 @@
-// The desktop check of the app's own upscaling shaders (app/src/main/glsl) against third-party oracles: the shaders
-// run headless on Mesa (EGL without a display, OpenGL ES 3.2 on llvmpipe) the way the filters' stage runs them, and
-// their output is compared with what the original produces. See README.md.
+// The app's own upscaling shaders (app/src/main/glsl) run headless on Mesa — EGL without a display, OpenGL ES 3.2 —
+// the way the filters' stage (VideoFilterStage) runs them, for oracle.sh to compare with the originals. See README.md.
 //
 //   shader_check picture <out.ppm> <width> <height> [gray]  the test picture
+//   shader_check plain <in.ppm> <out.ppm> <width> <height>  bilinear scaling, which an upscaler has to differ from
 //   shader_check gsr <in.ppm> <out.ppm> <width> <height>    glsl/video/sgsr.frag to that size
 //   shader_check gsr-qualcomm <shader> <in.ppm> <out.ppm> <width> <height>
 //                                                           Qualcomm's sgsr1_shader_mobile.frag, unchanged but for
 //                                                           its version line and what Mesa holds to the letter
-//   shader_check plain <in.ppm> <out.ppm> <width> <height>  bilinear scaling, to show an upscaler changes anything
-//   shader_check acnet <in.ppm> <out.ppm>                   glsl/acnet to twice the size, as the stage runs it
-//   shader_check compare <a.ppm> <b.ppm> <max> <mean>       fails when they differ by more (in 8-bit steps)
+//   shader_check fsr <in.ppm> <out.ppm> <width> <height>    glsl/video/fsr-easu.frag to that size, then fsr-rcas.frag
+//   shader_check fsr-easu <in.ppm> <out.ppm> <width> <height>
+//                                                           its EASU alone
+//   shader_check fsr-rcas <in.ppm> <out.ppm>                its RCAS alone, at the picture's own size
+//   shader_check nis <in.ppm> <out.ppm> <width> <height>    glsl/video/nis.frag to that size (at most twice)
+//   shader_check anime4k <in.ppm> <out.ppm>                 glsl/anime4k to twice the size
+//   shader_check acnet <in.ppm> <out.ppm>                   glsl/acnet to twice the size
+//   shader_check compare <a.ppm> <b.ppm> <max> <mean> [border]
+//                                                           fails when they differ by more (in 8-bit steps), the
+//                                                           border's pixels on every side left out
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl32.h>
 
+#include <algorithm>
 #include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <fstream>
-#include <regex>
-#include <sstream>
-#include <string>
-#include <vector>
+
+#include "NIS_Config.h"
+#include "picture.h"
+
+using namespace shadercheck;
 
 namespace {
-
-struct Picture {
-    int width = 0;
-    int height = 0;
-    std::vector<uint8_t> rgb;  // rows top to bottom
-};
-
-[[noreturn]] void fail(const std::string& what) {
-    std::fprintf(stderr, "shader_check: %s\n", what.c_str());
-    std::exit(2);
-}
-
-Picture readPpm(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    std::string magic;
-    int maxValue = 0;
-    Picture p;
-    in >> magic >> p.width >> p.height >> maxValue;
-    in.get();
-    if (magic != "P6" || maxValue != 255) fail("not an 8-bit P6 picture: " + path);
-    p.rgb.resize(size_t(p.width) * p.height * 3);
-    in.read(reinterpret_cast<char*>(p.rgb.data()), std::streamsize(p.rgb.size()));
-    if (!in) fail("short picture: " + path);
-    return p;
-}
-
-void writePpm(const std::string& path, const Picture& p) {
-    std::ofstream out(path, std::ios::binary);
-    out << "P6\n" << p.width << " " << p.height << "\n255\n";
-    out.write(reinterpret_cast<const char*>(p.rgb.data()), std::streamsize(p.rgb.size()));
-}
 
 // The test picture: what upscalers are judged on — flat discs with round edges in every colour, thin lines at
 // several angles, a smooth gradient and one-pixel detail, all fixed (no clock, no randomness).
@@ -91,18 +65,12 @@ Picture testPicture(int w, int h, bool gray) {
     return p;
 }
 
-std::string readFile(const std::string& path) {
-    std::ifstream in(path);
-    if (!in) fail("cannot read " + path);
-    std::stringstream s;
-    s << in.rdbuf();
-    return s.str();
-}
-
 // A shader of the app's as the shaderSources task assembles it: each `#include "name.glsl"` replaced by that file,
 // beside the including one.
 std::string appShader(const std::string& relative) {
-    const std::string path = std::string(GLSL_DIR) + "/" + relative;
+    // SHADER_CHECK_GLSL: another shader folder, to try a changed copy without touching the app's.
+    const char* other = std::getenv("SHADER_CHECK_GLSL");
+    const std::string path = std::string(other ? other : GLSL_DIR) + "/" + relative;
     const std::string dir = path.substr(0, path.rfind('/'));
     std::istringstream in(readFile(path));
     std::string line, out;
@@ -160,6 +128,8 @@ GLuint program(const std::string& vertex, const std::string& fragment) {
     return p;
 }
 
+GLuint appProgram(const std::string& fragment) { return program(appShader("video/vertex.vert"), appShader(fragment)); }
+
 struct Target {
     GLuint texture = 0;
     GLuint framebuffer = 0;
@@ -168,7 +138,7 @@ struct Target {
 };
 
 // A texture to draw into: 8-bit as the stage's frames, or half floats as its Anime4K and ACNet textures.
-Target target(int w, int h, bool half) {
+Target target(int w, int h, bool half = false) {
     Target t{0, 0, w, h};
     glGenTextures(1, &t.texture);
     glBindTexture(GL_TEXTURE_2D, t.texture);
@@ -187,36 +157,17 @@ Target target(int w, int h, bool half) {
 
 // The picture as the stage holds its frames: rows counted upwards, so the picture's top row is where v is 1.
 Target upload(const Picture& p) {
-    Target t = target(p.width, p.height, false);
-    std::vector<uint8_t> rgba(size_t(p.width) * p.height * 4);
-    for (int y = 0; y < p.height; y++) {
-        for (int x = 0; x < p.width; x++) {
-            const uint8_t* from = &p.rgb[(size_t(p.height - 1 - y) * p.width + x) * 3];
-            uint8_t* to = &rgba[(size_t(y) * p.width + x) * 4];
-            to[0] = from[0];
-            to[1] = from[1];
-            to[2] = from[2];
-            to[3] = 255;
-        }
-    }
+    Target t = target(p.width, p.height);
     glBindTexture(GL_TEXTURE_2D, t.texture);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.width, p.height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.width, p.height, GL_RGBA, GL_UNSIGNED_BYTE, rgba(p, false).data());
     return t;
 }
 
 Picture download(const Target& t) {
     glBindFramebuffer(GL_FRAMEBUFFER, t.framebuffer);
-    std::vector<uint8_t> rgba(size_t(t.width) * t.height * 4);
-    glReadPixels(0, 0, t.width, t.height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-    Picture p{t.width, t.height, std::vector<uint8_t>(size_t(t.width) * t.height * 3)};
-    for (int y = 0; y < t.height; y++) {
-        for (int x = 0; x < t.width; x++) {
-            for (int c = 0; c < 3; c++) {
-                p.rgb[(size_t(t.height - 1 - y) * t.width + x) * 3 + c] = rgba[(size_t(y) * t.width + x) * 4 + c];
-            }
-        }
-    }
-    return p;
+    std::vector<uint8_t> data(size_t(t.width) * t.height * 4);
+    glReadPixels(0, 0, t.width, t.height, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
+    return fromRgba(data, t.width, t.height, false);
 }
 
 // One pass over the whole of [into], as the stage's run(): the input on unit 0 as uTex, the identity matrix.
@@ -239,23 +190,23 @@ void draw(GLuint prog, const Target& into, GLuint input) {
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
-Picture gsr(const Picture& in, int w, int h) {
-    GLuint prog = program(appShader("video/vertex.vert"), appShader("video/sgsr.frag"));
-    Target source = upload(in);
-    Target out = target(w, h, false);
-    glUseProgram(prog);
-    glUniform2f(glGetUniformLocation(prog, "uInSize"), float(in.width), float(in.height));
-    draw(prog, out, source.texture);
-    return download(out);
-}
-
 // Bilinear scaling, the screen's own: what an upscaler has to differ from for a match with its oracle to mean much.
 Picture plain(const Picture& in, int w, int h) {
     GLuint prog = program(appShader("video/vertex.vert"),
                           "precision mediump float;\nuniform sampler2D uTex;\nvarying vec2 vTex;\n"
                           "void main() { gl_FragColor = vec4(texture2D(uTex, vTex).rgb, 1.0); }\n");
     Target source = upload(in);
-    Target out = target(w, h, false);
+    Target out = target(w, h);
+    draw(prog, out, source.texture);
+    return download(out);
+}
+
+Picture gsr(const Picture& in, int w, int h) {
+    GLuint prog = appProgram("video/sgsr.frag");
+    Target source = upload(in);
+    Target out = target(w, h);
+    glUseProgram(prog);
+    glUniform2f(glGetUniformLocation(prog, "uInSize"), float(in.width), float(in.height));
     draw(prog, out, source.texture);
     return download(out);
 }
@@ -277,7 +228,7 @@ Picture gsrQualcomm(const std::string& shaderPath, const Picture& in, int w, int
         "void main() { gl_Position = vec4(aPosition, 0.0, 1.0); in_TEXCOORD0 = vec4(aTexCoord, 0.0, 0.0); }\n";
     GLuint prog = program(vertex, fragment);
     Target source = upload(in);
-    Target out = target(w, h, false);
+    Target out = target(w, h);
     glUseProgram(prog);
     glUniform4f(glGetUniformLocation(prog, "ViewportInfo"), 1.0f / in.width, 1.0f / in.height, float(in.width),
                 float(in.height));
@@ -286,14 +237,123 @@ Picture gsrQualcomm(const std::string& shaderPath, const Picture& in, int w, int
     return download(out);
 }
 
-// ACNet as VideoFilterStage runs it: eleven passes over two pairs of half-float textures, then the pixel shuffle.
+// RCAS alone on [in], at the stage's sharpness: to compare the two halves of FSR apart.
+Picture rcasOnly(const Picture& in) {
+    GLuint rcas = appProgram("video/fsr-rcas.frag");
+    Target source = upload(in);
+    Target out = target(in.width, in.height);
+    glUseProgram(rcas);
+    glUniform2f(glGetUniformLocation(rcas, "uTexel"), 1.0f / in.width, 1.0f / in.height);
+    glUniform1f(glGetUniformLocation(rcas, "uSharp"), std::exp2(-0.2f));
+    draw(rcas, out, source.texture);
+    return download(out);
+}
+
+// FSR 1 as the stage runs it: EASU to the output's size into an 8-bit frame, RCAS on it at
+// VideoFilterStage.RCAS_SHARPNESS — 0.2 stops below full on AMD's scale.
+Picture fsr(const Picture& in, int w, int h, bool easuOnly = false) {
+    GLuint easu = appProgram("video/fsr-easu.frag");
+    GLuint rcas = appProgram("video/fsr-rcas.frag");
+    Target source = upload(in);
+    Target enlarged = target(w, h);
+    glUseProgram(easu);
+    glUniform2f(glGetUniformLocation(easu, "uInSize"), float(in.width), float(in.height));
+    draw(easu, enlarged, source.texture);
+    if (easuOnly) return download(enlarged);
+    Target out = target(w, h);
+    glUseProgram(rcas);
+    glUniform2f(glGetUniformLocation(rcas, "uTexel"), 1.0f / w, 1.0f / h);
+    glUniform1f(glGetUniformLocation(rcas, "uSharp"), std::exp2(-0.2f));
+    draw(rcas, out, enlarged.texture);
+    return download(out);
+}
+
+// NIS as the stage runs it: its coefficients packed as VideoFilterStage.nisTable() packs Nis's — two bytes a tap,
+// (c + 1) / 2.5 — and its settings at sharpness 0.5. Nis's tables and settings are NVIDIA's (NisTest holds them to
+// NIS_Scaler.h), so they are taken here from NIS_Config.h itself.
+Picture nis(const Picture& in, int w, int h) {
+    std::vector<uint8_t> table(6 * ::kPhaseCount * 4);
+    auto put = [](uint8_t* at, float c) {
+        int v = std::clamp(int((c + 1.0f) / 2.5f * 65535.0f + 0.5f), 0, 65535);
+        at[0] = uint8_t(v >> 8);
+        at[1] = uint8_t(v & 0xFF);
+    };
+    for (size_t phase = 0; phase < ::kPhaseCount; phase++) {
+        for (int tap = 0; tap < 6; tap++) {
+            uint8_t* texel = &table[(phase * 6 + tap) * 4];
+            put(texel, ::coef_scale[phase][tap]);
+            put(texel + 2, ::coef_usm[phase][tap]);
+        }
+    }
+    GLuint coef;
+    glGenTextures(1, &coef);
+    glBindTexture(GL_TEXTURE_2D, coef);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 6, ::kPhaseCount, 0, GL_RGBA, GL_UNSIGNED_BYTE, table.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    NISConfig c{};
+    NVScalerUpdateConfig(c, 0.5f, 0, 0, in.width, in.height, in.width, in.height, 0, 0, w, h, w, h);
+    GLuint prog = appProgram("video/nis.frag");
+    Target source = upload(in);
+    Target out = target(w, h);
+    glUseProgram(prog);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, coef);
+    glUniform1i(glGetUniformLocation(prog, "uCoef"), 1);
+    auto set = [&](const char* name, float v) { glUniform1f(glGetUniformLocation(prog, name), v); };
+    glUniform2f(glGetUniformLocation(prog, "uInSize"), float(in.width), float(in.height));
+    glUniform2f(glGetUniformLocation(prog, "uOutSize"), float(w), float(h));
+    glUniform2f(glGetUniformLocation(prog, "uScale"), float(in.width) / float(w), float(in.height) / float(h));
+    set("uDetectRatio", c.kDetectRatio);
+    set("uDetectThres", c.kDetectThres);
+    set("uMinContrastRatio", c.kMinContrastRatio);
+    set("uRatioNorm", c.kRatioNorm);
+    set("uSharpStartY", c.kSharpStartY);
+    set("uSharpScaleY", c.kSharpScaleY);
+    set("uSharpStrengthMin", c.kSharpStrengthMin);
+    set("uSharpStrengthScale", c.kSharpStrengthScale);
+    set("uSharpLimitMin", c.kSharpLimitMin);
+    set("uSharpLimitScale", c.kSharpLimitScale);
+    draw(prog, out, source.texture);
+    return download(out);
+}
+
+// The last step of Anime4K and ACNet: [last]'s four channels as the four pixels of each picture pixel, with the
+// picture's bilinear doubling.
+Picture toTwice(GLuint prog, const Target& source, const Target& last) {
+    Target out = target(source.width * 2, source.height * 2);
+    glUseProgram(prog);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, last.texture);
+    glUniform1i(glGetUniformLocation(prog, "uLast"), 1);
+    glUniform2f(glGetUniformLocation(prog, "uLastSize"), float(last.width), float(last.height));
+    draw(prog, out, source.texture);
+    return download(out);
+}
+
+// Anime4K as the stage runs it: four passes into half-float textures taking turns, then Depth-to-Space.
+Picture anime4k(const Picture& in) {
+    const int w = in.width, h = in.height;
+    Target source = upload(in);
+    Target turns[2] = {target(w, h, true), target(w, h, true)};
+    GLuint input = source.texture;
+    for (int i = 0; i < 4; i++) {
+        GLuint prog = appProgram("anime4k/conv-" + std::to_string(i + 1) + ".frag");
+        glUseProgram(prog);
+        glUniform2f(glGetUniformLocation(prog, "uTexel"), 1.0f / w, 1.0f / h);
+        draw(prog, turns[i % 2], input);
+        input = turns[i % 2].texture;
+    }
+    return toTwice(appProgram("anime4k/depth-to-space.frag"), source, turns[1]);
+}
+
+// ACNet as the stage runs it: eleven passes over two pairs of half-float textures, then the pixel shuffle.
 Picture acnet(const Picture& in) {
-    const std::string vertex = appShader("video/vertex.vert");
     const int w = in.width, h = in.height;
     Target source = upload(in);
     Target pairs[2][2] = {{target(w, h, true), target(w, h, true)}, {target(w, h, true), target(w, h, true)}};
     for (int i = 0; i < 11; i++) {
-        GLuint prog = program(vertex, appShader("acnet/conv-" + std::to_string(i + 1) + ".frag"));
+        GLuint prog = appProgram("acnet/conv-" + std::to_string(i + 1) + ".frag");
         int layer = i < 2 ? 0 : (i - 2) / 2 + 1;
         Target* into = pairs[layer % 2];
         Target* from = pairs[1 - layer % 2];
@@ -307,27 +367,25 @@ Picture acnet(const Picture& in) {
         glUniform1i(glGetUniformLocation(prog, "uPicture"), 2);
         draw(prog, into[i % 2], layer == 0 ? source.texture : from[0].texture);
     }
-    GLuint shuffle = program(vertex, appShader("acnet/pixel-shuffle.frag"));
-    Target out = target(w * 2, h * 2, false);
-    glUseProgram(shuffle);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, pairs[1][0].texture);
-    glUniform1i(glGetUniformLocation(shuffle, "uLast"), 1);
-    glUniform2f(glGetUniformLocation(shuffle, "uLastSize"), float(w), float(h));
-    draw(shuffle, out, source.texture);
-    return download(out);
+    return toTwice(appProgram("acnet/pixel-shuffle.frag"), source, pairs[1][0]);
 }
 
-int compare(const Picture& a, const Picture& b, int maxAllowed, double meanAllowed) {
+int compare(const Picture& a, const Picture& b, int maxAllowed, double meanAllowed, int border) {
     if (a.width != b.width || a.height != b.height) fail("the pictures differ in size");
     int worst = 0;
-    long long sum = 0;
-    for (size_t i = 0; i < a.rgb.size(); i++) {
-        int d = std::abs(int(a.rgb[i]) - int(b.rgb[i]));
-        worst = std::max(worst, d);
-        sum += d;
+    long long sum = 0, count = 0;
+    for (int y = border; y < a.height - border; y++) {
+        for (int x = border; x < a.width - border; x++) {
+            for (int c = 0; c < 3; c++) {
+                size_t i = (size_t(y) * a.width + x) * 3 + c;
+                int d = std::abs(int(a.rgb[i]) - int(b.rgb[i]));
+                worst = std::max(worst, d);
+                sum += d;
+                count++;
+            }
+        }
     }
-    double mean = double(sum) / double(a.rgb.size());
+    double mean = double(sum) / double(count);
     std::printf("max %d, mean %.4f (allowed %d, %.4f)\n", worst, mean, maxAllowed, meanAllowed);
     return worst <= maxAllowed && mean <= meanAllowed ? 0 : 1;
 }
@@ -340,21 +398,23 @@ int main(int argc, char** argv) {
         writePpm(a[1], testPicture(std::stoi(a[2]), std::stoi(a[3]), a.size() > 4 && a[4] == "gray"));
         return 0;
     }
-    if (a.size() == 5 && a[0] == "compare") {
-        return compare(readPpm(a[1]), readPpm(a[2]), std::stoi(a[3]), std::stod(a[4]));
+    if ((a.size() == 5 || a.size() == 6) && a[0] == "compare") {
+        return compare(readPpm(a[1]), readPpm(a[2]), std::stoi(a[3]), std::stod(a[4]),
+                       a.size() == 6 ? std::stoi(a[5]) : 0);
     }
     startGl();
-    if (a.size() == 5 && a[0] == "gsr") {
-        writePpm(a[2], gsr(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4])));
-    } else if (a.size() == 5 && a[0] == "plain") {
-        writePpm(a[2], plain(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4])));
-    } else if (a.size() == 6 && a[0] == "gsr-qualcomm") {
+    auto sized = [&](const char* mode) { return a.size() == 5 && a[0] == mode; };
+    if (sized("plain")) writePpm(a[2], plain(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4])));
+    else if (sized("gsr")) writePpm(a[2], gsr(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4])));
+    else if (sized("fsr")) writePpm(a[2], fsr(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4])));
+    else if (sized("fsr-easu")) writePpm(a[2], fsr(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4]), true));
+    else if (sized("nis")) writePpm(a[2], nis(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4])));
+    else if (a.size() == 6 && a[0] == "gsr-qualcomm")
         writePpm(a[3], gsrQualcomm(a[1], readPpm(a[2]), std::stoi(a[4]), std::stoi(a[5])));
-    } else if (a.size() == 3 && a[0] == "acnet") {
-        writePpm(a[2], acnet(readPpm(a[1])));
-    } else {
-        fail("usage: see the head of tools/shader-check/check.cpp");
-    }
+    else if (a.size() == 3 && a[0] == "fsr-rcas") writePpm(a[2], rcasOnly(readPpm(a[1])));
+    else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));
+    else if (a.size() == 3 && a[0] == "acnet") writePpm(a[2], acnet(readPpm(a[1])));
+    else fail("usage: see the head of tools/shader-check/check.cpp");
     if (glGetError() != GL_NO_ERROR) fail("GL error");
     return 0;
 }
