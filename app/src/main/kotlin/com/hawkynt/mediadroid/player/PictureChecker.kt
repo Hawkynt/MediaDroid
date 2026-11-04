@@ -16,10 +16,10 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object PictureChecker {
     /** The frames fed before measuring: the stage's history fills, its programs build. */
-    private const val WARM_FRAMES = 15
+    private const val WARM_FRAMES = 12
 
-    /** The frames measured. */
-    private const val MEASURED_FRAMES = 40
+    /** The frames measured: with the warm-up, under two seconds all told. */
+    private const val MEASURED_FRAMES = 30
 
     private val known = ConcurrentHashMap<String, PictureCheck.DryRun>()
 
@@ -28,7 +28,7 @@ object PictureChecker {
 
     /**
      * What the stage does with [picture] on this device — the neural parts on the units their self-tests chose
-     * ([neuralUnit], [neuralMotion]); null where the stage could not be set up. Takes about two seconds the first
+     * ([neuralUnit], [neuralMotion]); null where the stage could not be set up. Takes under two seconds the first
      * time for a picture; blocks — not on the main thread.
      */
     fun dryRun(

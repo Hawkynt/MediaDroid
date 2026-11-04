@@ -46,11 +46,14 @@ class PictureCheckTest {
     }
 
     @Test
-    fun `a dry run keeps up with nothing late and the stage's work well within a frame`() {
+    fun `a dry run keeps up with hardly anything late and the stage's work well within a frame`() {
         // 576p at 25 frames a second: a frame every 40 ms; 80 % of it is 32 ms.
         val frameMs = 40.0
         assertTrue(PictureCheck.keepsUp(PictureCheck.DryRun(frames = 40, late = 0, workMs = 20.0), frameMs))
-        assertFalse(PictureCheck.keepsUp(PictureCheck.DryRun(frames = 40, late = 1, workMs = 20.0), frameMs))
+        // Motion's search for a pair may come late while it settles on its scale: that pair is blended, no stutter —
+        // up to one frame in ten; more is a search that cannot keep up.
+        assertTrue(PictureCheck.keepsUp(PictureCheck.DryRun(frames = 30, late = 3, workMs = 20.0), frameMs))
+        assertFalse(PictureCheck.keepsUp(PictureCheck.DryRun(frames = 30, late = 4, workMs = 20.0), frameMs))
         assertFalse(PictureCheck.keepsUp(PictureCheck.DryRun(frames = 40, late = 0, workMs = 33.0), frameMs))
         assertFalse(PictureCheck.keepsUp(PictureCheck.DryRun(frames = 0, late = 0, workMs = 1.0), frameMs))
     }

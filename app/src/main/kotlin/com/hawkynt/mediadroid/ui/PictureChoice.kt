@@ -73,7 +73,8 @@ private suspend fun neuralMotion(
     val network = picture.interpolation
     val settings = store.data.settings
     if (!network.isNeural || settings.neuralMotionPassed(network) != null) return null
-    NeuralModels.download(network)?.let { download ->
+    // Fetched once, its digests checked then; after that the files' sizes are enough.
+    NeuralModels.download(network)?.takeUnless { ModelStore.ready(context, it) }?.let { download ->
         if (!ModelStore.fetch(context, download) { say("Fetching ${network.label}… ${(it * 100).toInt()} %") }) {
             return PictureVerdict(
                 false,

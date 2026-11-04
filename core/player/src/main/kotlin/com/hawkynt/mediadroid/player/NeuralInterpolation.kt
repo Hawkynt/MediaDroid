@@ -27,10 +27,22 @@ object NeuralInterpolation {
     val TEST_SIZES = listOf(Size(854, 480), Size(1024, 576), Size(1280, 720), Size(1920, 1080))
 
     /**
-     * The longest the self-test waits for one in-between: a hundred times the budget, so a slower device is told so
-     * without waiting minutes for how much slower. A run cut short counts as taking this long.
+     * The longest a self-test takes, from the tap to the answer, its network's loading included: a hundred times the
+     * budget, so a slower device is told so at once. A test cut short counts as taking this long.
      */
     const val MAX_WAIT_MS = 2000.0
+
+    /**
+     * What an in-between at the smallest test size would take, from [ms] for one of [pixels]: by the pixels, a
+     * lower bound where the network's own overhead counts for more on the small one.
+     */
+    fun estimate(ms: Double, pixels: Int): Double = ms * TEST_SIZES.first().area / pixels
+
+    /**
+     * Whether [ms] for the self-test's small check picture is already past the budget: the work only grows with the
+     * pixels, so no test size can keep up — told without giving the device anything larger.
+     */
+    fun tooSlowAlready(ms: Double): Boolean = !fastEnough(ms)
 
     /** Whether a time of [ms] stands for a run the self-test cut short. */
     fun cutShort(ms: Double): Boolean = ms >= MAX_WAIT_MS
