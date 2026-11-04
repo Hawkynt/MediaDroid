@@ -63,6 +63,15 @@ internal object NativeInterpolation {
 
     /** Frees the network. */
     external fun close(handle: Long)
+
+    /** waifu2x or Real-CUGAN ([realCugan]) from the asset folder [dir], on the GPU or the CPU; 0 where not loaded. */
+    external fun openEnlarger(assets: AssetManager, dir: String, realCugan: Boolean, gpu: Boolean): Long
+
+    /** The RGBA [picture] ([width] × [height]) at twice its size into [out] as RGB; 0 when it ran. */
+    external fun enlarge(handle: Long, picture: ByteBuffer, width: Int, height: Int, out: ByteBuffer): Int
+
+    /** Frees the upscaler. */
+    external fun closeEnlarger(handle: Long)
 }
 
 /**

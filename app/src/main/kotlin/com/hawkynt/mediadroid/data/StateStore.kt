@@ -93,6 +93,8 @@ data class Settings(
     // fastest and what an in-between took there per tested size ("GPU|480=12.5;576=…", see
     // NeuralInterpolation.Passed).
     var neuralMotion: Map<String, String> = emptyMap(),
+    // The upscalers on ncnn (waifu2x, Real-CUGAN) whose self-test passed, the same way: "GPU|576=…".
+    var neuralEnlargers: Map<String, String> = emptyMap(),
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
     var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout
@@ -108,6 +110,17 @@ data class Settings(
         network: com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation,
     ): com.hawkynt.mediadroid.player.NeuralInterpolation.Passed? =
         neuralMotion[network.name]?.let { com.hawkynt.mediadroid.player.NeuralInterpolation.Passed.decode(it) }
+
+    /** What [upscaler]'s self-test found where it passed (waifu2x, Real-CUGAN); null otherwise. */
+    fun neuralEnlargerPassed(
+        upscaler: com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler,
+    ): com.hawkynt.mediadroid.player.NeuralInterpolation.Passed? =
+        neuralEnlargers[upscaler.name]?.let { com.hawkynt.mediadroid.player.NeuralInterpolation.Passed.decode(it) }
+
+    /** The upscalers on ncnn this household's device passed. */
+    val neuralEnlargersOffered: Set<com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler>
+        get() = com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.entries
+            .filter { it.isEnlarger && neuralEnlargerPassed(it) != null }.toSet()
 
     /** The neural smooth-motion choices this household's device passed. */
     val neuralMotionOffered: Set<com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation>

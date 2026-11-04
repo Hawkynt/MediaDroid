@@ -28,14 +28,15 @@ object PictureChecker {
 
     /**
      * What the stage does with [picture] on this device — the neural parts on the units their self-tests chose
-     * ([neuralUnit], [neuralMotion]); null where the stage could not be set up. Takes under two seconds the first
-     * time for a picture; blocks — not on the main thread.
+     * ([neuralUnit], [neuralMotion], [neuralEnlargers]); null where the stage could not be set up. Takes under two
+     * seconds the first time for a picture; blocks — not on the main thread.
      */
     fun dryRun(
         context: Context,
         picture: PictureAdjustment,
         neuralUnit: NeuralUpscaler.Unit?,
         neuralMotion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed>,
+        neuralEnlargers: Map<PictureAdjustment.Upscaler, NeuralInterpolation.Passed> = emptyMap(),
     ): PictureCheck.DryRun? {
         val key = PictureCheck.key(picture)
         known[key]?.let { return it }
@@ -53,6 +54,7 @@ object PictureChecker {
             stage.waitForGpu = true
             stage.neuralUnit = neuralUnit
             stage.neuralMotion = neuralMotion
+            stage.neuralEnlargers = neuralEnlargers
             stage.filters = picture
             stage.setVideoSize(PictureCheck.WIDTH, PictureCheck.HEIGHT)
             if (!stage.setOutput(reader.surface)) return null

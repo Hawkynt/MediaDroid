@@ -3,6 +3,7 @@ package com.hawkynt.mediadroid.ui
 import android.content.Context
 import com.hawkynt.mediadroid.data.ModelStore
 import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.NeuralModels
 import com.hawkynt.mediadroid.player.NeuralTestService
@@ -28,6 +29,7 @@ typealias PictureTry = suspend (picture: PictureAdjustment, say: (String) -> Uni
 fun pictureCheck(context: Context, store: StateStore): PictureTry = { picture, say ->
     withContext(Dispatchers.Default) {
         neuralUpscaling(context, store, picture, say)
+            ?: neuralEnlarging(context, store, picture, say)
             ?: neuralMotion(context, store, picture, say)
             ?: dryRun(context, store, picture, say)
     }
@@ -59,6 +61,46 @@ private suspend fun neuralUpscaling(
         settings.neuralUpscaling = true
         settings.neuralUnit = best.first.name
         settings.neuralMs = best.second.toFloat()
+        store.save()
+    }
+    return null
+}
+
+private suspend fun neuralEnlarging(
+    context: Context,
+    store: StateStore,
+    picture: PictureAdjustment,
+    say: (String) -> Unit,
+): PictureVerdict? {
+    val upscaler = picture.upscaler
+    val settings = store.data.settings
+    if (!upscaler.isEnlarger || settings.neuralEnlargerPassed(upscaler) != null) return null
+    say("Testing ${upscaler.label} on this device…")
+    val timings = when (val outcome = NeuralTestService.selfTest(context, upscaler)) {
+        NeuralTestService.Outcome.Ended -> return PictureVerdict(
+            false,
+            "${upscaler.label} needed more than this device can give — memory or graphics — and the test was " +
+                "ended. The upscaler stays as it was.",
+        )
+        is NeuralTestService.Outcome.Ran -> outcome.timings
+    }
+    val best = timings.firstOrNull()
+    val ms = best?.msByHeight?.values?.first()
+    if (best == null || ms == null || !NeuralEnlarging.fastEnough(ms)) {
+        return PictureVerdict(
+            false,
+            if (best == null || ms == null) {
+                "This device cannot run ${upscaler.label} right. The upscaler stays as it was."
+            } else {
+                "This device is too slow for ${upscaler.label}: a 576p picture takes ${duration(ms)} on its fastest " +
+                    "unit (${best.unit}), and a frame allows ${NeuralEnlarging.BUDGET_MS.toInt()} ms. The upscaler " +
+                    "stays as it was."
+            },
+        )
+    }
+    val passed = NeuralInterpolation.Passed(best.unit.name, best.msByHeight)
+    withContext(Dispatchers.Main) {
+        settings.neuralEnlargers = settings.neuralEnlargers + (upscaler.name to passed.encode())
         store.save()
     }
     return null
@@ -123,7 +165,8 @@ private fun dryRun(context: Context, store: StateStore, picture: PictureAdjustme
         null
     }
     val motion = settings.neuralMotionOffered.associateWith { settings.neuralMotionPassed(it)!! }
-    val run = PictureChecker.dryRun(context, picture, unit, motion)
+    val enlargers = settings.neuralEnlargersOffered.associateWith { settings.neuralEnlargerPassed(it)!! }
+    val run = PictureChecker.dryRun(context, picture, unit, motion, enlargers)
         ?: return PictureVerdict(false, "The picture could not be tried on this device; it stays as it was.")
     val frameMs = PictureChecker.frameMs
     if (PictureCheck.keepsUp(run, frameMs)) return PictureVerdict(true)

@@ -99,4 +99,33 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_close(JNIEnv*, jobject, j
     delete reinterpret_cast<mediadroid::Interpolator*>(handle);
 }
 
+JNIEXPORT jlong JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_openEnlarger(
+    JNIEnv* env, jobject, jobject assets, jstring dir, jboolean realCugan, jboolean gpu) {
+    AAssetManager* manager = AAssetManager_fromJava(env, assets);
+    const std::string base = text(env, dir);
+    auto load = [&](ncnn::Net& net, const char* name) {
+        const std::string path = base + "/" + name;
+        return net.load_param(manager, (path + ".param").c_str()) != 0 ||
+               net.load_model(manager, (path + ".bin").c_str()) != 0;
+    };
+    auto it = realCugan ? mediadroid::openRealCugan(load, gpu) : mediadroid::openWaifu2x(load, gpu);
+    return reinterpret_cast<jlong>(it.release());
+}
+
+JNIEXPORT jint JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_enlarge(
+    JNIEnv* env, jobject, jlong handle, jobject picture, jint w, jint h, jobject out) {
+    auto* it = reinterpret_cast<mediadroid::Enlarger*>(handle);
+    const auto* rgba = static_cast<const unsigned char*>(env->GetDirectBufferAddress(picture));
+    auto* rgb = static_cast<unsigned char*>(env->GetDirectBufferAddress(out));
+    if (it == nullptr || rgba == nullptr || rgb == nullptr) return -1;
+    return it->enlarge(rgba, w, h, rgb);
+}
+
+JNIEXPORT void JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_closeEnlarger(JNIEnv*, jobject, jlong handle) {
+    delete reinterpret_cast<mediadroid::Enlarger*>(handle);
+}
+
 }  // extern "C"

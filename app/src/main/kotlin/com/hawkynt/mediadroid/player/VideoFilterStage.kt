@@ -110,6 +110,21 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val rifeFor = LongArray(2)
     private var rifeSize = NeuralInterpolation.Size(0, 0)
 
+    /**
+     * The upscalers on ncnn (waifu2x, Real-CUGAN) the household's self-test passed, with the unit each runs on; one
+     * not in it plays as Standard scaling.
+     */
+    @Volatile
+    var neuralEnlargers: Map<PictureAdjustment.Upscaler, NeuralInterpolation.Passed> = emptyMap()
+
+    // The picture's upscaler on ncnn (see NeuralEnlarger): opened on this thread, the picture read back for it, and
+    // the RGB texture at twice the size its output goes into.
+    private var enlarger: NeuralEnlarger? = null
+    private var enlargerRead: ByteBuffer? = null
+    private var enlargerTexture = 0
+    private var enlargerTextureWidth = 0
+    private var enlargerTextureHeight = 0
+
     /** The application, to open Real-ESRGAN's model from. */
     @Volatile
     var appContext: android.content.Context? = null
@@ -474,6 +489,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             neural?.close()
             neural = null
             if (neuralTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(neuralTexture), 0)
+            enlarger?.close()
+            enlarger = null
+            if (enlargerTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(enlargerTexture), 0)
             GLES20.glDeleteProgram(deinterlaceProgram)
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(sharpenProgram)
@@ -1522,6 +1540,19 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
                 }
+            } else if (picture.upscaler.isEnlarger && enlargerNet(picture.upscaler) != null) {
+                // waifu2x or Real-CUGAN: twice the picture's size (see enlargerPass), the screen's own scaling for
+                // whatever is left.
+                val enlarged = enlargerPass(source, width, height)
+                toScreen(outWidth, outHeight, adjusting)
+                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged, identity) { p ->
+                    val scale = NeuralEnlarging.SCALE
+                    GLES20.glUniform2f(
+                        GLES20.glGetUniformLocation(p, "uTexel"), 1f / (width * scale), 1f / (height * scale),
+                    )
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
+                }
             } else if (picture.upscaler == PictureAdjustment.Upscaler.NEURAL && es3 && neuralNet() != null) {
                 // Real-ESRGAN: four times the picture's size, tile by tile (see neuralPass), and the screen's own
                 // scaling for whatever is left.
@@ -1675,6 +1706,68 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, rgb)
         GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 4)
         rifeFor[slot] = keptAt[2]
+    }
+
+    /**
+     * [upscaler] (waifu2x, Real-CUGAN) on the unit its self-test chose, opened here on first use or when either
+     * changes; null where the device has not passed it.
+     */
+    private fun enlargerNet(upscaler: PictureAdjustment.Upscaler): NeuralEnlarger? {
+        val unit = neuralEnlargers[upscaler]?.let { runCatching { NeuralUpscaler.Unit.valueOf(it.unit) }.getOrNull() }
+        if (unit == null) {
+            enlarger?.close()
+            enlarger = null
+            return null
+        }
+        if (enlarger?.unit != unit || enlarger?.upscaler != upscaler) {
+            enlarger?.close()
+            enlarger = appContext?.let { NeuralEnlarger.open(it, upscaler, unit) }
+        }
+        return enlarger
+    }
+
+    /**
+     * The open upscaler over [source] ([width] × [height]): the picture read back, through the network, and its
+     * output uploaded into an RGB texture twice the size. Returns that texture.
+     */
+    private fun enlargerPass(source: Frame, width: Int, height: Int): Int {
+        val net = enlarger!!
+        val scale = NeuralEnlarging.SCALE
+        source.bind()
+        val bytes = width * height * 4
+        val read = enlargerRead?.takeIf { it.capacity() == bytes }
+            ?: ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder()).also { enlargerRead = it }
+        read.rewind()
+        GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, read)
+        read.rewind()
+        val outWidth = width * scale
+        val outHeight = height * scale
+        if (enlargerTexture == 0 || enlargerTextureWidth != outWidth || enlargerTextureHeight != outHeight) {
+            if (enlargerTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(enlargerTexture), 0)
+            val ids = IntArray(1)
+            GLES20.glGenTextures(1, ids, 0)
+            enlargerTexture = ids[0]
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, enlargerTexture)
+            GLES20.glTexImage2D(
+                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGB, outWidth, outHeight, 0, GLES20.GL_RGB,
+                GLES20.GL_UNSIGNED_BYTE, null,
+            )
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+            enlargerTextureWidth = outWidth
+            enlargerTextureHeight = outHeight
+        }
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, enlargerTexture)
+        net.run(read, width, height)?.let { rgb ->
+            GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
+            GLES20.glTexSubImage2D(
+                GLES20.GL_TEXTURE_2D, 0, 0, 0, outWidth, outHeight, GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, rgb,
+            )
+            GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 4)
+        }
+        return enlargerTexture
     }
 
     /** Real-ESRGAN on the unit asked for, opened here on first use or when the unit changes; null while off. */

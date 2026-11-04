@@ -29,5 +29,11 @@ On an Intel HD Graphics 520 laptop (Core i5, 2016) at 256 × 256 — a plain ble
 | XVFI | CPU | 1.27 | 1.1 s | 0.8 GB |
 | XVFI | GPU | 1.27 | 1.5 s | |
 
+The upscalers (with `WAIFU2X_DIR` and `REALCUGAN_DIR` set to `app/src/main/assets/models/waifu2x-cunet` and
+`realcugan-se`) enlarge a drawing — discs of flat colour — shrunk to half: at 128 × 128, waifu2x is off from the
+original by 2.42 per value and Real-CUGAN by 8.85 (it sharpens hard edges with halos), pixels merely doubled by
+3.08; shrunk back, their outputs are off from their inputs by 1.28 and 6.47, the app's check allowing 10.
+`NEURAL_CHECK_DUMP=<folder>` writes the pictures.
+
 It found what the phone could not show: DAIN's correlation reading packed features as unpacked, its result
 downloaded from the GPU as raw half floats, and ncnn's Winograd and im2col convolutions taking gigabytes on the CPU.
