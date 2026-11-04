@@ -20,6 +20,8 @@
 //                                                           glsl/video/temporal.frag: one field of cur rebuilt
 //   shader_check xbrz <in.ppm> <out.ppm> <factor> <table.bin>
 //                                                           glsl/xbrz to factor (2..6) times the size
+//   shader_check yuv <in.yuv> <width> <height> <601|709|2020> <out.ppm>
+//                                                           glsl/video/yuv.frag: a yuv420p frame to RGB
 //   shader_check anime4k <in.ppm> <out.ppm>                 glsl/anime4k to twice the size
 //   shader_check acnet <in.ppm> <out.ppm>                   glsl/acnet to twice the size
 //   shader_check compare <a.ppm> <b.ppm> <max> <mean> [border]
@@ -179,17 +181,18 @@ Picture download(const Target& t) {
 }
 
 // One pass over the whole of [into], as the stage's run(): the input on unit 0 as uTex, the identity matrix.
-void draw(GLuint prog, const Target& into, GLuint input) {
+const float kIdentity[] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+
+void draw(GLuint prog, const Target& into, GLuint input, const float* matrix = kIdentity) {
     static const float quad[] = {-1, -1, 1, -1, -1, 1, 1, 1};
     static const float quadTex[] = {0, 0, 1, 0, 0, 1, 1, 1};
-    static const float identity[] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     glBindFramebuffer(GL_FRAMEBUFFER, into.framebuffer);
     glViewport(0, 0, into.width, into.height);
     glUseProgram(prog);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, input);
     glUniform1i(glGetUniformLocation(prog, "uTex"), 0);
-    glUniformMatrix4fv(glGetUniformLocation(prog, "uTexMatrix"), 1, GL_FALSE, identity);
+    glUniformMatrix4fv(glGetUniformLocation(prog, "uTexMatrix"), 1, GL_FALSE, matrix);
     glUniform1f(glGetUniformLocation(prog, "uGrain"), 0.0f);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, quad);
@@ -222,6 +225,50 @@ Picture temporal(const Picture& prev, const Picture& cur, const Picture& next, b
     glUniform1f(glGetUniformLocation(prog, "uParity"), float((tff ? 1 : 0) ^ (second ? 0 : 1)));
     glUniform1i(glGetUniformLocation(prog, "uBwdif"), bwdif ? 1 : 0);
     draw(prog, out, c.texture);
+    return download(out);
+}
+
+// A yuv420p frame (raw planes, rows from the top) to RGB as VideoFilterStage.takeYuv/copyInput do it: the planes as
+// luminance textures, rows from the top flipped by the texture matrix, the matrix as YuvMatrix.toRgb computes it.
+Picture yuv(const std::string& path, int w, int h, double kr, double kb) {
+    const std::string data = readFile(path);
+    const int cw = (w + 1) / 2, ch = (h + 1) / 2;
+    if (data.size() != size_t(w) * h + 2 * size_t(cw) * ch) fail("not a yuv420p frame of that size: " + path);
+    const uint8_t* planes[3] = {reinterpret_cast<const uint8_t*>(data.data()),
+                                reinterpret_cast<const uint8_t*>(data.data()) + size_t(w) * h,
+                                reinterpret_cast<const uint8_t*>(data.data()) + size_t(w) * h + size_t(cw) * ch};
+    GLuint tex[3];
+    glGenTextures(3, tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    for (int i = 0; i < 3; i++) {
+        glBindTexture(GL_TEXTURE_2D, tex[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, i ? cw : w, i ? ch : h, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE,
+                     planes[i]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    const double kg = 1 - kr - kb, ys = 255.0 / 219, cs = 255.0 / 224;
+    const float matrix[9] = {
+        float(ys), float(ys), float(ys),
+        0, float(-cs * 2 * (1 - kb) * kb / kg), float(cs * 2 * (1 - kb)),
+        float(cs * 2 * (1 - kr)), float(-cs * 2 * (1 - kr) * kr / kg), 0,
+    };
+    // Rows from the top in the planes, from the bottom in texture coordinates (takeYuv's texMatrix).
+    const float flip[16] = {1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1};
+    GLuint prog = appProgram("video/yuv.frag");
+    Target out = target(w, h);
+    glUseProgram(prog);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, tex[1]);
+    glUniform1i(glGetUniformLocation(prog, "uU"), 1);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, tex[2]);
+    glUniform1i(glGetUniformLocation(prog, "uV"), 2);
+    glUniformMatrix3fv(glGetUniformLocation(prog, "uColor"), 1, GL_FALSE, matrix);
+    glUniform1f(glGetUniformLocation(prog, "uChroma"), 1.0f);
+    draw(prog, out, tex[0], flip);
     return download(out);
 }
 
@@ -549,7 +596,11 @@ int main(int argc, char** argv) {
         writePpm(a[4], temporal(readPpm(a[1]), readPpm(a[2]), readPpm(a[3]), a[5] == "bwdif", a[6] == "1",
                                 a[7] == "1"));
     else if (a.size() == 5 && a[0] == "xbrz") writePpm(a[2], xbrz(readPpm(a[1]), std::stoi(a[3]), a[4]));
-    else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));
+    else if (a.size() == 6 && a[0] == "yuv") {
+        const double kr = a[4] == "601" ? 0.299 : a[4] == "709" ? 0.2126 : 0.2627;
+        const double kb = a[4] == "601" ? 0.114 : a[4] == "709" ? 0.0722 : 0.0593;
+        writePpm(a[5], yuv(a[1], std::stoi(a[2]), std::stoi(a[3]), kr, kb));
+    } else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));
     else if (a.size() == 3 && a[0] == "acnet") writePpm(a[2], acnet(readPpm(a[1])));
     else fail("usage: see the head of tools/shader-check/check.cpp");
     if (glGetError() != GL_NO_ERROR) fail("GL error");

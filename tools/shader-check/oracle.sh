@@ -124,6 +124,21 @@ for size in "720 576" "720 480"; do
   differs "YADIF against the woven frame" "$W/temporal.ppm" "$W/field1.ppm"
 done
 
+# YUV to RGB (FFmpeg's decoded frames): against FFmpeg's own conversion, BT.601 and BT.709, limited range; grey is
+# exact (no chroma to scale), colour within FFmpeg's bilinear chroma.
+for matrix in 601 709; do
+  for name in grey picture; do
+    ffmpeg -loglevel error -y -i "$W/$name.ppm" -f rawvideo \
+      -vf "scale=out_color_matrix=bt$matrix:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p" \
+      "$W/$name-$matrix.yuv"
+    ffmpeg -loglevel error -y -f rawvideo -pix_fmt yuv420p -s 320x240 -i "$W/$name-$matrix.yuv" \
+      -vf "scale=in_color_matrix=bt$matrix:in_range=tv:flags=accurate_rnd+full_chroma_int+bilinear,format=rgb24" \
+      "$W/$name-$matrix-ffmpeg.ppm"
+    "$C" yuv "$W/$name-$matrix.yuv" 320 240 $matrix "$W/$name-$matrix-ours.ppm"
+    check "YUV BT.$matrix, $name, against FFmpeg" "$W/$name-$matrix-ours.ppm" "$W/$name-$matrix-ffmpeg.ppm" 1 0.05
+  done
+done
+
 # Lanczos and EWA: their kernels against libplacebo's lanczos and ewa_lanczossharp, antiringing off on both sides
 # (ours pulls into the four nearest pixels' range, libplacebo's weighs a soft minimum and maximum: not the same rule).
 for size in "480 360" "640 480"; do
