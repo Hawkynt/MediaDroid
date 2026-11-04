@@ -3,10 +3,10 @@
 // Vulkan GPU — the in-between against the frame truly halfway, the time it took, and the memory the process peaked
 // at; and the upscalers on a drawing.
 //
-// neural_check <glsl/ncnn folder> <RIFE model folder> <DAIN model folder> <XVFI model folder> [size ...]
-// FLAVR_DIR, WAIFU2X_DIR and REALCUGAN_DIR, where set, add those networks. NEURAL_CHECK_UNIT=CPU or GPU runs only
-// that unit, NEURAL_CHECK_NETWORK=RIFE, DAIN, XVFI, FLAVR, waifu2x or Real-CUGAN only that network.
-// NEURAL_CHECK_DUMP=<folder> writes the upscalers' pictures there.
+// neural_check <glsl/ncnn folder> <RIFE model folder> <DAIN model folder> <XVFI model folder> [size ...] FLAVR_DIR,
+// CAIN_DIR, IFRNET_DIR, WAIFU2X_DIR, REALCUGAN_DIR and REALSR_DIR, where set, add those networks. NEURAL_CHECK_UNIT=CPU
+// or GPU runs only that unit, NEURAL_CHECK_NETWORK=<its name> only that network. NEURAL_CHECK_DUMP=<folder> writes the
+// upscalers' pictures there.
 #include <sys/resource.h>
 
 #include <chrono>
@@ -122,17 +122,17 @@ void reuse(const char* name, mediadroid::Interpolator& net, int w, int h) {
                 name, w, h, fresh == kept ? "agrees" : "DIFFERS", afresh, again);
 }
 
-// The upscalers' test picture (NeuralEnlarger.drawing): flat colours with round edges, as drawings are — discs of
-// 7 to 20 pixels' radius on a 24-pixel grid, each its own colour, on a light ground.
-std::vector<unsigned char> drawing(int w, int h) {
+// The upscalers' test picture (NeuralEnlarger.drawing): flat colours with round edges, as drawings are — a disc in
+// each cell of a [cell]-pixel grid, its radius from 7/24 to 20/24 of the cell, each its own colour, on a light ground.
+std::vector<unsigned char> drawing(int w, int h, int cell = 24) {
     std::vector<unsigned char> rgba(static_cast<size_t>(w) * h * 4);
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            const int cx = x / 24;
-            const int cy = y / 24;
-            const int dx = x - (cx * 24 + 12);
-            const int dy = y - (cy * 24 + 12);
-            const int radius = 7 + level(cx, cy, 3) % 14;
+            const int cx = x / cell;
+            const int cy = y / cell;
+            const int dx = x - (cx * cell + cell / 2);
+            const int dy = y - (cy * cell + cell / 2);
+            const int radius = (7 + level(cx, cy, 3) % 14) * cell / 24;
             unsigned char* p = &rgba[(static_cast<size_t>(y) * w + x) * 4];
             const bool inside = dx * dx + dy * dy <= radius * radius;
             for (int c = 0; c < 3; c++) p[c] = static_cast<unsigned char>(inside ? level(cx, cy, c) : 230);
@@ -142,27 +142,30 @@ std::vector<unsigned char> drawing(int w, int h) {
     return rgba;
 }
 
-// An upscaler on a drawing: the picture box-filtered down to half and enlarged again, against the original — and,
-// for scale, the half picture's pixels just doubled.
+// An upscaler on a drawing: the picture box-filtered down by the upscaler's scale and enlarged again, against the
+// original — and, for scale, the small picture's pixels just repeated.
 void enlarge(const char* name, mediadroid::Enlarger& net, int w, int h) {
-    const auto full = drawing(w * 2, h * 2);
-    std::vector<unsigned char> half(static_cast<size_t>(w) * h * 4);
+    const int k = net.scale;
+    // The grid grows with the scale, so the small picture always has 12-pixel cells.
+    const auto full = drawing(w * k, h * k, 12 * k);
+    std::vector<unsigned char> small(static_cast<size_t>(w) * h * 4);
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             for (int c = 0; c < 4; c++) {
                 int sum = 0;
-                for (int dy = 0; dy < 2; dy++) {
-                    for (int dx = 0; dx < 2; dx++) {
-                        sum += full[((static_cast<size_t>(y) * 2 + dy) * w * 2 + x * 2 + dx) * 4 + c];
+                for (int dy = 0; dy < k; dy++) {
+                    for (int dx = 0; dx < k; dx++) {
+                        sum += full[((static_cast<size_t>(y) * k + dy) * w * k + x * k + dx) * 4 + c];
                     }
                 }
-                half[(static_cast<size_t>(y) * w + x) * 4 + c] = static_cast<unsigned char>((sum + 2) / 4);
+                const int mean = (sum + k * k / 2) / (k * k);
+                small[(static_cast<size_t>(y) * w + x) * 4 + c] = static_cast<unsigned char>(mean);
             }
         }
     }
-    std::vector<unsigned char> rgb(static_cast<size_t>(w) * h * 4 * 3);
+    std::vector<unsigned char> rgb(static_cast<size_t>(w) * h * k * k * 3);
     const auto start = std::chrono::steady_clock::now();
-    const int ran = net.enlarge(half.data(), w, h, rgb.data());
+    const int ran = net.enlarge(small.data(), w, h, rgb.data());
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     if (ran != 0) {
         std::printf("%s %dx%d: failed (%d)\n", name, w, h, ran);
@@ -176,25 +179,43 @@ void enlarge(const char* name, mediadroid::Enlarger& net, int w, int h) {
             std::fclose(f);
         };
         const std::string base = std::string(name).substr(0, std::string(name).find(' '));
-        ppm(base + "-full.ppm", full.data(), w * 2, h * 2, 4);
-        ppm(base + "-half.ppm", half.data(), w, h, 4);
-        ppm(base + "-out.ppm", rgb.data(), w * 2, h * 2, 3);
+        ppm(base + "-full.ppm", full.data(), w * k, h * k, 4);
+        ppm(base + "-small.ppm", small.data(), w, h, 4);
+        ppm(base + "-out.ppm", rgb.data(), w * k, h * k, 3);
     }
     double network = 0;
-    double doubled = 0;
+    double repeated = 0;
+    double back = 0;
     long count = 0;
-    for (int y = 8; y < h * 2 - 8; y++) {
-        for (int x = 8; x < w * 2 - 8; x++) {
+    long countBack = 0;
+    const int W = w * k;
+    for (int y = 8; y < h * k - 8; y++) {
+        for (int x = 8; x < W - 8; x++) {
             for (int c = 0; c < 3; c++) {
-                const int truth = full[(static_cast<size_t>(y) * w * 2 + x) * 4 + c];
-                network += std::abs(rgb[(static_cast<size_t>(y) * w * 2 + x) * 3 + c] - truth);
-                doubled += std::abs(half[(static_cast<size_t>(y / 2) * w + x / 2) * 4 + c] - truth);
+                const int truth = full[(static_cast<size_t>(y) * W + x) * 4 + c];
+                network += std::abs(rgb[(static_cast<size_t>(y) * W + x) * 3 + c] - truth);
+                repeated += std::abs(small[(static_cast<size_t>(y / k) * w + x / k) * 4 + c] - truth);
                 count++;
             }
         }
     }
-    std::printf("%s %dx%d -> %dx%d: off by %.2f, pixels doubled by %.2f; %.0f ms; peak %ld MB\n", name, w, h, w * 2,
-                h * 2, network / count, doubled / count, ms, peakMb());
+    // The output shrunk back against its input: the app's correctness check (NeuralEnlarger).
+    for (int y = 4; y < h - 4; y++) {
+        for (int x = 4; x < w - 4; x++) {
+            for (int c = 0; c < 3; c++) {
+                int sum = 0;
+                for (int dy = 0; dy < k; dy++) {
+                    for (int dx = 0; dx < k; dx++) {
+                        sum += rgb[((static_cast<size_t>(y) * k + dy) * W + x * k + dx) * 3 + c];
+                    }
+                }
+                back += std::abs((sum + k * k / 2) / (k * k) - small[(static_cast<size_t>(y) * w + x) * 4 + c]);
+                countBack++;
+            }
+        }
+    }
+    std::printf("%s %dx%d -> %dx%d: off by %.2f, pixels repeated by %.2f; shrunk back %.2f; %.0f ms; peak %ld MB\n",
+                name, w, h, W, h * k, network / count, repeated / count, back / countBack, ms, peakMb());
 }
 
 std::string read(const std::filesystem::path& path) {
@@ -235,15 +256,20 @@ int main(int argc, char** argv) {
                  std::make_pair(std::string("RIFE"), &mediadroid::openRife),
                  std::make_pair(std::string("DAIN"), &mediadroid::openDain),
                  std::make_pair(std::string("XVFI"), &mediadroid::openXvfi),
-                 std::make_pair(std::string("FLAVR"), &mediadroid::openFlavr)}) {
+                 std::make_pair(std::string("FLAVR"), &mediadroid::openFlavr),
+                 std::make_pair(std::string("CAIN"), &mediadroid::openCain),
+                 std::make_pair(std::string("IFRNet"), &mediadroid::openIfrnet)}) {
             const char* only = std::getenv("NEURAL_CHECK_NETWORK");
             if (only != nullptr && network != only) continue;
-            const char* flavrDir = std::getenv("FLAVR_DIR");
-            if (network == "FLAVR" && flavrDir == nullptr) continue;
+            const char* extra = network == "FLAVR" ? std::getenv("FLAVR_DIR")
+                : network == "CAIN"                  ? std::getenv("CAIN_DIR")
+                : network == "IFRNet"                ? std::getenv("IFRNET_DIR")
+                                                     : "";
+            if (extra == nullptr) continue;
             const std::string dir = network == "RIFE" ? argv[2]
                 : network == "DAIN"                     ? argv[3]
                 : network == "XVFI"                     ? argv[4]
-                                                        : flavrDir;
+                                                        : extra;
             auto net = (*open)(files(dir), onGpu);
             if (!net) {
                 std::printf("%s on the %s: does not load\n", network.c_str(), unit);
@@ -262,7 +288,8 @@ int main(int argc, char** argv) {
         if (onlyUnit != nullptr && std::string(onlyUnit) != unit) continue;
         for (const auto& [network, open, env] : {
                  std::make_tuple(std::string("waifu2x"), &mediadroid::openWaifu2x, "WAIFU2X_DIR"),
-                 std::make_tuple(std::string("Real-CUGAN"), &mediadroid::openRealCugan, "REALCUGAN_DIR")}) {
+                 std::make_tuple(std::string("Real-CUGAN"), &mediadroid::openRealCugan, "REALCUGAN_DIR"),
+                 std::make_tuple(std::string("RealSR"), &mediadroid::openRealSr, "REALSR_DIR")}) {
             const char* dir = std::getenv(env);
             const char* only = std::getenv("NEURAL_CHECK_NETWORK");
             if (dir == nullptr || (only != nullptr && network != only)) continue;

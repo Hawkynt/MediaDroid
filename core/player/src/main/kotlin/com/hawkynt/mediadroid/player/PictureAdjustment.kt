@@ -118,13 +118,19 @@ data class PictureAdjustment(
             1f,
             "A network looking at four frames at once, motion learned without flow; the heaviest; fetched and tested.",
         ),
+
+        /** CAIN's network makes the in-between by attention over channels, no flow; fetched (see [NeuralModels]). */
+        CAIN("CAIN", 1f, "A network without motion estimation, attention over channels; fetched and tested."),
+
+        /** IFRNet's network makes the in-between in one pass, flows and features together; carried in the app. */
+        IFRNET("IFRNet", 1f, "A light network estimating flow and features in one pass; quick; tested first."),
         ;
 
         /** Built along the motion rather than blended. */
         val isMotionCompensated: Boolean get() = this == MOTION
 
         /** Made by a neural network (see [NeuralInterpolation]). */
-        val isNeural: Boolean get() = this == RIFE || this == DAIN || this == XVFI || this == FLAVR
+        val isNeural: Boolean get() = this in setOf(RIFE, DAIN, XVFI, FLAVR, CAIN, IFRNET)
 
         /** How much of the next frame to show at [phase] (0 at the earlier frame's time, 1 at the next's). */
         fun weight(phase: Float): Float {
@@ -161,10 +167,14 @@ data class PictureAdjustment(
             "A neural network for drawings and anime, twice the size with noise lightly removed; tested first.",
         ),
         REALCUGAN("Real-CUGAN", "bilibili's network for anime, twice the size, edges crisp and clean; tested first."),
+        REALSR(
+            "RealSR",
+            "A network for photos and film, four times the size, trained on real blur and noise; fetched.",
+        ),
         ;
 
-        /** Enlarged by a network the app carries on ncnn, twice the size (see [NeuralEnlarging]). */
-        val isEnlarger: Boolean get() = this == WAIFU2X || this == REALCUGAN
+        /** Enlarged by a network on ncnn (see [NeuralEnlarging]). */
+        val isEnlarger: Boolean get() = this == WAIFU2X || this == REALCUGAN || this == REALSR
     }
 
     /**

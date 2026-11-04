@@ -31,9 +31,12 @@ On an Intel HD Graphics 520 laptop (Core i5, 2016) at 256 × 256 — a plain ble
 
 | FLAVR (`FLAVR_DIR`) | CPU | 5.23 | 1.5 s | 1.2 GB |
 | FLAVR | GPU | 5.23 | 1.8 s | |
+| CAIN (`CAIN_DIR`) | CPU | 3.02 | 0.1 s | 0.7 GB |
+| IFRNet-S (`IFRNET_DIR`) | CPU | 1.23 | 39 ms | 0.1 GB |
 
-The upscalers (with `WAIFU2X_DIR` and `REALCUGAN_DIR` set to `app/src/main/assets/models/waifu2x-cunet` and
-`realcugan-se`) enlarge a drawing — discs of flat colour — shrunk to half: at 128 × 128, waifu2x is off from the
+The upscalers (with `WAIFU2X_DIR`, `REALCUGAN_DIR` and `REALSR_DIR` set to their model folders) enlarge a drawing —
+discs of flat colour, the grid growing with the scale — shrunk by their scale (RealSR four times; shrunk back it is
+off from its input by 8.36): at 128 × 128, waifu2x is off from the
 original by 2.42 per value and Real-CUGAN by 8.85 (it sharpens hard edges with halos), pixels merely doubled by
 3.08; shrunk back, their outputs are off from their inputs by 1.28 and 6.47, the app's check allowing 10.
 `NEURAL_CHECK_DUMP=<folder>` writes the pictures.

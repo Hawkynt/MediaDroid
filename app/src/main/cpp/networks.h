@@ -47,10 +47,12 @@ std::unique_ptr<Interpolator> openDain(const Loader& load, bool gpu);
 // the CPU; null where it does not load.
 std::unique_ptr<Interpolator> openXvfi(const Loader& load, bool gpu);
 
-// A network that enlarges an RGBA picture (w x h, rows as stored) to twice its size as RGB bytes: waifu2x or
-// Real-CUGAN (see enlarger.cpp).
+// A network that enlarges an RGBA picture (w x h, rows as stored) to [scale] times its size as RGB bytes: waifu2x,
+// Real-CUGAN or RealSR (see enlarger.cpp).
 struct Enlarger {
     virtual ~Enlarger() = default;
+    // How much larger it makes a picture.
+    int scale = 2;
     virtual int enlarge(const unsigned char* rgba, int w, int h, unsigned char* rgb) = 0;
 };
 
@@ -58,6 +60,14 @@ struct Enlarger {
 // CPU; null where they do not load.
 std::unique_ptr<Enlarger> openWaifu2x(const Loader& load, bool gpu);
 std::unique_ptr<Enlarger> openRealCugan(const Loader& load, bool gpu);
+
+// RealSR's DF2K_JPEG model (its "x4"), four times the size, on the GPU or the CPU; null where it does not load.
+std::unique_ptr<Enlarger> openRealSr(const Loader& load, bool gpu);
+
+// CAIN (its "cain") and IFRNet (its "ifrnet"), two frames to the in-between, on the GPU or the CPU; null where they
+// do not load.
+std::unique_ptr<Interpolator> openCain(const Loader& load, bool gpu);
+std::unique_ptr<Interpolator> openIfrnet(const Loader& load, bool gpu);
 
 // FLAVR (its "body", the 3D part written as 2D layers over the four frames, and its "head"; see flavr.cpp), on the
 // GPU or the CPU; null where it does not load.

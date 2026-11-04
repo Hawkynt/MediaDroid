@@ -114,18 +114,39 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_close(JNIEnv*, jobject, j
     delete reinterpret_cast<mediadroid::Interpolator*>(handle);
 }
 
+// A loader reading [dir] from the app's assets where [assets] is given, else from the files there.
+mediadroid::Loader loader(JNIEnv* env, jobject assets, const std::string& base) {
+    AAssetManager* manager = assets ? AAssetManager_fromJava(env, assets) : nullptr;
+    return [manager, base](ncnn::Net& net, const char* name) {
+        const std::string path = base + "/" + name;
+        if (manager) {
+            return net.load_param(manager, (path + ".param").c_str()) != 0 ||
+                   net.load_model(manager, (path + ".bin").c_str()) != 0;
+        }
+        return net.load_param((path + ".param").c_str()) != 0 || net.load_model((path + ".bin").c_str()) != 0;
+    };
+}
+
+// [kind]: 0 waifu2x, 1 Real-CUGAN, 2 RealSR.
 JNIEXPORT jlong JNICALL
 Java_com_hawkynt_mediadroid_player_NativeInterpolation_openEnlarger(
-    JNIEnv* env, jobject, jobject assets, jstring dir, jboolean realCugan, jboolean gpu) {
-    AAssetManager* manager = AAssetManager_fromJava(env, assets);
-    const std::string base = text(env, dir);
-    auto load = [&](ncnn::Net& net, const char* name) {
-        const std::string path = base + "/" + name;
-        return net.load_param(manager, (path + ".param").c_str()) != 0 ||
-               net.load_model(manager, (path + ".bin").c_str()) != 0;
-    };
-    auto it = realCugan ? mediadroid::openRealCugan(load, gpu) : mediadroid::openWaifu2x(load, gpu);
+    JNIEnv* env, jobject, jobject assets, jstring dir, jint kind, jboolean gpu) {
+    auto load = loader(env, assets, text(env, dir));
+    auto it = kind == 2   ? mediadroid::openRealSr(load, gpu)
+              : kind == 1 ? mediadroid::openRealCugan(load, gpu)
+                          : mediadroid::openWaifu2x(load, gpu);
     return reinterpret_cast<jlong>(it.release());
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_openCain(JNIEnv* env, jobject, jstring dir, jboolean gpu) {
+    return handle(mediadroid::openCain(loader(env, nullptr, text(env, dir)), gpu));
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_openIfrnet(
+    JNIEnv* env, jobject, jobject assets, jstring dir, jboolean gpu) {
+    return handle(mediadroid::openIfrnet(loader(env, assets, text(env, dir)), gpu));
 }
 
 JNIEXPORT jint JNICALL

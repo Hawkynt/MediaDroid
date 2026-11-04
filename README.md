@@ -160,6 +160,7 @@ of its own, within two seconds of the tap. All of it runs on the graphics chip b
 | Real-ESRGAN | neural, 4×, in tiles (TFLite: NPU, GPU or CPU) | [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), [Qualcomm's export](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) |
 | waifu2x | neural CUnet for drawings, 2× (ncnn) | [nagadomi/waifu2x](https://github.com/nagadomi/waifu2x) via [waifu2x-ncnn-vulkan](https://github.com/nihui/waifu2x-ncnn-vulkan) |
 | Real-CUGAN | neural, for anime, 2× (ncnn) | [bilibili's Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) via [realcugan-ncnn-vulkan](https://github.com/nihui/realcugan-ncnn-vulkan) |
+| RealSR | neural, for photos and film, 4×; fetched, 33 MB | [jixiaozhong/RealSR](https://github.com/jixiaozhong/RealSR) via [realsr-ncnn-vulkan](https://github.com/nihui/realsr-ncnn-vulkan) — [files](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/realsr) |
 
 **Smooth motion** — the pictures between two frames
 
@@ -171,6 +172,8 @@ of its own, within two seconds of the tap. All of it runs on the graphics chip b
 | DAIN | neural, weighing depth; fetched, 51 MB | [baowenbo/DAIN](https://github.com/baowenbo/DAIN) via [dain-ncnn-vulkan](https://github.com/nihui/dain-ncnn-vulkan) — [files](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/dain) |
 | XVFI | neural, coarse to fine; fetched, 11 MB; research and education only | [JihyongOh/XVFI](https://github.com/JihyongOh/XVFI) — [files](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/xvfi), [conversion](tools/xvfi/README.md) |
 | FLAVR | neural, four frames at once; fetched, 84 MB | [tarun005/FLAVR](https://github.com/tarun005/FLAVR) — [files](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/flavr), [conversion](tools/flavr/README.md) |
+| CAIN | neural, channel attention, no flow; fetched, 86 MB | [myungsub/CAIN](https://github.com/myungsub/CAIN) via [cain-ncnn-vulkan](https://github.com/nihui/cain-ncnn-vulkan) — [files](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/cain) |
+| IFRNet | neural, flows and features in one pass; light, carried in the app | [ltkong218/IFRNet](https://github.com/ltkong218/IFRNet) (S model) via [ifrnet-ncnn-vulkan](https://github.com/nihui/ifrnet-ncnn-vulkan) |
 
 Also: brightness, gamma, contrast and colour; sharpness, clarity, noise removed or film grain added; 3D as 2D; large
 video brought down to 1080p first; Fit, Fill or Stretch, and a zoom. How the networks are checked on a desktop:
@@ -321,10 +324,10 @@ device; shaders live in `app/src/main/glsl`.
 | --- | --- | --- |
 | [AndroidX Media3](https://github.com/androidx/media) | playback, Matroska and the other containers | Apache-2.0 |
 | [FFmpeg](https://ffmpeg.org/) via the [Media3 FFmpeg extension](https://github.com/androidx/media/tree/1.11.1/libraries/decoder_ffmpeg) | decoders and demuxers Android lacks — built LGPL-only, recipe in [tools/ffmpeg](tools/ffmpeg/README.md) | LGPL-2.1+ |
-| [ncnn](https://github.com/Tencent/ncnn) | RIFE, DAIN, XVFI, FLAVR, waifu2x and Real-CUGAN on Vulkan or the CPU | BSD-3-Clause |
+| [ncnn](https://github.com/Tencent/ncnn) | RIFE, IFRNet, CAIN, DAIN, XVFI, FLAVR, waifu2x, Real-CUGAN and RealSR on Vulkan or the CPU | BSD-3-Clause |
 | [TensorFlow Lite](https://github.com/tensorflow/tensorflow) | Real-ESRGAN on the NPU, GPU or CPU | Apache-2.0 |
-| [RIFE 4.25 lite](https://github.com/TNTwise/rife-ncnn-vulkan), [waifu2x CUnet](https://github.com/nihui/waifu2x-ncnn-vulkan), [Real-CUGAN SE](https://github.com/nihui/realcugan-ncnn-vulkan), [Real-ESRGAN x4v3](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) | carried in the app | MIT, BSD-3-Clause |
-| [DAIN](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/dain), [XVFI](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/xvfi), [FLAVR](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/flavr) on [Hawkynt/mediadroid-models](https://huggingface.co/Hawkynt/mediadroid-models) | fetched when picked, each file checked against its digest | MIT; research and education only; Apache-2.0 |
+| [RIFE 4.25 lite](https://github.com/TNTwise/rife-ncnn-vulkan), [IFRNet-S](https://github.com/nihui/ifrnet-ncnn-vulkan), [waifu2x CUnet](https://github.com/nihui/waifu2x-ncnn-vulkan), [Real-CUGAN SE](https://github.com/nihui/realcugan-ncnn-vulkan), [Real-ESRGAN x4v3](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) | carried in the app | MIT, BSD-3-Clause |
+| [DAIN](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/dain), [XVFI](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/xvfi), [FLAVR](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/flavr), [CAIN](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/cain), [RealSR](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/realsr) on [Hawkynt/mediadroid-models](https://huggingface.co/Hawkynt/mediadroid-models) | fetched when picked, each file checked against its digest | MIT; research and education only; Apache-2.0 |
 
 Each third party's notice sits beside the app as `app/THIRD-PARTY-NOTICE.*.txt`.
 
