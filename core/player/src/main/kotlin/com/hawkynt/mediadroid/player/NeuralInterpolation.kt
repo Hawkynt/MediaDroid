@@ -26,6 +26,15 @@ object NeuralInterpolation {
     /** What the self-test times, smallest first: 16:9 pictures at 480p, 576p, 720p and 1080p. */
     val TEST_SIZES = listOf(Size(854, 480), Size(1024, 576), Size(1280, 720), Size(1920, 1080))
 
+    /**
+     * The longest the self-test waits for one in-between: a hundred times the budget, so a slower device is told so
+     * without waiting minutes for how much slower. A run cut short counts as taking this long.
+     */
+    const val MAX_WAIT_MS = 2000.0
+
+    /** Whether a time of [ms] stands for a run the self-test cut short. */
+    fun cutShort(ms: Double): Boolean = ms >= MAX_WAIT_MS
+
     /** How far an in-between may be from the true middle, as a mean difference per value (0..255). */
     const val MAX_ERROR = 6.0
 

@@ -1,9 +1,9 @@
 // The desktop check of the app's neural frame interpolation (app/src/main/cpp/networks.cpp): the self-test's frames
-// (as NeuralInterpolator.kt makes them) through RIFE and DAIN on the CPU and, where there is one, the Vulkan GPU —
-// the in-between against the frame truly halfway, the time it took, and the memory the process peaked at.
+// (as NeuralInterpolator.kt makes them) through RIFE, DAIN and XVFI on the CPU and, where there is one, the Vulkan
+// GPU — the in-between against the frame truly halfway, the time it took, and the memory the process peaked at.
 //
-// neural_check <glsl/ncnn folder> <RIFE model folder> <DAIN model folder> [size ...]
-// NEURAL_CHECK_UNIT=CPU or GPU runs only that unit.
+// neural_check <glsl/ncnn folder> <RIFE model folder> <DAIN model folder> <XVFI model folder> [size ...]
+// NEURAL_CHECK_UNIT=CPU or GPU runs only that unit, NEURAL_CHECK_NETWORK=RIFE, DAIN or XVFI only that network.
 #include <sys/resource.h>
 
 #include <chrono>
@@ -88,6 +88,30 @@ void check(const char* name, mediadroid::Interpolator& net, int w, int h) {
                 network / count, blend / count, ms, peakMb());
 }
 
+// The next pair of a stream — its earlier frame the later one of the pair before — against the same pair worked out
+// afresh: they must agree to the byte, and the time saved is printed.
+void reuse(const char* name, mediadroid::Interpolator& net, int w, int h) {
+    const auto f0 = frame(w, h, 0);
+    const auto f2 = frame(w, h, 2);
+    const auto f4 = frame(w, h, 4);
+    std::vector<unsigned char> fresh(static_cast<size_t>(w) * h * 3);
+    std::vector<unsigned char> kept(fresh.size());
+    auto timed = [&](const std::vector<unsigned char>& a, const std::vector<unsigned char>& b, long long ia,
+                     long long ib, std::vector<unsigned char>& out) {
+        net.earlierId = ia;
+        net.laterId = ib;
+        const auto start = std::chrono::steady_clock::now();
+        net.between(a.data(), b.data(), w, h, 0.5f, out.data());
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    };
+    const double afresh = timed(f2, f4, 0, 0, fresh);
+    timed(f0, f2, 1, 2, kept);
+    const double again = timed(f2, f4, 2, 3, kept);
+    net.earlierId = net.laterId = 0;
+    std::printf("%s %dx%d: the next pair %s with the earlier frame's work kept; %.0f ms afresh, %.0f ms kept\n",
+                name, w, h, fresh == kept ? "agrees" : "DIFFERS", afresh, again);
+}
+
 std::string read(const std::filesystem::path& path) {
     std::ifstream in(path);
     std::stringstream text;
@@ -98,15 +122,16 @@ std::string read(const std::filesystem::path& path) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 4) {
-        std::fprintf(stderr, "neural_check <glsl/ncnn folder> <RIFE model folder> <DAIN model folder> [size ...]\n");
+    if (argc < 5) {
+        std::fprintf(stderr, "neural_check <glsl/ncnn folder> <RIFE model folder> <DAIN model folder> "
+                             "<XVFI model folder> [size ...]\n");
         return 2;
     }
     for (const auto& entry : std::filesystem::directory_iterator(argv[1])) {
         if (entry.path().extension() == ".comp") mediadroid::shaders[entry.path().stem().string()] = read(entry.path());
     }
     std::vector<int> sizes;
-    for (int i = 4; i < argc; i++) sizes.push_back(std::atoi(argv[i]));
+    for (int i = 5; i < argc; i++) sizes.push_back(std::atoi(argv[i]));
     if (sizes.empty()) sizes = {256};
     auto files = [](const std::string& dir) {
         return [dir](ncnn::Net& net, const char* name) {
@@ -123,14 +148,20 @@ int main(int argc, char** argv) {
         if (only != nullptr && std::string(only) != unit) continue;
         for (const auto& [network, open] : {
                  std::make_pair(std::string("RIFE"), &mediadroid::openRife),
-                 std::make_pair(std::string("DAIN"), &mediadroid::openDain)}) {
-            const std::string dir = network == "RIFE" ? argv[2] : argv[3];
+                 std::make_pair(std::string("DAIN"), &mediadroid::openDain),
+                 std::make_pair(std::string("XVFI"), &mediadroid::openXvfi)}) {
+            const char* only = std::getenv("NEURAL_CHECK_NETWORK");
+            if (only != nullptr && network != only) continue;
+            const std::string dir = network == "RIFE" ? argv[2] : network == "DAIN" ? argv[3] : argv[4];
             auto net = (*open)(files(dir), onGpu);
             if (!net) {
                 std::printf("%s on the %s: does not load\n", network.c_str(), unit);
                 continue;
             }
-            for (int side : sizes) check((network + " " + unit).c_str(), *net, side, side);
+            for (int side : sizes) {
+                check((network + " " + unit).c_str(), *net, side, side);
+                reuse((network + " " + unit).c_str(), *net, side, side);
+            }
         }
     }
     return 0;

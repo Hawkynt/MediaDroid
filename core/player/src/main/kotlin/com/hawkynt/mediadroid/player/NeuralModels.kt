@@ -54,9 +54,34 @@ object NeuralModels {
         ),
     )
 
+    /**
+     * XVFI, the Vimeo-trained XVFI-Net (research and education only, used with its authors' permission), as
+     * tools/xvfi/export.py writes its convolution blocks out for ncnn.
+     */
+    val XVFI = Download(
+        "xvfi",
+        listOf(
+            File("extract.param", 975, "eaf251d3619671ba0d99ce0ff838b44d978498f6c33ad3d0c0e4a8f82dfd2787"),
+            File("extract.bin", 447_644, "adb5a7ecc41098826125ee796482f2156c737b2a066f23a4a6b932c57a3728e4"),
+            File("context.param", 148, "a8ac821a0d05a12d35197c0282fdba9aab4a1f67857c4e9ad1fd4e94ccdf780c"),
+            File("context.bin", 73_988, "daa636956605a852ec9d2fc6650d108ae2ecc3cdaef7ea0c6c7462e92378d1d2"),
+            File("bottom.param", 678, "f6982dde65e8664b26cdf377aef45908c5050c3ec1a0863b9811d26709f5a74d"),
+            File("bottom.bin", 2_319_404, "1ca55e7e0bfa87e9967f6a89526d922f2a84b8abdb7226c5a070baec371a386c"),
+            File("flow1.param", 148, "b355568bc5efe83f80c6cd4390d2c862aa07b6825e8118650b42fac11456c888"),
+            File("flow1.bin", 147_716, "d70c51f5d72685bf77fe5a0d5562926a401810801cf34c8039d37aca49e8ac1a"),
+            File("flow2.param", 678, "6e9c20c06c340a92c30402fb6bf14d30f73b1fc6f690f1f3f507dbb53b1f258b"),
+            File("flow2.bin", 2_335_788, "1cb8e027b68bf8585575ede3f7e23c3c142586a18ac768e1cbd71663bde37cac"),
+            File("flow3.param", 772, "06a700dcdd7d35a43ef4f3f10eb247a3efba43fb22ecaeed5a808b1f38c4d220"),
+            File("flow3.bin", 2_088_488, "d2876d4e581f0658cc4ac6e84a60a396a692d7007aa87585bef0287376b3e77a"),
+            File("refine.param", 1_167, "82fb6b8f2e03adfe966117cf4fc5e4da3c03733d2aa5cca584656ba61b02cc35"),
+            File("refine.bin", 3_768_364, "65814b891c5d4eb17c807ba0b894e41d88e9e8567ef322a6d74b56fef9cbfb53"),
+        ),
+    )
+
     /** What [network] needs downloaded; null for a network the app carries itself. */
     fun download(network: PictureAdjustment.Interpolation): Download? = when (network) {
         PictureAdjustment.Interpolation.DAIN -> DAIN
+        PictureAdjustment.Interpolation.XVFI -> XVFI
         else -> null
     }
 }

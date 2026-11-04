@@ -30,12 +30,29 @@ class NeuralModelsTest {
     }
 
     @Test
-    fun `the neural smooth-motion choices are RIFE and DAIN, only RIFE in the app itself`() {
+    fun `XVFI comes from the repository as its seven convolution blocks`() {
+        val xvfi = NeuralModels.XVFI
+        assertEquals("xvfi", xvfi.folder)
         assertEquals(
-            listOf(PictureAdjustment.Interpolation.RIFE, PictureAdjustment.Interpolation.DAIN),
+            listOf("extract", "context", "bottom", "flow1", "flow2", "flow3", "refine")
+                .flatMap { listOf("$it.param", "$it.bin") },
+            xvfi.files.map { it.name },
+        )
+        assertEquals(11_185_958L, xvfi.bytes)
+    }
+
+    @Test
+    fun `the neural smooth-motion choices are RIFE, DAIN and XVFI, only RIFE in the app itself`() {
+        assertEquals(
+            listOf(
+                PictureAdjustment.Interpolation.RIFE,
+                PictureAdjustment.Interpolation.DAIN,
+                PictureAdjustment.Interpolation.XVFI,
+            ),
             PictureAdjustment.Interpolation.entries.filter { it.isNeural },
         )
         assertEquals(null, NeuralModels.download(PictureAdjustment.Interpolation.RIFE))
         assertEquals(NeuralModels.DAIN, NeuralModels.download(PictureAdjustment.Interpolation.DAIN))
+        assertEquals(NeuralModels.XVFI, NeuralModels.download(PictureAdjustment.Interpolation.XVFI))
     }
 }

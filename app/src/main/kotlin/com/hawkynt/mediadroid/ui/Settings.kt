@@ -562,6 +562,13 @@ private fun NeuralUpscalingSetting(settings: Settings, update: ((Settings) -> Un
         settings,
         update,
     )
+    NeuralMotionSwitch(
+        com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation.XVFI,
+        "A neural network builds the picture between two frames from the motion found coarse to fine, made for " +
+            "large movements. Its authors allow it for research and education, not for sale.",
+        settings,
+        update,
+    )
 }
 
 /**
@@ -632,11 +639,11 @@ private fun NeuralMotionSwitch(
     )
 }
 
-/** [ms] as a person reads it: milliseconds, then seconds, then minutes. */
+/** [ms] as a person reads it; a run the self-test cut short (see NeuralInterpolation.cutShort) as more than that. */
 private fun duration(ms: Double): String = when {
-    ms < 10_000 -> "${ms.toInt()} ms"
-    ms < 120_000 -> "${(ms / 1000).toInt()} seconds"
-    else -> "${(ms / 60_000).toInt()} minutes"
+    com.hawkynt.mediadroid.player.NeuralInterpolation.cutShort(ms) ->
+        "more than ${(com.hawkynt.mediadroid.player.NeuralInterpolation.MAX_WAIT_MS / 1000).toInt()} seconds"
+    else -> "${ms.toInt()} ms"
 }
 
 /**
