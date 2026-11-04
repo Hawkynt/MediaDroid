@@ -19,8 +19,8 @@ import kotlin.concurrent.thread
 /**
  * Runs a neural network's self-test (NeuralInterpolator.selfTest) on one unit in a process of its own
  * (`:neuraltest`): a network that takes more memory than the device gives, or so long a GPU job that the GPU is lost
- * for the process, ends only that process — and an in-between that takes longer than
- * [NeuralInterpolation.MAX_WAIT_MS] is cut short by ending it, as a run on the device cannot be stopped otherwise.
+ * for the process, ends only that process — and a test that takes longer than [NeuralInterpolation.MAX_WAIT_MS] all
+ * told is cut short by ending it, as a run on the device cannot be stopped otherwise.
  * The app ends the process after each test, so the next starts afresh.
  */
 class NeuralTestService : Service() {
@@ -91,18 +91,22 @@ class NeuralTestService : Service() {
         private const val PASSED = "passed"
         private const val POLL_MS = 50L
         private const val GONE_WAIT_MS = 3000L
-        private const val LONGEST_MINUTES = 10L
 
         /**
-         * [network]'s self-test on the GPU, then the CPU unless the GPU kept up, each in a fresh test process; blocks
-         * until both answered, ended or were cut short — not on the main thread.
+         * [network]'s self-test on the GPU, then the CPU unless the GPU kept up, each in a fresh test process, all of it
+         * within [NeuralInterpolation.MAX_WAIT_MS]; blocks until both answered, ended or were cut short — not on the
+         * main thread.
          */
         fun selfTest(context: Context, network: PictureAdjustment.Interpolation): Outcome {
             val timings = ArrayList<NeuralInterpolator.Timing>()
             var ended = 0
-            for (unit in listOf(NeuralUpscaler.Unit.GPU, NeuralUpscaler.Unit.CPU)) {
+            // All of it within NeuralInterpolation.MAX_WAIT_MS: the GPU until half of it, the CPU until the end.
+            val start = System.nanoTime()
+            val units = listOf(NeuralUpscaler.Unit.GPU, NeuralUpscaler.Unit.CPU)
+            for ((i, unit) in units.withIndex()) {
                 if (timings.any { NeuralInterpolation.fastEnough(it.msByHeight.values.first()) }) break
-                when (val one = selfTest(context, network, unit)) {
+                val until = start + (NeuralInterpolation.MAX_WAIT_MS * 1e6 * (i + 1) / units.size).toLong()
+                when (val one = selfTest(context, network, unit, until)) {
                     null -> ended++
                     else -> one.timing?.let { timings += it }
                 }
@@ -117,11 +121,15 @@ class NeuralTestService : Service() {
         /** One unit's answer: its timing, or null where it cannot run the network or runs it wrong. */
         private class Answer(val timing: NeuralInterpolator.Timing?)
 
-        /** The test on [unit] in a fresh test process; null where the process ended without answering. */
+        /**
+         * The test on [unit] in a fresh test process, cut short at [until] (System.nanoTime) — its starting and
+         * loading included; null where the process ended without answering.
+         */
         private fun selfTest(
             context: Context,
             network: PictureAdjustment.Interpolation,
             unit: NeuralUpscaler.Unit,
+            until: Long,
         ): Answer? {
             val lock = Any()
             val done = CountDownLatch(1)
@@ -181,17 +189,18 @@ class NeuralTestService : Service() {
             if (!app.bindService(Intent(app, NeuralTestService::class.java), connection, Context.BIND_AUTO_CREATE)) {
                 return null
             }
-            val deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(LONGEST_MINUTES)
-            while (!done.await(POLL_MS, TimeUnit.MILLISECONDS) && System.nanoTime() < deadline) {
+            while (!done.await(POLL_MS, TimeUnit.MILLISECONDS)) {
+                if (System.nanoTime() < until) continue
                 synchronized(lock) {
-                    val waited = if (runningSince == 0L) 0.0 else (System.nanoTime() - runningSince) / 1e6
-                    if (waited >= NeuralInterpolation.MAX_WAIT_MS && pid != 0 && answer == null) {
-                        // Far beyond the budget already: the run is cut short, and counts as having taken this long.
-                        times[runningHeight] = NeuralInterpolation.MAX_WAIT_MS
+                    if (answer == null) {
+                        // Out of time, far beyond the budget already: cut short, the size being made (the smallest
+                        // while still loading) counting as having taken as long as a whole test may.
+                        val height = runningHeight.takeIf { it != 0 } ?: NeuralInterpolation.TEST_SIZES.first().height
+                        times[height] = NeuralInterpolation.MAX_WAIT_MS
                         answer = Answer(NeuralInterpolator.Timing(unit, LinkedHashMap(times)))
-                        done.countDown()
                     }
                 }
+                break
             }
             // The process ends here and now, and is waited for: bound again too soon, the next unit's test would run
             // in it beside whatever this one left.

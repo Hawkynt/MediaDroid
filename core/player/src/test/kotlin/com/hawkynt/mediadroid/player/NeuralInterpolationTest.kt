@@ -81,6 +81,14 @@ class NeuralInterpolationTest {
     }
 
     @Test
+    fun `a network slower than the budget on a small picture is too slow for any larger`() {
+        // The check's 128 x 128 picture: 25 ms there, and 480p has 25 times the pixels.
+        assertEquals(25.0 * 854 * 480 / (128 * 128), NeuralInterpolation.estimate(25.0, 128 * 128), 1e-9)
+        assertTrue(NeuralInterpolation.tooSlowAlready(25.0))
+        assertFalse(NeuralInterpolation.tooSlowAlready(15.0))
+    }
+
+    @Test
     fun `a passed self-test is kept per network as its unit and times, and read back`() {
         val passed = NeuralInterpolation.Passed("GPU", mapOf(480 to 5.5, 720 to 11.25))
         assertEquals("GPU|480=5.5;720=11.25", passed.encode())

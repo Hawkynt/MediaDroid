@@ -167,10 +167,10 @@ class NeuralInterpolator private constructor(
             val smallest = NeuralInterpolation.TEST_SIZES.first()
             progress.running(smallest.height)
             val checkMs = check(net) ?: return@use null
-            // The check timed a smaller picture already: far too slow there, the smallest size is estimated from it
-            // by its pixels instead of waiting for it.
-            val estimate = checkMs * smallest.area / (CHECK_SIDE * CHECK_SIDE)
-            if (estimate > FAR_TOO_SLOW * NeuralInterpolation.BUDGET_MS) {
+            // The check timed a small picture already: past the budget there, no test size can keep up — the
+            // smallest is estimated from it by its pixels, and the device is given nothing larger.
+            if (NeuralInterpolation.tooSlowAlready(checkMs)) {
+                val estimate = NeuralInterpolation.estimate(checkMs, CHECK_SIDE * CHECK_SIDE)
                 progress.timed(smallest.height, estimate)
                 return@use Timing(unit, mapOf(smallest.height to estimate))
             }
@@ -224,11 +224,14 @@ class NeuralInterpolator private constructor(
         /** How many times the budget an in-between may take warming up before the self-test stops timing it. */
         private const val FAR_TOO_SLOW = 10
 
-        /** The side of the check's square test frames. */
-        private const val CHECK_SIDE = 256
+        /**
+         * The side of the check's square test frames: small, so a network far too slow for the device is told so
+         * at once, without a long job for the graphics chip, which would hold up the whole screen meanwhile.
+         */
+        private const val CHECK_SIDE = 128
 
         /** The margin the check leaves out. */
-        private const val EDGE = 24
+        private const val EDGE = 20
 
         // One in-between at [size] as playback makes them: a stream of test frames, each pair sharing its earlier
         // frame with the pair before (and so its features, by the frames' ids); the first pair warms up, the pairs

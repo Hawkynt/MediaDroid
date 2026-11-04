@@ -17,12 +17,21 @@ object PictureCheck {
      */
     const val SHARE_OF_FRAME = 0.8
 
+    /**
+     * The frames in which one may come late: Motion's search for a pair, while it settles on its scale — that pair
+     * is shown blended, not stuttering. More is a search that cannot keep up.
+     */
+    const val FRAMES_PER_LATE = 10
+
     /** What a dry run saw once warmed up: the frames that came, how many came too late, the work per frame. */
     data class DryRun(val frames: Int, val late: Int, val workMs: Double)
 
-    /** Whether [run] kept up with a frame every [frameMs]: nothing late, the work well within the frame's time. */
+    /**
+     * Whether [run] kept up with a frame every [frameMs]: hardly anything late (see [FRAMES_PER_LATE]), the work well
+     * within the frame's time.
+     */
     fun keepsUp(run: DryRun, frameMs: Double): Boolean =
-        run.frames > 0 && run.late == 0 && run.workMs <= SHARE_OF_FRAME * frameMs
+        run.frames > 0 && run.late * FRAMES_PER_LATE <= run.frames && run.workMs <= SHARE_OF_FRAME * frameMs
 
     /** The costly part of [picture], what a check is about: its colours and light filters left out. */
     fun key(picture: PictureAdjustment): String = listOf(
