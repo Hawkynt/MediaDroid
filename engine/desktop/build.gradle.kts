@@ -18,11 +18,20 @@ val ffmpegFlavour = if (fullFfmpeg) "-gpl" else ""
 
 dependencies {
     api(project(":engine:api"))
+    api(project(":core:player"))
+    implementation(project(":stage"))
+    implementation(libs.lwjgl)
+    implementation(libs.lwjgl.glfw)
+    implementation(libs.lwjgl.opengl)
     implementation(libs.ffmpeg)
     implementation(libs.javacpp)
     platforms.forEach { platform ->
         runtimeOnly(variantOf(libs.ffmpeg) { classifier(platform + ffmpegFlavour) })
         runtimeOnly(variantOf(libs.javacpp) { classifier(platform) })
+        val natives = if (platform.startsWith("windows")) "natives-windows" else "natives-linux"
+        runtimeOnly(variantOf(libs.lwjgl) { classifier(natives) })
+        runtimeOnly(variantOf(libs.lwjgl.glfw) { classifier(natives) })
+        runtimeOnly(variantOf(libs.lwjgl.opengl) { classifier(natives) })
     }
     testImplementation(libs.junit)
 }

@@ -59,7 +59,12 @@ import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.desktop.DesktopPlaybackEngine
+import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PlaybackMath
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.ui.layout.onSizeChanged
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 /** The player: the picture letterboxed in the window, controls that fade, keys for everything. */
@@ -82,6 +87,12 @@ fun PlayerScreen(
         }
     }
     val bitmap = remember { PictureBitmap() }
+    // The picture stage (deinterlacing, upscalers, colour) on the graphics card, made once per player.
+    val stage = remember { com.hawkynt.mediadroid.engine.desktop.GlStage() }
+    var picture by remember { mutableStateOf(store.picture) }
+    // MEDIADROID_SHOW=panel: the picture panel open from the start (documentation and checks).
+    var panel by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "panel") }
+    var canvas by remember { mutableStateOf(IntSize.Zero) }
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
@@ -113,6 +124,7 @@ fun PlayerScreen(
             saveProgress()
             engine.removeListener(listener)
             engine.close()
+            stage.close()
         }
     }
     LaunchedEffect(index) {
@@ -121,15 +133,24 @@ fun PlayerScreen(
         runCatching { engine.open(MediaRequest(playing.video, startMs = store.resumeMs(playing.video))) }
             .onFailure { error = it.message ?: it.toString() }
     }
-    // Every window frame: the picture due now, the clock, the end.
+    // Every window frame: the picture due now — through the stage when the household set filters — the clock, the end.
     LaunchedEffect(Unit) {
         var lastShown: Any? = null
+        var lastLook: Pair<PictureAdjustment, IntSize>? = null
         while (true) {
             withFrameNanos { }
-            engine.picture()?.let { picture ->
-                if (picture !== lastShown) {
-                    frame = bitmap.of(picture)
-                    lastShown = picture
+            engine.picture()?.let { raw ->
+                val look = picture to canvas
+                if (raw !== lastShown || look != lastLook) {
+                    lastShown = raw
+                    lastLook = look
+                    val (w, h) = fitted(raw.width, raw.height, canvas)
+                    val shown = if (picture.hasFilters && stage.ready && w > 0 && h > 0) {
+                        withContext(Dispatchers.Default) { stage.process(raw, picture, w, h) }
+                    } else {
+                        raw
+                    }
+                    frame = bitmap.of(shown)
                 }
             }
             position = engine.positionMs
@@ -164,13 +185,24 @@ fun PlayerScreen(
                     Key.DirectionLeft -> engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, false))
                     Key.F -> onFullScreen()
                     Key.N -> next()
+                    Key.P -> panel = !panel
                     Key.Escape -> if (fullScreen) onFullScreen() else onExit()
                     else -> return@onKeyEvent false
                 }
                 true
             },
     ) {
-        frame?.let { image -> Canvas(Modifier.fillMaxSize()) { drawLetterboxed(image) } }
+        Canvas(Modifier.fillMaxSize().onSizeChanged { canvas = it }) { frame?.let { drawLetterboxed(it) } }
+        if (panel) {
+            PicturePanel(
+                picture,
+                onChange = {
+                    picture = it
+                    store.picture = it
+                },
+                modifier = Modifier.align(Alignment.CenterEnd),
+            )
+        }
         error?.let {
             Text("This video cannot be played: $it", color = Color.White, fontSize = 20.sp,
                 modifier = Modifier.align(Alignment.Center).padding(32.dp))
@@ -206,6 +238,9 @@ fun PlayerScreen(
                     }
                     Text("${clock(position)} · ${clock(duration)}", color = Color.White, fontSize = 15.sp)
                     Spacer(Modifier.weight(1f))
+                    IconButton(onClick = { panel = !panel }) {
+                        Icon(Icons.Default.Tune, "Picture", tint = Color.White)
+                    }
                     IconButton(onClick = onFullScreen) {
                         Icon(if (fullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
                             "Full screen", tint = Color.White)
@@ -214,6 +249,13 @@ fun PlayerScreen(
             }
         }
     }
+}
+
+/** A [w] × [h] picture's size fitted into [canvas], its shape kept. */
+private fun fitted(w: Int, h: Int, canvas: IntSize): Pair<Int, Int> {
+    if (canvas.width <= 0 || canvas.height <= 0) return w to h
+    val scale = minOf(canvas.width.toFloat() / w, canvas.height.toFloat() / h)
+    return (w * scale).toInt().coerceAtLeast(1) to (h * scale).toInt().coerceAtLeast(1)
 }
 
 /** [image] as large as the canvas allows, its shape kept, centred. */
