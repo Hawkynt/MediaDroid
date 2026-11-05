@@ -38,6 +38,12 @@ data class PictureAdjustment(
      * the middle, stronger and with more iterations towards 1.
      */
     val deband: Float = 0f,
+    /**
+     * Black bars around the picture — letterbox, pillarbox or both — found as it plays ([AutoCrop]) and cropped before
+     * every other filter, so Fit, Fill and the upscalers work on the picture alone. Off here, so [Neutral] stays
+     * nothing at all; the household default turns it on.
+     */
+    val cropBlackBars: Boolean = false,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
@@ -242,7 +248,8 @@ data class PictureAdjustment(
      * picture is drawn into a SurfaceView, which no view effect can colour.
      */
     val hasFilters: Boolean
-        get() = sharpness > 0f || clarity > 0f || noise != 0f || deband > 0f || deinterlace != Deinterlace.OFF ||
+        get() = sharpness > 0f || clarity > 0f || noise != 0f || deband > 0f || cropBlackBars ||
+            deinterlace != Deinterlace.OFF ||
             upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF || stereo != Stereo.OFF ||
             !isColorNeutral
 
