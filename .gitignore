@@ -2,7 +2,7 @@
 .gradle/
 build/
 .cxx/
-stage/
+/stage/ffmpeg-full/
 dist/
 [Ll]og/
 [Ll]ogs/
