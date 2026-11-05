@@ -62,6 +62,7 @@ data class PictureOverride(
 data class Settings(
     var defaultSpeed: Float = 1.0f,
     var loudness: Float = 0f,                 // dB-ish -10..10, mapped to volume
+    var evenLoudness: Boolean = false,        // every file at the same loudness: ReplayGain, else measured (R128)
     var matchRefreshRate: Boolean = false,    // TV boxes: switch the display to a multiple of the film's frame rate
     var audioPassthrough: Boolean = false,    // TV boxes: compressed surround untouched to an AV receiver
     var judderLimitPercent: Int = 0,          // judder reduction: how far the speed may change, 0 = off

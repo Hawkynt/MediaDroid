@@ -280,6 +280,13 @@ class PlaybackChainTest {
             "loudness +3 dB, night mode, speed 1.5× (Sonic), delay 120 ms, spatial audio",
             busy.detail(Lane.SOUND, "Processing"),
         )
+        val even = { replayGainDb: Float? ->
+            PlaybackChain.of(
+                facts.copy(audio = audio.copy(evenLoudness = true, replayGainDb = replayGainDb)),
+            ).detail(Lane.SOUND, "Processing")
+        }
+        assertEquals("even loudness (ReplayGain -6.5 dB)", even(-6.5f))
+        assertEquals("even loudness (measured, EBU R128)", even(null))
         assertEquals("44.1 kHz → 48 kHz", busy.detail(Lane.SOUND, "Resampling"))
         assertEquals("none (2 channels)", busy.detail(Lane.SOUND, "Mixing"))
         assertEquals(

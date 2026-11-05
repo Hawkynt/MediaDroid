@@ -335,6 +335,13 @@ fun SettingsScreen(
             valueText = "${settings.loudness.toInt()} dB",
             onValueChange = { v -> update { it.loudness = v } },
         )
+        SwitchRow(
+            label = "Even loudness",
+            detail = "Every film and song plays about as loud as the last: by its ReplayGain tags where it has them, " +
+                "else measured as it plays (EBU R128).",
+            checked = settings.evenLoudness,
+            onChange = { c -> update { it.evenLoudness = c } },
+        )
 
         Spacer(Modifier.height(16.dp))
         Text("Default picture", fontSize = 22.sp, fontWeight = FontWeight.Bold)

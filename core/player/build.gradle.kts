@@ -21,3 +21,14 @@ tasks.register<JavaExec>("benchmark") {
     mainClass.set("com.hawkynt.mediadroid.player.BenchmarkKt")
     dependsOn("testClasses")
 }
+
+// The loudness test signals as raw float32 files, for the oracles in src/test/resources/loudness to measure:
+// ./gradlew :core:player:loudnessSignals -Pfolder=<dir>.
+tasks.register<JavaExec>("loudnessSignals") {
+    group = "verification"
+    description = "Writes the loudness test signals for the libebur128 and FFmpeg oracles"
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.hawkynt.mediadroid.player.LoudnessSignals")
+    args(providers.gradleProperty("folder").getOrElse("loudness-signals"))
+    dependsOn("testClasses")
+}
