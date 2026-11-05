@@ -1,0 +1,13 @@
+FFmpeg through Bytedeco's JavaCPP presets
+
+The desktop engine (engine/desktop) decodes with FFmpeg 8.1 (https://ffmpeg.org) through Bytedeco's JavaCPP and its
+FFmpeg presets (https://github.com/bytedeco/javacpp-presets, Apache License 2.0), taken unchanged from Maven Central
+(org.bytedeco:javacpp 1.5.14, org.bytedeco:ffmpeg 8.1.2-1.5.14).
+
+Published builds ship FFmpeg's LGPL build (GNU Lesser General Public License, version 3 or later): its natives are
+the separate shared libraries inside the ffmpeg-*-<platform>.jar, which can be replaced by any compatible build.
+The GPL build (classifier "-gpl") is used only on the household's own machines (the Gradle property fullFfmpeg)
+and is never distributed.
+
+JavaCPP and the presets: Apache License, Version 2.0 — https://www.apache.org/licenses/LICENSE-2.0
+FFmpeg: LGPL v3 or later — https://www.gnu.org/licenses/lgpl-3.0.html (sources: https://ffmpeg.org/download.html)
