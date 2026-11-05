@@ -18,8 +18,12 @@ class DesktopPlaybackEngineTest {
     private class ManualSink : AudioSink {
         @Volatile var playedMs = 0L
         @Volatile var flushed = 0
+        @Volatile var written = 0L
         override fun open(sampleRate: Int, channels: Int) = Unit
-        override fun write(pcm: ByteArray) = Thread.sleep(1)
+        override fun write(pcm: ByteArray) {
+            written += pcm.size
+            Thread.sleep(1)
+        }
         override fun playedMs(): Long = playedMs
         override fun pause() = Unit
         override fun resume() = Unit
@@ -110,6 +114,25 @@ class DesktopPlaybackEngineTest {
             engine.select(Track.Kind.TEXT, track.id)
             sink.playedMs = 1200
             waitFor { engine.subtitle() == "Second line\nwith two rows" }
+        }
+    }
+
+    @Test
+    fun `a sound file beside the video is a track, and once picked its sound plays with the pictures`() {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(clip, audio = listOf(fixture("clip.en.ac3"))))
+            waitFor { engine.isPlaying }
+            val sound = engine.tracks.filter { it.kind == Track.Kind.AUDIO }
+            assertEquals(listOf(0, 1), sound.map { it.source })
+            assertEquals(listOf(true, false), sound.map { it.selected })
+            engine.select(Track.Kind.AUDIO, sound[1].id)
+            waitFor { sink.flushed > 0 }
+            assertEquals(listOf(false, true), engine.tracks.filter { it.kind == Track.Kind.AUDIO }.map { it.selected })
+            val before = sink.written
+            waitFor { sink.written > before + 4 * 48_000 / 10 }
+            sink.playedMs = 600
+            waitFor { (engine.picture()?.ptsMs ?: 0) >= 560 }
         }
     }
 }

@@ -30,7 +30,9 @@ class DesktopPlaybackEngine(
     @Volatile private var playing = false
     @Volatile private var ended = false
     @Volatile private var pendingSeekMs: Long? = null
-    @Volatile private var pendingAudio: Int? = null
+    @Volatile private var pendingAudio: String? = null
+    @Volatile private var soundFiles: List<String> = emptyList()
+    @Volatile private var selectedSound: String? = null
     @Volatile private var baseMs = 0L
     @Volatile private var hasSound = false
     @Volatile private var wallStartNs = 0L
@@ -50,6 +52,8 @@ class DesktopPlaybackEngine(
         reader = opened
         openedPath = request.path
         hasSound = opened.tracks.any { it.kind == Track.Kind.AUDIO }
+        soundFiles = request.audio
+        selectedSound = opened.tracks.firstOrNull { it.kind == Track.Kind.AUDIO && it.selected }?.id
         // Subtitle files beside the video, read whole now: they are small.
         sidecars = request.subtitles.mapIndexedNotNull { i, file ->
             runCatching {
@@ -62,7 +66,7 @@ class DesktopPlaybackEngine(
         }
         selectedText = null
         cues.clear()
-        sink = sinkFactory().also { if (hasSound) it.open(MediaReader.SAMPLE_RATE, 2) }
+        sink = sinkFactory().also { if (hasSound || soundFiles.isNotEmpty()) it.open(MediaReader.SAMPLE_RATE, 2) }
         sink?.volume = volume
         baseMs = 0
         ended = false
@@ -87,11 +91,18 @@ class DesktopPlaybackEngine(
     }
 
     private fun readLoop(source: MediaReader) {
+        // A sound file beside the video, when one is picked: read alongside, whichever of the two is behind.
+        var soundSource: MediaReader? = null
+        var pictureMs = Long.MIN_VALUE
+        var soundMs = Long.MIN_VALUE
         try {
             while (running) {
                 pendingSeekMs?.let { target ->
                     pendingSeekMs = null
                     source.seek(target)
+                    soundSource?.seek(target)
+                    pictureMs = Long.MIN_VALUE
+                    soundMs = Long.MIN_VALUE
                     pictures.clear()
                     if (selectedText?.startsWith("sidecar:") == false) cues.clear()
                     sink?.flush()
@@ -111,16 +122,37 @@ class DesktopPlaybackEngine(
                         pendingSeekMs = positionMs
                     }
                 }
-                pendingAudio?.let { index ->
+                pendingAudio?.let { id ->
                     pendingAudio = null
-                    source.selectAudio(index)
-                    pendingSeekMs = positionMs
+                    val at = positionMs
+                    soundSource?.close()
+                    soundSource = null
+                    val file = id.removePrefix(SOUND_FILE).toIntOrNull()?.takeIf { id.startsWith(SOUND_FILE) }
+                    if (file != null) {
+                        source.selectAudio(-1)
+                        soundSource = runCatching { MediaReader(soundFiles[file]) }.getOrNull()
+                    } else {
+                        source.selectAudio(id.toInt())
+                    }
+                    hasSound = soundSource != null || file == null
+                    selectedSound = id
+                    listeners.forEach { it.onTracksChanged(tracks) }
+                    pendingSeekMs = at
                 }
                 if (!playing && pictures.remainingCapacity() == 0) {
                     Thread.sleep(5)
                     continue
                 }
-                when (val item = source.read()) {
+                val sound = soundSource
+                val item = if (sound != null && soundMs <= pictureMs) {
+                    // Only its sound: a cover picture in the file (an MP3's art) is no part of the video.
+                    generateSequence { sound.read() }.firstOrNull { it is MediaReader.Sound }
+                        ?.also { soundMs = (it as MediaReader.Sound).ptsMs }
+                        ?: source.read().also { soundMs = Long.MAX_VALUE }
+                } else {
+                    source.read()
+                }
+                when (item) {
                     null -> {
                         if (!ended) {
                             ended = true
@@ -128,14 +160,19 @@ class DesktopPlaybackEngine(
                         }
                         Thread.sleep(10)
                     }
-                    is MediaReader.Picture -> while (running && pendingSeekMs == null) {
-                        if (pictures.offer(item, 10, TimeUnit.MILLISECONDS)) break
+                    is MediaReader.Picture -> {
+                        pictureMs = item.ptsMs
+                        while (running && pendingSeekMs == null) {
+                            if (pictures.offer(item, 10, TimeUnit.MILLISECONDS)) break
+                        }
                     }
                     is MediaReader.Sound -> sink?.write(item.pcm)
                     is MediaReader.Cue -> cues += item
                 }
             }
         } catch (_: InterruptedException) {
+        } finally {
+            soundSource?.close()
         }
     }
 
@@ -218,13 +255,23 @@ class DesktopPlaybackEngine(
         }
 
     override val tracks: List<Track>
-        get() = (reader?.tracks.orEmpty() + sidecars.map { it.first }).map {
-            if (it.kind == Track.Kind.TEXT) it.copy(selected = it.id == selectedText) else it
+        get() {
+            val own = reader?.tracks.orEmpty()
+            val files = soundFiles.mapIndexed { i, path ->
+                Track("$SOUND_FILE$i", Track.Kind.AUDIO, null, java.io.File(path).name, source = i + 1)
+            }
+            return (own + files + sidecars.map { it.first }).map {
+                when (it.kind) {
+                    Track.Kind.TEXT -> it.copy(selected = it.id == selectedText)
+                    Track.Kind.AUDIO -> it.copy(selected = it.id == selectedSound)
+                    Track.Kind.VIDEO -> it
+                }
+            }
         }
 
     override fun select(kind: Track.Kind, id: String?) {
         when (kind) {
-            Track.Kind.AUDIO -> if (id != null) pendingAudio = id.toInt()
+            Track.Kind.AUDIO -> if (id != null && id != selectedSound) pendingAudio = id
             Track.Kind.TEXT -> {
                 selectedText = id
                 val sidecar = sidecars.firstOrNull { it.first.id == id }
@@ -277,5 +324,8 @@ class DesktopPlaybackEngine(
     private companion object {
         /** Pictures decoded ahead of the clock: a fifth of a second at 25 fps. */
         const val PICTURES_AHEAD = 6
+
+        /** The id prefix of a sound file beside the video: `sound:0` the first of [MediaRequest.audio]. */
+        const val SOUND_FILE = "sound:"
     }
 }

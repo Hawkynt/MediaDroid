@@ -328,7 +328,8 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture and track panel,
   N for the next episode), a window that remembers its size.
 - Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
-  language last picked is where the next video starts.
+  language last picked is where the next video starts. Sound tracks likewise, the file's own and those beside it
+  (`Film.en.ac3`).
 - Settings, watched state and secrets stay on the machine: in the user's application-data folder, the passwords
   encrypted by the system (DPAPI on Windows, the Secret Service on Linux).
 - Media keys and the system's now-playing panel (SMTC on Windows, MPRIS on Linux); the screensaver held off while

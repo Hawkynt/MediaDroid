@@ -107,6 +107,10 @@ fun PlayerScreen(
     var isPlaying by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var tracks by remember { mutableStateOf(emptyList<Track>()) }
+    // A sound file's track named as the picker shows a sidecar: `EN`, `DE · commentary`.
+    val soundNames = remember(index) {
+        sidecarsOf(playing.video).filter { it.kind == Sidecars.Kind.AUDIO }.associate { it.name to it.describe() }
+    }
     var subtitle by remember { mutableStateOf<String?>(null) }
     var controlsUntil by remember { mutableLongStateOf(System.currentTimeMillis() + CONTROLS_MS) }
     val focus = remember { FocusRequester() }
@@ -241,7 +245,10 @@ fun PlayerScreen(
                     store.picture = it
                 },
                 modifier = Modifier.align(Alignment.CenterEnd),
-                tracks = tracks,
+                tracks = tracks.map { t ->
+                    val named = t.kind == Track.Kind.AUDIO && t.source > 0
+                    if (named) t.copy(label = soundNames[t.label] ?: t.label) else t
+                },
                 onPick = ::pick,
             )
         }
@@ -293,15 +300,21 @@ fun PlayerScreen(
     }
 }
 
-/** What to open for [video]: from [startMs], with the subtitle files beside it (Sidecars). */
-private fun requestFor(video: String, startMs: Long): MediaRequest {
+/** The subtitle and sound files beside [video] (Sidecars), by name. */
+private fun sidecarsOf(video: String): List<Sidecars.Sidecar> {
     val file = File(video)
-    val siblings = file.parentFile?.list()?.toList().orEmpty()
-    val subtitles = Sidecars.of(file.name, siblings).filter { it.kind == Sidecars.Kind.SUBTITLES }.map {
-        val path = File(file.parentFile, it.name).path
-        MediaRequest.SubtitleFile(path, it.mimeType, it.language, it.describe(), it.forced)
+    return Sidecars.of(file.name, file.parentFile?.list()?.toList().orEmpty())
+}
+
+/** What to open for [video]: from [startMs], with the subtitle and sound files beside it. */
+private fun requestFor(video: String, startMs: Long): MediaRequest {
+    val folder = File(video).parentFile
+    val sidecars = sidecarsOf(video)
+    val subtitles = sidecars.filter { it.kind == Sidecars.Kind.SUBTITLES }.map {
+        MediaRequest.SubtitleFile(File(folder, it.name).path, it.mimeType, it.language, it.describe(), it.forced)
     }
-    return MediaRequest(video, subtitles = subtitles, startMs = startMs)
+    val audio = sidecars.filter { it.kind == Sidecars.Kind.AUDIO }.map { File(folder, it.name).path }
+    return MediaRequest(video, subtitles = subtitles, audio = audio, startMs = startMs)
 }
 
 /** A subtitle line: white, with a dark outline that keeps it readable over any picture. */

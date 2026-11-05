@@ -106,14 +106,16 @@ class MediaReader(path: String) : AutoCloseable {
         return context
     }
 
-    /** Plays the audio stream [index] (a track id) from the next read on. */
+    /** Plays the audio stream [index] (a track id) from the next read on; -1 for no sound from this file. */
     fun selectAudio(index: Int) {
-        if (index == audioIndex || format.streams(index).codecpar().codec_type() != avutil.AVMEDIA_TYPE_AUDIO) return
+        if (index == audioIndex) return
+        if (index >= 0 && format.streams(index).codecpar().codec_type() != avutil.AVMEDIA_TYPE_AUDIO) return
         audio?.let { avcodec.avcodec_free_context(it) }
+        audio = null
         swr?.let { swresample.swr_free(it) }
         swr = null
         audioIndex = index
-        audio = openDecoder(index)
+        if (index >= 0) audio = openDecoder(index)
     }
 
     /** Decodes the text subtitle stream [index] (a track id) from the next read on, as [Cue]s; -1 for none. */
