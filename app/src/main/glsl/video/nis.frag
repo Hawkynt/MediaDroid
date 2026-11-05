@@ -9,6 +9,9 @@ uniform sampler2D uTex;
 uniform sampler2D uCoef;
 uniform vec2 uInSize;
 uniform vec2 uOutSize;
+// Input over output size, divided on the processor as NVIDIA's kScaleX/kScaleY are: a GPU divides by multiplying
+// with a reciprocal, which at 240 / 480 lands a hair off 0.5 and so picks the phase below.
+uniform vec2 uScale;
 uniform float uDetectRatio;
 uniform float uDetectThres;
 uniform float uMinContrastRatio;
@@ -78,7 +81,7 @@ float evalPoly6(float x0, float x1, float x2, float x3, float x4, float x5, floa
 void main() {
   float dstX = floor(gl_FragCoord.x);
   float dstY = uOutSize.y - 1.0 - floor(gl_FragCoord.y);
-  vec2 scale = uInSize / uOutSize;
+  vec2 scale = uScale;
   float srcX = (0.5 + dstX) * scale.x - 0.5;
   float srcY = (0.5 + dstY) * scale.y - 0.5;
   float fx = srcX - floor(srcX);

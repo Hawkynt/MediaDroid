@@ -19,8 +19,9 @@ void main() {
   vec2 o = floor(gl_FragCoord.xy);
   float n = uFactor;
   float oy = n * uSize.y - 1.0 - o.y;
-  float x = floor(o.x / n);
-  float y = floor(oy / n);
+  // Half a pixel in, so a GPU's reciprocal of n landing a hair low cannot pick the block before.
+  float x = floor((o.x + 0.5) / n);
+  float y = floor((oy + 0.5) / n);
   float col = o.x - x * n;
   float row = oy - y * n;
   vec4 code = floor(texture2D(uDecisions, vec2((x + 0.5) / uSize.x, (y + 0.5) / uSize.y)) * 255.0 + 0.5);
