@@ -75,6 +75,7 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     val tracks: List<Track>
 
     init {
+        FfmpegNatives.load()
         if (avformat.avformat_open_input(format, path, null, null as AVDictionary?) < 0) {
             input?.close()
             error("cannot open $path")

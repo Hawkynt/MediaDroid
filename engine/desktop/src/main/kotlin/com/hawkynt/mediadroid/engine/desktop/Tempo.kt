@@ -14,6 +14,10 @@ import java.io.ByteArrayOutputStream
  */
 class Tempo : AutoCloseable {
 
+    init {
+        FfmpegNatives.load()
+    }
+
     private var graph: AVFilterGraph? = null
     private var source: AVFilterContext? = null
     private var sink: AVFilterContext? = null
