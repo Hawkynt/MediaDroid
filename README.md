@@ -313,8 +313,8 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
 | Platform | Status | Package | Plays with | Neural networks |
 | --- | --- | --- | --- | --- |
 | Android 8.0+ — phone, tablet, TV box | ✅ shipping | APK | [Media3](https://github.com/androidx/media), the device's decoders, FFmpeg as fallback | ncnn on Vulkan or the CPU; TFLite on the NPU |
-| Windows 10/11, x64 | 📋 planned | MSI installer, portable zip | FFmpeg (LGPL build) with hardware decoding (D3D11VA/DXVA2) | ncnn on Vulkan or the CPU |
-| Linux, x64 and arm64 | 📋 planned | AppImage | FFmpeg (LGPL build) with hardware decoding (VA-API/NVDEC) | ncnn on Vulkan or the CPU |
+| Windows 10/11, x64 | 🚧 in progress | MSI installer, portable zip | FFmpeg (LGPL build) with hardware decoding (D3D11VA/DXVA2) | ncnn on Vulkan or the CPU |
+| Linux, x64 and arm64 | 🚧 in progress | AppImage | FFmpeg (LGPL build) with hardware decoding (VA-API/NVDEC) | ncnn on Vulkan or the CPU |
 
 <details><summary>▸ What the desktop apps do, and what differs</summary>
 
@@ -387,9 +387,14 @@ Requires JDK 21 and an Android SDK with platform 37; `local.properties` must poi
 ./gradlew test            # parser, library, and binge-logic unit tests
 ./build.sh                # signed release build: dist/MediaDroid.apk
 ./buildnonlgpl.sh         # the same with the GPL + nonfree FFmpeg: dist/MediaDroid-nonlgpl.apk
+./gradlew :desktop:run    # the desktop app (Windows, Linux); a video path after --args plays it at once
+./gradlew :desktop:run -PfullFfmpeg   # the same with Bytedeco's GPL FFmpeg build, for your own machine only
+./gradlew :engine:desktop:probe -Pfolder=<dir>   # every video in a folder opened and its start decoded
 ```
 
-`build.sh` signs with the release key when `KEYSTORE` (or `KEYSTORE_BASE64`), `KEYSTORE_PASSWORD` and `KEY_ALIAS` are set — in the environment or in a git-ignored `signing.env` — and otherwise with the Android debug key, which installs on your own device but cannot update a release or nightly. The key itself lives only in the repository's secrets. `buildnonlgpl.sh` first builds FFmpeg with every decoder, demuxer and parser (`FULL=1 tools/ffmpeg/build.sh`, once, into `stage/ffmpeg-full`); that build is GPL and cannot be distributed under this licence, so it is for your own device only — see [tools/ffmpeg/README.md](tools/ffmpeg/README.md).
+`build.sh` signs with the release key when `KEYSTORE` (or `KEYSTORE_BASE64`), `KEYSTORE_PASSWORD` and `KEY_ALIAS` are set — in the environment or in a git-ignored `signing.env` — and otherwise with the Android debug key, which installs on your own device but cannot update a release or nightly. The key itself lives only in the repository's secrets. `buildnonlgpl.sh` first builds FFmpeg with every decoder, demuxer and parser (`FULL=1 tools/ffmpeg/build.sh`, once, into `stage/ffmpeg-full`); that build is GPL and cannot be distributed under this licence, so it is for your own device only — see [tools/ffmpeg/README.md](tools/ffmpeg/README.md). The desktop app decodes
+with FFmpeg through [Bytedeco's JavaCPP presets](https://github.com/bytedeco/javacpp-presets): FFmpeg's LGPL build in
+what is published, the GPL one with `-PfullFfmpeg` (see `engine/desktop/THIRD-PARTY-NOTICE.ffmpeg.txt`).
 
 ## 🤝 Contributing
 

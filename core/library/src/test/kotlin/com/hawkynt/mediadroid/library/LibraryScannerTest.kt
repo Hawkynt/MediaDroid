@@ -316,7 +316,8 @@ class LibraryScannerTest {
     @Test
     fun scansTheMaintainersRealLibraryWhenPresent() {
         val real = File(System.getProperty("user.home"), "Media")
-        assumeTrue(real.isDirectory)
+        // The maintainer's library, told by a show it holds — not any ~/Media (a folder of test clips, say).
+        assumeTrue(real.isDirectory && real.walk().maxDepth(3).any { it.name.contains("Supernatural") })
 
         val library = LibraryScanner.scan(real)
         val supernatural = library.shows.firstOrNull { it.title == "Supernatural" }
