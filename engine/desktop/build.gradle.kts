@@ -26,6 +26,8 @@ dependencies {
     // FsFile: what the network sources (core:sources) hand over to be played.
     api(project(":core:library"))
     implementation(project(":stage"))
+    // Xbrz: the table of its patterns' shares the xBRZ shader reads.
+    implementation(project(":core:imaging"))
     implementation(libs.lwjgl)
     implementation(libs.lwjgl.glfw)
     implementation(libs.lwjgl.opengl)

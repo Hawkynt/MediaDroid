@@ -39,6 +39,9 @@ val DesktopUpscalers = listOf(
     PictureAdjustment.Upscaler.EWA,
     PictureAdjustment.Upscaler.NIS,
     PictureAdjustment.Upscaler.GSR,
+    PictureAdjustment.Upscaler.ANIME4K,
+    PictureAdjustment.Upscaler.ACNET,
+    PictureAdjustment.Upscaler.XBRZ,
 )
 
 /** How a track picker names [track]: its own label, else its language, else its place among its kind ([number]). */

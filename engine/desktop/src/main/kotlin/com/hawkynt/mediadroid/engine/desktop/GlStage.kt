@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.engine.desktop
 
+import com.hawkynt.mediadroid.imaging.Xbrz
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Ewa
 import com.hawkynt.mediadroid.player.Nis
@@ -11,13 +12,15 @@ import org.lwjgl.opengl.GL43.*
 import org.lwjgl.system.MemoryUtil
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
+import kotlin.math.ceil
 import kotlin.math.pow
 
 /**
  * The picture stage on the desktop: the Android stage's shaders (:stage) on OpenGL 4.3 — which compiles GLSL ES 1.00
  * and 3.00 as they are — in a hidden window's context on a thread of its own. A decoded picture goes in, the picture
  * as the household set it comes out at the size it is shown: deinterlaced (Auto, Blend, Bob, YADIF, BWDIF), denoised,
- * sharpened, enlarged (Lanczos, FSR, EWA, NIS, GSR; the others plain for now), colour-corrected. The passes and their
+ * sharpened, enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the neural ones plain for now),
+ * colour-corrected. The passes and their
  * uniforms are the Android stage's (VideoFilterStage), the shaders those tools/shader-check holds to their originals.
  */
 class GlStage : AutoCloseable {
@@ -29,6 +32,7 @@ class GlStage : AutoCloseable {
     private var vao = 0
     private var nisTable = 0
     private var ewaTable = 0
+    private var xbrzTable = 0
     private var history = ArrayDeque<Target>()
     private var lastPicture: MediaReader.Picture? = null
     private var out: ByteBuffer? = null
@@ -68,6 +72,7 @@ class GlStage : AutoCloseable {
         glVertexAttribPointer(1, 2, GL_FLOAT, false, 16, 8)
         nisTable = nisTable()
         ewaTable = ewaTable()
+        xbrzTable = xbrzTable()
         ready = true
     }
 
@@ -189,7 +194,72 @@ class GlStage : AutoCloseable {
                 set("uSharpLimitMin", c.sharpLimitMin)
                 set("uSharpLimitScale", c.sharpLimitScale)
             }
+            PictureAdjustment.Upscaler.ANIME4K -> anime4k(from)
+            PictureAdjustment.Upscaler.ACNET -> acnet(from)
+            PictureAdjustment.Upscaler.XBRZ -> xbrz(from, outW, outH)
             else -> from
+        }
+    }
+
+    // Anime4K: four convolutions at the picture's size into half-float textures taking turns, then twice the size —
+    // the picture's bilinear doubling plus the detail the network adds. As VideoFilterStage runs it.
+    private fun anime4k(from: Target): Target {
+        val w = from.width
+        val h = from.height
+        val texel: (Int) -> Unit = { p -> glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h) }
+        var input = from
+        ANIME4K.forEachIndexed { i, shader ->
+            input = pass(shader, target(if (i % 2 == 0) "netA" else "netB", w, h, half = true), input.texture,
+                body = texel)
+        }
+        return pass("anime4k/depth-to-space.frag", target("up", w * 2, h * 2), from.texture,
+            listOf(input.texture to "uLast")) { p ->
+            glUniform2f(glGetUniformLocation(p, "uLastSize"), w.toFloat(), h.toFloat())
+        }
+    }
+
+    // ACNet: eleven convolutions over eight channels — a layer is two half-float textures, one pass each, the layers
+    // taking turns between two pairs — then the network's luma put into the picture's bilinear doubling.
+    private fun acnet(from: Target): Target {
+        val w = from.width
+        val h = from.height
+        val pairs = arrayOf(arrayOf("netA", "netB"), arrayOf("netC", "netD"))
+        ACNET.forEachIndexed { i, shader ->
+            // The head (0) into the first pair, each body block (1 to 4) from one pair into the other, the last
+            // convolution (5) into the second; every layer's two halves read the whole layer before.
+            val layer = if (i < 2) 0 else (i - 2) / 2 + 1
+            val into = pairs[layer % 2]
+            val prior = pairs[1 - layer % 2]
+            val input = if (layer == 0) from.texture else target(prior[0], w, h, half = true).texture
+            val extra = buildList {
+                if (layer > 0) add(target(prior[1], w, h, half = true).texture to "uTex1")
+                if (i == ACNET.lastIndex) add(from.texture to "uPicture")
+            }
+            pass(shader, target(into[i % 2], w, h, half = true), input, extra) { p ->
+                glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
+            }
+        }
+        return pass("acnet/pixel-shuffle.frag", target("up", w * 2, h * 2), from.texture,
+            listOf(target(pairs[1][0], w, h, half = true).texture to "uLast")) { p ->
+            glUniform2f(glGetUniformLocation(p, "uLastSize"), w.toFloat(), h.toFloat())
+        }
+    }
+
+    // xBRZ by the whole factor that reaches the shown size, 2 to 6: the corners where pixels meet, what each pixel
+    // draws in its corners, then the enlarged picture — every texel read as it is.
+    private fun xbrz(from: Target, outW: Int, outH: Int): Target {
+        val w = from.width
+        val h = from.height
+        val factor = ceil(minOf(outW.toFloat() / w, outH.toFloat() / h)).toInt().coerceIn(Xbrz.FACTORS)
+        val size: (Int) -> Unit = { p -> glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat()) }
+        val corners = pass("xbrz/corners.frag", target("xbrzCorners", w + 1, h + 1), from.texture, nearest = true,
+            body = size)
+        val decisions = pass("xbrz/decisions.frag", target("xbrzDecisions", w, h), from.texture,
+            listOf(corners.texture to "uCorners"), nearest = true, body = size)
+        return pass("xbrz/scale.frag", target("up", w * factor, h * factor), from.texture,
+            listOf(decisions.texture to "uDecisions", xbrzTable to "uTable"), nearest = true) { p ->
+            size(p)
+            glUniform1f(glGetUniformLocation(p, "uFactor"), factor.toFloat())
         }
     }
 
@@ -248,11 +318,16 @@ class GlStage : AutoCloseable {
         }
     }
 
-    private fun target(name: String, w: Int, h: Int): Target {
+    // [half]: 16-bit floats, for a network's layers, whose values reach past 0..1.
+    private fun target(name: String, w: Int, h: Int, half: Boolean = false): Target {
         targets[name]?.let { if (it.width == w && it.height == h) return it else free(it) }
         val texture = glGenTextures()
         glBindTexture(GL_TEXTURE_2D, texture)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, null as ByteBuffer?)
+        if (half) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_HALF_FLOAT, null as ByteBuffer?)
+        } else {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, null as ByteBuffer?)
+        }
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
@@ -325,6 +400,23 @@ class GlStage : AutoCloseable {
         return table(size, 1, bytes)
     }
 
+    // xBRZ's patterns (Xbrz.weights) as a XBRZ_TABLE_WIDTH × 25 texture: a row per factor from 2 and pattern, a texel
+    // per cell of the block, its share of the neighbour's colour as m in red and n in green.
+    private fun xbrzTable(): Int {
+        val rows = Xbrz.FACTORS.count() * Xbrz.Pattern.entries.size
+        val bytes = MemoryUtil.memAlloc(XBRZ_TABLE_WIDTH * rows * 4)
+        for (factor in Xbrz.FACTORS) for (pattern in Xbrz.Pattern.entries) {
+            val weights = Xbrz.weights(factor, pattern)
+            for (cell in 0 until XBRZ_TABLE_WIDTH) {
+                val m = if (cell < factor * factor) weights[cell * 2] else 0
+                val n = if (cell < factor * factor) weights[cell * 2 + 1] else 1
+                bytes.put(m.toByte()).put(n.toByte()).put(0).put(0)
+            }
+        }
+        bytes.flip()
+        return table(XBRZ_TABLE_WIDTH, rows, bytes)
+    }
+
     private fun table(w: Int, h: Int, bytes: ByteBuffer): Int {
         val texture = glGenTextures()
         glBindTexture(GL_TEXTURE_2D, texture)
@@ -350,6 +442,9 @@ class GlStage : AutoCloseable {
         val IDENTITY = floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f)
         const val ANTIRING = 0.5f
         const val NIS_SHARPNESS = 0.5f
+        const val XBRZ_TABLE_WIDTH = 36
+        val ANIME4K = (1..4).map { "anime4k/conv-$it.frag" }
+        val ACNET = (1..11).map { "acnet/conv-$it.frag" }
         val SHADERS = mapOf(
             "temporal.frag" to Shaders.VIDEO_TEMPORAL,
             "deinterlace.frag" to Shaders.VIDEO_DEINTERLACE,
@@ -362,6 +457,26 @@ class GlStage : AutoCloseable {
             "fsr-rcas-es3.frag" to Shaders.VIDEO_FSR_RCAS_ES3,
             "ewa.frag" to Shaders.VIDEO_EWA,
             "nis.frag" to Shaders.VIDEO_NIS,
+            "anime4k/conv-1.frag" to Shaders.ANIME4K_CONV_1,
+            "anime4k/conv-2.frag" to Shaders.ANIME4K_CONV_2,
+            "anime4k/conv-3.frag" to Shaders.ANIME4K_CONV_3,
+            "anime4k/conv-4.frag" to Shaders.ANIME4K_CONV_4,
+            "anime4k/depth-to-space.frag" to Shaders.ANIME4K_DEPTH_TO_SPACE,
+            "acnet/conv-1.frag" to Shaders.ACNET_CONV_1,
+            "acnet/conv-2.frag" to Shaders.ACNET_CONV_2,
+            "acnet/conv-3.frag" to Shaders.ACNET_CONV_3,
+            "acnet/conv-4.frag" to Shaders.ACNET_CONV_4,
+            "acnet/conv-5.frag" to Shaders.ACNET_CONV_5,
+            "acnet/conv-6.frag" to Shaders.ACNET_CONV_6,
+            "acnet/conv-7.frag" to Shaders.ACNET_CONV_7,
+            "acnet/conv-8.frag" to Shaders.ACNET_CONV_8,
+            "acnet/conv-9.frag" to Shaders.ACNET_CONV_9,
+            "acnet/conv-10.frag" to Shaders.ACNET_CONV_10,
+            "acnet/conv-11.frag" to Shaders.ACNET_CONV_11,
+            "acnet/pixel-shuffle.frag" to Shaders.ACNET_PIXEL_SHUFFLE,
+            "xbrz/corners.frag" to Shaders.XBRZ_CORNERS,
+            "xbrz/decisions.frag" to Shaders.XBRZ_DECISIONS,
+            "xbrz/scale.frag" to Shaders.XBRZ_SCALE,
         )
     }
 }

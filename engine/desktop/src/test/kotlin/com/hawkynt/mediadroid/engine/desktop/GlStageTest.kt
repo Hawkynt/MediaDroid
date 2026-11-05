@@ -37,6 +37,27 @@ class GlStageTest {
         assertTrue(lanczos.rgba.indices.any { abs(lanczos.rgba[it] - plain.rgba[it]) > 8 })
     }
 
+    @Test
+    fun `Anime4K, ACNet and xBRZ enlarge to the size asked for, with a picture, unlike plain scaling`() {
+        val plain = stage.process(picture, PictureAdjustment.Neutral, 128, 96)
+        for (upscaler in listOf(
+            PictureAdjustment.Upscaler.ANIME4K, PictureAdjustment.Upscaler.ACNET, PictureAdjustment.Upscaler.XBRZ,
+        )) {
+            val out = stage.process(picture, PictureAdjustment(upscaler = upscaler), 128, 96)
+            assertEquals(128 * 96 * 4, out.rgba.size)
+            val mean = out.rgba.indices.filter { it % 4 != 3 }.map { out.rgba[it].toInt() and 255 }.average()
+            assertTrue("$upscaler: black picture", mean > 20)
+            assertTrue("$upscaler: same as plain", out.rgba.indices.any { abs(out.rgba[it] - plain.rgba[it]) > 8 })
+        }
+    }
+
+    @Test
+    fun `xBRZ leaves a flat picture exactly flat`() {
+        val flat = MediaReader.Picture(0, 32, 24, ByteArray(32 * 24 * 4) { i -> if (i % 4 == 3) -1 else 0x5a })
+        val out = stage.process(flat, PictureAdjustment(upscaler = PictureAdjustment.Upscaler.XBRZ), 64, 48)
+        assertTrue(out.rgba.indices.filter { it % 4 != 3 }.all { out.rgba[it] == 0x5a.toByte() })
+    }
+
     companion object {
         private lateinit var stage: GlStage
 
