@@ -73,6 +73,8 @@ fun main(args: Array<String>) = application {
             Art.reader = { location -> places.file(location).open().use { it.readBytes() } }
         }
     }
+    // The media keys and the system's now-playing panel, for the app's whole life (MPRIS, SMTC).
+    val mediaKeys = remember { MediaKeys() }
     val state = remember { windowState(store.window) }
     val opened = remember { args.firstOrNull()?.let(::File)?.takeIf { it.isFile } }
     var screen by remember {
@@ -87,6 +89,7 @@ fun main(args: Array<String>) = application {
     }
     val close = {
         describe(state)?.let { store.window = it }
+        mediaKeys.close()
         exitApplication()
     }
     Window(onCloseRequest = close, title = "MediaDroid", state = state, icon = icon) {
@@ -108,6 +111,7 @@ fun main(args: Array<String>) = application {
                 is Screen.Player -> PlayerScreen(
                     store = store,
                     places = places,
+                    mediaKeys = mediaKeys,
                     queue = s.queue,
                     startIndex = s.index,
                     fullScreen = state.placement == WindowPlacement.Fullscreen,

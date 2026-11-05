@@ -118,6 +118,23 @@ fun SourcesPanel(places: DesktopLibrary, onChanged: () -> Unit, onClose: () -> U
                     FilterChip(selected = kind == k, onClick = { kind = k }, label = { Text(label) })
                 }
             }
+            // Servers announcing SMB on the local network, one click to fill in.
+            val lan by rememberSmbServers(active = kind == SourceKind.SMB)
+            if (kind == SourceKind.SMB && lan.isNotEmpty()) {
+                Text("On this network", color = Color.Gray, fontSize = 14.sp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    lan.forEach { found ->
+                        FilterChip(
+                            selected = host == found.host,
+                            onClick = {
+                                host = found.host
+                                if (name.isBlank()) name = found.name
+                            },
+                            label = { Text(found.name) },
+                        )
+                    }
+                }
+            }
             if (kind == SourceKind.WEBDAV) {
                 Field("Address", url, "https://cloud.example.org/remote.php/dav/files/me/Media") { url = it }
             } else {

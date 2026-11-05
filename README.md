@@ -334,14 +334,18 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
 - Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
   language last picked is where the next video starts. Sound tracks likewise, the file's own and those beside it
   (`Film.en.ac3`). Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.
-- Settings, watched state and secrets stay on the machine: in the user's application-data folder, the passwords
+- Settings, watched state and secrets stay on the machine: in the user's application-data folder, the settings and
+  watched marks as JSON (`settings.json`, taken over once from the `state.properties` of earlier builds), the passwords
   encrypted by the system (DPAPI on Windows, the Secret Service on Linux; where no Secret Service runs, in a file only
   the user can read).
-- Network sources are added from the wall's Network sources button — tried once before they are kept — and their
+- Network sources are added from the wall's Network sources button — tried once before they are kept; SMB servers
+  announcing themselves on the local network (mDNS, `_smb._tcp`) are offered with one click — and their
   movies and shows join the local folder's on one wall; they play, subtitles and sound files beside them included,
   through FFmpeg reading the source's files directly.
-- Media keys and the system's now-playing panel (SMTC on Windows, MPRIS on Linux); the screensaver held off while
-  something plays (Windows: the thread's execution state; Linux: an idle lock from systemd-logind).
+- Media keys and the system's now-playing panel (SMTC on Windows, MPRIS on Linux): play, pause, stop, next and
+  previous in the queue, and the title of what plays; the screensaver held off while something plays (Windows: the
+  thread's execution state; Linux: an idle lock from systemd-logind and the desktop's own screensaver asked over
+  D-Bus, org.freedesktop.ScreenSaver).
 - Not on the desktop: the second screen and casting, the phone's lock and gestures for volume and brightness, the NPU;
   switching the display's refresh rate to the film's comes later.
 
