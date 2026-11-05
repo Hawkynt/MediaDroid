@@ -160,8 +160,8 @@ internal data class DesktopSettings(
 }
 
 /**
- * The household's picture as kept: PictureAdjustment's fields the desktop offers, the choices by name — a name this
- * version does not know falls back to the neutral choice.
+ * The household's picture as kept: PictureAdjustment's fields the desktop offers — not the 3D eye, a choice for one
+ * video — the choices by name; a name this version does not know falls back to the neutral choice.
  */
 @Serializable
 internal data class PictureSettings(
@@ -177,6 +177,9 @@ internal data class PictureSettings(
     val upscaler: String = PictureAdjustment.Neutral.upscaler.name,
     /** Black bars cropped (AutoCrop): on for the household, see README "Picture". */
     val cropBlackBars: Boolean = true,
+    val fieldRate: Boolean = PictureAdjustment.Neutral.fieldRate,
+    val upscalerStrength: Float = PictureAdjustment.Neutral.upscalerStrength,
+    val interpolation: String = PictureAdjustment.Neutral.interpolation.name,
 ) {
     fun toAdjustment(): PictureAdjustment {
         val p = PictureAdjustment.Neutral
@@ -193,6 +196,10 @@ internal data class PictureSettings(
                 .getOrDefault(p.deinterlace),
             upscaler = runCatching { PictureAdjustment.Upscaler.valueOf(upscaler) }.getOrDefault(p.upscaler),
             cropBlackBars = cropBlackBars,
+            fieldRate = fieldRate,
+            upscalerStrength = upscalerStrength,
+            interpolation = runCatching { PictureAdjustment.Interpolation.valueOf(interpolation) }
+                .getOrDefault(p.interpolation),
         )
     }
 
@@ -209,6 +216,9 @@ internal data class PictureSettings(
             deinterlace = p.deinterlace.name,
             upscaler = p.upscaler.name,
             cropBlackBars = p.cropBlackBars,
+            fieldRate = p.fieldRate,
+            upscalerStrength = p.upscalerStrength,
+            interpolation = p.interpolation.name,
         )
     }
 }

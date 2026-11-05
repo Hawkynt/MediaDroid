@@ -13,7 +13,8 @@ import java.util.concurrent.TimeUnit
  * The desktop playback engine: a [MediaReader] on a thread of its own decodes ahead — the sound into the
  * [AudioSink], which paces it, the pictures into a short queue — and the clock is the sound's: the time the reader
  * started from plus what the sink has played (wall time where the file has no sound). [picture] hands out the latest
- * picture due by that clock, for the window to draw at its next refresh.
+ * picture due by that clock, for the window to draw at its next refresh, and [moment] that picture with the ones
+ * around it for the stage. With [film] on, the pictures go through Film on their way to the queue.
  */
 class DesktopPlaybackEngine(
     override val tuning: PlaybackTuning,
@@ -45,6 +46,8 @@ class DesktopPlaybackEngine(
     @Volatile private var wallStartNs = 0L
     @Volatile private var wallPausedMs = 0L
     @Volatile private var shown: MediaReader.Picture? = null
+    @Volatile private var shownBefore: MediaReader.Picture? = null
+    @Volatile private var filmChanged = false
     @Volatile private var pendingText: Int? = null
     @Volatile private var sidecars: List<Pair<Track, List<MediaReader.Cue>>> = emptyList()
     @Volatile private var selectedText: String? = null
@@ -78,6 +81,8 @@ class DesktopPlaybackEngine(
         baseMs = 0
         ended = false
         shown = null
+        shownBefore = null
+        filmChanged = true
         pictures.clear()
         if (request.startMs > 0) {
             opened.seek(request.startMs)
@@ -106,8 +111,13 @@ class DesktopPlaybackEngine(
         var pictureMs = Long.MIN_VALUE
         var soundMs = Long.MIN_VALUE
         val tempo = Tempo()
+        val pulldown = Film()
         try {
             while (running) {
+                if (filmChanged) {
+                    filmChanged = false
+                    pulldown.reset()
+                }
                 pendingSpeed?.let { value ->
                     // The clock starts again from here at the new rate, the sound held back by the filter dropped.
                     pendingSpeed = null
@@ -124,12 +134,14 @@ class DesktopPlaybackEngine(
                     pictureMs = Long.MIN_VALUE
                     soundMs = Long.MIN_VALUE
                     pictures.clear()
+                    pulldown.reset()
                     if (selectedText?.startsWith("sidecar:") == false) cues.clear()
                     sink?.flush()
                     baseMs = target
                     wallStartNs = System.nanoTime()
                     wallPausedMs = 0
                     shown = null
+                    shownBefore = null
                     ended = false
                 }
                 pendingText?.let { index ->
@@ -182,8 +194,10 @@ class DesktopPlaybackEngine(
                     }
                     is MediaReader.Picture -> {
                         pictureMs = item.ptsMs
-                        while (running && pendingSeekMs == null) {
-                            if (pictures.offer(item, 10, TimeUnit.MILLISECONDS)) break
+                        for (picture in if (film) pulldown.add(item) else listOf(item)) {
+                            while (running && pendingSeekMs == null) {
+                                if (pictures.offer(picture, 10, TimeUnit.MILLISECONDS)) break
+                            }
                         }
                     }
                     is MediaReader.Sound -> {
@@ -220,16 +234,41 @@ class DesktopPlaybackEngine(
      * The picture due now by the clock (the latest one not later than it), or null before the first. Paused after a
      * seek, the first picture from there shows at once though the clock stands just short of it — a frame step's.
      */
-    fun picture(): MediaReader.Picture? {
+    fun picture(): MediaReader.Picture? = moment()?.shown
+
+    /**
+     * The moment due now by the clock: the latest picture not later than it (paused after a seek, the first from
+     * there), the one shown before it, the two after it decoded already, and how far the clock is between it and the
+     * next; null before the first.
+     */
+    @Synchronized
+    fun moment(): Moment? {
         val now = positionMs
         while (true) {
             val next = pictures.peekFirst() ?: break
             if (next.ptsMs > now) break
-            shown = pictures.pollFirst()
+            val taken = pictures.pollFirst() ?: break
+            if (shown != null) shownBefore = shown
+            shown = taken
         }
         if (shown == null && !playing && pendingSeekMs == null) shown = pictures.pollFirst()
-        return shown
+        val current = shown ?: return null
+        val ahead = pictures.iterator()
+        val next = if (ahead.hasNext()) ahead.next() else null
+        val after = if (ahead.hasNext()) ahead.next() else null
+        return Moment(current, shownBefore, next, after, Moment.phase(current, next, now))
     }
+
+    /**
+     * Film (3:2 pulldown undone, see Film) on the pictures decoded from now on; those queued already stay as they
+     * are.
+     */
+    @Volatile var film: Boolean = false
+        set(value) {
+            if (value == field) return
+            field = value
+            filmChanged = true
+        }
 
     override fun play() {
         if (reader == null || playing) return
@@ -352,6 +391,8 @@ class DesktopPlaybackEngine(
         reader = null
         playing = false
         pictures.clear()
+        shown = null
+        shownBefore = null
     }
 
     override fun close() = stop()

@@ -350,7 +350,12 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   self-test and dry run deciding what is offered — on a desktop graphics card DAIN, FLAVR, RealSR and Real-CUGAN keep
   up where a phone refuses them.
 - The picture stage is the Android one: the same GLSL ES shaders, compiled as they are by desktop OpenGL 4.3 (which
-  takes GLSL ES 1.00 and 3.00), held to the same oracles (`tools/shader-check`).
+  takes GLSL ES 1.00 and 3.00), held to the same oracles (`tools/shader-check`). The desktop decodes ahead of the
+  clock, so the stage sees the pictures to come: YADIF and BWDIF, every field, blending and Motion — whose search runs
+  on the pair after the one on screen — need no delay, and neither does the sound; Film is undone before the pictures
+  queue up, its four pictures of five spread over the cycle's own time. A choice is tried as on the phone: the same
+  checks (`PictureTrial` in `:core:player`), the dry run on a stage of its own drawing at the size the largest screen
+  shows 576p, at that screen's refresh rate.
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
   (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture and track panel,
   N for the next episode, [ and ] for slower and faster, C for a snapshot, `,` and `.` for one frame back and

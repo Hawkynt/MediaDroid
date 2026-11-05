@@ -57,6 +57,36 @@ class DesktopPlaybackEngineTest {
     }
 
     @Test
+    fun `a moment holds the picture shown, the one before, the two decoded after it and how far the clock is`() {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(clip))
+            waitFor { engine.picture()?.ptsMs == 0L }
+            sink.playedMs = 90
+            waitFor { engine.picture()?.ptsMs == 80L }
+            sink.playedMs = 130
+            waitFor { engine.moment()?.let { it.shown.ptsMs == 120L && it.after != null } == true }
+            val moment = requireNotNull(engine.moment())
+            assertEquals(80L, moment.previous?.ptsMs)
+            assertEquals(160L, moment.next?.ptsMs)
+            assertEquals(200L, moment.after?.ptsMs)
+            assertEquals(0.25f, moment.phase, 1e-6f)
+        }
+    }
+
+    @Test
+    fun `with Film on, progressive pictures still come through, every one of a cycle without a repeat`() {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.film = true
+            engine.open(MediaRequest(clip))
+            waitFor { engine.picture() != null }
+            sink.playedMs = 400
+            waitFor { (engine.picture()?.ptsMs ?: 0L) >= 360L }
+        }
+    }
+
+    @Test
     fun `a seek starts the clock and the pictures at the new time`() {
         val sink = ManualSink()
         DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->

@@ -85,6 +85,7 @@ import com.hawkynt.mediadroid.player.ChapterSteps
 import com.hawkynt.mediadroid.player.FrameStep
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
+import com.hawkynt.mediadroid.player.PictureTrial
 import com.hawkynt.mediadroid.player.PlaybackMath
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -117,6 +118,8 @@ fun PlayerScreen(
     val bitmap = remember { PictureBitmap() }
     // The picture stage (deinterlacing, upscalers, colour) on the graphics card, made once per player.
     val stage = remember { com.hawkynt.mediadroid.engine.desktop.GlStage() }
+    // What a choice is tried with before it is taken (PictureTrial, as on Android).
+    val trial = remember { DesktopTrial() }
     var picture by remember { mutableStateOf(store.picture) }
     // MEDIADROID_SHOW=panel: the picture panel open from the start (documentation and checks).
     var panel by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "panel") }
@@ -201,11 +204,14 @@ fun PlayerScreen(
         }
             .onFailure { error = it.message ?: it.toString() }
     }
+    // Film is undone in the engine, before the pictures queue up (see Film).
+    LaunchedEffect(picture.deinterlace) { engine.film = picture.deinterlace == PictureAdjustment.Deinterlace.FILM }
     // Every window frame: the picture due now — through the stage when the household set filters, or the video is HDR,
-    // which the stage tone-maps — the clock, the end.
+    // which the stage tone-maps — the clock, the end. Smooth motion draws anew at every refresh, field rate at the
+    // middle of each picture's time.
     LaunchedEffect(Unit) {
         var lastShown: Any? = null
-        var lastLook: Triple<PictureAdjustment, IntSize, PictureCrop?>? = null
+        var lastLook: Any? = null
         // Black bars (AutoCrop): a sample of the picture every SAMPLE_INTERVAL_MS, judged off the window's thread,
         // afresh for every video; the crop found, for pictures of the size it was found on.
         val autoCrop = AutoCrop()
@@ -214,7 +220,8 @@ fun PlayerScreen(
         var crop: PictureCrop? = null
         while (true) {
             withFrameNanos { }
-            engine.picture()?.let { raw ->
+            engine.moment()?.let { moment ->
+                val raw = moment.shown
                 val nowMs = System.currentTimeMillis()
                 if (engine.openedPath != cropVideo || !picture.cropBlackBars || !stage.ready) {
                     cropVideo = engine.openedPath
@@ -234,7 +241,12 @@ fun PlayerScreen(
                     }
                 }
                 val part = crop?.takeIf { it.left + it.width <= raw.width && it.top + it.height <= raw.height }
-                val look = Triple(picture, canvas, part)
+                val timing = when {
+                    picture.interpolation != PictureAdjustment.Interpolation.OFF -> moment.phase
+                    picture.isFieldRate -> moment.phase >= 0.5f
+                    else -> null
+                }
+                val look = listOf(picture, canvas, part, timing)
                 if (raw !== lastShown || look != lastLook) {
                     lastShown = raw
                     lastLook = look
@@ -246,7 +258,7 @@ fun PlayerScreen(
                     )
                     val staged = picture.hasFilters || engine.pixelAspect != 1f || raw.hdr != null
                     val shown = if (staged && stage.ready && w > 0 && h > 0) {
-                        withContext(Dispatchers.Default) { stage.process(raw, picture, w, h, part) }
+                        withContext(Dispatchers.Default) { stage.process(moment, picture, w, h, part) }
                     } else {
                         raw.eightBit()
                     }
@@ -397,6 +409,9 @@ fun PlayerScreen(
                 onPick = ::pick,
                 speed = speed,
                 onSpeed = ::changeSpeed,
+                check = { candidate, say ->
+                    withContext(Dispatchers.Default) { PictureTrial.check(candidate, trial, say) }
+                },
             )
         }
         snapshotNote?.takeIf { now < snapshotNoteUntil }?.let { note ->

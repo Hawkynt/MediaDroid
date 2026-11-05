@@ -3,6 +3,7 @@ package com.hawkynt.mediadroid.engine.desktop
 import com.hawkynt.mediadroid.imaging.Xbrz
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Ewa
+import com.hawkynt.mediadroid.player.MotionInterpolation
 import com.hawkynt.mediadroid.player.Nis
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
@@ -20,13 +21,16 @@ import kotlin.math.pow
 
 /**
  * The picture stage on the desktop: the Android stage's shaders (:stage) on OpenGL 4.3 — which compiles GLSL ES 1.00
- * and 3.00 as they are — in a hidden window's context on a thread of its own. A decoded picture goes in, the picture
- * as the household set it comes out at the size it is shown: its black bars cropped as it comes in (AutoCrop finds
- * them), so every pass after sees the picture alone; an HDR one tone-mapped to SDR as it comes in (ToneMap,
- * its peak measured as it plays: PeakDetect), deinterlaced (Auto, Blend, Bob, YADIF, BWDIF), debanded,
- * denoised, sharpened, enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the neural ones plain for now),
- * colour-corrected. The passes and their
- * uniforms are the Android stage's (VideoFilterStage), the shaders those tools/shader-check holds to their originals.
+ * and 3.00 as they are — in a hidden window's context on a thread of its own. A moment of playback goes in (Moment:
+ * the picture on screen, its neighbours, how far the clock is to the next), the picture as the household set it comes
+ * out at the size it is shown: its black bars cropped as it comes in (AutoCrop finds them) and the 3D eye cut out
+ * of what is left, so every pass after sees the picture alone; an HDR one tone-mapped to SDR as it comes in (ToneMap,
+ * its peak measured as it plays: PeakDetect), deinterlaced (Auto, Blend, Bob, YADIF, BWDIF, every field at field rate; Film is
+ * the engine's, see Film), debanded, denoised, sharpened, blended into the next picture by the clock (Low, Medium,
+ * High) or along the motion between them (Motion, with MotionSearch), enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K,
+ * ACNet, xBRZ; the neural ones plain for now) at the strength chosen, colour-corrected. Each picture is filtered once
+ * and kept while it is on screen or next. The passes and their uniforms are the Android stage's (VideoFilterStage),
+ * the shaders those tools/shader-check holds to their originals.
  */
 class GlStage : AutoCloseable {
 
@@ -38,6 +42,7 @@ class GlStage : AutoCloseable {
     private var nisTable = 0
     private var ewaTable = 0
     private var xbrzTable = 0
+    private var obmcTable = 0
 
     // Debanding's frame index, which seeds its random numbers: libplacebo's 8-bit counter.
     private var debandFrame = 0
@@ -45,13 +50,32 @@ class GlStage : AutoCloseable {
     // HDR's peak as measured over the pictures so far, and the transfer it was measured for.
     private val peakDetect = PeakDetect()
     private var peakTransfer: ToneMap.Transfer? = null
-    private var history = ArrayDeque<Target>()
-    private var lastPicture: MediaReader.Picture? = null
-    private var lastPart: PictureCrop? = null
     private var out: ByteBuffer? = null
+
+    // The pictures uploaded (their 3D eye) and the pictures filtered at their own size, each by the picture it holds.
+    private val uploaded = Array(UPLOADED) { Slot("raw$it") }
+    private val kept = Array(KEPT) { Slot("kept$it") }
+    private var keptLook: Any? = null
+    private var uses = 0L
+
+    // Motion's vectors on the graphics card, and the search's answer they hold.
+    private val motion = MotionSearch()
+    private var vectorTexture = 0
+    private var vectorsShown: MotionSearch.Vectors? = null
 
     /** A texture with its framebuffer. */
     private class Target(val texture: Int, val framebuffer: Int, val width: Int, val height: Int)
+
+    /** A picture held on the graphics card: which, its 3D eye or field, and when it was last used. */
+    private class Slot(val name: String) {
+        var picture: MediaReader.Picture? = null
+        var region = PictureCrop(0, 0, 0, 0)
+        var second = false
+        var used = 0L
+    }
+
+    /** Pairs of pictures Motion showed before their vectors were in, since the stage started. */
+    val motionLate: Int get() = motion.late
 
     /** Whether the context came up; without it, pictures pass untouched. */
     @Volatile var ready = false
@@ -94,13 +118,13 @@ class GlStage : AutoCloseable {
         nisTable = nisTable()
         ewaTable = ewaTable()
         xbrzTable = xbrzTable()
+        obmcTable = obmcTable()
         ready = true
     }
 
     /**
-     * [picture] as [adjustment] has it, at [width] × [height]: RGBA rows from the top — only its part [crop] (the
-     * picture inside its black bars), when one is given. A temporal deinterlacer shows the picture before the newest
-     * (it needs the one after), so the result runs one picture behind.
+     * [picture] alone as [adjustment] has it, at [width] × [height]: RGBA rows from the top — only its part [crop]
+     * (the picture inside its black bars), when one is given.
      */
     fun process(
         picture: MediaReader.Picture,
@@ -108,48 +132,119 @@ class GlStage : AutoCloseable {
         width: Int,
         height: Int,
         crop: PictureCrop? = null,
+    ): MediaReader.Picture = process(Moment(picture), adjustment, width, height, crop)
+
+    /**
+     * The picture [moment] shows as [adjustment] has it, at [width] × [height]: RGBA rows from the top. A temporal
+     * deinterlacer reads the pictures either side of it; smooth motion mixes it into the next by the moment's phase.
+     * Only the part [crop] of each picture (inside its black bars) is shown, when one is given.
+     */
+    fun process(
+        moment: Moment,
+        adjustment: PictureAdjustment,
+        width: Int,
+        height: Int,
+        crop: PictureCrop? = null,
     ): MediaReader.Picture = if (!ready) {
-        picture
+        moment.shown
     } else {
-        thread.submit<MediaReader.Picture> { run(picture, adjustment, width, height, crop) }.get()
+        thread.submit<MediaReader.Picture> { run(moment, adjustment, width, height, crop) }.get()
     }
 
-    private fun run(
+    // The part of [picture] the stage works on: inside the [crop] where it fits the picture, of that the [stereo] eye.
+    private fun region(
         picture: MediaReader.Picture,
-        a: PictureAdjustment,
-        outW: Int,
-        outH: Int,
         crop: PictureCrop?,
-    ): MediaReader.Picture {
-        val part = crop ?: PictureCrop.whole(picture.width, picture.height)
-        val w = part.width
-        val h = part.height
-        if (picture !== lastPicture || part != lastPart) {
-            // Another crop makes the pictures before no neighbours of this one.
-            if (part != lastPart) history.clear()
-            lastPicture = picture
-            lastPart = part
-            val slot = if (history.size >= 3) history.removeFirst() else null
-            val target = slot?.takeIf { it.width == w && it.height == h } ?: target("history${history.size}$w", w, h)
-            upload(target, picture, part)
-            history.addLast(target)
+        stereo: PictureAdjustment.Stereo,
+    ): PictureCrop {
+        val base = crop?.takeIf { it.left + it.width <= picture.width && it.top + it.height <= picture.height }
+            ?: PictureCrop.whole(picture.width, picture.height)
+        return PictureCrop(
+            base.left + (base.width * stereo.x).toInt(),
+            base.top + ((1f - stereo.y - stereo.height) * base.height).toInt(),
+            maxOf(1, (base.width * stereo.width).toInt()),
+            maxOf(1, (base.height * stereo.height).toInt()),
+        )
+    }
+
+    private var crop: PictureCrop? = null
+
+    private fun run(m: Moment, a: PictureAdjustment, outW: Int, outH: Int, crop: PictureCrop?): MediaReader.Picture {
+        this.crop = crop
+        // A change to the filters, or to the part shown, makes every kept picture stale.
+        val look = listOf(a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop)
+        if (look != keptLook) {
+            keptLook = look
+            kept.forEach { it.picture = null }
         }
-        var source = history.last()
+        val next = m.next?.takeIf { it.width == m.shown.width && it.height == m.shown.height }
+        val blending = a.interpolation != PictureAdjustment.Interpolation.OFF && !a.interpolation.isNeural &&
+            next != null
+        // At field rate the second half of a picture's time shows its other field.
+        val second = a.isFieldRate && !blending && next != null && m.phase >= 0.5f
+        var source = filtered(m.shown, m.previous, next, a, second)
+        if (blending && next != null) {
+            val later = filtered(next, m.shown, m.after, a, false)
+            source = mixed(m, next, source, later, a)
+        }
+        // Enlarging to the shown size (at most twice where the upscaler is made for that, the rest bilinear), at the
+        // strength chosen: below full strength the plain picture laid over it by that share.
+        if (a.upscales && (outW > source.width || outH > source.height)) {
+            val plain = source
+            source = upscale(a.upscaler, source, outW, outH)
+            if (a.plainShare > 0f) {
+                val upscaled = source
+                source = pass("blend.frag", target("strength", outW, outH), plain.texture,
+                    listOf(upscaled.texture to "uPrevious")) { p ->
+                    glUniform1f(glGetUniformLocation(p, "uWeight"), a.plainShare)
+                }
+            }
+        }
+        // To the shown size, colour-corrected.
+        val shown = target("shown", outW, outH)
+        val u = a.shaderUniforms()
+        pass("adjust.frag", shown, source.texture) { p ->
+            glUniform1f(glGetUniformLocation(p, "uBrightness"), u.brightness)
+            glUniform1f(glGetUniformLocation(p, "uContrast"), u.contrast)
+            glUniform1f(glGetUniformLocation(p, "uSaturation"), u.saturation)
+            glUniform1f(glGetUniformLocation(p, "uInverseGamma"), u.inverseGamma)
+        }
+        return download(shown, m.shown.ptsMs)
+    }
+
+    /**
+     * [picture] (its 3D eye) deinterlaced — a temporal deinterlacer reading [before] and [after] where known, its
+     * [second] field rebuilt at field rate — debanded, denoised and sharpened at its own size; kept while it is used.
+     */
+    private fun filtered(
+        picture: MediaReader.Picture,
+        before: MediaReader.Picture?,
+        after: MediaReader.Picture?,
+        a: PictureAdjustment,
+        second: Boolean,
+    ): Target {
+        kept.firstOrNull { it.picture === picture && it.second == second }?.let { return slotTarget(it) }
+        val raw = uploaded(picture, region(picture, crop, a.stereo))
+        val w = raw.width
+        val h = raw.height
+        var source = raw
         // 1. Deinterlacing.
-        if (a.deinterlace.isTemporal && history.size >= 3) {
-            val (prev, cur, next) = history.toList().takeLast(3)
-            source = pass("temporal.frag", target("deinterlaced", w, h), cur.texture,
+        if (a.deinterlace.isTemporal) {
+            fun neighbour(p: MediaReader.Picture) = uploaded(p, region(p, crop, a.stereo))
+            val prev = neighbour(before ?: picture).takeIf { it.width == w && it.height == h } ?: raw
+            val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
+            source = pass("temporal.frag", target("deinterlaced", w, h), raw.texture,
                 listOf(prev.texture to "uPrev", next.texture to "uNext"), nearest = true) { p ->
                 glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-                glUniform1i(glGetUniformLocation(p, "uSecond"), 0)
-                glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(false, true).toFloat())
+                glUniform1i(glGetUniformLocation(p, "uSecond"), if (second) 1 else 0)
+                glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(second, true).toFloat())
                 val bwdif = a.deinterlace == PictureAdjustment.Deinterlace.BWDIF
                 glUniform1i(glGetUniformLocation(p, "uBwdif"), if (bwdif) 1 else 0)
             }
-        } else if (a.deinterlace != PictureAdjustment.Deinterlace.OFF && !a.deinterlace.isTemporal &&
+        } else if (a.deinterlace != PictureAdjustment.Deinterlace.OFF &&
             a.deinterlace != PictureAdjustment.Deinterlace.FILM
         ) {
-            source = pass("deinterlace.frag", target("deinterlaced", w, h), source.texture) { p ->
+            source = pass("deinterlace.frag", target("deinterlaced", w, h), raw.texture) { p ->
                 glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
                 glUniform1i(glGetUniformLocation(p, "uMode"), a.deinterlace.ordinal)
                 glUniform1f(glGetUniformLocation(p, "uHeight"), h.toFloat())
@@ -178,26 +273,103 @@ class GlStage : AutoCloseable {
                 glUniform1f(glGetUniformLocation(p, "uSigmaR2"), 2f * k.similarity * k.similarity)
             }
         }
+        val slot = claim(kept, picture, region(picture, crop, a.stereo), second)
+        val into = target(slot.name, w, h)
         if (a.sharpness > 0f || a.clarity > 0f) {
-            source = pass("sharpen.frag", target("sharpened", w, h), source.texture) { p ->
+            pass("sharpen.frag", into, source.texture) { p ->
                 glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
                 glUniform1f(glGetUniformLocation(p, "uSharpness"), a.sharpness)
                 glUniform1f(glGetUniformLocation(p, "uClarity"), a.clarity)
             }
+        } else {
+            copy(source, into)
         }
-        // 3. Enlarging to the shown size (at most twice where the upscaler is made for that, the rest bilinear).
-        val upscaling = a.upscaler != PictureAdjustment.Upscaler.STANDARD && (outW > w || outH > h)
-        if (upscaling) source = upscale(a.upscaler, source, outW, outH)
-        // 4. To the shown size, colour-corrected.
-        val shown = target("shown", outW, outH)
-        val u = a.shaderUniforms()
-        source = pass("adjust.frag", shown, source.texture) { p ->
-            glUniform1f(glGetUniformLocation(p, "uBrightness"), u.brightness)
-            glUniform1f(glGetUniformLocation(p, "uContrast"), u.contrast)
-            glUniform1f(glGetUniformLocation(p, "uSaturation"), u.saturation)
-            glUniform1f(glGetUniformLocation(p, "uInverseGamma"), u.inverseGamma)
+        return into
+    }
+
+    /**
+     * [earlier] and [later] (the filtered pictures of the moment's shown and [next]) mixed by the moment's phase:
+     * blended by the strength's window (Low, Medium, High), or along the vectors Motion's search found between them —
+     * a cut switching half-way, as FFmpeg's does, and the earlier picture staying until the later is due while the
+     * vectors are not in yet.
+     */
+    private fun mixed(
+        m: Moment,
+        next: MediaReader.Picture,
+        earlier: Target,
+        later: Target,
+        a: PictureAdjustment,
+    ): Target {
+        val phase = m.phase.coerceIn(0f, 1f)
+        var weight = a.interpolation.weight(phase)
+        var vectors: MotionSearch.Vectors? = null
+        if (a.interpolation.isMotionCompensated) {
+            motion.request(m.shown, next, region(m.shown, crop, a.stereo))
+            m.after?.let { motion.request(next, it, region(next, crop, a.stereo)) }
+            vectors = motion.vectors(m.shown, next)
+            val along = vectors != null && !vectors.cut && weight > 0f && weight < 1f
+            if (!along) {
+                val due = if (vectors?.cut == true) 0.5f else 1f
+                weight = if (phase < due) 0f else 1f
+                vectors = null
+            }
         }
-        return download(shown, picture.ptsMs)
+        if (weight <= 0f) return earlier
+        if (weight >= 1f) return later
+        val w = earlier.width
+        val h = earlier.height
+        val into = target("mixed", w, h)
+        val along = vectors ?: return pass("blend.frag", into, later.texture, listOf(earlier.texture to "uPrevious")) {
+            glUniform1f(glGetUniformLocation(it, "uWeight"), weight)
+        }
+        if (along !== vectorsShown) {
+            if (vectorTexture != 0) glDeleteTextures(vectorTexture)
+            val bytes = MemoryUtil.memAlloc(along.bytes.size).put(along.bytes).flip()
+            vectorTexture = table(along.gridWidth, along.gridHeight, bytes)
+            vectorsShown = along
+        }
+        val textures = listOf(earlier.texture to "uPrevious", vectorTexture to "uVectors", obmcTable to "uObmc")
+        return pass("motion.frag", into, later.texture, textures) { p ->
+            glUniform1f(glGetUniformLocation(p, "uAlpha"), (weight * MotionInterpolation.ALPHA_MAX).toInt().toFloat())
+            glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
+            glUniform2f(glGetUniformLocation(p, "uGrid"), along.gridWidth.toFloat(), along.gridHeight.toFloat())
+            glUniform2f(glGetUniformLocation(p, "uSearch"), (w / along.scale).toFloat(), (h / along.scale).toFloat())
+            glUniform1f(glGetUniformLocation(p, "uScale"), along.scale.toFloat())
+        }
+    }
+
+    /** [picture]'s [region] on the graphics card, uploaded unless it is still there. */
+    private fun uploaded(picture: MediaReader.Picture, region: PictureCrop): Target {
+        uploaded.firstOrNull { it.picture === picture && it.region == region }?.let { return slotTarget(it) }
+        val slot = claim(uploaded, picture, region, false)
+        val into = target(slot.name, region.width, region.height)
+        upload(into, picture, region)
+        return into
+    }
+
+    /** The least recently used of [slots], now holding [picture]. */
+    private fun claim(
+        slots: Array<Slot>,
+        picture: MediaReader.Picture,
+        region: PictureCrop,
+        second: Boolean,
+    ): Slot = slots.minBy { if (it.picture == null) Long.MIN_VALUE else it.used }.also {
+        it.picture = picture
+        it.region = region
+        it.second = second
+        it.used = ++uses
+    }
+
+    private fun slotTarget(slot: Slot): Target {
+        slot.used = ++uses
+        return targets.getValue(slot.name)
+    }
+
+    /** [from] into [into] as it is (a blend wholly of the one picture). */
+    private fun copy(from: Target, into: Target) {
+        pass("blend.frag", into, from.texture, listOf(from.texture to "uPrevious")) { p ->
+            glUniform1f(glGetUniformLocation(p, "uWeight"), 1f)
+        }
     }
 
     private fun upscale(upscaler: PictureAdjustment.Upscaler, from: Target, outW: Int, outH: Int): Target {
@@ -395,17 +567,18 @@ class GlStage : AutoCloseable {
     }
 
     // The stage holds its frames with the picture's top row where v is 1, as on Android: rows uploaded bottom first,
-    // only those of [part] — the first pass is the crop, so the peak below is measured on the picture alone too.
-    // An HDR picture goes into a 16-bit frame of its own, its peak is measured, and it is tone-mapped into [into].
-    private fun upload(into: Target, picture: MediaReader.Picture, part: PictureCrop) {
-        val w = part.width
-        val h = part.height
+    // only those of [region] (inside the black bars, the 3D eye), which [into] is the size of — so the peak below is
+    // measured on the picture alone too. An HDR picture goes into a 16-bit frame of its own, its peak is measured,
+    // and it is tone-mapped into [into].
+    private fun upload(into: Target, picture: MediaReader.Picture, region: PictureCrop) {
+        val w = into.width
+        val h = into.height
+        val left = region.left
+        val top = region.top
         val transfer = picture.hdr
         val bytes = if (transfer == null) 4 else 8
         val buffer = MemoryUtil.memAlloc(w * h * bytes)
-        for (y in 0 until h) {
-            buffer.put(picture.rgba, ((part.top + h - 1 - y) * picture.width + part.left) * bytes, w * bytes)
-        }
+        for (y in 0 until h) buffer.put(picture.rgba, ((top + h - 1 - y) * picture.width + left) * bytes, w * bytes)
         buffer.flip()
         val coded = if (transfer == null) into else target("hdr-coded", w, h, deep = true)
         glBindTexture(GL_TEXTURE_2D, coded.texture)
@@ -510,6 +683,14 @@ class GlStage : AutoCloseable {
         return table(XBRZ_TABLE_WIDTH, rows, bytes)
     }
 
+    // The overlapped blocks' weights (MotionInterpolation.obmcWeight) as a 32 × 32 texture, in red.
+    private fun obmcTable(): Int {
+        val bytes = MemoryUtil.memAlloc(32 * 32 * 4)
+        for (i in 0 until 32 * 32) bytes.put(MotionInterpolation.obmcWeight(i).toByte()).put(0).put(0).put(0)
+        bytes.flip()
+        return table(32, 32, bytes)
+    }
+
     private fun table(w: Int, h: Int, bytes: ByteBuffer): Int {
         val texture = glGenTextures()
         glBindTexture(GL_TEXTURE_2D, texture)
@@ -529,6 +710,7 @@ class GlStage : AutoCloseable {
             out?.let(MemoryUtil::memFree)
         }.get()
         thread.shutdown()
+        motion.close()
     }
 
     private companion object {
@@ -536,6 +718,11 @@ class GlStage : AutoCloseable {
         const val ANTIRING = 0.5f
         const val NIS_SHARPNESS = 0.5f
         const val XBRZ_TABLE_WIDTH = 36
+
+        // The pictures held: uploaded — the one on screen, the one before and two after, and one to spare — and
+        // filtered — the one on screen and the next, both fields of one at field rate.
+        const val UPLOADED = 6
+        const val KEPT = 4
         val ANIME4K = (1..4).map { "anime4k/conv-$it.frag" }
         val ACNET = (1..11).map { "acnet/conv-$it.frag" }
         val SHADERS = mapOf(
@@ -547,6 +734,8 @@ class GlStage : AutoCloseable {
             "denoise.frag" to Shaders.VIDEO_DENOISE,
             "sharpen.frag" to Shaders.VIDEO_SHARPEN,
             "adjust.frag" to Shaders.VIDEO_ADJUST,
+            "blend.frag" to Shaders.VIDEO_BLEND,
+            "motion.frag" to Shaders.VIDEO_MOTION,
             "lanczos.frag" to Shaders.VIDEO_LANCZOS,
             "sgsr.frag" to Shaders.VIDEO_SGSR,
             "fsr-easu-es3.frag" to Shaders.VIDEO_FSR_EASU_ES3,
