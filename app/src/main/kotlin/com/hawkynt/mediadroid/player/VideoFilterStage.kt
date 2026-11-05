@@ -654,8 +654,16 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         ewaTable = ewaTable()
         nisProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_NIS)
         nisTable = nisTable()
-        easuProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_EASU)
-        rcasProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_RCAS)
+        // FSR reads its floats' bits for AMD's approximate reciprocals where GLSL ES 3.00 can (about half the cost on
+        // a Mali G77 at 576p); the GLSL ES 1.00 passes compute the same bits from the floats' fields elsewhere.
+        val fsrEs3 = es3 && runCatching {
+            easuProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_FSR_EASU_ES3))
+            rcasProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_FSR_RCAS_ES3))
+        }.isSuccess
+        if (!fsrEs3) {
+            easuProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_EASU)
+            rcasProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_RCAS)
+        }
         blendProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_BLEND)
         motionProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MOTION)
         packProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PACK_LUMA)
@@ -2236,6 +2244,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 put(values)
                 position(0)
             }
+
+        /** [program], or an exception where it failed to link. */
+        private fun linked(program: Int): Int {
+            val ok = IntArray(1)
+            GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, ok, 0)
+            check(ok[0] != 0) { "Program: " + GLES20.glGetProgramInfoLog(program) }
+            return program
+        }
 
         private fun program(vertex: String, fragment: String): Int {
             fun shader(type: Int, source: String): Int = GLES20.glCreateShader(type).also {

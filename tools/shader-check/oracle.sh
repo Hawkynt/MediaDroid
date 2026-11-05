@@ -66,6 +66,18 @@ for size in "480 360" "640 480" "1080 810"; do
   # EASU's 1-step roundings in the 8-bit frame between the passes, sharpened by RCAS.
   check "FSR ${size/ /×} against AMD's" "$W/fsr.ppm" "$W/fsr-amd.ppm" 5 0.01 1
 done
+# The GLSL ES 3.00 variants (floats' bits read directly, as on ES 3 chips) have to agree just the same.
+for size in "480 360" "1080 810"; do
+  SHADER_CHECK_FSR=es3 "$C" fsr-easu "$W/picture.ppm" "$W/easu-es3.ppm" $size
+  "$Q" fsr-amd-easu "$O" "$W/picture.ppm" "$W/easu-amd.ppm" $size
+  check "FSR EASU (ES 3.00) ${size/ /×} against AMD's" "$W/easu-es3.ppm" "$W/easu-amd.ppm" 1 0.01
+  SHADER_CHECK_FSR=es3 "$C" fsr "$W/picture.ppm" "$W/fsr-es3.ppm" $size
+  "$Q" fsr-amd "$O" "$W/picture.ppm" "$W/fsr-amd.ppm" $size
+  check "FSR (ES 3.00) ${size/ /×} against AMD's" "$W/fsr-es3.ppm" "$W/fsr-amd.ppm" 5 0.01 1
+done
+SHADER_CHECK_FSR=es3 "$C" fsr-rcas "$W/easu-amd.ppm" "$W/rcas-es3.ppm"
+"$Q" fsr-amd-rcas "$O" "$W/easu-amd.ppm" "$W/rcas-amd.ppm" 0 0
+check "FSR RCAS (ES 3.00) on the same picture against AMD's" "$W/rcas-es3.ppm" "$W/rcas-amd.ppm" 0 0 1
 "$C" fsr-rcas "$W/easu-amd.ppm" "$W/rcas.ppm"
 "$Q" fsr-amd-rcas "$O" "$W/easu-amd.ppm" "$W/rcas-amd.ppm" 0 0
 check "FSR RCAS on the same picture against AMD's" "$W/rcas.ppm" "$W/rcas-amd.ppm" 0 0 1
