@@ -1,0 +1,9 @@
+# Integrated loudness (LUFS) of the LoudnessSignals test signals, captured by measure.sh beside it on
+# 2026-11-05: column 2 is libebur128 1.2.6 (ebur128_loudness_global, EBUR128_MODE_I, float input, full precision),
+# column 3 is FFmpeg n9.0.2's ebur128 filter (rounded to 0.1 LU by its summary). Both agree on every signal.
+# signal libebur128 ffmpeg
+gated-36-23-36-48k-stereo -23.194326 -23.2
+noise-then-silence-32k-stereo -18.936727 -18.9
+tone-1k-23dbfs-48k-stereo -22.993297 -23.0
+tones-100hz-5khz-44k1-mono -14.226428 -14.2
+tones-5.1-48k -19.255782 -19.3

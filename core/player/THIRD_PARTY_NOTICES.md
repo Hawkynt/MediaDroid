@@ -14,6 +14,7 @@
 | [Media3](https://github.com/androidx/media) `libraries/effect` (`DefaultShaderProgram`'s BT.2020 limited-range matrix and `fragment_shader_transformation_external_yuv_es3.glsl`'s YUV offsets) — © The Android Open Source Project | Apache-2.0 | how `stage/src/main/glsl/video/copy-y2y-es3.frag` reads a decoder's 10-bit HDR frame through GL_EXT_YUV_target; `YuvMatrix.toRgbTenBit` is held to Media3's matrix |
 | [NVIDIA Image Scaling SDK](https://github.com/NVIDIAGameWorks/NVIDIAImageScaling) v1.0.3 `NIS_Scaler.h` (NVScaler) and `NIS_Config.h` (settings, coefficient tables) — © 2022 NVIDIA Corporation | MIT | `Nis`, and the app's GL pass written from it (licence text: `app/THIRD-PARTY-NOTICE.NVIDIA-Image-Scaling.txt`) |
 | [FFmpeg](https://ffmpeg.org) `libavfilter/vf_minterpolate.c` and `motion_estimation.c` (bilateral EPZS search, OBMC, `obmc_linear32`, scene change) — © 2014-2015 Michael Niedermayer, 2016 Davinder Singh | LGPL-2.1-or-later | `MotionInterpolation`, and the app's GL pass written from it |
+| [libebur128](https://github.com/jiixyj/libebur128) v1.2.6 `ebur128/ebur128.c` (`ebur128_init_filter`, the filter, `ebur128_calc_gating_block`, `ebur128_gated_loudness`) — © 2011 Jan Kokemüller | MIT | `LoudnessMeter` — EBU R128 integrated loudness (licence text: `app/THIRD-PARTY-NOTICE.libebur128.txt`) |
 
 The Bessel function J1 in `Ewa` follows Abramowitz & Stegun, *Handbook of Mathematical Functions*, 9.4.4 and 9.4.6.
 
@@ -36,3 +37,5 @@ gamut by hard clip), `pl_tone_map_sample` and peak detection for them, run by li
 through `tools/shader-check/placebo.cpp`, made by `make-expected.sh`.
 `src/test/resources/minterpolate/` — `input.gray.gz` written by `make-input.py` there, `expected.gray.gz` FFmpeg 6.0's
 `minterpolate` output for it, made with the command in that script's header.
+`src/test/resources/loudness/expected.txt` — the integrated loudness of the `LoudnessSignals` test signals, measured by
+`measure.sh` beside it with libebur128 1.2.6 (through `oracle.c`) and FFmpeg's `ebur128` filter.
