@@ -2,7 +2,7 @@ Real-CUGAN, by bilibili (https://github.com/bilibili/ailab/tree/main/Real-CUGAN)
 realcugan-ncnn-vulkan, by nihui (https://github.com/nihui/realcugan-ncnn-vulkan).
 
 app/src/main/assets/models/realcugan-se holds realcugan-ncnn-vulkan's models-se/up2x-conservative (the SE model,
-conservative, twice the size), copied unchanged. app/src/main/cpp/enlarger.cpp runs it the way the port does on a
+conservative, twice the size), copied unchanged. native/src/enlarger.cpp runs it the way the port does on a
 whole picture: in RGB 0..1, its edges mirrored 18 around and to an even size, the output's top left the picture
 twice as large.
 

@@ -3,7 +3,7 @@ others (https://github.com/ltkong218/IFRNet), as ncnn runs it: ifrnet-ncnn-vulka
 (https://github.com/nihui/ifrnet-ncnn-vulkan).
 
 app/src/main/assets/models/ifrnet-s holds ifrnet-ncnn-vulkan's IFRNet_S_Vimeo90K model, copied unchanged. Its
-ifrnet.Warp layer is RIFE's warp with the flow first (app/src/main/cpp/warp_layer.cpp); app/src/main/cpp/
+ifrnet.Warp layer is RIFE's warp with the flow first (native/src/warp_layer.cpp); native/src/
 pair_networks.cpp runs it the way the port does: the frames in -0.5..0.5, zeros to a multiple of 32, the time as a
 plane.
 

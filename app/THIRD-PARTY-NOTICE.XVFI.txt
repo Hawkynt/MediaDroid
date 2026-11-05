@@ -10,6 +10,6 @@ MediaDroid uses XVFI with its authors' permission, under those terms: free, neve
 app: switched on, it is fetched from huggingface.co/Hawkynt/mediadroid-models (xvfi/, with LICENSE-XVFI), each file
 checked against its SHA-256 digest (core/player/.../NeuralModels.kt) — the authors' Vimeo-trained weights
 (XVFInet_Vimeo_exp1_latest.pt) as tools/xvfi/export.py writes its convolution blocks out for ncnn, from
-tools/xvfi/xvfi_net.py, the network written out from its published architecture. app/src/main/cpp/xvfi.cpp joins the
+tools/xvfi/xvfi_net.py, the network written out from its published architecture. native/src/xvfi.cpp joins the
 blocks as xvfi_net.py's forward does. Anyone taking MediaDroid's source takes these terms with the XVFI parts: they
 are not covered by MediaDroid's own licence.

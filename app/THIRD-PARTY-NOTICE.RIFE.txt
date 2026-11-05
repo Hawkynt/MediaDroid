@@ -4,8 +4,8 @@ ncnn runs it: rife-ncnn-vulkan, by nihui (https://github.com/nihui/rife-ncnn-vul
 
 app/src/main/assets/models/rife-4.25-lite/flownet.param and flownet.bin are TNTwise's conversion of the 4.25.lite
 model (flownet.pkl, released under the same MIT licence as Practical-RIFE), copied unchanged. The warp layer the
-model calls (rife.Warp: app/src/main/cpp/warp_layer.cpp and stage/src/main/glsl/ncnn/warp.comp) is converted from
-rife-ncnn-vulkan's, and app/src/main/cpp/interpolator.cpp runs the model the way its RIFE::process_v4 does — the
+model calls (rife.Warp: native/src/warp_layer.cpp and stage/src/main/glsl/ncnn/warp.comp) is converted from
+rife-ncnn-vulkan's, and native/src/networks.cpp runs the model the way its RIFE::process_v4 does — the
 frames in 0..1, padded with zeros to a multiple of 128, the in-between's time as a plane.
 
 Practical-RIFE:

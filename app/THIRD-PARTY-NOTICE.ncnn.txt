@@ -1,8 +1,9 @@
 ncnn 20261020, by Tencent and contributors (https://github.com/Tencent/ncnn)
 
-The native part (app/src/main/cpp) links ncnn's prebuilt Android release, which the ncnnPrebuilt task in
-app/build.gradle.kts fetches and checks against its digest; it runs the neural networks there, on the GPU through
-Vulkan or on the CPU. Its licence, as published with it:
+The native tree (native/) links ncnn's prebuilt releases — Android's in the app, Windows' and Ubuntu's in the desktop
+library, ncnn built from its full source for Linux arm64 — which native/build.gradle.kts fetches and checks against
+their digests; it runs the neural networks there, on the GPU through Vulkan or on the CPU. Its licence, as published
+with it:
 
 Tencent is pleased to support the open source community by making ncnn available.
 Copyright (C) 2017 Tencent.  All rights reserved.

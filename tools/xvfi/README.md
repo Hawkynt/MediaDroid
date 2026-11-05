@@ -13,6 +13,6 @@ permission: see `app/THIRD-PARTY-NOTICE.XVFI.txt`).
 3. `python export.py XVFInet_Vimeo_exp1_latest.pt <out dir>` — the seven convolution blocks as ncnn `.param` and
    `.bin` (weights as half floats; ReLUs fused into their convolutions; splits where a blob is read twice).
 
-`app/src/main/cpp/xvfi.cpp` joins the blocks as `xvfi_net.py`'s forward does. Both give the same in-between on the
+`native/src/xvfi.cpp` joins the blocks as `xvfi_net.py`'s forward does. Both give the same in-between on the
 self-test's frames — off by 1.27 per value from the frame truly halfway, where a blend is off by 29.68 — checked with
 `tools/neural-check`.

@@ -219,6 +219,13 @@ void configure(ncnn::Net& net, bool vulkan) {
     if (vulkan) net.set_vulkan_device(ncnn::get_gpu_device());
 }
 
+Loader fileLoader(const std::string& base) {
+    return [base](ncnn::Net& net, const char* name) {
+        const std::string path = base + "/" + name;
+        return net.load_param((path + ".param").c_str()) != 0 || net.load_model((path + ".bin").c_str()) != 0;
+    };
+}
+
 bool gpuReady() {
     std::call_once(gpuOnce, [] { ncnn::create_gpu_instance(); });
     return ncnn::get_gpu_count() > 0;

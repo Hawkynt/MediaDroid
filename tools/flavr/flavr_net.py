@@ -6,7 +6,7 @@ out.
 
 The app runs it on ncnn in two networks (export.py): the 3D part (`body`: the frames, their mean taken away, to the
 decoder's last output) and the 2D part (`head`: the four times folded into channels, to the picture); what joins them
-is app/src/main/cpp/flavr.cpp.
+is native/src/flavr.cpp.
 """
 import torch
 import torch.nn as nn

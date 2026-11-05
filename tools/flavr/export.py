@@ -1,5 +1,5 @@
 """export.py <checkpoint> <out dir>: FLAVR's two parts (flavr_net.py) as ncnn networks — .param (structure, text) and
-.bin (weights as half floats, biases as floats) — for app/src/main/cpp/flavr.cpp, which joins them:
+.bin (weights as half floats, biases as floats) — for native/src/flavr.cpp, which joins them:
 
   body  in0 (4D: 3 channels x 4 frames x H x W, their mean taken away) -> out (64 x 4 x H x W)
   head  in0 (256 x H x W: body's four times folded into channels, time major) -> out (3 x H x W, mean still away)

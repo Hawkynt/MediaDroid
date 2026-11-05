@@ -1,5 +1,5 @@
 """export.py <checkpoint> <out dir>: XVFI-Net's convolution blocks (xvfi_net.py) as ncnn networks — .param (structure,
-text) and .bin (weights as half floats, biases as floats) — for app/src/main/cpp/xvfi.cpp, which joins them:
+text) and .bin (weights as half floats, biases as floats) — for native/src/xvfi.cpp, which joins them:
 
   extract   in0 (3) -> feat (nf at half size): a frame's features
   context   in0 (nf) -> out (nf at half size): the next coarser level's

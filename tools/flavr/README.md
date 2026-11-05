@@ -17,7 +17,7 @@ Apache-2.0; see `app/THIRD-PARTY-NOTICE.FLAVR.txt`).
    stored once. SE gating is a global average over that tall picture (all frames the same size), an InnerProduct with
    a sigmoid and a per-channel multiplication.
 
-`app/src/main/cpp/flavr.cpp` joins them as `flavr_net.py`'s forward does: the four frames' mean taken away, the four
+`native/src/flavr.cpp` joins them as `flavr_net.py`'s forward does: the four frames' mean taken away, the four
 times of the body's output folded into channels for the head, the mean put back. Checked with `tools/neural-check`
 (`FLAVR_DIR`): off by 5.23 per value from the frame truly halfway at 128 x 128, where the PyTorch network is off by
 5.25 and a blend by 29.95.

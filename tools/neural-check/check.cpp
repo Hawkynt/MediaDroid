@@ -1,4 +1,4 @@
-// The desktop check of the app's neural frame interpolation (app/src/main/cpp/networks.cpp): the self-test's frames
+// The desktop check of the app's neural frame interpolation (native/src/networks.cpp): the self-test's frames
 // (as NeuralInterpolator.kt makes them) through RIFE, DAIN, XVFI and FLAVR on the CPU and, where there is one, the
 // Vulkan GPU — the in-between against the frame truly halfway, the time it took, and the memory the process peaked
 // at; and the upscalers on a drawing.
@@ -239,12 +239,6 @@ int main(int argc, char** argv) {
     std::vector<int> sizes;
     for (int i = 5; i < argc; i++) sizes.push_back(std::atoi(argv[i]));
     if (sizes.empty()) sizes = {256};
-    auto files = [](const std::string& dir) {
-        return [dir](ncnn::Net& net, const char* name) {
-            const std::string path = dir + "/" + name;
-            return net.load_param((path + ".param").c_str()) != 0 || net.load_model((path + ".bin").c_str()) != 0;
-        };
-    };
     const bool gpu = mediadroid::gpuReady();
     std::printf("Vulkan GPU: %s\n", gpu ? "yes" : "no");
     for (bool onGpu : {false, true}) {
@@ -270,7 +264,7 @@ int main(int argc, char** argv) {
                 : network == "DAIN"                     ? argv[3]
                 : network == "XVFI"                     ? argv[4]
                                                         : extra;
-            auto net = (*open)(files(dir), onGpu);
+            auto net = (*open)(mediadroid::fileLoader(dir), onGpu);
             if (!net) {
                 std::printf("%s on the %s: does not load\n", network.c_str(), unit);
                 continue;
@@ -293,7 +287,7 @@ int main(int argc, char** argv) {
             const char* dir = std::getenv(env);
             const char* only = std::getenv("NEURAL_CHECK_NETWORK");
             if (dir == nullptr || (only != nullptr && network != only)) continue;
-            auto net = (*open)(files(dir), onGpu);
+            auto net = (*open)(mediadroid::fileLoader(dir), onGpu);
             if (!net) {
                 std::printf("%s on the %s: does not load\n", network.c_str(), unit);
                 continue;

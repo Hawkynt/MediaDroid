@@ -5,7 +5,7 @@ import android.content.res.AssetManager
 import com.hawkynt.mediadroid.shaders.Shaders
 import java.nio.ByteBuffer
 
-/** The native part's neural frame interpolation (src/main/cpp/interpolator.cpp, on ncnn). */
+/** The native part's neural frame interpolation (native/jni/interpolator.cpp, on ncnn). */
 internal object NativeInterpolation {
     /**
      * Whether the native library loaded — and was handed the compute shaders of glsl/ncnn; false where the device's
