@@ -190,7 +190,11 @@ class AndroidPlaybackEngine(
 
     private val listeners = mutableMapOf<PlaybackEngine.Listener, Player.Listener>()
 
+    override var openedPath: String? = null
+        private set
+
     override fun open(request: MediaRequest, autoPlay: Boolean) {
+        openedPath = request.path
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguage(request.audioLanguage.ifEmpty { null })
             .build()
@@ -317,9 +321,11 @@ class AndroidPlaybackEngine(
                     C.TRACK_TYPE_VIDEO -> Track.Kind.VIDEO
                     else -> null
                 } ?: return@flatMapIndexed emptyList()
+                // Merged sources prefix their groups' ids with their index: 0 the video, n the n-th sidecar file.
+                val source = group.mediaTrackGroup.id.substringBefore(':', "").toIntOrNull() ?: 0
                 (0 until group.length).map { i ->
                     val format = group.getTrackFormat(i)
-                    Track("$g:$i", kind, format.language, format.label, group.isTrackSelected(i))
+                    Track("$g:$i", kind, format.language, format.label, group.isTrackSelected(i), source)
                 }
             }
     }

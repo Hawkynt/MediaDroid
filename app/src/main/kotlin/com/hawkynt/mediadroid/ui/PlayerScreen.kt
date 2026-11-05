@@ -301,7 +301,7 @@ fun PlayerScreen(
     }
     DisposableEffect(player) {
         fun publish() {
-            PlayerWindow.playing = player.isPlaying
+            PlayerWindow.playing = engine.isPlaying
             val size = player.videoSize
             PlayerWindow.aspect = PlaybackMath.pipAspect(size.width, size.height, size.pixelWidthHeightRatio)
                 ?.let { (w, h) -> android.util.Rational(w, h) }
@@ -319,7 +319,7 @@ fun PlayerScreen(
             if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
                 // Android's own screen asking to allow locking is not leaving the player.
                 if (!askingToLock) leavePlayer()
-                if (!PlayerWindow.elsewhere) player.pause()
+                if (!PlayerWindow.elsewhere) engine.pause()
             }
         }
         lifecycle?.addObserver(stopObserver)
@@ -412,11 +412,11 @@ fun PlayerScreen(
     fun startHold(forward: Boolean) {
         holdJob?.cancel()
         val startedAt = android.os.SystemClock.uptimeMillis()
-        var target = player.currentPosition
+        var target = engine.positionMs
         holdJob = holdScope.launch {
             while (true) {
                 val step = PlaybackMath.holdStepMs(android.os.SystemClock.uptimeMillis() - startedAt)
-                val end = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                val end = engine.durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE
                 target = (target + if (forward) step else -step).coerceIn(0L, end)
                 holdTarget = target
                 show((if (forward) "» " else "« ") + clock(target))
@@ -428,7 +428,7 @@ fun PlayerScreen(
     fun endHold() {
         holdJob?.cancel()
         holdJob = null
-        holdTarget?.let { player.seekTo(it) }
+        holdTarget?.let { engine.seekTo(it) }
         holdTarget = null
     }
     val externalDisplay = rememberExternalDisplay()
@@ -533,18 +533,16 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(speed, subtitlesOn, judderFactor) {
-        player.setPlaybackSpeed(speed * judderFactor)
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesOn)
-            .build()
+        engine.speed = speed * judderFactor
+        engine.subtitlesOn = subtitlesOn
     }
 
     /** Remembers how far the current item got: watched once only its tail or credits are left. */
-    fun saveProgress(position: Long = player.currentPosition, duration: Long = player.duration) {
+    fun saveProgress(position: Long = engine.positionMs, duration: Long = engine.durationMs) {
         if (duration <= 0 || position <= 0) return
         val path = queue[index].videoPath
         // Right after Next/Previous the player still holds the last file: its position is not ours.
-        if (player.currentMediaItem?.localConfiguration?.uri?.path != path) return
+        if (engine.openedPath != path) return
         if (PlaybackMath.isWatched(position, duration, creditsStartMs)) {
             store.markWatched(path)
         } else {
@@ -564,8 +562,8 @@ fun PlayerScreen(
                 }
             },
             onPrevious = {
-                when (val previous = PlaybackMath.previous(player.currentPosition, index)) {
-                    PlaybackMath.Previous.Restart -> player.seekTo(0)
+                when (val previous = PlaybackMath.previous(engine.positionMs, index)) {
+                    PlaybackMath.Previous.Restart -> engine.seekTo(0)
                     is PlaybackMath.Previous.GoTo -> {
                         saveProgress()
                         index = previous.index
@@ -634,8 +632,8 @@ fun PlayerScreen(
             null -> finished = true
             index -> {
                 // The same video again: the index does not change, so start it over by hand.
-                player.seekTo(0)
-                player.playWhenReady = true
+                engine.seekTo(0)
+                engine.play()
             }
             else -> index = next
         }
@@ -667,7 +665,7 @@ fun PlayerScreen(
                     item != null && freshSurfaceFor[0] != item.mediaId && renew != null
                 ) {
                     freshSurfaceFor[0] = item.mediaId
-                    val position = player.currentPosition
+                    val position = engine.positionMs
                     renew()
                     player.setMediaItem(item, position)
                     player.prepare()
@@ -677,7 +675,7 @@ fun PlayerScreen(
                 // must not stop the film: it plays again without them, from where it was.
                 val audio = item?.localConfiguration?.tag as? com.hawkynt.mediadroid.player.SidecarAudio
                 if (item != null && audio != null && audio.locations.isNotEmpty()) {
-                    val position = player.currentPosition
+                    val position = engine.positionMs
                     sidecars = sidecars.filter { it.first.kind != com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
                     player.setMediaItem(item.buildUpon().setTag(null).build(), position)
                     player.prepare()
@@ -711,17 +709,17 @@ fun PlayerScreen(
         var tick = 0
         while (true) {
             delay(500)
-            if (!player.isPlaying) continue
-            val position = player.currentPosition
+            if (!engine.isPlaying) continue
+            val position = engine.positionMs
             // Inside a known intro (also one after a cold open): jump to its end.
             SkipRules.skipTarget(position, introSpanMs)?.let {
-                player.seekTo(it)
+                engine.seekTo(it)
                 continue
             }
             val credits = creditsStartMs
             if (skipping && credits != null && position >= credits) {
-                // The credits have begun: end the episode, binge mode takes it from there.
-                player.seekTo(player.duration)
+                // The credits have begun: end the episode, binge mode takes it from there (once its end is known).
+                engine.durationMs.takeIf { it > 0 }?.let { engine.seekTo(it) }
                 continue
             }
             if (++tick % 6 == 0) saveProgress(position)
@@ -730,16 +728,16 @@ fun PlayerScreen(
 
     LaunchedEffect(sleepAt) {
         val at = sleepAt ?: run {
-            player.volume = 1f
+            engine.volume = 1f
             return@LaunchedEffect
         }
         while (true) {
             val left = at - android.os.SystemClock.elapsedRealtime()
             sleepLeftMs = left
-            player.volume = PlaybackMath.sleepFade(left)
+            engine.volume = PlaybackMath.sleepFade(left)
             if (left <= 0) {
-                player.pause()
-                player.volume = 1f
+                engine.pause()
+                engine.volume = 1f
                 sleepAt = null
                 show("Sleep timer: paused")
                 break
@@ -1181,7 +1179,7 @@ fun PlayerScreen(
                         onTap = { playerView?.showController() },
                         onDoubleTap = { side ->
                             val forward = side == Side.RIGHT
-                            player.seekTo(PlaybackMath.seekBy(player.currentPosition, player.duration, forward))
+                            engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, forward))
                             show(if (forward) "+15 s" else "−15 s")
                         },
                         onSwipe = ::swipe,
@@ -1216,9 +1214,9 @@ fun PlayerScreen(
                 while (true) {
                     endsAt = PlaybackMath.endsAtMs(
                         System.currentTimeMillis(),
-                        player.currentPosition,
-                        player.duration,
-                        player.playbackParameters.speed,
+                        engine.positionMs,
+                        engine.durationMs,
+                        engine.speed,
                     )
                     delay(1000)
                 }
@@ -1643,37 +1641,30 @@ fun PlayerScreen(
             // Audio files beside the video are merged in as sources 1, 2 …: their names say what they are.
             val audioFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
             TrackDialog(
-                player = player,
-                trackType = C.TRACK_TYPE_AUDIO,
-                labelFor = { groupId ->
-                    groupId.substringBefore(':', "").toIntOrNull()
-                        ?.takeIf { audioFiles.isNotEmpty() && it >= 1 }
+                tracks = engine.tracks,
+                kind = com.hawkynt.mediadroid.engine.Track.Kind.AUDIO,
+                labelFor = { track ->
+                    track.source.takeIf { audioFiles.isNotEmpty() && it >= 1 }
                         ?.let { audioFiles.getOrNull(it - 1)?.first?.describe() }
                 },
                 onDismiss = { audioPicker = false },
                 onPick = { picked ->
                     manualTrackPick = true
-                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                        .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
-                        .apply { picked?.let { setOverrideForType(it) } }
-                        .build()
+                    engine.select(com.hawkynt.mediadroid.engine.Track.Kind.AUDIO, picked?.id)
                     audioPicker = false
                 },
             )
         }
         if (subtitlePicker) {
             TrackDialog(
-                player = player,
-                trackType = C.TRACK_TYPE_TEXT,
+                tracks = engine.tracks,
+                kind = com.hawkynt.mediadroid.engine.Track.Kind.TEXT,
                 onDismiss = { subtitlePicker = false },
                 onPick = { picked ->
                     manualTrackPick = true
                     subtitlesOn = picked != null || subtitlesOn
-                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                        .apply { picked?.let { setOverrideForType(it) } }
-                        .build()
+                    engine.subtitlesOn = true
+                    engine.select(com.hawkynt.mediadroid.engine.Track.Kind.TEXT, picked?.id)
                     subtitlePicker = false
                 },
             )
@@ -1713,38 +1704,32 @@ fun PlayerScreen(
 /** Lists the audio or subtitle tracks of the current item; "Automatic" clears the pick. */
 @Composable
 private fun TrackDialog(
-    player: Player,
-    trackType: @C.TrackType Int,
-    labelFor: (String) -> String? = { null },
+    tracks: List<com.hawkynt.mediadroid.engine.Track>,
+    kind: com.hawkynt.mediadroid.engine.Track.Kind,
+    labelFor: (com.hawkynt.mediadroid.engine.Track) -> String? = { null },
     onDismiss: () -> Unit,
-    onPick: (TrackSelectionOverride?) -> Unit,
+    onPick: (com.hawkynt.mediadroid.engine.Track?) -> Unit,
 ) {
-    val groups = player.currentTracks.groups.filter { it.type == trackType }
+    val choices = com.hawkynt.mediadroid.engine.Tracks.of(tracks, kind)
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close", fontSize = 18.sp) } },
         text = {
             Column {
                 TextButton(onClick = { onPick(null) }) { Text("Automatic", fontSize = 20.sp) }
-                groups.forEach { group ->
-                    for (i in 0 until group.length) {
-                        val format = group.getTrackFormat(i)
-                        val label = labelFor(group.mediaTrackGroup.id)
-                            ?: format.label
-                            ?: format.language
-                            ?: "Track ${i + 1}"
-                        TextButton(onClick = { onPick(TrackSelectionOverride(group.mediaTrackGroup, i)) }) {
-                            Text(
-                                buildString {
-                                    append(label)
-                                    format.language?.let { append("  ($it)") }
-                                },
-                                fontSize = 20.sp,
-                            )
-                        }
+                choices.forEachIndexed { i, track ->
+                    val label = labelFor(track) ?: track.label ?: track.language ?: "Track ${i + 1}"
+                    TextButton(onClick = { onPick(track) }) {
+                        Text(
+                            buildString {
+                                append(label)
+                                track.language?.let { append("  ($it)") }
+                            },
+                            fontSize = 20.sp,
+                        )
                     }
                 }
-                if (groups.isEmpty()) Text("This file has only one such track.", fontSize = 18.sp)
+                if (choices.isEmpty()) Text("This file has only one such track.", fontSize = 18.sp)
             }
         },
     )
