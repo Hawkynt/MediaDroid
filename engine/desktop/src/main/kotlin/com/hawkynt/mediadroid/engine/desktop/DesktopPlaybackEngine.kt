@@ -216,7 +216,10 @@ class DesktopPlaybackEngine(
         }.apply { isDaemon = true }.start()
     }
 
-    /** The picture due now by the clock (the latest one not later than it), or null before the first. */
+    /**
+     * The picture due now by the clock (the latest one not later than it), or null before the first. Paused after a
+     * seek, the first picture from there shows at once though the clock stands just short of it — a frame step's.
+     */
     fun picture(): MediaReader.Picture? {
         val now = positionMs
         while (true) {
@@ -224,6 +227,7 @@ class DesktopPlaybackEngine(
             if (next.ptsMs > now) break
             shown = pictures.pollFirst()
         }
+        if (shown == null && !playing && pendingSeekMs == null) shown = pictures.pollFirst()
         return shown
     }
 
@@ -268,6 +272,8 @@ class DesktopPlaybackEngine(
     val pixelAspect: Float get() = reader?.pixelAspect ?: 1f
 
     override val isPlaying: Boolean get() = playing
+
+    override val frameRate: Float get() = reader?.frameRate ?: 0f
 
     /** How fast it plays, the sound at its own pitch (Tempo); taken in by the reader at its next turn. */
     override var speed: Float = 1f

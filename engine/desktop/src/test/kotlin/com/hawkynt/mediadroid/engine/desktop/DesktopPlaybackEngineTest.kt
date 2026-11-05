@@ -71,6 +71,20 @@ class DesktopPlaybackEngineTest {
     }
 
     @Test
+    fun `a seek while paused shows the picture there at once, as a frame step needs`() {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(clip), autoPlay = false)
+            waitFor { engine.durationMs > 0 }
+            assertEquals(25f, engine.frameRate, 0.001f)
+            // Between two pictures: the one after it is the one to see, though the clock has not reached it.
+            engine.seekTo(1001)
+            waitFor { engine.picture()?.ptsMs == 1040L }
+            assertEquals(1001L, engine.positionMs)
+        }
+    }
+
+    @Test
     fun `nothing is shown before anything is open`() {
         DesktopPlaybackEngine(PlaybackTuning.Mutable()) { ManualSink() }.use { engine ->
             assertNull(engine.picture())

@@ -266,6 +266,8 @@ class AndroidPlaybackEngine(
 
     override val isPlaying: Boolean get() = exo.isPlaying
 
+    override val frameRate: Float get() = exo.videoFormat?.frameRate?.takeIf { it > 0f } ?: 0f
+
     override var speed: Float
         get() = exo.playbackParameters.speed
         set(value) = exo.setPlaybackSpeed(value)
