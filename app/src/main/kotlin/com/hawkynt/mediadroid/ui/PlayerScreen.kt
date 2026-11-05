@@ -431,6 +431,12 @@ fun PlayerScreen(
         holdTarget?.let { engine.seekTo(it) }
         holdTarget = null
     }
+    // Seek-bar thumbnails: the finger on the bar, and the current video's pictures, opened once per video.
+    var scrub by remember { mutableStateOf<Scrub?>(null) }
+    val seekPreviews = remember(index) {
+        if (demo) null else com.hawkynt.mediadroid.data.SeekPreviews.of(context).open(queue[index].videoPath)
+    }
+    DisposableEffect(seekPreviews) { onDispose { seekPreviews?.close() } }
     val externalDisplay = rememberExternalDisplay()
     var onSecondScreen by remember { mutableStateOf(false) }
     var presentation by remember { mutableStateOf<VideoPresentation?>(null) }
@@ -1143,6 +1149,7 @@ fun PlayerScreen(
                     if (demo) setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
                     findViewById<View>(androidx.media3.ui.R.id.exo_ffwd)?.onHold({ startHold(true) }, ::endHold)
                     findViewById<View>(androidx.media3.ui.R.id.exo_rew)?.onHold({ startHold(false) }, ::endHold)
+                    onScrub { scrub = it }
                     playerView = this
                 }
             },
@@ -1206,6 +1213,9 @@ fun PlayerScreen(
                     .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
                     .padding(horizontal = 20.dp, vertical = 10.dp),
             )
+        }
+        scrub?.takeIf { controlsVisible && !inPip }?.let {
+            SeekPreviewCard(it, engine.durationMs, seekPreviews, clock(it.positionMs))
         }
         // When the film will be over on the clock, on the free right end of Media3's time row.
         if (controlsVisible && !inPip) {
