@@ -84,7 +84,9 @@ class DesktopStore(private val folder: File) {
         val aside = File(folder, "$FILE.new")
         aside.writeText(DesktopSettings.encode(what))
         runCatching {
-            Files.move(aside.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            Files.move(
+                aside.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE,
+            )
         }.getOrElse {
             Files.move(aside.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
@@ -185,7 +187,8 @@ internal data class PictureSettings(
             clarity = clarity,
             noise = noise,
             deband = deband,
-            deinterlace = runCatching { PictureAdjustment.Deinterlace.valueOf(deinterlace) }.getOrDefault(p.deinterlace),
+            deinterlace = runCatching { PictureAdjustment.Deinterlace.valueOf(deinterlace) }
+                .getOrDefault(p.deinterlace),
             upscaler = runCatching { PictureAdjustment.Upscaler.valueOf(upscaler) }.getOrDefault(p.upscaler),
         )
     }
