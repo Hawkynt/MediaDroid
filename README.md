@@ -363,7 +363,7 @@ would for its menus.
 | `:desktop` | planned ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): the desktop shell — window, menus, keyboard, file chooser | Windows, Linux |
 
 The cores import no Android, so parsing, search, binge and the picture's rules are unit-tested in seconds without a
-device; shaders live in `app/src/main/glsl`.
+device; shaders live in `stage/src/main/glsl`.
 
 ## 🔌 Dependencies
 

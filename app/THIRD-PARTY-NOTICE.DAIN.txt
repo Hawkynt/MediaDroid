@@ -5,7 +5,7 @@ The model is not in the app: switched on in Settings, it is fetched from hugging
 (dain/), where dain-ncnn-vulkan's models/best files lie unchanged, each file checked against its SHA-256 digest (see
 core/player/.../NeuralModels.kt). The layers the model calls — dain.Correlation, dain.OpticalFlowWarp,
 dain.DepthFlowProjection, dain.FilterInterpolation (app/src/main/cpp/dain_layers.cpp and
-app/src/main/glsl/ncnn/dain-*.comp) — are converted from dain-ncnn-vulkan's, and app/src/main/cpp/networks.cpp runs
+stage/src/main/glsl/ncnn/dain-*.comp) — are converted from dain-ncnn-vulkan's, and app/src/main/cpp/networks.cpp runs
 the four networks the way its DAIN::process_notile does.
 
 DAIN:

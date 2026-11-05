@@ -1,7 +1,7 @@
 NVIDIA Image Scaling SDK v1.0.3 (https://github.com/NVIDIAGameWorks/NVIDIAImageScaling)
 
 core/player/src/main/kotlin/com/hawkynt/mediadroid/player/Nis.kt converts NVScaler from NIS_Scaler.h and its
-settings and coefficient tables from NIS_Config.h; app/src/main/glsl/video/nis.frag is the GL pass written from
+settings and coefficient tables from NIS_Config.h; stage/src/main/glsl/video/nis.frag is the GL pass written from
 it.
 
 The MIT License(MIT)

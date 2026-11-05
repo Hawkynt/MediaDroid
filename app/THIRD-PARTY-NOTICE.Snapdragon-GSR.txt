@@ -1,6 +1,6 @@
 Snapdragon Game Super Resolution 1 (https://github.com/quic/snapdragon-gsr)
 
-app/src/main/glsl/video/sgsr.frag converts the v1 mobile shader (sgsr1_shader_mobile.frag, RGBA mode) to GLSL ES
+stage/src/main/glsl/video/sgsr.frag converts the v1 mobile shader (sgsr1_shader_mobile.frag, RGBA mode) to GLSL ES
 1.00: each textureGather read as its four texels, the constants and the weighting kept as they are.
 
 License:

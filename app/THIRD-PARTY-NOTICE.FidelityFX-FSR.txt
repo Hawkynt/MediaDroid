@@ -1,8 +1,8 @@
 AMD FidelityFX Super Resolution 1.0 (FSR 1)
 
-app/src/main/glsl/video/fsr-easu.frag and fsr-rcas.frag port the EASU and RCAS passes of
+stage/src/main/glsl/video/fsr-easu.frag and fsr-rcas.frag port the EASU and RCAS passes of
 ffx-fsr/ffx_fsr1.h from https://github.com/GPUOpen-Effects/FidelityFX-FSR to GLSL ES 2.0 shaders;
-app/src/main/glsl/video/ffx-approx.glsl carries ffx-fsr/ffx_a.h's approximate reciprocals (APrxLoRcpF1,
+stage/src/main/glsl/video/ffx-approx.glsl carries ffx-fsr/ffx_a.h's approximate reciprocals (APrxLoRcpF1,
 APrxMedRcpF1, APrxLoRsqF1) and their magic numbers.
 
 Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.

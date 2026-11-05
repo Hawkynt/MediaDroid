@@ -13,7 +13,7 @@ the CPU and, where there is one, the Vulkan GPU; it prints how far the in-betwee
    `tools/xvfi`).
 4. `cmake -S tools/neural-check -B build/neural-check -G Ninja -DNCNN_ROOT=<ncnn-20261020-ubuntu-2404>` and
    `cmake --build build/neural-check`.
-5. `build/neural-check/neural_check app/src/main/glsl/ncnn app/src/main/assets/models/rife-4.25-lite <dain folder>
+5. `build/neural-check/neural_check stage/src/main/glsl/ncnn app/src/main/assets/models/rife-4.25-lite <dain folder>
    <xvfi folder> 256` — further sizes after the first; `NEURAL_CHECK_UNIT=CPU` or `GPU` runs only that unit,
    `NEURAL_CHECK_NETWORK=RIFE`, `DAIN` or `XVFI` only that network. After each check, the next pair of a stream with
    its earlier frame's work kept must agree to the byte with the same pair worked out afresh.
