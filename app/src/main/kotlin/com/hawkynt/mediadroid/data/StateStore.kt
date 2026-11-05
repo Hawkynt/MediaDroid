@@ -49,6 +49,8 @@ data class PictureOverride(
     val stereo: String = "OFF",
     /** How much of the upscaler shows, 0..1. */
     val upscalerStrength: Float = 1f,
+    /** Debanding, 0 (off) .. 1. */
+    val deband: Float = 0f,
 )
 
 /**
@@ -78,6 +80,7 @@ data class Settings(
     var interpolation: String = "OFF",        // PictureAdjustment.Interpolation name
     var fieldRate: Boolean = false,           // YADIF/BWDIF show every field
     var upscalerStrength: Float = 1f,         // 0..1, how much of the upscaler shows over plain scaling
+    var deband: Float = 0f,                   // 0 (off) .. 1, gradients' 8-bit steps smoothed
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -267,6 +270,7 @@ class StateStore(context: Context) {
             noise ?: PictureAdjustment.noiseOfLevel(denoise), deinterlaceOf(deinterlace),
             upscalerOf(upscaler), interpolationOf(interpolation), fieldRate,
             upscalerStrength = upscalerStrength,
+            deband = deband,
         )
     }
 
@@ -296,6 +300,7 @@ class StateStore(context: Context) {
                 it.fieldRate,
                 runCatching { PictureAdjustment.Stereo.valueOf(it.stereo) }.getOrDefault(PictureAdjustment.Stereo.OFF),
                 it.upscalerStrength,
+                it.deband,
             )
         }
             ?: defaultPicture()
@@ -320,6 +325,7 @@ class StateStore(context: Context) {
                 picture.fieldRate,
                 picture.stereo.name,
                 picture.upscalerStrength,
+                picture.deband,
             )
         }
         save()

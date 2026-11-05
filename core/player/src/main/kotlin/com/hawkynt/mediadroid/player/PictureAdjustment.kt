@@ -33,6 +33,11 @@ data class PictureAdjustment(
     val stereo: Stereo = Stereo.OFF,
     /** How much of the [upscaler]'s picture shows, 0 to 1; the rest is plain scaling, see [plainShare]. */
     val upscalerStrength: Float = 1f,
+    /**
+     * Debanding, 0 (off) to 1: the steps of an 8-bit gradient smoothed away (see [Deband]), libplacebo's defaults in
+     * the middle, stronger and with more iterations towards 1.
+     */
+    val deband: Float = 0f,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
@@ -222,6 +227,9 @@ data class PictureAdjustment(
         return Denoise(if (strength <= 1f / 3f) 1f else 2f, 0.04f + 0.12f * strength)
     }
 
+    /** The debanding [deband] asks for, or null when it is off. */
+    fun debandParams(): Deband.Params? = Deband.params(deband)
+
     /** The film grain [noise] asks for, as an amplitude on the 0..1 scale. */
     val grain: Float get() = noise.coerceIn(0f, 1f) * MAX_GRAIN
 
@@ -234,7 +242,7 @@ data class PictureAdjustment(
      * picture is drawn into a SurfaceView, which no view effect can colour.
      */
     val hasFilters: Boolean
-        get() = sharpness > 0f || clarity > 0f || noise != 0f || deinterlace != Deinterlace.OFF ||
+        get() = sharpness > 0f || clarity > 0f || noise != 0f || deband > 0f || deinterlace != Deinterlace.OFF ||
             upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF || stereo != Stereo.OFF ||
             !isColorNeutral
 

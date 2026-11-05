@@ -18,8 +18,8 @@ import kotlin.math.pow
 /**
  * The picture stage on the desktop: the Android stage's shaders (:stage) on OpenGL 4.3 — which compiles GLSL ES 1.00
  * and 3.00 as they are — in a hidden window's context on a thread of its own. A decoded picture goes in, the picture
- * as the household set it comes out at the size it is shown: deinterlaced (Auto, Blend, Bob, YADIF, BWDIF), denoised,
- * sharpened, enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the neural ones plain for now),
+ * as the household set it comes out at the size it is shown: deinterlaced (Auto, Blend, Bob, YADIF, BWDIF), debanded,
+ * denoised, sharpened, enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the neural ones plain for now),
  * colour-corrected. The passes and their
  * uniforms are the Android stage's (VideoFilterStage), the shaders those tools/shader-check holds to their originals.
  */
@@ -33,6 +33,9 @@ class GlStage : AutoCloseable {
     private var nisTable = 0
     private var ewaTable = 0
     private var xbrzTable = 0
+
+    // Debanding's frame index, which seeds its random numbers: libplacebo's 8-bit counter.
+    private var debandFrame = 0
     private var history = ArrayDeque<Target>()
     private var lastPicture: MediaReader.Picture? = null
     private var out: ByteBuffer? = null
@@ -120,7 +123,20 @@ class GlStage : AutoCloseable {
                 glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(false, true).toFloat())
             }
         }
-        // 2. Denoise and sharpen at the picture's own size.
+        // 2. Deband, denoise and sharpen at the picture's own size.
+        a.debandParams()?.let { d ->
+            debandFrame = (debandFrame + 1) and 0xFF
+            source = pass("deband-es3.frag", target("debanded", w, h), source.texture) { p ->
+                glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
+                // The picture's top row is where v is 1 (see upload); libplacebo counts rows from the top.
+                glUniform2f(glGetUniformLocation(p, "uRows"), h.toFloat(), -1f)
+                glUniform1f(glGetUniformLocation(p, "uFrame"), debandFrame.toFloat())
+                glUniform1i(glGetUniformLocation(p, "uIterations"), d.iterations)
+                glUniform1f(glGetUniformLocation(p, "uThreshold"), d.threshold / 1000f)
+                glUniform1f(glGetUniformLocation(p, "uRadius"), d.radius)
+                glUniform1f(glGetUniformLocation(p, "uDebandGrain"), d.grain / 1000f)
+            }
+        }
         a.denoiseKernel()?.let { k ->
             source = pass("denoise.frag", target("denoised", w, h), source.texture) { p ->
                 glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
@@ -448,6 +464,7 @@ class GlStage : AutoCloseable {
         val SHADERS = mapOf(
             "temporal.frag" to Shaders.VIDEO_TEMPORAL,
             "deinterlace.frag" to Shaders.VIDEO_DEINTERLACE,
+            "deband-es3.frag" to Shaders.VIDEO_DEBAND_ES3,
             "denoise.frag" to Shaders.VIDEO_DENOISE,
             "sharpen.frag" to Shaders.VIDEO_SHARPEN,
             "adjust.frag" to Shaders.VIDEO_ADJUST,

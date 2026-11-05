@@ -27,6 +27,11 @@
 //                                                           glsl/video/deinterlace.frag (1 Auto, 2 Blend, 3 Bob)
 //   shader_check anime4k <in.ppm> <out.ppm>                 glsl/anime4k to twice the size
 //   shader_check acnet <in.ppm> <out.ppm>                   glsl/acnet to twice the size
+//   shader_check deband <in.ppm> <out.ppm> <iterations> <threshold> <radius> <grain> <frame>
+//                                                           glsl/video/deband-es3.frag at the picture's own size;
+//                                                           SHADER_CHECK_DEBAND=es1 its GLSL ES 1.00 variant,
+//                                                           SHADER_CHECK_DEBAND=top the picture's top row at v = 0
+//                                                           (the stages hold it at v = 1)
 //   shader_check compare <a.ppm> <b.ppm> <max> <mean> [border]
 //                                                           fails when they differ by more (in 8-bit steps), the
 //                                                           border's pixels on every side left out
@@ -580,6 +585,33 @@ Picture acnet(const Picture& in) {
     return toTwice(appProgram("acnet/pixel-shuffle.frag"), source, pairs[1][0]);
 }
 
+// Debanding as the stages run it (VideoFilterStage.denoised, GlStage): the GLSL ES 3.00 pass, or the ES 1.00 one; the
+// frame's top row where v is 1, as the stages hold it, or (SHADER_CHECK_DEBAND=top) at v = 0, which uRows turns round.
+Picture deband(const Picture& in, int iterations, float threshold, float radius, float grain, int frame) {
+    const char* variant = std::getenv("SHADER_CHECK_DEBAND");
+    const std::string mode = variant ? variant : "";
+    GLuint prog = mode == "es1" ? appProgram("video/deband.frag")
+                                : program(appShader("video/vertex-es3.vert"), appShader("video/deband-es3.frag"));
+    const bool top = mode == "top";
+    Target source = target(in.width, in.height);
+    glBindTexture(GL_TEXTURE_2D, source.texture);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, in.width, in.height, GL_RGBA, GL_UNSIGNED_BYTE, rgba(in, top).data());
+    Target out = target(in.width, in.height);
+    glUseProgram(prog);
+    glUniform2f(glGetUniformLocation(prog, "uSize"), float(in.width), float(in.height));
+    glUniform2f(glGetUniformLocation(prog, "uRows"), top ? 0.0f : float(in.height), top ? 1.0f : -1.0f);
+    glUniform1f(glGetUniformLocation(prog, "uFrame"), float(frame & 0xFF));
+    glUniform1i(glGetUniformLocation(prog, "uIterations"), iterations);
+    glUniform1f(glGetUniformLocation(prog, "uThreshold"), threshold / 1000.0f);
+    glUniform1f(glGetUniformLocation(prog, "uRadius"), radius);
+    glUniform1f(glGetUniformLocation(prog, "uDebandGrain"), float(grain / 1000.0));
+    draw(prog, out, source.texture);
+    glBindFramebuffer(GL_FRAMEBUFFER, out.framebuffer);
+    std::vector<uint8_t> data(size_t(out.width) * out.height * 4);
+    glReadPixels(0, 0, out.width, out.height, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
+    return fromRgba(data, out.width, out.height, top);
+}
+
 int compare(const Picture& a, const Picture& b, int maxAllowed, double meanAllowed, int border) {
     if (a.width != b.width || a.height != b.height) fail("the pictures differ in size");
     int worst = 0;
@@ -638,6 +670,9 @@ int main(int argc, char** argv) {
         writePpm(a[2], deinterlace(readPpm(a[1]), std::stoi(a[3]), a[4] == "1"));
     else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));
     else if (a.size() == 3 && a[0] == "acnet") writePpm(a[2], acnet(readPpm(a[1])));
+    else if (a.size() == 8 && a[0] == "deband")
+        writePpm(a[2], deband(readPpm(a[1]), std::stoi(a[3]), std::stof(a[4]), std::stof(a[5]), std::stof(a[6]),
+                              std::stoi(a[7])));
     else fail("usage: see the head of tools/shader-check/check.cpp");
     if (glGetError() != GL_NO_ERROR) fail("GL error");
     return 0;

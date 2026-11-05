@@ -19,11 +19,14 @@ oracle that bilinear scaling would pass as well proves nothing.
 | Lanczos, EWA (`lanczos.frag`, `ewa.frag`) | libplacebo's `lanczos` and `ewa_lanczossharp` | their kernels, antiringing off on both sides (ours pulls into the four nearest pixels' range, libplacebo's weighs a soft minimum and maximum — a different rule, so not compared) |
 | xBRZ (`glsl/xbrz`) | the original's own output: core/imaging's reference pictures, which `Xbrz` is held to as well | the three passes as the stage runs them, every factor 2 to 6; the patterns read from the app's `Xbrz.kt` (`xbrz-table.py`) |
 | YADIF, BWDIF (`temporal.frag`) | FFmpeg's `yadif` and `bwdif` on planar RGB | three interlaced frames (`fields.py`: half still, half moving), both field orders and both fields, PAL and NTSC sizes; once more with every read addressed 1/256 texel off, which nearest sampling has to absorb |
+| Debanding (`deband-es3.frag`, `deband.frag`) | libplacebo's own `pl_shader_deband` (7.360) | run by libplacebo itself on the same Mesa's desktop OpenGL (`placebo.cpp`), on a picture of 8-bit steps (core/player's fixture) and the test picture, one to four iterations, with and without grain, frame indices 0 to 255; the frame held both ways up. The GLSL ES 1.00 variant draws other random numbers (no unsigned integers for pcg3d), so it is held only to moving no value further than the threshold lets it |
 | YUV to RGB (`yuv.frag`) | FFmpeg's own conversion (swscale, `accurate_rnd`, bilinear chroma) | a yuv420p frame uploaded as `takeYuv` uploads it, BT.601 and BT.709 limited range, the matrix as `YuvMatrix.toRgb` computes it; full range (MJPEG's) squeezed first by the FFmpeg decoder's own `mediadroid_range.h`, which unsqueezed has to fail |
 | ACNet (`glsl/acnet`) | `acnet_f8b4.glsl`, TianZerL/ACNetGLSL `c6e5940` (MIT) | in libplacebo on 16-bit YUV (BT.709, full range), grey and in colour, the chroma scaled bilinearly as the stage's doubling does — with another chroma scaler it has to differ, so that setting is known to take |
 
-1. Mesa's EGL, GLES and OpenGL (`pkg-config egl glesv2 opengl`); for Anime4K and ACNet, FFmpeg built with libplacebo and
-   a Vulkan driver (FFmpeg's filter makes its own Vulkan device).
+1. Mesa's EGL, GLES and OpenGL (`pkg-config egl glesv2 opengl`) and libplacebo's development files (`pkg-config
+   libplacebo`); for Anime4K and ACNet, FFmpeg built with libplacebo and a Vulkan driver (FFmpeg's filter makes its own
+   Vulkan device). Without a GPU Mesa can draw on the processor: `LIBGL_ALWAYS_SOFTWARE=1`, and where another vendor's
+   EGL comes first, `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json`.
 2. `tools/shader-check/oracle.sh <work folder>` — fetches, builds, compares; fails when a comparison does not hold.
 
 On an Intel HD Graphics 520 laptop (Mesa 26.2, libplacebo 7.360), per 8-bit value:
@@ -42,6 +45,21 @@ On an Intel HD Graphics 520 laptop (Mesa 26.2, libplacebo 7.360), per 8-bit valu
 | YADIF and BWDIF, every case, and read 1/256 texel off | 0 | 0 |
 | YUV to RGB, grey / in colour | 0 / 1 | 0 / 0.005 |
 | YUV to RGB from full range, grey / in colour (unsqueezed: 20 / 20) | 1 / 2 | 0.15 / 0.33 |
+
+Debanding, on Mesa 26.2's llvmpipe (libplacebo 7.360 on the same), per 8-bit value:
+
+| Check | Max | Mean |
+|-------|-----|------|
+| Deband, ES 3.00, with grain (1 to 4 iterations) | 0 | 0 |
+| Deband, ES 3.00, without grain | 1 | ≤ 0.0075 |
+| Deband, ES 1.00 (other random numbers), without grain | 2 | ≤ 0.12 |
+
+Where the ES 3.00 pass is not byte for byte, it is without grain, in one channel, where an average of four lands on a
+half step and the shader compiler's float arithmetic rounds it the other way; the points it samples are libplacebo's
+(checked against their exact positions: none lies near a texel's edge). Core/player's `Deband` agrees with libplacebo
+byte for byte (`DebandTest`). What the check found and the pass now does: each texel requantised to its byte times the
+float nearest 1/255, as libplacebo's output on Mesa rounds — read as the chip hands it over, about one value in eight
+rounded the other way (mean 0.13); a true division by 255 still left 0.03.
 
 Outermost pixels are left out where the originals read past the picture: AMD's RCAS fetches beyond the edge (one
 pixel), NVIDIA's tile loader wraps an unsigned index at the top and left (eight pixels, as `NisTest` does).
