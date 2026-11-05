@@ -26,7 +26,7 @@ import com.hawkynt.mediadroid.player.PictureCheck
 import com.hawkynt.mediadroid.player.PictureControl
 
 /**
- * The four picture sliders, neutral in the middle, then the filters: sharpness and clarity from off
+ * The four picture sliders, neutral in the middle, then the filters: sharpness, clarity and debanding from off
  * upwards, and noise from removed to added grain. [onChange] fires while dragging so the picture follows live; [onDone]
  * when a slider is let go or a step is picked, the moment to save.
  */
@@ -72,6 +72,8 @@ fun PictureSliders(
         listOf(
             Triple("Sharpness", picture.sharpness) { v: Float -> picture.copy(sharpness = v) },
             Triple("Clarity", picture.clarity) { v: Float -> picture.copy(clarity = v) },
+            // Smooths the steps an 8-bit gradient shows (a sky, a fade to black), see Deband.
+            Triple("Debanding", picture.deband) { v: Float -> picture.copy(deband = v) },
         ).forEach { (label, value, set) ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(label, fontSize = 16.sp, modifier = Modifier.weight(1f))

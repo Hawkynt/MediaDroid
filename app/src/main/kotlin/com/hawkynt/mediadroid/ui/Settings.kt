@@ -349,6 +349,7 @@ fun SettingsScreen(
                     it.interpolation = defaultPicture.interpolation.name
                     it.fieldRate = defaultPicture.fieldRate
                     it.upscalerStrength = defaultPicture.upscalerStrength
+                    it.deband = defaultPicture.deband
                 }
             },
             check = pictureCheck(androidx.compose.ui.platform.LocalContext.current, store),

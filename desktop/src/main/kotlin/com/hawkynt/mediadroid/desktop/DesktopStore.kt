@@ -33,6 +33,7 @@ class DesktopStore(private val folder: File) {
                 sharpness = f("sharpness", p.sharpness),
                 clarity = f("clarity", p.clarity),
                 noise = f("noise", p.noise),
+                deband = f("deband", p.deband),
                 deinterlace = runCatching {
                     com.hawkynt.mediadroid.player.PictureAdjustment.Deinterlace.valueOf(
                         properties.getProperty("picture.deinterlace"),
@@ -50,6 +51,7 @@ class DesktopStore(private val folder: File) {
                 "brightness" to value.brightness, "gamma" to value.gamma, "contrast" to value.contrast,
                 "saturation" to value.saturation, "sharpness" to value.sharpness, "clarity" to value.clarity,
                 "noise" to value.noise, "deinterlace" to value.deinterlace.name, "upscaler" to value.upscaler.name,
+                "deband" to value.deband,
             ).forEach { (k, v) -> properties.setProperty("picture.$k", "$v") }
             save()
         }

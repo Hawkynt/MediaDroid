@@ -164,6 +164,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var adjustProgram = 0
     private var deinterlaceProgram = 0
     private var denoiseProgram = 0
+    private var debandProgram = 0
+
+    // Debanding's frame index, which seeds its random numbers with the pixel's position: libplacebo's 8-bit counter.
+    private var debandFrame = 0
     private var sharpenProgram = 0
     private var lanczosProgram = 0
     private var gsrProgram = 0
@@ -178,7 +182,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var temporalProgram = 0
     private var weaveProgram = 0
     private var packProgram = 0
-    private val frames = Array(ACNET_D + 1) { Frame() }
+    private val frames = Array(DEBANDED + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -512,6 +516,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             if (enlargerTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(enlargerTexture), 0)
             GLES20.glDeleteProgram(deinterlaceProgram)
             GLES20.glDeleteProgram(denoiseProgram)
+            GLES20.glDeleteProgram(debandProgram)
             GLES20.glDeleteProgram(sharpenProgram)
             GLES20.glDeleteProgram(lanczosProgram)
             GLES20.glDeleteProgram(gsrProgram)
@@ -664,6 +669,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             easuProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_EASU)
             rcasProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_RCAS)
         }
+        // Debanding draws libplacebo's own random numbers where GLSL ES 3.00 has unsigned integers for them; the
+        // GLSL ES 1.00 pass draws others (see glsl/video/deband.frag).
+        val debandEs3 = es3 && runCatching {
+            debandProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_DEBAND_ES3))
+        }.isSuccess
+        if (!debandEs3) debandProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEBAND)
         blendProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_BLEND)
         motionProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MOTION)
         packProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PACK_LUMA)
@@ -1170,9 +1181,28 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }
     }
 
-    /** Step 3: the denoise filter [picture] asks for, if any, over [from]. */
+    /**
+     * Step 3: debanding, then the denoise filter, as far as [picture] asks for them, over [from]. Debanding comes first,
+     * as libplacebo runs it first on the decoded picture: the steps it looks for are the source's own.
+     */
     private fun denoised(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
         var source = from
+        picture.debandParams()?.let { deband ->
+            val debanded = frames[DEBANDED].ensure(width, height)
+            debanded.bind()
+            debandFrame = (debandFrame + 1) and 0xFF
+            run(debandProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+                // The frames hold the picture's top row where v is 1; libplacebo counts rows from the top.
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uRows"), height.toFloat(), -1f)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFrame"), debandFrame.toFloat())
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uIterations"), deband.iterations)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uThreshold"), deband.threshold / 1000f)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), deband.radius)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uDebandGrain"), deband.grain / 1000f)
+            }
+            source = debanded
+        }
         val kernel = picture.denoiseKernel()
         if (kernel != null) {
             val denoised = frames[1].ensure(width, height)
@@ -2211,6 +2241,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** ACNet's second pair of half-float textures; its first pair is Anime4K's two. */
         private const val ACNET_C = RIFE_INPUT + 1
         private const val ACNET_D = ACNET_C + 1
+
+        /** The debanded picture, before the denoise filter reads it. */
+        private const val DEBANDED = ACNET_D + 1
 
         /** Width of xBRZ's pattern table, one texel a cell of the largest block — as glsl/xbrz/scale.frag reads it. */
         private const val XBRZ_TABLE_WIDTH = 36
