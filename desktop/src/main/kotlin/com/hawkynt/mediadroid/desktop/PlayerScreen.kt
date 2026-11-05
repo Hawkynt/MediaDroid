@@ -191,6 +191,10 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(Unit) { focus.requestFocus() }
+    // The screen stays on while a video plays — from the window's thread, which Windows ties the state to.
+    val keeper = remember { ScreenKeeper.forThisSystem() }
+    LaunchedEffect(isPlaying) { keeper.keepOn(isPlaying) }
+    DisposableEffect(keeper) { onDispose { keeper.close() } }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {

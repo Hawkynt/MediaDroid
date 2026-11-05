@@ -333,7 +333,7 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
 - Settings, watched state and secrets stay on the machine: in the user's application-data folder, the passwords
   encrypted by the system (DPAPI on Windows, the Secret Service on Linux).
 - Media keys and the system's now-playing panel (SMTC on Windows, MPRIS on Linux); the screensaver held off while
-  something plays.
+  something plays (Windows: the thread's execution state; Linux: an idle lock from systemd-logind).
 - Not on the desktop: the second screen and casting, the phone's lock and gestures for volume and brightness, the NPU;
   switching the display's refresh rate to the film's comes later.
 

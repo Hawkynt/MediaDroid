@@ -21,6 +21,8 @@ dependencies {
     implementation(project(":core:imaging"))
     implementation(project(":core:player"))
     implementation(project(":engine:desktop"))
+    // LWJGL's native calls, for the system functions the window needs (ScreenKeeper); its natives come with the engine.
+    implementation(libs.lwjgl)
     // The window's natives (Skia) for the system built for: -PdesktopTarget=linux|windows|all, the building machine's
     // own by default — as :engine:desktop picks FFmpeg's and LWJGL's.
     val target = providers.gradleProperty("desktopTarget").getOrElse(
