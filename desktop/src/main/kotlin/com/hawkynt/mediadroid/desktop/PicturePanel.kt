@@ -23,6 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureControl
 
@@ -37,15 +39,59 @@ val DesktopUpscalers = listOf(
     PictureAdjustment.Upscaler.GSR,
 )
 
-/** The player's picture panel: the Android gear's picture controls, from the same domain (PictureControl, enums). */
+/** How a track picker names [track]: its own label, else its language, else its place among its kind ([number]). */
+fun trackName(track: Track, number: Int): String =
+    track.label?.takeIf { it.isNotBlank() } ?: track.language?.let(Languages::label) ?: "Track $number"
+
+/**
+ * The player's panel: the sound and subtitle [tracks] to pick from ([onPick] with null: subtitles off), then the
+ * Android gear's picture controls, from the same domain (PictureControl, enums).
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun PicturePanel(picture: PictureAdjustment, onChange: (PictureAdjustment) -> Unit, modifier: Modifier = Modifier) {
+fun PicturePanel(
+    picture: PictureAdjustment,
+    onChange: (PictureAdjustment) -> Unit,
+    modifier: Modifier = Modifier,
+    tracks: List<Track> = emptyList(),
+    onPick: (Track.Kind, String?) -> Unit = { _, _ -> },
+) {
     Column(
         modifier.width(380.dp).fillMaxHeight().background(Color(0xF01A1A2E)).verticalScroll(rememberScrollState())
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        val sound = tracks.filter { it.kind == Track.Kind.AUDIO }
+        val subtitles = tracks.filter { it.kind == Track.Kind.TEXT }
+        if (sound.size > 1) {
+            Text("Sound", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                sound.forEachIndexed { i, track ->
+                    FilterChip(
+                        selected = track.selected,
+                        onClick = { onPick(Track.Kind.AUDIO, track.id) },
+                        label = { Text(trackName(track, i + 1)) },
+                    )
+                }
+            }
+        }
+        if (subtitles.isNotEmpty()) {
+            Text("Subtitles", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(
+                    selected = subtitles.none { it.selected },
+                    onClick = { onPick(Track.Kind.TEXT, null) },
+                    label = { Text("Off") },
+                )
+                subtitles.forEachIndexed { i, track ->
+                    FilterChip(
+                        selected = track.selected,
+                        onClick = { onPick(Track.Kind.TEXT, track.id) },
+                        label = { Text(trackName(track, i + 1)) },
+                    )
+                }
+            }
+        }
         Text("Picture", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
         PictureControl.entries.forEach { control ->
             val value = control.get(picture)

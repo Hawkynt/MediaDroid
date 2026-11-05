@@ -49,4 +49,26 @@ class MediaReaderTest {
         val anamorphic = File(requireNotNull(javaClass.getResource("/anamorphic.mp4")).toURI()).path
         MediaReader(anamorphic).use { assertEquals(16f / 15f, it.pixelAspect, 0.001f) }
     }
+
+    private fun cues(path: String): List<MediaReader.Cue> = MediaReader(path).use { r ->
+        r.selectText(r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt())
+        generateSequence { r.read() }.filterIsInstance<MediaReader.Cue>().toList()
+    }
+
+    private val expected = listOf(
+        MediaReader.Cue(200, 800, "First line"),
+        MediaReader.Cue(1000, 1600, "Second line\nwith two rows"),
+    )
+
+    @Test
+    fun `a subtitle file beside the video reads as timed lines of text`() {
+        assertEquals(expected, cues(File(requireNotNull(javaClass.getResource("/clip.de.srt")).toURI()).path))
+    }
+
+    @Test
+    fun `a file's own subtitle stream reads the same, with its language`() {
+        val mkv = File(requireNotNull(javaClass.getResource("/subtitled.mkv")).toURI()).path
+        assertEquals(expected, cues(mkv))
+        MediaReader(mkv).use { r -> assertEquals("deu", r.tracks.first { it.kind == Track.Kind.TEXT }.language) }
+    }
 }

@@ -53,6 +53,14 @@ class DesktopStore(private val folder: File) {
             save()
         }
 
+    /** The household's subtitle language (ISO 639-1), or empty for subtitles off: the last one picked. */
+    var subtitleLanguage: String
+        get() = properties.getProperty("subtitles.language").orEmpty()
+        set(value) {
+            properties.setProperty("subtitles.language", value)
+            save()
+        }
+
     fun resumeMs(video: String): Long = properties.getProperty("resume.$video")?.toLongOrNull() ?: 0
 
     fun setResume(video: String, positionMs: Long) {

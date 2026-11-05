@@ -325,7 +325,10 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
 - The picture stage is the Android one: the same GLSL ES shaders on OpenGL ES 3 (EGL on Linux, ANGLE on Windows),
   held to the same oracles (`tools/shader-check`).
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
-  (space to pause, arrows to seek, F to go full screen), a window that remembers its size.
+  (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture and track panel,
+  N for the next episode), a window that remembers its size.
+- Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
+  language last picked is where the next video starts.
 - Settings, watched state and secrets stay on the machine: in the user's application-data folder, the passwords
   encrypted by the system (DPAPI on Windows, the Secret Service on Linux).
 - Media keys and the system's now-playing panel (SMTC on Windows, MPRIS on Linux); the screensaver held off while

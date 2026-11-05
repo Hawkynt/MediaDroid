@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,7 +44,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -51,6 +54,9 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -58,14 +64,16 @@ import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackTuning
+import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.Tracks
 import com.hawkynt.mediadroid.engine.desktop.DesktopPlaybackEngine
+import com.hawkynt.mediadroid.library.Sidecars
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PlaybackMath
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.ui.layout.onSizeChanged
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.io.File
 
 /** The player: the picture letterboxed in the window, controls that fade, keys for everything. */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -98,6 +106,8 @@ fun PlayerScreen(
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var tracks by remember { mutableStateOf(emptyList<Track>()) }
+    var subtitle by remember { mutableStateOf<String?>(null) }
     var controlsUntil by remember { mutableLongStateOf(System.currentTimeMillis() + CONTROLS_MS) }
     val focus = remember { FocusRequester() }
 
@@ -127,10 +137,19 @@ fun PlayerScreen(
             stage.close()
         }
     }
+    // A subtitle picked becomes the household's language for the next videos; off stays off.
+    fun pick(kind: Track.Kind, id: String?) {
+        engine.select(kind, id)
+        if (kind == Track.Kind.TEXT) {
+            store.subtitleLanguage = engine.tracks.firstOrNull { it.id == id }?.language.orEmpty()
+        }
+    }
+
     LaunchedEffect(index) {
         error = null
+        tracks = emptyList()
         frame = null
-        runCatching { engine.open(MediaRequest(playing.video, startMs = store.resumeMs(playing.video))) }
+        runCatching { engine.open(requestFor(playing.video, store.resumeMs(playing.video))) }
             .onFailure { error = it.message ?: it.toString() }
     }
     // Every window frame: the picture due now — through the stage when the household set filters — the clock, the end.
@@ -156,6 +175,11 @@ fun PlayerScreen(
             }
             position = engine.positionMs
             duration = engine.durationMs
+            val wereEmpty = tracks.none { it.kind == Track.Kind.TEXT }
+            tracks = engine.tracks
+            // A video's subtitles start in the household's language, as on the phone.
+            if (wereEmpty) Tracks.preferredText(tracks, store.subtitleLanguage)?.let { pick(Track.Kind.TEXT, it.id) }
+            subtitle = engine.subtitle()
             val wasPlaying = isPlaying
             isPlaying = engine.isPlaying
             if (wasPlaying && !isPlaying && duration > 0 && position >= duration - 100) next()
@@ -173,6 +197,13 @@ fun PlayerScreen(
 
     fun togglePlay() = if (engine.isPlaying) engine.pause() else engine.play()
 
+    // S: the next subtitle track, after the last one off again.
+    fun nextSubtitles() {
+        val text = engine.tracks.filter { it.kind == Track.Kind.TEXT }
+        val at = text.indexOfFirst { it.selected }
+        pick(Track.Kind.TEXT, text.getOrNull(at + 1)?.id)
+    }
+
     Box(
         Modifier.fillMaxSize().background(Color.Black)
             .focusRequester(focus).focusable()
@@ -187,6 +218,7 @@ fun PlayerScreen(
                     Key.F -> onFullScreen()
                     Key.N -> next()
                     Key.P -> panel = !panel
+                    Key.S -> nextSubtitles()
                     Key.Escape -> if (fullScreen) onFullScreen() else onExit()
                     else -> return@onKeyEvent false
                 }
@@ -194,6 +226,13 @@ fun PlayerScreen(
             },
     ) {
         Canvas(Modifier.fillMaxSize().onSizeChanged { canvas = it }) { frame?.let { drawLetterboxed(it) } }
+        subtitle?.let { line ->
+            SubtitleLine(
+                line,
+                Modifier.align(Alignment.BottomCenter).padding(start = 48.dp, end = 48.dp,
+                    bottom = if (controlsShown) 120.dp else 40.dp),
+            )
+        }
         if (panel) {
             PicturePanel(
                 picture,
@@ -202,6 +241,8 @@ fun PlayerScreen(
                     store.picture = it
                 },
                 modifier = Modifier.align(Alignment.CenterEnd),
+                tracks = tracks,
+                onPick = ::pick,
             )
         }
         error?.let {
@@ -249,6 +290,27 @@ fun PlayerScreen(
                 }
             }
         }
+    }
+}
+
+/** What to open for [video]: from [startMs], with the subtitle files beside it (Sidecars). */
+private fun requestFor(video: String, startMs: Long): MediaRequest {
+    val file = File(video)
+    val siblings = file.parentFile?.list()?.toList().orEmpty()
+    val subtitles = Sidecars.of(file.name, siblings).filter { it.kind == Sidecars.Kind.SUBTITLES }.map {
+        val path = File(file.parentFile, it.name).path
+        MediaRequest.SubtitleFile(path, it.mimeType, it.language, it.describe(), it.forced)
+    }
+    return MediaRequest(video, subtitles = subtitles, startMs = startMs)
+}
+
+/** A subtitle line: white, with a dark outline that keeps it readable over any picture. */
+@Composable
+private fun SubtitleLine(text: String, modifier: Modifier) {
+    Box(modifier) {
+        val style = TextStyle(fontSize = 30.sp, textAlign = TextAlign.Center, lineHeight = 38.sp)
+        Text(text, style = style.copy(color = Color.Black, drawStyle = Stroke(width = 6f, join = StrokeJoin.Round)))
+        Text(text, style = style.copy(color = Color.White))
     }
 }
 

@@ -36,6 +36,10 @@ class DesktopPlaybackEngine(
     @Volatile private var wallStartNs = 0L
     @Volatile private var wallPausedMs = 0L
     @Volatile private var shown: MediaReader.Picture? = null
+    @Volatile private var pendingText: Int? = null
+    @Volatile private var sidecars: List<Pair<Track, List<MediaReader.Cue>>> = emptyList()
+    @Volatile private var selectedText: String? = null
+    private val cues = java.util.concurrent.CopyOnWriteArrayList<MediaReader.Cue>()
 
     override var openedPath: String? = null
         private set
@@ -46,6 +50,18 @@ class DesktopPlaybackEngine(
         reader = opened
         openedPath = request.path
         hasSound = opened.tracks.any { it.kind == Track.Kind.AUDIO }
+        // Subtitle files beside the video, read whole now: they are small.
+        sidecars = request.subtitles.mapIndexedNotNull { i, file ->
+            runCatching {
+                MediaReader(file.path).use { r ->
+                    r.selectText(r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt())
+                    val read = generateSequence { r.read() }.filterIsInstance<MediaReader.Cue>().toList()
+                    Track("sidecar:$i", Track.Kind.TEXT, file.language, file.label, source = i + 1) to read
+                }
+            }.getOrNull()
+        }
+        selectedText = null
+        cues.clear()
         sink = sinkFactory().also { if (hasSound) it.open(MediaReader.SAMPLE_RATE, 2) }
         sink?.volume = volume
         baseMs = 0
@@ -77,12 +93,23 @@ class DesktopPlaybackEngine(
                     pendingSeekMs = null
                     source.seek(target)
                     pictures.clear()
+                    if (selectedText?.startsWith("sidecar:") == false) cues.clear()
                     sink?.flush()
                     baseMs = target
                     wallStartNs = System.nanoTime()
                     wallPausedMs = 0
                     shown = null
                     ended = false
+                }
+                pendingText?.let { index ->
+                    pendingText = null
+                    source.selectText(index)
+                    // A stream of the file itself: read again from here so its lines arrive; a file beside it
+                    // brought all of its lines along when it was picked.
+                    if (index >= 0) {
+                        cues.clear()
+                        pendingSeekMs = positionMs
+                    }
                 }
                 pendingAudio?.let { index ->
                     pendingAudio = null
@@ -105,6 +132,7 @@ class DesktopPlaybackEngine(
                         if (pictures.offer(item, 10, TimeUnit.MILLISECONDS)) break
                     }
                     is MediaReader.Sound -> sink?.write(item.pcm)
+                    is MediaReader.Cue -> cues += item
                 }
             }
         } catch (_: InterruptedException) {
@@ -190,10 +218,35 @@ class DesktopPlaybackEngine(
         }
 
     override val tracks: List<Track>
-        get() = reader?.tracks.orEmpty()
+        get() = (reader?.tracks.orEmpty() + sidecars.map { it.first }).map {
+            if (it.kind == Track.Kind.TEXT) it.copy(selected = it.id == selectedText) else it
+        }
 
     override fun select(kind: Track.Kind, id: String?) {
-        if (kind == Track.Kind.AUDIO && id != null) pendingAudio = id.toInt()
+        when (kind) {
+            Track.Kind.AUDIO -> if (id != null) pendingAudio = id.toInt()
+            Track.Kind.TEXT -> {
+                selectedText = id
+                val sidecar = sidecars.firstOrNull { it.first.id == id }
+                if (sidecar != null) {
+                    pendingText = -1
+                    cues.clear()
+                    cues.addAll(sidecar.second)
+                } else {
+                    cues.clear()
+                    pendingText = id?.toInt() ?: -1
+                }
+                listeners.forEach { it.onTracksChanged(tracks) }
+            }
+            Track.Kind.VIDEO -> Unit
+        }
+    }
+
+    /** The subtitle line due by the clock, while subtitles are on and a subtitle track is picked; else null. */
+    fun subtitle(): String? {
+        if (!subtitlesOn || selectedText == null) return null
+        val now = positionMs
+        return cues.firstOrNull { now >= it.startMs && now < it.endMs }?.text
     }
 
     override var subtitlesOn: Boolean = true
