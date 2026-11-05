@@ -66,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
@@ -1080,6 +1081,66 @@ fun PlayerScreen(
         }
     }
 
+    // A snapshot of the picture on screen, saved into Pictures and offered to share: the stage's own picture, filters
+    // and all, read back from it; with the stage standing aside (no filter set, HDR on an HDR screen) the view's
+    // picture copied; where neither gives one, the frame at the position decoded afresh.
+    var snapshotTaken by remember {
+        mutableStateOf<Pair<androidx.compose.ui.graphics.ImageBitmap, Uri?>?>(null)
+    }
+    var snapshotStamp by remember { mutableIntStateOf(0) }
+    var snapshotFlash by remember { mutableStateOf(false) }
+    fun takeSnapshot() {
+        val playable = queue[index]
+        val positionMs = engine.positionMs
+        val name = com.hawkynt.mediadroid.player.Snapshot.fileName(
+            listOfNotNull(playable.title, playable.subtitle).joinToString(" · "),
+            positionMs,
+        )
+        val stage = filterStage[0]?.takeIf { routedTo[0] != null }
+        val view = routedTo[0] ?: ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)
+            ?.videoSurfaceView as? android.view.SurfaceView)
+        holdScope.launch {
+            snapshotFlash = true
+            val bitmap = stage?.let { stagePicture(it) } ?: viewPicture(view)
+                ?: com.hawkynt.mediadroid.data.ThumbnailStore.of(context).frameAt(playable.videoPath, positionMs)
+            if (bitmap == null) {
+                show("No picture to save")
+                return@launch
+            }
+            runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.hawkynt.mediadroid.data.SnapshotSaver.save(context, bitmap, name)
+                }
+            }.onSuccess { uri ->
+                snapshotTaken = bitmap.asImageBitmap() to uri
+                snapshotStamp++
+            }.onFailure { show("The picture could not be saved") }
+        }
+    }
+    // Before Android 10 the shared Pictures folder needs the storage permission; asked for on the first snapshot.
+    val askToSave = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) takeSnapshot() else show("Saving pictures needs access to storage") }
+    fun snapshot() {
+        if (com.hawkynt.mediadroid.data.SnapshotSaver.needsPermission(context)) {
+            askToSave.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            takeSnapshot()
+        }
+    }
+    LaunchedEffect(snapshotFlash) {
+        if (snapshotFlash) {
+            delay(SNAPSHOT_FLASH_MS)
+            snapshotFlash = false
+        }
+    }
+    LaunchedEffect(snapshotStamp) {
+        if (snapshotStamp > 0) {
+            delay(SNAPSHOT_SHOWN_MS)
+            snapshotTaken = null
+        }
+    }
+
     // While the phone's own screen is mirrored to a TV (Smart View and friends show up as a presentation
     // display we are not using), the TV crops a long phone screen to 16:9: overlays stay inside that part.
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
@@ -1322,6 +1383,18 @@ fun PlayerScreen(
                     }
                     IconButton(
                         onClick = {
+                            snapshot()
+                            keepControls()
+                        },
+                    ) {
+                        Icon(
+                            painterResource(R.drawable.ic_photo_camera),
+                            contentDescription = "Take a picture",
+                            tint = Color.White,
+                        )
+                    }
+                    IconButton(
+                        onClick = {
                             infoOpen = true
                             playerView?.hideController()
                         },
@@ -1338,6 +1411,18 @@ fun PlayerScreen(
                     }
                 }
             }
+        }
+        // A camera's flash as the picture is taken, then the picture small with a button to share it.
+        AnimatedVisibility(visible = snapshotFlash, enter = fadeIn(), exit = fadeOut()) {
+            Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.5f)))
+        }
+        snapshotTaken?.let { (picture, uri) ->
+            SnapshotCard(
+                picture,
+                uri,
+                onShare = { com.hawkynt.mediadroid.data.SnapshotSaver.share(context, it) },
+                modifier = Modifier.align(Alignment.TopEnd).then(safeArea).padding(top = 72.dp, end = 16.dp),
+            )
         }
         if (panelOpen) {
             // Tapping beside the panel closes it, like the players everyone knows.
@@ -1899,6 +1984,12 @@ private fun View.onHold(start: () -> Unit, end: () -> Unit) {
 
 /** How long the lock symbol must be held to unlock the player. */
 private const val UNLOCK_HOLD_MS = 2_000L
+
+/** How long the flash of a snapshot lasts. */
+private const val SNAPSHOT_FLASH_MS = 150L
+
+/** How long the snapshot just taken stays on screen, with its share button. */
+private const val SNAPSHOT_SHOWN_MS = 6_000L
 
 /** How long the lock symbol stays up after a touch. */
 private const val LOCK_HINT_MS = 2_500L

@@ -107,6 +107,7 @@ specification.
   everything else — WMV, VC-1, RealVideo, DV, AC3, DTS, TrueHD and more.
 - Speed 0.2×–5×, held skips that grow, sleep timer, repeat, rotation, picture in picture, media keys everywhere.
 - Even frames: the speed nudged so every frame stays on screen equally long where the screen cannot switch its rate.
+- Snapshot: the camera button saves the picture on screen — filters and all — as a PNG in Pictures, ready to share.
 
 <details>
 <summary>Playback in detail</summary>
@@ -117,6 +118,7 @@ specification.
 - Seek-bar thumbnails: dragging along the seek bar — or stepping along it with a remote — shows a picture of the moment under the finger above it, with its time, taken from the file itself (local or on any source; Android's own reader, the bundled FFmpeg for what it cannot read). The timeline is cut into at most 300 steps of whole seconds (2 s to 1 min each), one picture per step from the keyframe nearest its middle; the file is opened once per video, the pictures are taken one at a time on a background thread so playback keeps its pace, a picture the finger has already passed is never taken, and a picture kept for a nearby step stands in while the right one loads. Pictures are kept in memory and in a small cache on the device (32 MB, the longest unused going first), so seeking the same film again is instant.
 - Picture in picture: leaving the app while a film plays on the phone shrinks it into a small window in the picture's own shape; tapping it brings the full player back where it was. Leaving while paused — or closing the small window — pauses the film instead of letting it play on unseen.
 - Media controls everywhere: play/pause, next and previous work from headset and Bluetooth buttons, the media notification and the lock screen while the player is open; next and previous follow the episodes or the parts of a movie. Android 13+ asks once for the notification.
+- Snapshot: the camera button in the player's top bar saves the picture as it is on screen — every filter applied, at the size it is shown, read back from the picture stage — as a lossless PNG named after the title and the moment (`Title 01-23-45.png`) in the system's Pictures collection, in a MediaDroid album; the picture shows small for a few seconds with a button to share it. Where the stage stands aside (no filter set, HDR on a screen that shows it) the view's own picture is copied, and failing that the frame at that moment is decoded afresh. From Android 10 no permission is needed; before it, the storage permission is asked for once. A name already taken gets a number, nothing is overwritten.
 - Rotation in the gear: auto, landscape or portrait, held for the session; leaving the player hands rotation back to the system.
 - Sleep timer in the gear: off, 15, 30, 45, 60 or 90 minutes, or at the end of this video. While it runs the top bar shows the minutes left; when it runs out the sound fades over ten seconds and playback pauses. It never carries over to the next start.
 - Repeat in the gear: off, this video, or all of it (the show or the folder, round again from the start) — for the film a child wants to see again and again. It lasts for the session.
@@ -338,7 +340,10 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   takes GLSL ES 1.00 and 3.00), held to the same oracles (`tools/shader-check`).
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
   (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture and track panel,
-  N for the next episode, [ and ] for slower and faster), a window that remembers its size and place.
+  N for the next episode, [ and ] for slower and faster, C for a snapshot), a window that remembers its size and
+  place.
+- Snapshot: the camera button (or C) saves the picture as the stage shows it, filters and all, as a PNG in the user's
+  Pictures folder (`MediaDroid` inside it; on Linux the one xdg-user-dirs names) and shows where it went.
 - Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
   language last picked is where the next video starts. Sound tracks likewise, the file's own and those beside it
   (`Film.en.ac3`). Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.

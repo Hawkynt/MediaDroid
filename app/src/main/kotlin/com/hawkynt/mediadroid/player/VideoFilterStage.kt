@@ -280,10 +280,59 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     @Volatile
     var waitForGpu = false
 
-    /** Hands the picture drawn to the window, waiting for the graphics chip first where [waitForGpu] asks to. */
+    /**
+     * Hands the picture drawn to the window, waiting for the graphics chip first where [waitForGpu] asks to; a
+     * snapshot asked for reads it back first, as it is about to be shown.
+     */
     private fun swap() {
         if (waitForGpu) GLES20.glFinish()
+        snapshotTaker?.let { take ->
+            snapshotTaker = null
+            handler.removeCallbacks(snapshotTimeout)
+            take(runCatching { readWindow() }.getOrNull())
+        }
         EGL14.eglSwapBuffers(display, window)
+    }
+
+    /** A picture read back from the window: RGBA rows from the bottom, as OpenGL reads them. */
+    class ReadBack(val rgba: ByteArray, val width: Int, val height: Int)
+
+    // A snapshot waiting for the next picture handed to the window, and what ends the wait when none comes.
+    private var snapshotTaker: ((ReadBack?) -> Unit)? = null
+    private val snapshotTimeout = Runnable { snapshotTaker?.also { snapshotTaker = null }?.invoke(null) }
+
+    /**
+     * The picture on screen as the stage draws it — every filter applied, at the size it is shown — handed to
+     * [onPicture] on the stage's own thread: read back from the window just before the next picture goes to it, at
+     * once while paused (the last picture drawn again). Null without a window or picture, or when none is drawn
+     * within [SNAPSHOT_WAIT_MS].
+     */
+    fun snapshot(onPicture: (ReadBack?) -> Unit) {
+        handler.post {
+            busy {
+                if (window == EGL14.EGL_NO_SURFACE || !hasFrame) {
+                    onPicture(null)
+                    return@busy
+                }
+                snapshotTaker?.invoke(null)
+                snapshotTaker = onPicture
+                handler.postDelayed(snapshotTimeout, SNAPSHOT_WAIT_MS)
+                draw(redraw = true)
+            }
+        }
+    }
+
+    // The window's picture as drawn so far, before it is handed to the screen.
+    private fun readWindow(): ReadBack {
+        val width = query(EGL14.EGL_WIDTH)
+        val height = query(EGL14.EGL_HEIGHT)
+        val bytes = ByteBuffer.allocateDirect(width * height * 4)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, 1)
+        GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
+        val rgba = ByteArray(width * height * 4)
+        bytes.get(rgba)
+        return ReadBack(rgba, width, height)
     }
 
     /** Where the decoder draws. */
@@ -609,6 +658,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     fun release() {
         handler.removeCallbacks(pumpYuv)
+        handler.post(snapshotTimeout)
         while (true) yuvQueue.pollFirst()?.buffer?.release() ?: break
         onThread {
             // On this thread, the vsync's own: a caller's may have no looper to make one on.
@@ -2331,6 +2381,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             private set
 
         private const val MAX_LATENCY_MS = 100
+
+        /** How long a snapshot waits for a picture drawn before it gives up. */
+        private const val SNAPSHOT_WAIT_MS = 1_000L
 
         /** The tallest picture taken as standard definition, coloured by BT.601: PAL's 576 lines. */
 

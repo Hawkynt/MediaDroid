@@ -60,7 +60,15 @@ class ThumbnailStore private constructor(private val context: Context) {
         null
     }
 
-    private fun androidFrame(videoPath: String): Bitmap? {
+    /**
+     * The frame of [videoPath] at [positionMs] at its full size, decoded afresh by Android's retriever — for a
+     * snapshot where the picture on screen cannot be read back; null where the retriever finds none.
+     */
+    suspend fun frameAt(videoPath: String, positionMs: Long): Bitmap? = withContext(Dispatchers.IO) {
+        runCatching { androidFrame(videoPath) { positionMs.coerceAtLeast(0L) * 1000 } }.getOrNull()
+    }
+
+    private fun androidFrame(videoPath: String, atUs: (Long?) -> Long = ::pickUs): Bitmap? {
         val retriever = MediaMetadataRetriever()
         try {
             if (videoPath.startsWith("/")) {
@@ -70,7 +78,7 @@ class ThumbnailStore private constructor(private val context: Context) {
                 retriever.setDataSource(FsMediaDataSource(SourceAccess.resolve(context, videoPath) ?: return null))
             }
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-            return retriever.getFrameAtTime(pickUs(durationMs?.times(1000)), MediaMetadataRetriever.OPTION_CLOSEST)
+            return retriever.getFrameAtTime(atUs(durationMs?.times(1000)), MediaMetadataRetriever.OPTION_CLOSEST)
         } finally {
             retriever.release()
         }

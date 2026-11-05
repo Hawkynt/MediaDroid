@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Tune
@@ -33,6 +34,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -67,11 +69,13 @@ import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.engine.Tracks
 import com.hawkynt.mediadroid.engine.desktop.DesktopPlaybackEngine
+import com.hawkynt.mediadroid.engine.desktop.MediaReader
 import com.hawkynt.mediadroid.library.Sidecars
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PlaybackMath
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -105,6 +109,11 @@ fun PlayerScreen(
     var panel by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "panel") }
     var canvas by remember { mutableStateOf(IntSize.Zero) }
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    // The picture on screen as the stage drew it (or as decoded, without a filter), for a snapshot.
+    val shownPicture = remember { arrayOfNulls<MediaReader.Picture>(1) }
+    // What the last snapshot became — its file, or why there is none — shown for a few seconds.
+    var snapshotNote by remember { mutableStateOf<String?>(null) }
+    var snapshotNoteUntil by remember { mutableLongStateOf(0L) }
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -163,6 +172,7 @@ fun PlayerScreen(
         error = null
         tracks = emptyList()
         frame = null
+        shownPicture[0] = null
         // Off the window's thread: on a network source, finding the files beside it and opening it take round trips.
         runCatching {
             val startMs = store.resumeMs(playing.video)
@@ -190,6 +200,7 @@ fun PlayerScreen(
                     } else {
                         raw.eightBit()
                     }
+                    shownPicture[0] = shown
                     frame = bitmap.of(shown)
                 }
             }
@@ -250,6 +261,21 @@ fun PlayerScreen(
         store.speed = clamped
     }
 
+    // The picture on screen saved as a PNG in the Pictures folder, its file named on screen.
+    val scope = rememberCoroutineScope()
+    fun snapshot() {
+        val shown = shownPicture[0] ?: return
+        // A copy: the decoder's picture is not ours to keep while the file is written.
+        val still = MediaReader.Picture(shown.ptsMs, shown.width, shown.height, shown.rgba.copyOf())
+        val title = playing.title
+        scope.launch {
+            snapshotNote = runCatching {
+                withContext(Dispatchers.IO) { FrameSnapshot.save(still, title, PicturesFolder.current()) }
+            }.fold({ "Picture saved: ${it.path}" }, { "The picture could not be saved: ${it.message ?: it}" })
+            snapshotNoteUntil = System.currentTimeMillis() + SNAPSHOT_NOTE_MS
+        }
+    }
+
     // S: the next subtitle track, after the last one off again.
     fun nextSubtitles() {
         val text = engine.tracks.filter { it.kind == Track.Kind.TEXT }
@@ -272,6 +298,7 @@ fun PlayerScreen(
                     Key.N -> next()
                     Key.P -> panel = !panel
                     Key.S -> nextSubtitles()
+                    Key.C -> snapshot()
                     Key.LeftBracket -> changeSpeed(speed - SPEED_STEP)
                     Key.RightBracket -> changeSpeed(speed + SPEED_STEP)
                     Key.Escape -> if (fullScreen) onFullScreen() else onExit()
@@ -303,6 +330,13 @@ fun PlayerScreen(
                 onPick = ::pick,
                 speed = speed,
                 onSpeed = ::changeSpeed,
+            )
+        }
+        snapshotNote?.takeIf { now < snapshotNoteUntil }?.let { note ->
+            Text(
+                note, color = Color.White, fontSize = 16.sp,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 72.dp)
+                    .background(Color(0xCC000000), MaterialTheme.shapes.small).padding(12.dp),
             )
         }
         error?.let {
@@ -340,6 +374,9 @@ fun PlayerScreen(
                     }
                     Text("${clock(position)} · ${clock(duration)}", color = Color.White, fontSize = 15.sp)
                     Spacer(Modifier.weight(1f))
+                    IconButton(onClick = { snapshot() }) {
+                        Icon(Icons.Default.PhotoCamera, "Take a picture", tint = Color.White)
+                    }
                     IconButton(onClick = { panel = !panel }) {
                         Icon(Icons.Default.Tune, "Picture", tint = Color.White)
                     }
@@ -406,6 +443,9 @@ private fun clock(ms: Long): String {
 }
 
 private const val CONTROLS_MS = 3_000L
+
+/** How long a snapshot's file stays named on screen. */
+private const val SNAPSHOT_NOTE_MS = 5_000L
 
 /** How much [ and ] change the speed. */
 private const val SPEED_STEP = 0.05f
