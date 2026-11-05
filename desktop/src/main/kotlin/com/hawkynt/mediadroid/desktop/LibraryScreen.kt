@@ -37,6 +37,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -62,34 +63,46 @@ import javax.swing.JFileChooser
 @Composable
 fun LibraryScreen(
     store: DesktopStore,
+    places: DesktopLibrary,
     library: Library?,
     onLibrary: (Library) -> Unit,
-    onScan: (String) -> Library,
     onPlay: (List<Playing>, Int) -> Unit,
 ) {
     var folder by remember { mutableStateOf(store.libraryFolder) }
     var scanning by remember { mutableStateOf(false) }
     var openShow by remember { mutableStateOf<Show?>(null) }
-    LaunchedEffect(folder) {
-        val root = folder ?: return@LaunchedEffect
-        if (library != null) return@LaunchedEffect
+    // MEDIADROID_SHOW=sources: the network sources open from the start (documentation and checks).
+    var showSources by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "sources") }
+    // Moves on whenever the places change: the library is scanned again.
+    var generation by remember { mutableIntStateOf(0) }
+    val nothingYet = folder == null && places.networkSources.isEmpty()
+    LaunchedEffect(generation) {
+        if (folder == null && places.networkSources.isEmpty()) return@LaunchedEffect
+        if (library != null && generation == 0) return@LaunchedEffect
         scanning = true
-        onLibrary(withContext(Dispatchers.IO) { onScan(root) })
+        onLibrary(withContext(Dispatchers.IO) { places.scan() })
         scanning = false
     }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         when {
-            folder == null -> Column(
+            nothingYet -> Column(
                 Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text("Your movies and shows are already organized.", fontSize = 24.sp, color = Color.White)
                 Spacer(Modifier.padding(8.dp))
-                Button(onClick = { chooseFolder()?.let { store.libraryFolder = it; folder = it } }) {
+                Button(onClick = {
+                    chooseFolder()?.let {
+                        store.libraryFolder = it
+                        folder = it
+                        generation++
+                    }
+                }) {
                     Icon(Icons.Default.Folder, null)
                     Spacer(Modifier.width(8.dp))
                     Text("Choose media folder", fontSize = 18.sp)
                 }
+                TextButton(onClick = { showSources = true }) { Text("Or add a network source", fontSize = 16.sp) }
             }
             scanning || library == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             openShow != null -> ShowScreen(store, openShow!!, onBack = { openShow = null }, onPlay = onPlay)
@@ -98,19 +111,28 @@ fun LibraryScreen(
                     is Movie -> onPlay(listOf(Playing(item.title, item.videoPath)), 0)
                     is Show -> openShow = item
                 }
-            }, onFolder = {
+            }, onSources = { showSources = true }, onFolder = {
                 chooseFolder()?.let {
                     store.libraryFolder = it
                     folder = it
-                    onLibrary(Library(emptyList(), emptyList()))
+                    generation++
                 }
             })
+        }
+        if (showSources) {
+            SourcesPanel(places, onChanged = { generation++ }, onClose = { showSources = false })
         }
     }
 }
 
 @Composable
-private fun Wall(store: DesktopStore, library: Library, onOpen: (MediaItem) -> Unit, onFolder: () -> Unit) {
+private fun Wall(
+    store: DesktopStore,
+    library: Library,
+    onOpen: (MediaItem) -> Unit,
+    onSources: () -> Unit,
+    onFolder: () -> Unit,
+) {
     val all: List<MediaItem> = remember(library) { (library.movies + library.shows).sortedBy { it.title.lowercase() } }
     var query by remember { mutableStateOf("") }
     var genres by remember { mutableStateOf(emptySet<String>()) }
@@ -135,7 +157,10 @@ private fun Wall(store: DesktopStore, library: Library, onOpen: (MediaItem) -> U
             )
             Spacer(Modifier.weight(1f))
             Text("${library.movies.size} movies · ${library.shows.size} shows", color = Color.Gray)
-            TextButton(onClick = onFolder) { Text("Change folder") }
+            TextButton(onClick = onSources) { Text("Network sources") }
+            TextButton(onClick = onFolder) {
+                Text(if (store.libraryFolder == null) "Choose folder" else "Change folder")
+            }
         }
         if (facets.isNotEmpty()) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {

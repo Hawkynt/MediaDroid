@@ -20,6 +20,7 @@ dependencies {
     implementation(project(":core:nfo"))
     implementation(project(":core:imaging"))
     implementation(project(":core:player"))
+    implementation(project(":core:sources"))
     implementation(project(":engine:desktop"))
     // LWJGL's native calls, for the system functions the window needs (ScreenKeeper); its natives come with the engine.
     implementation(libs.lwjgl)

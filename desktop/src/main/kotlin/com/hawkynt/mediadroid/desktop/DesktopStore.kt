@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.desktop
 
+import com.hawkynt.mediadroid.library.Source
 import java.io.File
 import java.util.Properties
 
@@ -74,6 +75,18 @@ class DesktopStore(private val folder: File) {
         get() = properties.getProperty("window")
         set(value) {
             if (value == null) properties.remove("window") else properties.setProperty("window", value)
+            save()
+        }
+
+    /** The network sources added (core:library's Source, as JSON), in the order they were added. */
+    var sources: List<Source>
+        get() = properties.stringPropertyNames().filter { it.startsWith("source.") }.sorted()
+            .mapNotNull { key -> runCatching { Source.decode(properties.getProperty(key)) }.getOrNull() }
+        set(value) {
+            properties.stringPropertyNames().filter { it.startsWith("source.") }.forEach { properties.remove(it) }
+            value.forEachIndexed { i, source ->
+                properties.setProperty("source.%03d".format(i), Source.encode(source))
+            }
             save()
         }
 

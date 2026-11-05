@@ -80,6 +80,7 @@ import java.io.File
 @Composable
 fun PlayerScreen(
     store: DesktopStore,
+    places: DesktopLibrary,
     queue: List<Playing>,
     startIndex: Int,
     fullScreen: Boolean,
@@ -89,7 +90,7 @@ fun PlayerScreen(
     var index by remember { mutableIntStateOf(startIndex) }
     val playing = queue[index]
     val engine = remember {
-        DesktopPlaybackEngine(PlaybackTuning.Mutable()).apply {
+        DesktopPlaybackEngine(PlaybackTuning.Mutable(), files = places::remoteFile).apply {
             // MEDIADROID_MUTE=1: checks and documentation runs play silently.
             if (System.getenv("MEDIADROID_MUTE") == "1") volume = 0f
             speed = store.speed
@@ -110,7 +111,8 @@ fun PlayerScreen(
     var tracks by remember { mutableStateOf(emptyList<Track>()) }
     // A sound file's track named as the picker shows a sidecar: `EN`, `DE · commentary`.
     val soundNames = remember(index) {
-        sidecarsOf(playing.video).filter { it.kind == Sidecars.Kind.AUDIO }.associate { it.name to it.describe() }
+        sidecarsOf(places, playing.video).filter { it.kind == Sidecars.Kind.AUDIO }
+            .associate { it.name to it.describe() }
     }
     var subtitle by remember { mutableStateOf<String?>(null) }
     var controlsUntil by remember { mutableLongStateOf(System.currentTimeMillis() + CONTROLS_MS) }
@@ -154,7 +156,11 @@ fun PlayerScreen(
         error = null
         tracks = emptyList()
         frame = null
-        runCatching { engine.open(requestFor(playing.video, store.resumeMs(playing.video))) }
+        // Off the window's thread: on a network source, finding the files beside it and opening it take round trips.
+        runCatching {
+            val startMs = store.resumeMs(playing.video)
+            withContext(Dispatchers.IO) { engine.open(requestFor(places, playing.video, startMs)) }
+        }
             .onFailure { error = it.message ?: it.toString() }
     }
     // Every window frame: the picture due now — through the stage when the household set filters — the clock, the end.
@@ -317,20 +323,21 @@ fun PlayerScreen(
     }
 }
 
-/** The subtitle and sound files beside [video] (Sidecars), by name. */
-private fun sidecarsOf(video: String): List<Sidecars.Sidecar> {
-    val file = File(video)
-    return Sidecars.of(file.name, file.parentFile?.list()?.toList().orEmpty())
+/** The subtitle and sound files beside [video] (Sidecars), by name — on this computer or a network source. */
+private fun sidecarsOf(places: DesktopLibrary, video: String): List<Sidecars.Sidecar> {
+    val file = places.file(video)
+    return Sidecars.of(file.name, file.parentFile?.listFiles()?.map { it.name }.orEmpty())
 }
 
 /** What to open for [video]: from [startMs], with the subtitle and sound files beside it. */
-private fun requestFor(video: String, startMs: Long): MediaRequest {
-    val folder = File(video).parentFile
-    val sidecars = sidecarsOf(video)
+private fun requestFor(places: DesktopLibrary, video: String, startMs: Long): MediaRequest {
+    val folder = places.file(video).parentFile
+    fun pathOf(name: String) = folder?.child(name)?.path ?: name
+    val sidecars = sidecarsOf(places, video)
     val subtitles = sidecars.filter { it.kind == Sidecars.Kind.SUBTITLES }.map {
-        MediaRequest.SubtitleFile(File(folder, it.name).path, it.mimeType, it.language, it.describe(), it.forced)
+        MediaRequest.SubtitleFile(pathOf(it.name), it.mimeType, it.language, it.describe(), it.forced)
     }
-    val audio = sidecars.filter { it.kind == Sidecars.Kind.AUDIO }.map { File(folder, it.name).path }
+    val audio = sidecars.filter { it.kind == Sidecars.Kind.AUDIO }.map { pathOf(it.name) }
     return MediaRequest(video, subtitles = subtitles, audio = audio, startMs = startMs)
 }
 

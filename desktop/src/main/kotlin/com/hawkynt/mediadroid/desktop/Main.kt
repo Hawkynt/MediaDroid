@@ -15,7 +15,6 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
 import com.hawkynt.mediadroid.library.Library
-import com.hawkynt.mediadroid.library.LibraryScanner
 import java.io.File
 
 /** What the window shows: the library, or the player on a queue of videos. */
@@ -66,7 +65,14 @@ private fun describe(state: WindowState): String? {
  * (default 4000) milliseconds — for documentation and checks, never the rest of the screen.
  */
 fun main(args: Array<String>) = application {
-    val store = remember { DesktopStore(AppFolder.current()) }
+    val folder = remember { AppFolder.current() }
+    val store = remember { DesktopStore(folder) }
+    // The places media lives — this computer's folder and the network sources — and the files behind them.
+    val places = remember {
+        DesktopLibrary(store, DesktopSecrets.forThisSystem(folder)).also { places ->
+            Art.reader = { location -> places.file(location).open().use { it.readBytes() } }
+        }
+    }
     val state = remember { windowState(store.window) }
     val opened = remember { args.firstOrNull()?.let(::File)?.takeIf { it.isFile } }
     var screen by remember {
@@ -94,13 +100,14 @@ fun main(args: Array<String>) = application {
             when (val s = screen) {
                 Screen.Library -> LibraryScreen(
                     store = store,
+                    places = places,
                     library = library,
                     onLibrary = { library = it },
-                    onScan = { folder -> LibraryScanner.scan(File(folder)) },
                     onPlay = { queue, index -> screen = Screen.Player(queue, index) },
                 )
                 is Screen.Player -> PlayerScreen(
                     store = store,
+                    places = places,
                     queue = s.queue,
                     startIndex = s.index,
                     fullScreen = state.placement == WindowPlacement.Fullscreen,
