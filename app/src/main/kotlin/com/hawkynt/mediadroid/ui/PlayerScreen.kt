@@ -107,12 +107,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 /** How long the controls stay up after the last touch, like the streaming apps' players. */
 private const val ControlsTimeoutMs = 3_000
 
-/**
- * Compressed samples waiting for FFmpeg's video decoder, as Media3 keeps them: each grows to the largest sample, in
- * the app's heap — 12 MB for a raw 4K picture.
- */
-private const val FFMPEG_INPUT_BUFFERS = 4
-
 /** How the video fills the screen; maps onto Media3's resize modes. */
 enum class VideoFit(val label: String, val resizeMode: Int) {
     FIT("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT),
@@ -202,163 +196,21 @@ fun PlayerScreen(
             android.media.Spatializer.SPATIALIZER_IMMERSIVE_LEVEL_NONE
     }
     var gammaBoost by remember { mutableFloatStateOf(1f) }
-    // The video's frame rate, for the sound's wait behind a filtered picture; kept current by the routing loop.
-    val videoFrameRate = remember { floatArrayOf(-1f) }
-    // The bundled FFmpeg's video renderer, which hands its pictures to the filters' stage as YUV planes.
-    val ffmpegVideoRenderer = remember { arrayOfNulls<androidx.media3.exoplayer.Renderer>(1) }
-    val player = remember {
-        ExoPlayer.Builder(context)
-            // Two minutes ahead where memory allows, and a longer start after a stall: a 4K file over
-            // Wi-Fi rides out the dips. The bytes held stay within a quarter of the app's memory (see LoadBudget):
-            // Media3's own 131 MB ran a 256 MB heap out with a raw 4K file.
-            .setLoadControl(
-                androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(BUFFER_MIN_MS, BUFFER_MAX_MS, BUFFER_START_MS, BUFFER_RESTART_MS)
-                    .setTargetBufferBytes(
-                        com.hawkynt.mediadroid.player.LoadBudget.targetBytes(Runtime.getRuntime().maxMemory()).toInt(),
-                    )
-                    .build(),
-            )
-            .setRenderersFactory(
-                object : DefaultRenderersFactory(context) {
-                    override fun buildTextRenderers(
-                        context: android.content.Context,
-                        output: androidx.media3.exoplayer.text.TextOutput,
-                        outputLooper: android.os.Looper,
-                        extensionRendererMode: Int,
-                        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
-                    ) {
-                        val built = java.util.ArrayList<androidx.media3.exoplayer.Renderer>()
-                        super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, built)
-                        built.mapTo(out) {
-                            com.hawkynt.mediadroid.player.DelayedTextRenderer(it) { subtitleLook.delayMs }
-                        }
-                    }
-
-                    override fun buildVideoRenderers(
-                        context: android.content.Context,
-                        extensionRendererMode: Int,
-                        mediaCodecSelector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector,
-                        enableDecoderFallback: Boolean,
-                        eventHandler: android.os.Handler,
-                        eventListener: androidx.media3.exoplayer.video.VideoRendererEventListener,
-                        allowedVideoJoiningTimeMs: Long,
-                        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
-                    ) {
-                        super.buildVideoRenderers(
-                            context,
-                            if (settings.softwareVideoDecoding) {
-                                EXTENSION_RENDERER_MODE_PREFER
-                            } else {
-                                EXTENSION_RENDERER_MODE_ON
-                            },
-                            mediaCodecSelector,
-                            enableDecoderFallback,
-                            eventHandler,
-                            com.hawkynt.mediadroid.player.PixelShapeListener(eventListener),
-                            allowedVideoJoiningTimeMs,
-                            out,
-                        )
-                        // FFmpeg's renderer again, keeping as many decoded pictures ahead as the household set
-                        // (Settings › Pictures kept ahead), instead of Media3's four.
-                        val at = out.indexOfFirst { it.name.startsWith("ExperimentalFfmpegVideo") }
-                        if (at >= 0) {
-                            val memory = android.app.ActivityManager.MemoryInfo()
-                            context.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memory)
-                            val buffer = com.hawkynt.mediadroid.player.DecodedBuffer(
-                                runCatching {
-                                    com.hawkynt.mediadroid.player.DecodedBuffer.Unit.valueOf(settings.bufferUnit)
-                                }.getOrDefault(com.hawkynt.mediadroid.player.DecodedBuffer.Unit.SECONDS),
-                                settings.bufferValue,
-                            )
-                            val frames = buffer.decoderFrames(
-                                com.hawkynt.mediadroid.player.DecodedBuffer.decoderCeilingBytes(
-                                    memory.totalMem,
-                                    Runtime.getRuntime().maxMemory(),
-                                ),
-                            )
-                            out[at] = androidx.media3.decoder.ffmpeg.ExperimentalFfmpegVideoRenderer(
-                                allowedVideoJoiningTimeMs,
-                                eventHandler,
-                                com.hawkynt.mediadroid.player.PixelShapeListener(eventListener),
-                                MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY,
-                                Runtime.getRuntime().availableProcessors(),
-                                FFMPEG_INPUT_BUFFERS,
-                                frames,
-                            )
-                        }
-                        ffmpegVideoRenderer[0] = out.getOrNull(at)
-                    }
-
-                    // Real loudness fix for unnormalized streams: the settings dB
-                    // is applied to the decoded PCM and re-read per buffer, so the
-                    // slider takes effect mid-playback without rebuilding anything.
-                    // Passthrough for an AV receiver only happens on the device's own audio path, so with it
-                    // switched on the bundled FFmpeg decoder becomes the fallback instead of the first choice.
-                    override fun buildAudioRenderers(
-                        context: android.content.Context,
-                        extensionRendererMode: Int,
-                        mediaCodecSelector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector,
-                        enableDecoderFallback: Boolean,
-                        audioSink: androidx.media3.exoplayer.audio.AudioSink,
-                        eventHandler: android.os.Handler,
-                        eventListener: androidx.media3.exoplayer.audio.AudioRendererEventListener,
-                        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
-                    ) = super.buildAudioRenderers(
-                        context,
-                        if (settings.audioPassthrough) EXTENSION_RENDERER_MODE_ON else extensionRendererMode,
-                        mediaCodecSelector,
-                        enableDecoderFallback,
-                        audioSink,
-                        eventHandler,
-                        eventListener,
-                        out,
-                    )
-
-                    override fun buildAudioSink(
-                        context: android.content.Context,
-                        enableFloatOutput: Boolean,
-                        enableAudioOutputPlaybackParams: Boolean,
-                    ): androidx.media3.exoplayer.audio.AudioSink = com.hawkynt.mediadroid.player.DelayedAudioSink(
-                        DefaultAudioSink.Builder(context)
-                            .setEnableFloatOutput(enableFloatOutput)
-                            .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
-                            .setAudioProcessorChain(
-                                DefaultAudioSink.DefaultAudioProcessorChain(
-                                    LoudnessAudioProcessor({ settings.loudness + loudnessBoostDb }, { nightMode }),
-                                ),
-                            )
-                            .build(),
-                        // A filtered picture can run a few frames behind; the sound waits as long, counted by the
-                        // video's own frame rate (see VideoFilterStage.latencyFrames).
-                        {
-                            audioDelayMs + com.hawkynt.mediadroid.player.PlaybackMath.pictureLatencyMs(
-                                com.hawkynt.mediadroid.player.VideoFilterStage.latencyFrames,
-                                videoFrameRate[0],
-                                com.hawkynt.mediadroid.player.VideoFilterStage.latencyMs,
-                            )
-                        },
-                    )
-                }
-                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
-            )
-            .setMediaSourceFactory(
-                // Videos on a network source stream through it; local ones as before. Audio files beside
-                // the video are merged in (see SidecarAudio).
-                com.hawkynt.mediadroid.player.SourceDataSource.Factory(context) {
-                    com.hawkynt.mediadroid.data.SourceAccess.resolve(context, it)
-                }.let { files ->
-                    com.hawkynt.mediadroid.player.SidecarAudioSourceFactory(
-                        androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                            files,
-                            com.hawkynt.mediadroid.player.AviAudioFraming.extractors,
-                        ),
-                        files,
-                    )
-                },
-            )
-            .build()
+    // The knobs the engine reads as it plays, answered from this screen's live state (see PlaybackTuning).
+    val tuning = remember {
+        object : com.hawkynt.mediadroid.engine.PlaybackTuning {
+            override val loudnessDb get() = settings.loudness + loudnessBoostDb
+            override val nightMode get() = nightMode
+            override val audioDelayMs get() = audioDelayMs
+            override val subtitleDelayMs get() = subtitleLook.delayMs
+        }
     }
+    val engine = remember { com.hawkynt.mediadroid.player.AndroidPlaybackEngine(context, settings, tuning) }
+    val player = engine.exo
+    // The video's frame rate, for the sound's wait behind a filtered picture; kept current by the routing loop.
+    val videoFrameRate = engine.videoFrameRate
+    // The bundled FFmpeg's video renderer, which hands its pictures to the filters' stage as YUV planes.
+    val ffmpegVideoRenderer = engine.ffmpegVideoRenderer
     // Every frame equally long on screen: the film's rate times the chosen speed decides the display mode (TV boxes,
     // "Match the refresh rate") and the small speed change of Even frames, together (see PlaybackMath.evenPlayback).
     val displayActivity = remember(context) { context.findActivity() }
@@ -634,9 +486,6 @@ fun PlayerScreen(
             store.save()
         }
         subtitleLook = store.subtitleLookFor(playable.videoPath)
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setPreferredAudioLanguage(settings.audioLanguage.ifEmpty { null })
-            .build()
         val chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             // Chapters mark intros and credits for videos on network sources as for local ones.
             com.hawkynt.mediadroid.data.SourceAccess.resolve(context, playable.videoPath)
@@ -658,31 +507,27 @@ fun PlayerScreen(
             val (subtitleFiles, audioFiles) = sidecars.partition { (sidecar, _) ->
                 sidecar.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.SUBTITLES
             }
-            player.setMediaItem(
-                MediaItem.Builder()
-                    .setUri(com.hawkynt.mediadroid.player.playableUri(playable.videoPath))
-                    .setSubtitleConfigurations(
-                        subtitleFiles.map { (sidecar, path) ->
-                            MediaItem.SubtitleConfiguration.Builder(com.hawkynt.mediadroid.player.playableUri(path))
-                                .setMimeType(sidecar.mimeType)
-                                .setLanguage(sidecar.language)
-                                .setLabel(sidecar.describe())
-                                .setSelectionFlags(if (sidecar.forced) C.SELECTION_FLAG_FORCED else 0)
-                                .build()
-                        },
-                    )
-                    .setTag(com.hawkynt.mediadroid.player.SidecarAudio(audioFiles.map { it.second }))
-                    .build(),
-            )
             val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
             // Resume where you left off — but never back into a known intro.
             val startPos = SkipRules.skipTarget(resumePos, introSpanMs) ?: resumePos
-            if (startPos > 0) player.seekTo(startPos)
+            engine.open(
+                com.hawkynt.mediadroid.engine.MediaRequest(
+                    path = playable.videoPath,
+                    subtitles = subtitleFiles.map { (sidecar, path) ->
+                        com.hawkynt.mediadroid.engine.MediaRequest.SubtitleFile(
+                            path, sidecar.mimeType, sidecar.language, sidecar.describe(), sidecar.forced,
+                        )
+                    },
+                    audio = audioFiles.map { it.second },
+                    startMs = startPos,
+                    audioLanguage = settings.audioLanguage,
+                ),
+                autoPlay = false,
+            )
             // The demo library's videos are placeholders: the screen shows its chrome without playing them.
             if (!demo) {
                 routeAtOnce[0]?.invoke()
-                player.prepare()
-                player.playWhenReady = true
+                engine.play()
             }
         }
     }
@@ -846,23 +691,19 @@ fun PlayerScreen(
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                val wanted = settings.subtitleLanguage
-                if (wanted.isEmpty() || manualTrackPick) return
-                val group = tracks.groups.firstOrNull { g ->
-                    g.type == C.TRACK_TYPE_TEXT && (0 until g.length).any { g.getTrackFormat(it).language == wanted }
-                } ?: return
-                val track = (0 until group.length).first { group.getTrackFormat(it).language == wanted }
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                    .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, track))
-                    .build()
+                if (manualTrackPick) return
+                val wanted = com.hawkynt.mediadroid.engine.Tracks.preferredText(
+                    com.hawkynt.mediadroid.player.AndroidPlaybackEngine.tracksOf(tracks),
+                    settings.subtitleLanguage,
+                ) ?: return
+                engine.select(com.hawkynt.mediadroid.engine.Track.Kind.TEXT, wanted.id)
             }
         }
         player.addListener(listener)
         onDispose {
             saveProgress()
             player.removeListener(listener)
-            player.release()
+            engine.close()
         }
     }
 
@@ -2138,11 +1979,4 @@ private enum class Rotation(val label: String, val orientation: Int) {
     PORTRAIT("Portrait", android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT),
 }
 
-/** At least half a minute of video buffered, two minutes at most, as memory allows. */
-private const val BUFFER_MIN_MS = 30_000
-private const val BUFFER_MAX_MS = 120_000
-
-/** Playback starts with 2.5 s buffered, and again after a stall with 5 s. */
-private const val BUFFER_START_MS = 2_500
-private const val BUFFER_RESTART_MS = 5_000
 

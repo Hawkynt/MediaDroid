@@ -23,6 +23,14 @@ cores carry no Android dependency on purpose: the parsing, search and binge logi
 device, and the screens sit on top of them. The bar is a household where nobody has to be taught the app — usable by a
 six-year-old and a grandparent, instant even on cheap hardware.
 
+The same app is coming to **Windows and Linux** ([#291](https://github.com/Hawkynt/MediaDroid/issues/291); README
+"Platform support"). The split, phase by phase: `:engine:api` (plain JVM — the playback engine the screens talk to),
+`:engine:android` (Media3 behind it), `:stage` (plain JVM — the picture stage's passes against an OpenGL ES interface,
+the shaders with it), `native/` (one CMake tree for the ncnn networks on Android, Windows and Linux), `:ui` (every
+screen in Compose Multiplatform's commonMain), `:engine:desktop` (FFmpeg, the stage on OpenGL ES 3 through EGL or
+ANGLE, audio and sync) and the shells `:app` (Android) and `:desktop`. Code goes to the lowest layer that can hold it:
+anything without a platform API belongs in a core, `:engine:api`, `:stage` or `:ui`'s commonMain — never in a shell.
+
 **The README is a forward-looking specification** — it is authoritative. The app is an early skeleton:
 the cores are built and tested, the UI is next. When code and spec disagree, the spec wins unless the
 spec itself is being revised in the same change; cite the relevant section in the commit body.
@@ -134,6 +142,8 @@ commit the captured expected output with a note saying what produced it.
   `.editorconfig` sets it; every other file in the repo is 2-space), K&R braces (the opening brace ends
   the line that opens the block; `} else` and `} catch` continue the closing brace's line), max line
   length 120, LF endings, final newline.
+- The `:core:*` modules, `:engine:api` and `:stage` are plain JVM Kotlin, and `:ui`'s commonMain uses only
+  Compose Multiplatform — no `android.*` imports there; platform code lives in `:app`, `:desktop` and `:engine:*`.
 - The `:core:*` modules are plain JVM Kotlin — no `android.*` imports there. Domain models, parsing and
   binge logic live in the cores; `:app` holds Compose screens and platform glue only. This is what keeps
   the fast tier device-free, and it is a rule, not a preference.
