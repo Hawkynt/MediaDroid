@@ -191,6 +191,31 @@ for tff in 1 0; do
   check "Bob keeps the first field ($order first)" "$W/bob.ppm" "$W/flat$first.ppm" 0 0 1
 done
 
+# Debanding: libplacebo's own pl_shader_deband, run by libplacebo on the same Mesa (placebo.cpp), on a picture with
+# 8-bit steps (core/player's fixture) and the test picture, the frame held as the stages hold it (top row at v = 1)
+# and turned round (at v = 0). Without grain an average of four landing on a half step may round the other way in the
+# shader compiler's float arithmetic (README.md). The GLSL ES 1.00 variant draws other random numbers
+# (no unsigned integers for pcg3d): without grain it can only move a value within the threshold, as libplacebo's.
+python3 -I "$HERE/../../core/player/src/test/resources/deband/make-input.py" "$W/band.ppm"
+for name in band picture; do
+  for case in "1 3 16 0 0" "1 3 16 4 3" "4 6 16 8 7" "3 5 24 2 255"; do
+    # shellcheck disable=SC2086
+    "$B/placebo_deband" "$W/$name.ppm" "$W/deband-libplacebo.ppm" $case
+    for rows in bottom top; do
+      # shellcheck disable=SC2086
+      SHADER_CHECK_DEBAND=$rows "$C" deband "$W/$name.ppm" "$W/deband.ppm" $case
+      check "Deband $name ($case), top row at v = $([ $rows = top ] && echo 0 || echo 1), against libplacebo" \
+        "$W/deband.ppm" "$W/deband-libplacebo.ppm" 1 0.01
+    done
+  done
+  "$B/placebo_deband" "$W/$name.ppm" "$W/deband-libplacebo.ppm" 1 3 16 0 0
+  SHADER_CHECK_DEBAND=es1 "$C" deband "$W/$name.ppm" "$W/deband-es1.ppm" 1 3 16 0 0
+  check "Deband $name (GLSL ES 1.00, other random numbers) against libplacebo" "$W/deband-es1.ppm" \
+    "$W/deband-libplacebo.ppm" 2 0.2
+  "$C" deband "$W/$name.ppm" "$W/deband.ppm" 4 6 16 0 0
+  differs "Deband $name against the picture it was given" "$W/deband.ppm" "$W/$name.ppm"
+done
+
 # Lanczos and EWA: their kernels against libplacebo's lanczos and ewa_lanczossharp, antiringing off on both sides
 # (ours pulls into the four nearest pixels' range, libplacebo's weighs a soft minimum and maximum: not the same rule).
 for size in "480 360" "640 480"; do

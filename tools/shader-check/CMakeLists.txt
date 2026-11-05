@@ -26,3 +26,9 @@ target_link_libraries(shader_check ${GLES_LIBRARIES})
 add_executable(shader_oracle oracle.cpp)
 target_include_directories(shader_oracle PRIVATE ${GL_INCLUDE_DIRS} "${ORACLE_DIR}")
 target_link_libraries(shader_oracle ${GL_LIBRARIES})
+
+# libplacebo's own debanding, run by libplacebo on Mesa's OpenGL (placebo.cpp).
+pkg_check_modules(PLACEBO REQUIRED libplacebo egl)
+add_executable(placebo_deband placebo.cpp)
+target_include_directories(placebo_deband PRIVATE ${PLACEBO_INCLUDE_DIRS})
+target_link_libraries(placebo_deband ${PLACEBO_LIBRARIES})
