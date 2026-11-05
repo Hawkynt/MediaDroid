@@ -91,10 +91,19 @@ class GlStageTest {
     companion object {
         private lateinit var stage: GlStage
 
+        // MEDIADROID_GL=required (CI, on Mesa's software OpenGL) turns a missing context into a failure: there the
+        // tests must run, not skip themselves and pass on nothing.
+        private val required = System.getenv("MEDIADROID_GL") == "required"
+
+        private fun expect(message: String, condition: Boolean) =
+            if (required) assertTrue(message, condition) else assumeTrue(message, condition)
+
         @BeforeClass @JvmStatic fun open() {
-            assumeTrue("no display", System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null)
+            val windows = System.getProperty("os.name").startsWith("Windows")
+            val display = System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null
+            expect("no display", windows || display)
             stage = GlStage()
-            assumeTrue("no OpenGL 4.3 context", stage.ready)
+            expect("no OpenGL 4.3 context", stage.ready)
         }
 
         @AfterClass @JvmStatic fun close() {
