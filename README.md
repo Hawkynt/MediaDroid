@@ -17,13 +17,13 @@
 [![Nightly](https://img.shields.io/github/v/release/Hawkynt/MediaDroid?include_prereleases&sort=date&filter=nightly-*&label=nightly&color=FF9800)](https://github.com/Hawkynt/MediaDroid/releases)
 [![Downloads](https://img.shields.io/github/downloads/Hawkynt/MediaDroid/total)](https://github.com/Hawkynt/MediaDroid/releases)
 
-> Your movies and shows are already organized — folders with `.nfo` files and cover art, scraped by Kodi or MediaBrowser over the years. MediaDroid plays that library straight from where it lives — local storage, a NAS share, an FTP server or a cloud folder — on any Android box, tablet, or phone: no media server, no account of ours, no re-scraping, no re-encoding. It reads what is already there and turns it into a browse-and-play app simple enough for a six-year-old and a grandparent.
+> Your movies and shows are already organized — folders with `.nfo` files and cover art, scraped by Kodi or MediaBrowser over the years. MediaDroid plays that library straight from where it lives — local storage, a NAS share, an FTP server or a cloud folder — on an Android box, tablet or phone, or a Windows or Linux PC: no media server, no account of ours, no re-scraping, no re-encoding. It reads what is already there and turns it into a browse-and-play app simple enough for a six-year-old and a grandparent.
 
 ![The browse wall: what is being watched as the hero, Continue watching, then every movie](screenshots/main.png)
 
 ## 🧭 Vision
 
-Media libraries on Android are usually either a raw file browser or a client of someone else's server. MediaDroid claims the middle ground that home media collectors actually live in: the folders are the library, and the `.nfo` sidecars and `folder.jpg` covers you already scraped are the metadata — no database of ours in between. The bar for success is a household where nobody has to be taught the app: a kid finds a film by its picture, a grandparent resumes a show where they left off, and everything answers instantly even on cheap hardware. The parser, the scanner, the search and the binge logic are pure and tested; the screens sit on top of them and must never get slower than the hardware allows. The app scans a library, shows the wall, plays with resume and binge auto-advance, decodes exotic audio through a bundled FFmpeg extension, and paints missing art from the video files themselves.
+Media libraries on Android are usually either a raw file browser or a client of someone else's server. MediaDroid claims the middle ground that home media collectors actually live in: the folders are the library, and the `.nfo` sidecars and `folder.jpg` covers you already scraped are the metadata — no database of ours in between. The bar for success is a household where nobody has to be taught the app: a kid finds a film by its picture, a grandparent resumes a show where they left off, and everything answers instantly even on cheap hardware. The parser, the scanner, the search and the binge logic are pure and tested; the screens sit on top of them and must never get slower than the hardware allows. The app scans a library, shows the wall, plays with resume and binge auto-advance, decodes exotic audio through a bundled FFmpeg extension, and paints missing art from the video files themselves. The same app comes to Windows and Linux: the library, the sources, the picture stage and the neural networks are shared, the screens are one Compose UI, and a desktop graphics card runs the heavy networks a phone has to refuse.
 
 ## ✨ Features
 
@@ -277,7 +277,13 @@ video brought down to 1080p first; Fit, Fill or Stretch, and a zoom. How the net
 
 ## 📦 Installation
 
-Android 8.0 (API 26) or newer, phone, tablet, or TV box. Not on the Play Store (yet): download the APK from [Releases](https://github.com/Hawkynt/MediaDroid/releases) — a dated stable build or a `nightly-*` build. Take `MediaDroid.apk`, the signed release build, and enable installation from unknown sources; `MediaDroid-debug.apk` is for development and cannot update over it. Storage stays on your device; the app needs access only to the folders you point it at.
+**Android** 8.0 (API 26) or newer, phone, tablet, or TV box. Not on the Play Store (yet): download the APK from [Releases](https://github.com/Hawkynt/MediaDroid/releases) — a dated stable build or a `nightly-*` build. Take `MediaDroid.apk`, the signed release build, and enable installation from unknown sources; `MediaDroid-debug.apk` is for development and cannot update over it. Storage stays on your device; the app needs access only to the folders you point it at.
+
+**Windows** 10/11 (x64) and **Linux** (x64, arm64) — planned ([#291](https://github.com/Hawkynt/MediaDroid/issues/291)):
+from the same Releases, `MediaDroid-windows-x64.msi` (installs, updates in place) or `MediaDroid-windows-x64.zip`
+(portable: unpack anywhere and run `MediaDroid.exe`, settings beside it), and `MediaDroid-linux-x64.AppImage` /
+`MediaDroid-linux-arm64.AppImage` (mark it executable and run it). Java comes inside; a Vulkan driver for the neural
+networks on the graphics card comes from the system.
 
 ## 🚀 Quick start
 
@@ -299,23 +305,62 @@ thumbs are painted from the titles themselves, and commits whatever changed back
 ![Filters and facets: genres with counts, decades and sort order](screenshots/filters.png)
 ![The Files browser in a season folder: real file names, NFO titles, thumbs, watched ticks and a resume bar](screenshots/files.png)
 
+## 💻 Platform support
+
+One app on three systems: the cores, the picture stage, the neural networks and the screens are shared; each platform
+adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/MediaDroid/issues/291)).
+
+| Platform | Status | Package | Plays with | Neural networks |
+| --- | --- | --- | --- | --- |
+| Android 8.0+ — phone, tablet, TV box | ✅ shipping | APK | [Media3](https://github.com/androidx/media), the device's decoders, FFmpeg as fallback | ncnn on Vulkan or the CPU; TFLite on the NPU |
+| Windows 10/11, x64 | 📋 planned | MSI installer, portable zip | FFmpeg (LGPL build) with hardware decoding (D3D11VA/DXVA2) | ncnn on Vulkan or the CPU |
+| Linux, x64 and arm64 | 📋 planned | AppImage | FFmpeg (LGPL build) with hardware decoding (VA-API/NVDEC) | ncnn on Vulkan or the CPU |
+
+<details><summary>▸ What the desktop apps do, and what differs</summary>
+
+- Everything under Features that is not tied to a phone: the library, sources (local folders, SMB, NFS, FTP/SFTP,
+  WebDAV), browsing, search and filters, resume and binge, every picture choice and every neural network, the same
+  self-test and dry run deciding what is offered — on a desktop graphics card DAIN, FLAVR, RealSR and Real-CUGAN keep
+  up where a phone refuses them.
+- The picture stage is the Android one: the same GLSL ES shaders on OpenGL ES 3 (EGL on Linux, ANGLE on Windows),
+  held to the same oracles (`tools/shader-check`).
+- The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
+  (space to pause, arrows to seek, F to go full screen), a window that remembers its size.
+- Settings, watched state and secrets stay on the machine: in the user's application-data folder, the passwords
+  encrypted by the system (DPAPI on Windows, the Secret Service on Linux).
+- Media keys and the system's now-playing panel (SMTC on Windows, MPRIS on Linux); the screensaver held off while
+  something plays.
+- Not on the desktop: the second screen and casting, the phone's lock and gestures for volume and brightness, the NPU;
+  switching the display's refresh rate to the film's comes later.
+
+</details>
+
 ## 🗺️ Roadmap
 
 What comes next lives in the [open issues](https://github.com/Hawkynt/MediaDroid/issues), each a requirement of its
-own — among them more upscalers and interpolators ([#235](https://github.com/Hawkynt/MediaDroid/issues/235)).
+own — among them more upscalers and interpolators ([#235](https://github.com/Hawkynt/MediaDroid/issues/235)) and the Windows and
+Linux apps ([#291](https://github.com/Hawkynt/MediaDroid/issues/291)).
 Considered and left out: online scraping, playlists, and IMDb/TMDb links — the metadata stays what is already in the
 folders. Prior art looked at: [Nova Video Player](https://github.com/nova-video-player/aos-Video), read as a user
 would for its menus.
 
 ## 🏗️ Architecture
 
-| Module | What | Android? |
-| --- | --- | :---: |
-| `:app` | the Compose screens, the player on [Media3](https://github.com/androidx/media), the picture stage on OpenGL ES, and a native part (`app/src/main/cpp`, on [ncnn](https://github.com/Tencent/ncnn)) for the neural networks | ✅ |
-| `:core:nfo` | NFO parsing, the `SxxExx` / `NxNN` names, Kodi's art names | — |
-| `:core:library` | the folder scanner, the domain models, search, filters, grouping | — |
-| `:core:player` | the binge queue, the picture's rules (deinterlacing, scaling, smooth motion, the checks), the models catalogue | — |
-| `:core:imaging` | decoders for TIFF, TGA and PCX art | — |
+| Module | What | Runs on |
+| --- | --- | --- |
+| `:app` | today the whole Android app — screens, player on [Media3](https://github.com/androidx/media), picture stage on OpenGL ES, neural networks (`app/src/main/cpp`, on [ncnn](https://github.com/Tencent/ncnn)); to become the Android shell alone | Android |
+| `:core:nfo` | NFO parsing, the `SxxExx` / `NxNN` names, Kodi's art names | everywhere (JVM) |
+| `:core:library` | the folder scanner, the domain models, search, filters, grouping | everywhere (JVM) |
+| `:core:player` | the binge queue, the picture's rules (deinterlacing, scaling, smooth motion, the checks), the models catalogue | everywhere (JVM) |
+| `:core:imaging` | decoders for TIFF, TGA and PCX art | everywhere (JVM) |
+| `:core:sources` | SMB, NFS, FTP/SFTP and WebDAV | everywhere (JVM) |
+| `:engine:api` | planned ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): the playback engine the screens talk to | everywhere (JVM) |
+| `:engine:android` | planned ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): Media3 behind that engine | Android |
+| `:stage` | planned ([#284](https://github.com/Hawkynt/MediaDroid/issues/284)): the picture stage's passes against an OpenGL ES interface, the shaders with it | everywhere (JVM) |
+| `native/` | planned ([#285](https://github.com/Hawkynt/MediaDroid/issues/285)): the neural networks as one CMake tree | Android, Windows, Linux |
+| `:ui` | planned ([#286](https://github.com/Hawkynt/MediaDroid/issues/286)): every screen, in Compose Multiplatform | Android, Windows, Linux |
+| `:engine:desktop` | planned ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): FFmpeg, the stage on OpenGL ES 3 (EGL, ANGLE), audio and sync | Windows, Linux |
+| `:desktop` | planned ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): the desktop shell — window, menus, keyboard, file chooser | Windows, Linux |
 
 The cores import no Android, so parsing, search, binge and the picture's rules are unit-tested in seconds without a
 device; shaders live in `app/src/main/glsl`.
