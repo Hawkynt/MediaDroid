@@ -142,6 +142,16 @@ GLuint program(const std::string& vertex, const std::string& fragment) {
 
 GLuint appProgram(const std::string& fragment) { return program(appShader("video/vertex.vert"), appShader(fragment)); }
 
+// An FSR pass as the stage builds it: SHADER_CHECK_FSR=es3 takes the GLSL ES 3.00 variant (fsr-*-es3.frag with
+// vertex-es3.vert), as the stage does on ES 3 chips; otherwise the GLSL ES 1.00 one.
+GLuint fsrProgram(const std::string& pass) {
+    const char* variant = std::getenv("SHADER_CHECK_FSR");
+    if (variant && std::string(variant) == "es3") {
+        return program(appShader("video/vertex-es3.vert"), appShader("video/fsr-" + pass + "-es3.frag"));
+    }
+    return appProgram("video/fsr-" + pass + ".frag");
+}
+
 struct Target {
     GLuint texture = 0;
     GLuint framebuffer = 0;
@@ -337,7 +347,7 @@ Picture gsrQualcomm(const std::string& shaderPath, const Picture& in, int w, int
 
 // RCAS alone on [in], at the stage's sharpness: to compare the two halves of FSR apart.
 Picture rcasOnly(const Picture& in) {
-    GLuint rcas = appProgram("video/fsr-rcas.frag");
+    GLuint rcas = fsrProgram("rcas");
     Target source = upload(in);
     Target out = target(in.width, in.height);
     glUseProgram(rcas);
@@ -350,8 +360,8 @@ Picture rcasOnly(const Picture& in) {
 // FSR 1 as the stage runs it: EASU to the output's size into an 8-bit frame, RCAS on it at
 // VideoFilterStage.RCAS_SHARPNESS — 0.2 stops below full on AMD's scale.
 Picture fsr(const Picture& in, int w, int h, bool easuOnly = false) {
-    GLuint easu = appProgram("video/fsr-easu.frag");
-    GLuint rcas = appProgram("video/fsr-rcas.frag");
+    GLuint easu = fsrProgram("easu");
+    GLuint rcas = fsrProgram("rcas");
     Target source = upload(in);
     Target enlarged = target(w, h);
     glUseProgram(easu);
