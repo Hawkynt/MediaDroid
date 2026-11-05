@@ -55,6 +55,15 @@ jobs:
       # The GL stage tests skip themselves where no display is.
       - name: Desktop tests
         run: ./gradlew :engine:desktop:test :desktop:test --no-daemon
+      - name: Keep the test reports of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.system }}-test-reports
+          path: |
+            engine/desktop/build/reports/tests/
+            desktop/build/reports/tests/
+          if-no-files-found: ignore
       - name: Packages
         run: ./gradlew ${{ matrix.tasks }} --no-daemon
       - name: Stage the packages under their published names
