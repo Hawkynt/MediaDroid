@@ -25,7 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.Languages
+import androidx.compose.material3.TextButton
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.PlaybackMath
 import com.hawkynt.mediadroid.player.PictureControl
 
 /** What the desktop stage runs so far (GlStage); the rest of the Android choices follow. */
@@ -55,12 +57,24 @@ fun PicturePanel(
     modifier: Modifier = Modifier,
     tracks: List<Track> = emptyList(),
     onPick: (Track.Kind, String?) -> Unit = { _, _ -> },
+    speed: Float = 1f,
+    onSpeed: (Float) -> Unit = {},
 ) {
     Column(
         modifier.width(380.dp).fillMaxHeight().background(Color(0xF01A1A2E)).verticalScroll(rememberScrollState())
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("Speed", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                modifier = Modifier.weight(1f))
+            Text("%.2f×".format(speed), color = Color.Gray)
+            if (speed != 1f) TextButton(onClick = { onSpeed(1f) }) { Text("1×") }
+        }
+        Slider(
+            value = PlaybackMath.speedPosition(speed),
+            onValueChange = { onSpeed(PlaybackMath.speedAt(it)) },
+        )
         val sound = tracks.filter { it.kind == Track.Kind.AUDIO }
         val subtitles = tracks.filter { it.kind == Track.Kind.TEXT }
         if (sound.size > 1) {

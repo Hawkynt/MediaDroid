@@ -34,6 +34,8 @@ class DesktopPlaybackEngine(
     @Volatile private var soundFiles: List<String> = emptyList()
     @Volatile private var selectedSound: String? = null
     @Volatile private var baseMs = 0L
+    @Volatile private var pendingSpeed: Float? = null
+    @Volatile private var clockSpeed = 1f
     @Volatile private var hasSound = false
     @Volatile private var wallStartNs = 0L
     @Volatile private var wallPausedMs = 0L
@@ -78,6 +80,9 @@ class DesktopPlaybackEngine(
         }
         wallStartNs = System.nanoTime()
         wallPausedMs = 0
+        clockSpeed = 1f
+        // The speed carries over from the video before: the new reader's filter takes it in at once.
+        pendingSpeed = speed.takeIf { it != 1f }
         running = true
         thread = Thread({ readLoop(opened) }, "mediadroid-reader").apply {
             isDaemon = true
@@ -95,10 +100,20 @@ class DesktopPlaybackEngine(
         var soundSource: MediaReader? = null
         var pictureMs = Long.MIN_VALUE
         var soundMs = Long.MIN_VALUE
+        val tempo = Tempo()
         try {
             while (running) {
+                pendingSpeed?.let { value ->
+                    // The clock starts again from here at the new rate, the sound held back by the filter dropped.
+                    pendingSpeed = null
+                    val at = positionMs
+                    tempo.speed = value
+                    if (pendingSeekMs == null) pendingSeekMs = at
+                }
                 pendingSeekMs?.let { target ->
                     pendingSeekMs = null
+                    tempo.reset()
+                    clockSpeed = tempo.speed
                     source.seek(target)
                     soundSource?.seek(target)
                     pictureMs = Long.MIN_VALUE
@@ -166,13 +181,17 @@ class DesktopPlaybackEngine(
                             if (pictures.offer(item, 10, TimeUnit.MILLISECONDS)) break
                         }
                     }
-                    is MediaReader.Sound -> sink?.write(item.pcm)
+                    is MediaReader.Sound -> {
+                        val pcm = tempo.process(item.pcm)
+                        if (pcm.isNotEmpty()) sink?.write(pcm)
+                    }
                     is MediaReader.Cue -> cues += item
                 }
             }
         } catch (_: InterruptedException) {
         } finally {
             soundSource?.close()
+            tempo.close()
         }
     }
 
@@ -235,7 +254,7 @@ class DesktopPlaybackEngine(
             } else {
                 wallPausedMs
             }
-            return baseMs + played
+            return baseMs + (played * clockSpeed).toLong()
         }
 
     override val durationMs: Long get() = reader?.durationMs ?: 0
@@ -245,8 +264,13 @@ class DesktopPlaybackEngine(
 
     override val isPlaying: Boolean get() = playing
 
-    /** Speed other than 1 is not played yet on the desktop (#288): the value is kept. */
+    /** How fast it plays, the sound at its own pitch (Tempo); taken in by the reader at its next turn. */
     override var speed: Float = 1f
+        set(value) {
+            if (value == field || value <= 0f) return
+            field = value
+            pendingSpeed = value
+        }
 
     override var volume: Float = 1f
         set(value) {

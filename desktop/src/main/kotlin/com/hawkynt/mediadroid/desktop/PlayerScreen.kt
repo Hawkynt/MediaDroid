@@ -92,6 +92,7 @@ fun PlayerScreen(
         DesktopPlaybackEngine(PlaybackTuning.Mutable()).apply {
             // MEDIADROID_MUTE=1: checks and documentation runs play silently.
             if (System.getenv("MEDIADROID_MUTE") == "1") volume = 0f
+            speed = store.speed
         }
     }
     val bitmap = remember { PictureBitmap() }
@@ -201,6 +202,14 @@ fun PlayerScreen(
 
     fun togglePlay() = if (engine.isPlaying) engine.pause() else engine.play()
 
+    var speed by remember { mutableStateOf(store.speed) }
+    fun changeSpeed(value: Float) {
+        val clamped = (kotlin.math.round(value * 20f) / 20f).coerceIn(PlaybackMath.SPEED_MIN, PlaybackMath.SPEED_MAX)
+        speed = clamped
+        engine.speed = clamped
+        store.speed = clamped
+    }
+
     // S: the next subtitle track, after the last one off again.
     fun nextSubtitles() {
         val text = engine.tracks.filter { it.kind == Track.Kind.TEXT }
@@ -223,6 +232,8 @@ fun PlayerScreen(
                     Key.N -> next()
                     Key.P -> panel = !panel
                     Key.S -> nextSubtitles()
+                    Key.LeftBracket -> changeSpeed(speed - SPEED_STEP)
+                    Key.RightBracket -> changeSpeed(speed + SPEED_STEP)
                     Key.Escape -> if (fullScreen) onFullScreen() else onExit()
                     else -> return@onKeyEvent false
                 }
@@ -250,6 +261,8 @@ fun PlayerScreen(
                     if (named) t.copy(label = soundNames[t.label] ?: t.label) else t
                 },
                 onPick = ::pick,
+                speed = speed,
+                onSpeed = ::changeSpeed,
             )
         }
         error?.let {
@@ -352,3 +365,6 @@ private fun clock(ms: Long): String {
 }
 
 private const val CONTROLS_MS = 3_000L
+
+/** How much [ and ] change the speed. */
+private const val SPEED_STEP = 0.05f

@@ -135,4 +135,19 @@ class DesktopPlaybackEngineTest {
             waitFor { (engine.picture()?.ptsMs ?: 0) >= 560 }
         }
     }
+
+    @Test
+    fun `at twice the speed the clock runs twice as fast as the sound played`() {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(clip))
+            waitFor { engine.isPlaying }
+            engine.speed = 2f
+            waitFor { sink.flushed > 0 }
+            val from = engine.positionMs
+            sink.playedMs = 300
+            assertEquals(from + 600, engine.positionMs)
+            waitFor { engine.picture()?.ptsMs == (from + 600) / 40 * 40 }
+        }
+    }
 }

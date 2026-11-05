@@ -61,6 +61,14 @@ class DesktopStore(private val folder: File) {
             save()
         }
 
+    /** The household's playback speed, 1 for as filmed: every video starts at it. */
+    var speed: Float
+        get() = properties.getProperty("speed")?.toFloatOrNull() ?: 1f
+        set(value) {
+            properties.setProperty("speed", "$value")
+            save()
+        }
+
     fun resumeMs(video: String): Long = properties.getProperty("resume.$video")?.toLongOrNull() ?: 0
 
     fun setResume(video: String, positionMs: Long) {
