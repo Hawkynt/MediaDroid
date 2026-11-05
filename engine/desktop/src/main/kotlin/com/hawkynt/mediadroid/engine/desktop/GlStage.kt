@@ -54,6 +54,10 @@ class GlStage : AutoCloseable {
     @Volatile var ready = false
         private set
 
+    /** The OpenGL driver's own name for what draws (GL_RENDERER): "llvmpipe (…)" for Mesa in software. */
+    @Volatile var renderer = ""
+        private set
+
     init {
         thread.submit { start() }.get()
     }
@@ -73,6 +77,7 @@ class GlStage : AutoCloseable {
         if (window == 0L) return
         GLFW.glfwMakeContextCurrent(window)
         GL.createCapabilities()
+        renderer = org.lwjgl.opengl.GL11C.glGetString(org.lwjgl.opengl.GL11C.GL_RENDERER).orEmpty()
         vao = glGenVertexArrays()
         glBindVertexArray(vao)
         val quad = glGenBuffers()
