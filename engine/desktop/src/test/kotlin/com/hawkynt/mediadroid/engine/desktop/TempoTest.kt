@@ -69,4 +69,12 @@ class TempoTest {
         assertEquals(2.0, out.size / 4.0 / MediaReader.SAMPLE_RATE, 0.15)
         assertEquals(440.0, pitch(out), 15.0)
     }
+
+    @Test
+    fun `the tempo reaches FFmpeg as a fraction of whole numbers, which reads the same in every locale`() {
+        assertEquals("tempo=2000000/1000000", Tempo.tempoArgument(2.0))
+        assertEquals("tempo=500000/1000000", Tempo.tempoArgument(0.5))
+        assertEquals("tempo=1333333/1000000", Tempo.tempoArgument(1.3333333))
+        assertEquals(false, Tempo.tempoArgument(1.25).contains('.') || Tempo.tempoArgument(1.25).contains(','))
+    }
 }

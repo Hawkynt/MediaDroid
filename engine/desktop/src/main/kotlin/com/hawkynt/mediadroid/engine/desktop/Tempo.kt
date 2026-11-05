@@ -80,10 +80,10 @@ class Tempo : AutoCloseable {
         var left = speed.toDouble()
         var n = 0
         while (left < 0.5) {
-            last = create("atempo", "tempo${n++}", "tempo=0.5").also { avfilter.avfilter_link(last, 0, it, 0) }
+            last = create("atempo", "tempo${n++}", tempoArgument(0.5)).also { avfilter.avfilter_link(last, 0, it, 0) }
             left /= 0.5
         }
-        last = create("atempo", "tempo$n", "tempo=$left").also { avfilter.avfilter_link(last, 0, it, 0) }
+        last = create("atempo", "tempo$n", tempoArgument(left)).also { avfilter.avfilter_link(last, 0, it, 0) }
         val format = create("aformat", "format", "sample_fmts=s16:channel_layouts=stereo:sample_rates=$rate")
         avfilter.avfilter_link(last, 0, format, 0)
         val out = create("abuffersink", "out", null)
@@ -98,5 +98,14 @@ class Tempo : AutoCloseable {
         reset()
         avutil.av_frame_free(input)
         avutil.av_frame_free(output)
+    }
+
+    companion object {
+        /**
+         * The `atempo` argument for [tempo], as a fraction of whole numbers: FFmpeg reads a decimal with the C library's
+         * strtod, which follows the locale the JVM set from the environment, so `2.0` is no number where the decimal
+         * separator is a comma. Its expression parser reads `2000000/1000000` the same everywhere.
+         */
+        fun tempoArgument(tempo: Double): String = "tempo=${Math.round(tempo * 1_000_000)}/1000000"
     }
 }
