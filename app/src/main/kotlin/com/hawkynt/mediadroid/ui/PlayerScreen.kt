@@ -202,6 +202,7 @@ fun PlayerScreen(
         object : com.hawkynt.mediadroid.engine.PlaybackTuning {
             override val loudnessDb get() = settings.loudness + loudnessBoostDb
             override val nightMode get() = nightMode
+            override val normalizeLoudness get() = settings.evenLoudness
             override val audioDelayMs get() = audioDelayMs
             override val subtitleDelayMs get() = subtitleLook.delayMs
         }
@@ -1727,6 +1728,8 @@ fun PlayerScreen(
                         },
                         loudnessDb = settings.loudness + loudnessBoostDb,
                         nightMode = nightMode,
+                        evenLoudness = settings.evenLoudness,
+                        replayGainDb = engine.replayGainDb,
                         speed = speed,
                         delayMs = audioDelayMs,
                         spatial = spatialAudio,

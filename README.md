@@ -207,14 +207,15 @@ video brought down to 1080p first; Fit, Fill or Stretch, and a zoom. How the net
 ### 🔊 Sound
 
 - AC3, E-AC3, DTS, TrueHD and more through the bundled FFmpeg; passthrough to an AV receiver over HDMI.
-- Night mode (a compressor after Giannoulis, Massberg & Reiss, JAES 2012), loudness boost up to 800 %, audio delay
-  remembered per output, spatial audio on Android 13+.
+- Night mode (a compressor after Giannoulis, Massberg & Reiss, JAES 2012), loudness boost up to 800 %, even loudness
+  from file to file (ReplayGain, else EBU R128 measured), audio delay remembered per output, spatial audio on Android 13+.
 
 <details>
 <summary>Sound in detail</summary>
 
 - AC3, E-AC3, DTS, TrueHD and other exotic audio tracks play through a bundled FFmpeg decoder, even on hardware without them.
 - Night mode in the gear compresses the dynamic range in the app's own audio stage — quiet dialogue comes up, explosions come down — for late evenings and thin walls; it combines with the loudness gain and the volume boost (soft-knee compressor after Giannoulis, Massberg & Reiss, JAES 2012).
+- Even loudness in Settings plays every film and song about as loud as the last, beside the loudness gain and night mode: a file whose tags carry ReplayGain — `REPLAYGAIN_TRACK_GAIN` / `_PEAK` in Vorbis comments, ID3, iTunes atoms or an MP3's LAME header, Opus's `R128_TRACK_GAIN` — plays at its track gain from the first sample, held back so its peak stays within full scale; any other file is measured as it plays (EBU R128 / ITU-R BS.1770 integrated loudness: K-weighting, 400 ms blocks, the −70 LUFS and −10 LU gates — converted from libebur128 and agreeing with it and with FFmpeg's ebur128 filter) and turned towards ReplayGain's −18 LUFS, after its first three seconds, no faster than 2 dB a second, by at most +12 / −24 dB. The info graph names which of the two is at work.
 - Audio delay in the gear, −2.5 s … +2.5 s in 50 ms steps, fixes lip-sync; the gear says it in words — "sound 150 ms after the picture", "subtitles 2 s before the picture" — and its buttons are Sooner and Later, for the sound as for the subtitles; it is remembered per audio output — the phone's speaker, each Bluetooth headset, USB, HDMI — since each has its own latency, and follows the output when it changes.
 - Spatial audio: on Android 13+ devices with a spatializer, a remembered switch in the gear hands multichannel sound to it for headphones that support it. The player takes audio focus like any film player: other apps pause, a call pauses the film.
 
@@ -257,7 +258,7 @@ video brought down to 1080p first; Fit, Fill or Stretch, and a zoom. How the net
 <summary>The household in detail</summary>
 
 - Child lock in the gear: once locked, every touch, swipe, Back and button is ignored — only the volume keys still work — and any touch shows a lock symbol for a moment; holding it for two seconds unlocks.
-- Parent-guarded settings behind a four-digit PIN, freshly drawn on every visit and shown on screen as words — a child who cannot read cannot get in, and nobody has to remember anything. There: default speed, loudness boost for unnormalized audio, the default brightness/gamma/contrast/color every video starts from, subtitle and stream languages, and a maximum-age mode that hides content whose NFO certification is too old (FSK, MPAA and TV ratings understood) — content with no certification shown, or hidden too, as the household chooses.
+- Parent-guarded settings behind a four-digit PIN, freshly drawn on every visit and shown on screen as words — a child who cannot read cannot get in, and nobody has to remember anything. There: default speed, loudness boost for unnormalized audio, even loudness from file to file, the default brightness/gamma/contrast/color every video starts from, subtitle and stream languages, and a maximum-age mode that hides content whose NFO certification is too old (FSK, MPAA and TV ratings understood) — content with no certification shown, or hidden too, as the household chooses.
 
 </details>
 

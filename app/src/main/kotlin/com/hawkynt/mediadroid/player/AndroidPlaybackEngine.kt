@@ -18,8 +18,8 @@ import com.hawkynt.mediadroid.engine.Track
 /**
  * The Android playback engine: Media3's ExoPlayer, built as the player has always built it — the bundled FFmpeg
  * preferred for audio and the fallback for video (first with software decoding), FFmpeg's video renderer keeping as
- * many pictures ahead as Settings asks, loudness and night mode on the decoded sound, the sound waiting for a
- * filtered picture, sidecar audio merged in, network sources streamed — behind [PlaybackEngine].
+ * many pictures ahead as Settings asks, loudness, night mode and even loudness on the decoded sound, the sound waiting
+ * for a filtered picture, sidecar audio merged in, network sources streamed — behind [PlaybackEngine].
  *
  * [exo] stays reachable while the player screen moves over to the engine's own commands (#283).
  */
@@ -154,7 +154,12 @@ class AndroidPlaybackEngine(
                             .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
                             .setAudioProcessorChain(
                                 DefaultAudioSink.DefaultAudioProcessorChain(
-                                    LoudnessAudioProcessor({ tuning.loudnessDb }, { tuning.nightMode }),
+                                    LoudnessAudioProcessor(
+                                        { tuning.loudnessDb },
+                                        { tuning.nightMode },
+                                        { tuning.normalizeLoudness },
+                                        { fileLoudness },
+                                    ),
                                 ),
                             )
                             .build(),
@@ -190,11 +195,38 @@ class AndroidPlaybackEngine(
 
     private val listeners = mutableMapOf<PlaybackEngine.Listener, Player.Listener>()
 
+    /** The file and audio track playing and its ReplayGain, for the even-loudness correction on the audio thread. */
+    @Volatile private var fileLoudness: FileLoudness? = null
+
+    /** The ReplayGain of the file and audio track playing, if its tags carry one. */
+    val replayGainDb: Float? get() = fileLoudness?.tagGainDb
+
+    init {
+        // The audio track playing and its ReplayGain tags, as Media3 read them from the file.
+        exo.addListener(
+            object : Player.Listener {
+                override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                    val path = openedPath ?: return
+                    val group = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
+                    val index = group?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) } }
+                    val format = if (group != null && index != null) group.getTrackFormat(index) else null
+                    val tags = ReplayGainTags.of(format?.metadata)
+                    val loudness = FileLoudness(
+                        "$path#${tracks.groups.indexOf(group)}:$index",
+                        ReplayGain.parse(tags)?.gainDb,
+                    )
+                    if (loudness != fileLoudness) fileLoudness = loudness
+                }
+            },
+        )
+    }
+
     override var openedPath: String? = null
         private set
 
     override fun open(request: MediaRequest, autoPlay: Boolean) {
         openedPath = request.path
+        fileLoudness = FileLoudness(request.path, null)
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguage(request.audioLanguage.ifEmpty { null })
             .build()

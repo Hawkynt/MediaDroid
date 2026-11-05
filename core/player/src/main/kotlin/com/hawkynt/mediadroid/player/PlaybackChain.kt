@@ -94,6 +94,9 @@ object PlaybackChain {
         val decodedFormat: String? = null,
         /** The PCM the decoder hands on and the processing works in: `16-bit PCM`, `float PCM`. */
         val pcmFormat: String? = null,
+        /** Even loudness on: by the file's ReplayGain ([replayGainDb]), else measured as it plays. */
+        val evenLoudness: Boolean = false,
+        val replayGainDb: Float? = null,
     )
 
     /** The subtitles shown: their format (a MIME type), language, shift, and the screen they are drawn on. */
@@ -220,6 +223,12 @@ object PlaybackChain {
         val processing = buildList {
             if (audio.loudnessDb != 0f) add("loudness ${signed(audio.loudnessDb)} dB")
             if (audio.nightMode) add("night mode")
+            if (audio.evenLoudness) {
+                add(
+                    "even loudness (" +
+                        (audio.replayGainDb?.let { "ReplayGain ${signed(it)} dB" } ?: "measured, EBU R128") + ")",
+                )
+            }
             if (audio.speed != 1f) add("speed ${number(audio.speed)}× (Sonic)")
             if (audio.delayMs != 0) add("delay ${audio.delayMs} ms")
             if (audio.spatial) add("spatial audio")
