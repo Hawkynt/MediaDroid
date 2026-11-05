@@ -25,6 +25,8 @@ dependencies {
     implementation(project(":engine:desktop"))
     // The settings file, settings.json (DesktopStore).
     implementation(libs.serialization.json)
+    // SMB servers announced on the local network (mDNS), SmbDiscovery.
+    implementation(libs.jmdns)
     // LWJGL's native calls, for the system functions the window needs (ScreenKeeper); its natives come with the engine.
     implementation(libs.lwjgl)
     // The window's natives (Skia) for the system built for: -PdesktopTarget=linux|windows|all, the building machine's

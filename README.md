@@ -338,7 +338,8 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   watched marks as JSON (`settings.json`, taken over once from the `state.properties` of earlier builds), the passwords
   encrypted by the system (DPAPI on Windows, the Secret Service on Linux; where no Secret Service runs, in a file only
   the user can read).
-- Network sources are added from the wall's Network sources button — tried once before they are kept — and their
+- Network sources are added from the wall's Network sources button — tried once before they are kept; SMB servers
+  announcing themselves on the local network (mDNS, `_smb._tcp`) are offered with one click — and their
   movies and shows join the local folder's on one wall; they play, subtitles and sound files beside them included,
   through FFmpeg reading the source's files directly.
 - Media keys and the system's now-playing panel (SMTC on Windows, MPRIS on Linux); the screensaver held off while
