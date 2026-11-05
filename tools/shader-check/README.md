@@ -16,6 +16,9 @@ oracle that bilinear scaling would pass as well proves nothing.
 | FSR (`fsr-easu.frag`, `fsr-rcas.frag`) | AMD's `ffx_a.h` and `ffx_fsr1.h`, GPUOpen-Effects/FidelityFX-FSR `a21ffb8` (MIT) | as the Vulkan sample's full-float path (`FSR_Pass.glsl`, `SAMPLE_SLOW_FALLBACK`): `FsrEasuF` with `textureGather`, `FsrRcasF` with `texelFetch`, the constants from `FsrEasuCon` and `FsrRcasCon` on the processor; the frame between them 8-bit, as the app's is |
 | NIS (`nis.frag`) | NVIDIA's `NIS_Scaler.h` and `NIS_Config.h`, NVIDIAGameWorks/NVIDIAImageScaling `35e13ba`, SDK v1.0.3 (MIT) | as `NIS_Main.glsl` runs `NVScaler` at sharpness 0.5, settings from `NVScalerUpdateConfig`; only the five texture macros written for OpenGL's combined samplers instead of Vulkan's separate ones. Ours gets its coefficients packed as `nisTable()` packs `Nis`'s, from `NIS_Config.h` itself (`NisTest` holds `Nis` to NVIDIA) |
 | Anime4K (`glsl/anime4k`) | `Anime4K_Upscale_CNN_x2_S.glsl` v3.2, bloc97/Anime4K `7684e95` (MIT) | in libplacebo on RGB, where its MAIN hook sees the values the stage does |
+| Lanczos, EWA (`lanczos.frag`, `ewa.frag`) | libplacebo's `lanczos` and `ewa_lanczossharp` | their kernels, antiringing off on both sides (ours pulls into the four nearest pixels' range, libplacebo's weighs a soft minimum and maximum — a different rule, so not compared) |
+| xBRZ (`glsl/xbrz`) | the original's own output: core/imaging's reference pictures, which `Xbrz` is held to as well | the three passes as the stage runs them, every factor 2 to 6; the patterns read from the app's `Xbrz.kt` (`xbrz-table.py`) |
+| YADIF, BWDIF (`temporal.frag`) | FFmpeg's `yadif` and `bwdif` on planar RGB | three interlaced frames (`fields.py`: half still, half moving), both field orders and both fields, PAL and NTSC sizes; once more with every read addressed 1/256 texel off, which nearest sampling has to absorb |
 | ACNet (`glsl/acnet`) | `acnet_f8b4.glsl`, TianZerL/ACNetGLSL `c6e5940` (MIT) | in libplacebo on 16-bit YUV (BT.709, full range), grey and in colour, the chroma scaled bilinearly as the stage's doubling does — with another chroma scaler it has to differ, so that setting is known to take |
 
 1. Mesa's EGL, GLES and OpenGL (`pkg-config egl glesv2 opengl`); for Anime4K and ACNet, FFmpeg built with libplacebo and
@@ -33,11 +36,18 @@ On an Intel HD Graphics 520 laptop (Mesa 26.2, libplacebo 7.360), per 8-bit valu
 | NIS at 1.25×, 1.5×, 1.75× and 2× | 1 | ≤ 0.0063 |
 | Anime4K at 2× | 1 | 0.056 |
 | ACNet at 2×, grey / in colour | 1 | 0.040 / 0.021 |
+| Lanczos and EWA kernels at 1.5× and 2× | ≤ 2 | ≤ 0.083 |
+| xBRZ, three pictures at 2× to 6× | 0 | 0 |
+| YADIF and BWDIF, every case, and read 1/256 texel off | 0 | 0 |
 
 Outermost pixels are left out where the originals read past the picture: AMD's RCAS fetches beyond the edge (one
 pixel), NVIDIA's tile loader wraps an unsigned index at the top and left (eight pixels, as `NisTest` does).
 
-What the check found and the app now does as the originals do: FSR uses AMD's approximate reciprocals rather than
+What the check found and the app now does as the originals do: the passes that read exact pixels (YADIF, BWDIF,
+Film's weave, the luma read back, xBRZ) sample them nearest — through linear filtering a texel addressed 1/256 off
+moved YADIF by up to 139/255, which nearest sampling absorbs; Film's weave runs at high precision, as half floats
+cannot address 1080 rows to the row; xBRZ finds its block half a pixel in, so a reciprocal landing a hair low cannot
+pick the one before; FSR uses AMD's approximate reciprocals rather than
 exact ones (`glsl/video/ffx-approx.glsl`, the same integer arithmetic on the float's two fields, since GLSL ES 1.00
 cannot read its bits) — up to 23/255 apart before — and its RCAS lets a colour whose neighbours are all 0 or all 1
 drop out of the lobe, as AMD's NaN does on GPUs; NIS gets its scale divided on the processor, as NVIDIA's

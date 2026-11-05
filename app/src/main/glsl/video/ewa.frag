@@ -1,11 +1,13 @@
 // EWA Lanczos-sharp (see Ewa): the source pixels in a circle of uRadius around the position weigh by
-// their distance, read from uTable; the result is pulled halfway into the four nearest pixels' range,
-// as the Lanczos pass does.
+// their distance, read from uTable; the result is pulled uAntiring of the way into the four nearest pixels'
+// range, as the Lanczos pass does.
 precision highp float;
 uniform sampler2D uTex;
 uniform sampler2D uTable;
 uniform vec2 uInSize;
 uniform float uRadius;
+// How far the result is pulled into the four nearest pixels' range (VideoFilterStage.ANTIRING).
+uniform float uAntiring;
 varying vec2 vTex;
 float weight(float d) {
   if (d >= uRadius) return 0.0;
@@ -36,5 +38,5 @@ void main() {
     }
   }
   vec3 c = sum / weights;
-  gl_FragColor = vec4(mix(c, clamp(c, lo, hi), 0.5), 1.0);
+  gl_FragColor = vec4(mix(c, clamp(c, lo, hi), uAntiring), 1.0);
 }
