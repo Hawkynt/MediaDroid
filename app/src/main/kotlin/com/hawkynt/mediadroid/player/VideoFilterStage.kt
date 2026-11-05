@@ -448,14 +448,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             texMatrix[10] = 1f
             texMatrix[13] = 1f
             texMatrix[15] = 1f
-            System.arraycopy(
-                when (buffer.colorspace) {
-                    VideoDecoderOutputBuffer.COLORSPACE_BT601 -> BT601
-                    VideoDecoderOutputBuffer.COLORSPACE_BT2020 -> BT2020
-                    else -> BT709
-                },
-                0, yuvColor, 0, 9,
-            )
+            val signalled = when (buffer.colorspace) {
+                VideoDecoderOutputBuffer.COLORSPACE_BT601 -> YuvMatrix.BT601
+                VideoDecoderOutputBuffer.COLORSPACE_BT709 -> YuvMatrix.BT709
+                VideoDecoderOutputBuffer.COLORSPACE_BT2020 -> YuvMatrix.BT2020
+                else -> null
+            }
+            System.arraycopy(YuvMatrix.of(signalled, buffer.height).toRgb(), 0, yuvColor, 0, 9)
             yuvInput = true
             draw(redraw = false)
         } finally {
@@ -1064,7 +1063,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             run(packProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uStep"), stepX.toFloat(), stepY.toFloat())
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSd"), if (height <= SD_HEIGHT) 1 else 0)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSd"), if (height <= YuvMatrix.SD_HEIGHT) 1 else 0)
             }
         }
         return Triple(columns, rows, texels)
@@ -2157,7 +2156,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         private const val MAX_LATENCY_MS = 100
 
         /** The tallest picture taken as standard definition, coloured by BT.601: PAL's 576 lines. */
-        private const val SD_HEIGHT = 576
 
         /** Film runs about five frames behind: a sixth of a second for NTSC. */
         private const val MAX_FILM_LATENCY_MS = 250
@@ -2251,10 +2249,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** Pictures from FFmpeg waiting to be drawn, beyond which the oldest is let go. */
         private const val MAX_YUV_QUEUED = 4
 
-        // Limited-range YUV to RGB, column-major, copied from Media3's VideoDecoderGLSurfaceView.
-        private val BT601 = floatArrayOf(1.164f, 1.164f, 1.164f, 0.0f, -0.392f, 2.017f, 1.596f, -0.813f, 0.0f)
-        private val BT709 = floatArrayOf(1.164f, 1.164f, 1.164f, 0.0f, -0.213f, 2.112f, 1.793f, -0.533f, 0.0f)
-        private val BT2020 = floatArrayOf(1.168f, 1.168f, 1.168f, 0.0f, -0.188f, 2.148f, 1.683f, -0.652f, 0.0f)
 
         /** NIS's sharpness, on its own 0..1 scale: the middle, NVIDIA's neutral setting. */
         private const val NIS_SHARPNESS = 0.5f
