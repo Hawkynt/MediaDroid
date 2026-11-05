@@ -5,7 +5,7 @@ architecture: the parameter names are the checkpoint's, so its weights load as t
 
 The blocks the app runs on ncnn — the feature extractor, the context downscale, the flow and refinement networks — are
 plain convolutions (export.py writes them out); what joins them (warping, the complementary flow reversal, the
-blending) is in forward() here and in app/src/main/cpp/xvfi.cpp there.
+blending) is in forward() here and in native/src/xvfi.cpp there.
 """
 import torch
 import torch.nn as nn

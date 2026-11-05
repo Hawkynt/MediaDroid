@@ -2,7 +2,7 @@ CAIN: Channel Attention Is All You Need for Video Frame Interpolation (AAAI 2020
 (https://github.com/myungsub/CAIN), as ncnn runs it: cain-ncnn-vulkan, by nihui (https://github.com/nihui/cain-ncnn-vulkan).
 
 The model is not in the app: picked, it is fetched from huggingface.co/Hawkynt/mediadroid-models (cain/), where
-cain-ncnn-vulkan's models/cain files lie unchanged, each checked against its SHA-256 digest. app/src/main/cpp/
+cain-ncnn-vulkan's models/cain files lie unchanged, each checked against its SHA-256 digest. native/src/
 pair_networks.cpp runs it the way the port does: each frame's own mean taken away, the edges repeated to a multiple
 of 32, the two means' average put back.
 

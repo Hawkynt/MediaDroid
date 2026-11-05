@@ -1,5 +1,5 @@
-// Neural frame interpolation networks on ncnn (Vulkan or the CPU), without Android: the app's JNI part
-// (interpolator.cpp) and the desktop check (tools/neural-check) both run them.
+// Neural frame interpolation networks on ncnn (Vulkan or the CPU), without Android or JNI: the JNI surface
+// (native/jni) and the desktop check (tools/neural-check) both run them.
 //  - RIFE 4.x as rife-ncnn-vulkan runs it (MIT, see app/THIRD-PARTY-NOTICE.RIFE.txt): one network, the frames in
 //    0..1 padded with zeros to a multiple of 128, the time as a plane.
 //  - DAIN as dain-ncnn-vulkan runs it (MIT, see app/THIRD-PARTY-NOTICE.DAIN.txt): depth, flow and context networks
@@ -11,6 +11,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 
 #include <net.h>
 
@@ -36,6 +37,9 @@ struct Interpolator {
 
 // Loads the structure (.param) and weights (.bin) named [name] into [net]: 0 when both loaded.
 using Loader = std::function<int(ncnn::Net& net, const char* name)>;
+
+// A loader reading [base]/<name>.param and [base]/<name>.bin from files.
+Loader fileLoader(const std::string& base);
 
 // RIFE (its "flownet"), on the GPU or the CPU; null where it does not load.
 std::unique_ptr<Interpolator> openRife(const Loader& load, bool gpu);

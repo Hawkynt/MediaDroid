@@ -16,9 +16,11 @@ convention, Kodi art discovery), `:core:library` (the folder scanner plus domain
 group-by-decade) and `:core:player` (the binge queue). `:app` also ships `app/libs/lib-decoder-ffmpeg-release.aar` — the
 Media3 FFmpeg audio decoder extension (AC3/E-AC3/DTS/TrueHD on devices without them), built from androidx/media 1.11.1
 with an LGPL-only FFmpeg; the recipe is in `tools/ffmpeg/README.md` and the attribution in
-`app/THIRD-PARTY-NOTICE.ffmpeg.txt`. `:app` also has a native part, `app/src/main/cpp` (CMake, NDK): the neural networks
-that run on ncnn — on the GPU through Vulkan or on the CPU — built against ncnn's prebuilt Android release, which the
-`ncnnPrebuilt` task fetches and checks against its digest; the attribution is in `app/THIRD-PARTY-NOTICE.ncnn.txt`. The
+`app/THIRD-PARTY-NOTICE.ffmpeg.txt`. The native tree, `native/` (one CMake project; `:native` in Gradle): the neural
+networks that run on ncnn — on the GPU through Vulkan or on the CPU — built for the Android ABIs by the app's
+externalNativeBuild and for the desktop by `:native:desktopLibrary`, against ncnn's prebuilt releases, which
+`native/build.gradle.kts` fetches and checks against their digests; the attribution is in
+`app/THIRD-PARTY-NOTICE.ncnn.txt`. The
 cores carry no Android dependency on purpose: the parsing, search and binge logic are pure and unit-tested without a
 device, and the screens sit on top of them. The bar is a household where nobody has to be taught the app — usable by a
 six-year-old and a grandparent, instant even on cheap hardware.

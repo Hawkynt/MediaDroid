@@ -51,10 +51,11 @@ jobs:
       - name: Install squashfs-tools (the AppImage's file system)
         if: matrix.system == 'linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq squashfs-tools
-      # The desktop tests on the system they are for: FFmpeg's and LWJGL's natives, the sound path, the store.
+      # The desktop tests on the system they are for: FFmpeg's and LWJGL's natives, the sound path, the store — and the
+      # native tree (native/) built for it with the system's compiler and loaded (-PnativeLibrary).
       # The GL stage tests skip themselves where no display is.
       - name: Desktop tests
-        run: ./gradlew :engine:desktop:test :desktop:test --no-daemon
+        run: ./gradlew :engine:desktop:test :desktop:test -PnativeLibrary --no-daemon
       - name: Keep the test reports of a failed run
         if: failure()
         uses: actions/upload-artifact@v4
@@ -64,6 +65,12 @@ jobs:
             engine/desktop/build/reports/tests/
             desktop/build/reports/tests/
           if-no-files-found: ignore
+      - name: Keep the native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmediadroid-${{ matrix.system }}-x64
+          path: native/build/desktop/lib/*
+          if-no-files-found: error
       - name: Packages
         run: ./gradlew ${{ matrix.tasks }} --no-daemon
       - name: Stage the packages under their published names
@@ -80,4 +87,37 @@ jobs:
         with:
           name: desktop-${{ matrix.system }}-artifacts
           path: dist/*
+          if-no-files-found: error
+
+  # The native tree on Linux arm64, which ncnn publishes no release for: ncnn built from its full source, the library
+  # built against it, loaded by the JVM and a network run (the desktop packages are x64 only for now).
+  native-linux-arm64:
+    name: native linux-arm64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: gradle
+      # The Android modules are configured with the rest even when only the desktop is built.
+      - uses: android-actions/setup-android@v4
+      - name: Native library and its test
+        run: ./gradlew :engine:desktop:test -PnativeLibrary --tests '*NativeNetworksTest' --no-daemon
+      - name: Keep the test reports of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-arm64-test-reports
+          path: engine/desktop/build/reports/tests/
+          if-no-files-found: ignore
+      - name: Keep the native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmediadroid-linux-arm64
+          path: native/build/desktop/lib/*
           if-no-files-found: error

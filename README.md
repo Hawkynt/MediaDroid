@@ -372,7 +372,7 @@ would for its menus.
 
 | Module | What | Runs on |
 | --- | --- | --- |
-| `:app` | today the whole Android app — screens, player on [Media3](https://github.com/androidx/media), picture stage on OpenGL ES, neural networks (`app/src/main/cpp`, on [ncnn](https://github.com/Tencent/ncnn)); to become the Android shell alone | Android |
+| `:app` | today the whole Android app — screens, player on [Media3](https://github.com/androidx/media), picture stage on OpenGL ES, neural networks (`native/`, on [ncnn](https://github.com/Tencent/ncnn)); to become the Android shell alone | Android |
 | `:core:nfo` | NFO parsing, the `SxxExx` / `NxNN` names, Kodi's art names | everywhere (JVM) |
 | `:core:library` | the folder scanner, the domain models, search, filters, grouping | everywhere (JVM) |
 | `:core:player` | the binge queue, the picture's rules (deinterlacing, scaling, smooth motion, the checks), the models catalogue | everywhere (JVM) |
@@ -381,7 +381,7 @@ would for its menus.
 | `:engine:api` | built ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): the playback engine the screens talk to | everywhere (JVM) |
 | `:engine:android` | planned ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): Media3 behind that engine | Android |
 | `:stage` | in progress ([#284](https://github.com/Hawkynt/MediaDroid/issues/284)), the shaders so far: the picture stage's passes against an OpenGL ES interface, the shaders with it | everywhere (JVM) |
-| `native/` | planned ([#285](https://github.com/Hawkynt/MediaDroid/issues/285)): the neural networks as one CMake tree | Android, Windows, Linux |
+| `native/` | built ([#285](https://github.com/Hawkynt/MediaDroid/issues/285)): the neural networks and their JNI surface as one CMake tree — `libmediadroid_neural.so` in the app, `libmediadroid.so` / `mediadroid.dll` on the desktop | Android, Windows, Linux |
 | `:ui` | planned ([#286](https://github.com/Hawkynt/MediaDroid/issues/286)): every screen, in Compose Multiplatform | Android, Windows, Linux |
 | `:engine:desktop` | in progress ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): FFmpeg, the stage on OpenGL 4.3, audio and sync, network sources | Windows, Linux |
 | `:desktop` | in progress ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): the desktop shell — window, menus, keyboard, file chooser | Windows, Linux |
@@ -416,7 +416,15 @@ Requires JDK 21 and an Android SDK with platform 37; `local.properties` must poi
 ./gradlew :engine:desktop:probe -Pfolder=<dir>   # every video in a folder opened and its start decoded
 ./gradlew :desktop:appImage                      # Linux: desktop/build/dist/MediaDroid-linux-x64.AppImage (squashfs-tools)
 ./gradlew :desktop:windowsZip -PdesktopTarget=windows   # Windows, portable: desktop/build/dist/MediaDroid-windows-x64.zip
+./gradlew :native:desktopLibrary                 # the native tree for this desktop: native/build/desktop/lib
+./gradlew :engine:desktop:test -PnativeLibrary   # the desktop tests with the native library's, built first
 ```
+
+The native tree (`native/`) is one CMake project: the app's build compiles it for each Android ABI, and
+`:native:desktopLibrary` for the machine it runs on — Linux x64 or arm64, Windows x64 — with CMake (from the path, else
+the Android SDK's) and the system's C++ compiler (GCC or Clang; Visual Studio 2022 on Windows). Both build against
+ncnn's prebuilt releases, fetched once and checked against their digests; Linux arm64, which ncnn publishes none for,
+builds ncnn from its full source (`-PncnnFromSource` does the same anywhere).
 
 `build.sh` signs with the release key when `KEYSTORE` (or `KEYSTORE_BASE64`), `KEYSTORE_PASSWORD` and `KEY_ALIAS` are set — in the environment or in a git-ignored `signing.env` — and otherwise with the Android debug key, which installs on your own device but cannot update a release or nightly. The key itself lives only in the repository's secrets. `buildnonlgpl.sh` first builds FFmpeg with every decoder, demuxer and parser (`FULL=1 tools/ffmpeg/build.sh`, once, into `stage/ffmpeg-full`); that build is GPL and cannot be distributed under this licence, so it is for your own device only — see [tools/ffmpeg/README.md](tools/ffmpeg/README.md). The desktop app decodes
 with FFmpeg through [Bytedeco's JavaCPP presets](https://github.com/bytedeco/javacpp-presets): FFmpeg's LGPL build in

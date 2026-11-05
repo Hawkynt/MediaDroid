@@ -2,7 +2,7 @@ waifu2x, by nagadomi (https://github.com/nagadomi/waifu2x), as ncnn runs it: wai
 (https://github.com/nihui/waifu2x-ncnn-vulkan).
 
 app/src/main/assets/models/waifu2x-cunet holds waifu2x-ncnn-vulkan's models-cunet/noise1_scale2.0x_model (the CUnet,
-light denoising, twice the size), copied unchanged. app/src/main/cpp/enlarger.cpp runs it the way the port does:
+light denoising, twice the size), copied unchanged. native/src/enlarger.cpp runs it the way the port does:
 the picture in RGB 0..1, its edge pixels repeated 18 around and to an even size, the output's top left the picture
 twice as large.
 

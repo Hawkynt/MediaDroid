@@ -1,13 +1,15 @@
 # Neural check on the desktop
 
-The app's neural frame interpolation (`app/src/main/cpp/networks.cpp` and its layers) built for Linux against
-ncnn's Linux release, so a network can be checked without a phone: the self-test's frames (two of the same
+The app's neural frame interpolation (`native/src/networks.cpp` and its layers, linked from the native tree without
+its JNI library) built for Linux against ncnn's Linux release, so a network can be checked without a phone: the self-test's frames (two of the same
 non-repeating texture, moved 10 × 6 pixels apart, as `NeuralInterpolator.kt` makes them) go through RIFE, DAIN and XVFI on
 the CPU and, where there is one, the Vulkan GPU; it prints how far the in-between is from the frame truly halfway
 (and, for scale, how far a plain blend of the two is), how long it took and the memory the process peaked at.
 
 1. ncnn's Linux release, `ncnn-20261020-ubuntu-2404.zip` from <https://github.com/Tencent/ncnn/releases>
-   (sha256 `d3b2dcc98f454424911c2bfe3589c0431f07591b7b2d193f18911be6b1ffc28c`), unpacked.
+   (sha256 `d3b2dcc98f454424911c2bfe3589c0431f07591b7b2d193f18911be6b1ffc28c`), unpacked — or the Ubuntu 22.04 one
+   the desktop library builds against, which `./gradlew :native:ncnnDesktop` fetches, checks and unpacks into
+   `native/build/ncnn/20261020/ubuntu-2204`.
 2. DAIN's files from <https://huggingface.co/Hawkynt/mediadroid-models/tree/main/dain> in a folder.
 3. XVFI's files from <https://huggingface.co/Hawkynt/mediadroid-models/tree/main/xvfi> in another (see
    `tools/xvfi`).

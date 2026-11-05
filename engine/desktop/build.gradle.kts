@@ -46,6 +46,17 @@ dependencies {
 
 tasks.test {
     systemProperty("mediadroid.ffmpegLicence", if (fullFfmpeg) "GPL" else "LGPL")
+    // The native library's test (NativeNetworksTest) needs it built for this system first — CMake, a C++ compiler and
+    // ncnn's release: `-PnativeLibrary` builds it and brings the test in, `./gradlew test` leaves it out. _desktop.yml
+    // runs it on Linux and Windows.
+    if (providers.gradleProperty("nativeLibrary").isPresent) {
+        dependsOn(":native:desktopLibrary")
+        val library = rootProject.file("native/build/desktop/lib")
+        inputs.dir(library)
+        systemProperty("mediadroid.native", library.path)
+    } else {
+        exclude("**/NativeNetworksTest*")
+    }
 }
 
 // Every video in a folder opened and its first second decoded: ./gradlew :engine:desktop:probe -Pfolder=<dir>.

@@ -8,7 +8,7 @@ Changes made (Apache-2.0, section 4b): the 2x model's weights (FLAVR_2x.pth) wer
 tools/flavr/flavr_net.py — the network written out from its published architecture — and written out for ncnn by
 tools/flavr/export.py in two networks, its 3D part — its 3D layers written as 2D ones over the four frames — and its
 2D part, the weights as half floats;
-app/src/main/cpp/flavr.cpp joins them as the original's forward does. The in-between agrees with the PyTorch network
+native/src/flavr.cpp joins them as the original's forward does. The in-between agrees with the PyTorch network
 on the self-test's frames (off by 5.23 and 5.25 per value from the frame truly halfway).
 
                                  Apache License

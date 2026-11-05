@@ -4,7 +4,7 @@ realsr-ncnn-vulkan, by nihui (https://github.com/nihui/realsr-ncnn-vulkan).
 
 The model is not in the app: picked, it is fetched from huggingface.co/Hawkynt/mediadroid-models (realsr/), where
 realsr-ncnn-vulkan's models-DF2K_JPEG/x4 files lie unchanged, each checked against its SHA-256 digest.
-app/src/main/cpp/enlarger.cpp runs it the way the port does: RGB 0..1, the edges mirrored 10 around, the picture four
+native/src/enlarger.cpp runs it the way the port does: RGB 0..1, the edges mirrored 10 around, the picture four
 times as large from 40 pixels in.
 
 RealSR:
