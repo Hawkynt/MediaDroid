@@ -116,6 +116,17 @@ enum class VideoFit(val label: String, val resizeMode: Int) {
 }
 
 /**
+ * The picture's shape on the view: [video]'s own, as the player view gives it, narrowed or flattened by the black
+ * bars the filters' stage crops — [share] the part of the width and height it still shows — so Fit, Fill and Stretch
+ * work on the picture alone.
+ */
+private fun PlayerView.applyCropShape(video: androidx.media3.common.VideoSize, share: Pair<Float, Float>) {
+    if (video.width == 0 || video.height == 0) return
+    val frame = findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame) ?: return
+    frame.setAspectRatio(video.width * video.pixelWidthHeightRatio * share.first / (video.height * share.second))
+}
+
+/**
  * Fit, zoom and picture correction on the video frame inside a player view only — the controls
  * and subtitles drawn above it are neither scaled nor tinted.
  */
@@ -394,6 +405,8 @@ fun PlayerScreen(
         playerView?.useController = !inPip
     }
     var fit by remember { mutableStateOf(VideoFit.FIT) }
+    // The part of the picture's width and height left once the stage has cropped its black bars; 1 and 1 without.
+    var cropShare by remember { mutableStateOf(1f to 1f) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     // Short-lived on-screen confirmation of a gesture: "+15 s", "Volume 40 %".
@@ -442,6 +455,20 @@ fun PlayerScreen(
     val externalDisplay = rememberExternalDisplay()
     var onSecondScreen by remember { mutableStateOf(false) }
     var presentation by remember { mutableStateOf<VideoPresentation?>(null) }
+    DisposableEffect(player) {
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val listener = object : Player.Listener {
+            // After the player views have given their frames the video's own shape, the crop's shape again.
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                main.post {
+                    listOfNotNull(playerView, presentation?.takeIf { it.isShowing }?.playerView)
+                        .forEach { it.applyCropShape(videoSize, cropShare) }
+                }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
     openShutter[0] = {
         listOfNotNull(playerView, presentation?.takeIf { it.isShowing }?.playerView).forEach {
             it.findViewById<View>(androidx.media3.ui.R.id.exo_shutter)?.visibility = View.INVISIBLE
@@ -981,7 +1008,12 @@ fun PlayerScreen(
             (ffmpegVideo || settings.hdrToneMapping && target?.display?.isHdr != true)
         val wanted = (ffmpegVideo || toneMapped || (shownPicture.hasFilters && transfer == null)) && target != null &&
             target.holder.surface.isValid
-        val stage = filterStage[0] ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { filterStage[0] = it }
+        val stage = filterStage[0] ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { made ->
+            filterStage[0] = made
+            // A changed crop reshapes the view at once, not on the next round.
+            val main = android.os.Handler(android.os.Looper.getMainLooper())
+            made.onCrop = { _, _ -> main.post { routeAtOnce[0]?.invoke() } }
+        }
         ffmpegVideoRenderer[0]?.let { renderer ->
             player.createMessage(renderer)
                 .setType(androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_OUTPUT)
@@ -1023,6 +1055,8 @@ fun PlayerScreen(
             routedTo[0] = null
             target?.let { player.setVideoSurfaceView(it) }
         }
+        // Only a picture drawn by the stage is cropped.
+        cropShare = if (routedTo[0] != null) stage.cropShare else 1f to 1f
     }
     freshSurface[0] = {
         val stage = filterStage[0]
@@ -1048,7 +1082,11 @@ fun PlayerScreen(
         if (statisticsShown) player.setVideoFrameMetadataListener(listener)
         onDispose { if (statisticsShown) player.clearVideoFrameMetadataListener(listener) }
     }
-    LaunchedEffect(index) { statistics.clear() }
+    LaunchedEffect(index) {
+        statistics.clear()
+        // Every video's black bars are its own.
+        filterStage[0]?.forgetCrop()
+    }
     // A pause, a seek or buffering is no frame time: the statistics start their gaps afresh after one.
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -1231,6 +1269,7 @@ fun PlayerScreen(
                 val elsewhere = presentation?.isShowing == true
                 view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
                 if (!elsewhere) view.applyVideoLook(fit, zoom, pan)
+                view.applyCropShape(player.videoSize, cropShare)
                 val density = view.resources.displayMetrics.density
                 val cutout = view.rootWindowInsets
                     ?.takeIf { useCutout && android.os.Build.VERSION.SDK_INT >= 28 }
@@ -1246,7 +1285,10 @@ fun PlayerScreen(
         )
 
         presentation?.let { shown ->
-            if (shown.isShowing) shown.playerView.applyVideoLook(fit, zoom, pan)
+            if (shown.isShowing) {
+                shown.playerView.applyVideoLook(fit, zoom, pan)
+                shown.playerView.applyCropShape(player.videoSize, cropShare)
+            }
         }
         // The bare picture listens for gestures; with the controls up, touches go to the controls.
         if (!controlsVisible && !panelOpen && !inPip) {

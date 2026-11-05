@@ -150,13 +150,155 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     /** When the frame being drawn arrived, on the clock eglPresentationTimeANDROID and the history use. */
     private var frameTimestamp = 0L
     private val croppedMatrix = FloatArray(16)
+    private val eyeMatrix = FloatArray(16)
 
-    /** The frame's own transform, after the crop to one eye of a 3D frame when one is chosen. */
-    private fun frameMatrix(): FloatArray {
+    /**
+     * The frame's own transform, after the crop to one eye of a 3D frame when one is chosen, and then — unless [bars]
+     * is false, for the samples the black bars are found in — the crop of those bars.
+     */
+    private fun frameMatrix(bars: Boolean = true): FloatArray {
         val stereo = filters.stereo
-        if (stereo == PictureAdjustment.Stereo.OFF) return texMatrix
-        android.opengl.Matrix.multiplyMM(croppedMatrix, 0, texMatrix, 0, stereo.cropMatrix(), 0)
+        val crop = if (bars) activeCrop() else null
+        if (stereo == PictureAdjustment.Stereo.OFF && crop == null) return texMatrix
+        val eye = if (stereo == PictureAdjustment.Stereo.OFF) {
+            texMatrix
+        } else {
+            android.opengl.Matrix.multiplyMM(eyeMatrix, 0, texMatrix, 0, stereo.cropMatrix(), 0)
+            eyeMatrix
+        }
+        if (crop == null) return eye
+        val whole = wholeEye()
+        android.opengl.Matrix.multiplyMM(croppedMatrix, 0, eye, 0, crop.textureMatrix(whole.width, whole.height), 0)
         return croppedMatrix
+    }
+
+    // Black bars (see AutoCrop): the decision, made on a thread of its own from a small sample of the picture taken
+    // every SAMPLE_INTERVAL_MS, and the crop in effect on this thread — in the eye's pixels, for the eye size it was
+    // found for — with the pixel buffers the samples are read back through on ES 3, taking turns.
+    private val autoCrop = AutoCrop()
+    private val cropWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var barCrop: PictureCrop? = null
+    private var barCropFor = PictureSize(0, 0)
+    private var lastCropSampleNs = 0L
+    private var cropGeneration = 0
+    private val cropBuffers = IntArray(2)
+    private val cropBufferSizes = IntArray(2)
+    private val cropPending = arrayOfNulls<PendingLuma>(2)
+    private var cropSlot = 0
+
+    // The crop last told about (see publishCrop).
+    private var publishedCrop: PictureCrop? = null
+
+    /**
+     * The share of the eye's width and height the picture shows once its black bars are cropped: 1 and 1 for the
+     * whole picture — for the view to take the picture's shape.
+     */
+    @Volatile
+    var cropShare: Pair<Float, Float> = 1f to 1f
+        private set
+
+    /** Told on this thread whenever [cropShare] changes. */
+    @Volatile
+    var onCrop: ((widthShare: Float, heightShare: Float) -> Unit)? = null
+
+    /** The black bars' crop in effect: found for the eye shown now, while the household has cropping on. */
+    private fun activeCrop(): PictureCrop? = barCrop.takeIf { filters.cropBlackBars && barCropFor == wholeEye() }
+
+    /** Forgets the black bars found so far — a new video starts its own. */
+    fun forgetCrop() {
+        handler.post { restartCrop() }
+    }
+
+    private fun restartCrop() {
+        cropGeneration++
+        cropPending.fill(null)
+        lastCropSampleNs = 0L
+        if (!cropWorker.isShutdown) cropWorker.execute { autoCrop.restart() }
+        setCrop(null, PictureSize(0, 0))
+    }
+
+    private fun setCrop(crop: PictureCrop?, eye: PictureSize) {
+        barCrop = crop
+        barCropFor = eye
+        publishCrop()
+    }
+
+    /**
+     * Tells [onCrop] when the crop in effect has changed — a new one found, or cropping turned off, another 3D eye or
+     * another size of video making the one found void.
+     */
+    private fun publishCrop() {
+        val now = activeCrop()
+        if (now == publishedCrop) return
+        publishedCrop = now
+        val share = now?.let { it.width.toFloat() / barCropFor.width to it.height.toFloat() / barCropFor.height }
+            ?: (1f to 1f)
+        cropShare = share
+        onCrop?.invoke(share.first, share.second)
+    }
+
+    /**
+     * Every [AutoCrop.SAMPLE_INTERVAL_MS] while cropping is on: the decoded picture, its bars and all, drawn small into
+     * a frame of its own and its luma read back — on ES 3 into a pixel buffer collected a sample later, without
+     * waiting — for [autoCrop] to judge on its own thread; a changed crop comes back here and takes effect with the next
+     * frame.
+     */
+    private fun sampleForCrop() {
+        if (!filters.cropBlackBars) return
+        val now = System.nanoTime()
+        if (lastCropSampleNs != 0L && now - lastCropSampleNs < AutoCrop.SAMPLE_INTERVAL_MS * 1_000_000L) return
+        lastCropSampleNs = now
+        val eye = wholeEye()
+        val size = AutoCrop.sampleSize(eye.width, eye.height)
+        val sample = frames[CROP_SAMPLE].ensure(size.width, size.height)
+        sample.bind()
+        copyCoded(tenBit = false, matrix = frameMatrix(bars = false))
+        if (!es3) {
+            judgeCrop(packedLuma(sample, size.width, size.height, 1, 1), eye)
+            return
+        }
+        val slot = cropSlot
+        cropSlot = 1 - slot
+        collectCropSample(1 - slot)
+        if (cropBuffers[0] == 0) GLES20.glGenBuffers(2, cropBuffers, 0)
+        val (columns, rows, texels) = packLuma(sample, size.width, size.height, 1, 1)
+        val bytes = texels * rows * 4
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, cropBuffers[slot])
+        if (cropBufferSizes[slot] != bytes) {
+            GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, bytes, null, GLES30.GL_STREAM_READ)
+            cropBufferSizes[slot] = bytes
+        }
+        GLES30.glReadPixels(0, 0, texels, rows, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, 0)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        // The eye's size rides along in the pending sample's id: width above, height below.
+        cropPending[slot] = PendingLuma((eye.width.toLong() shl 32) or eye.height.toLong(), columns, rows, texels)
+    }
+
+    /** The sample waiting in [slot]'s pixel buffer, if any, handed on to be judged. */
+    private fun collectCropSample(slot: Int) {
+        val pending = cropPending[slot] ?: return
+        cropPending[slot] = null
+        val size = pending.texels * pending.rows * 4
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, cropBuffers[slot])
+        val mapped = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, size, GLES30.GL_MAP_READ_BIT)
+            as? ByteBuffer
+        val plane = mapped?.let {
+            unpackLuma(it.order(ByteOrder.nativeOrder()), pending.columns, pending.rows, pending.texels)
+        }
+        if (mapped != null) GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        if (plane != null) judgeCrop(plane, PictureSize((pending.id ushr 32).toInt(), pending.id.toInt()))
+    }
+
+    /** [luma], a sample of an [eye]-sized picture, judged off this thread; a changed crop is taken back here. */
+    private fun judgeCrop(luma: Deinterlacer.Plane, eye: PictureSize) {
+        val generation = cropGeneration
+        if (cropWorker.isShutdown) return
+        cropWorker.execute {
+            if (!autoCrop.add(luma)) return@execute
+            val crop = autoCrop.crop(eye.width, eye.height).takeUnless { it.isWhole(eye.width, eye.height) }
+            handler.post { if (generation == cropGeneration) setCrop(crop, eye) }
+        }
     }
     private val identity = FloatArray(16).also { android.opengl.Matrix.setIdentityM(it, 0) }
 
@@ -196,7 +338,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val peakBufferSizes = IntArray(2)
     private val peakPending = IntArray(2)
     private var peakSlot = 0
-    private val frames = Array(HDR_BLOCKS + 1) { Frame() }
+    private val frames = Array(CROP_SAMPLE + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -367,7 +509,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     var filters: PictureAdjustment = PictureAdjustment.Neutral
         set(value) {
             if (value == field) return
+            val cropping = field.cropBlackBars
             field = value
+            if (value.cropBlackBars != cropping) handler.post { restartCrop() }
             handler.post { busy { if (hasFrame && window != EGL14.EGL_NO_SURFACE) draw(redraw = true) } }
         }
 
@@ -388,8 +532,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     @Volatile
     var downscaler: Downscaler = Downscaler.DEFAULT
 
-    /** The size the stage takes the decoder's frame at: the 3D eye's half, pixel for pixel, or the whole frame. */
+    /**
+     * The size the stage takes the decoder's frame at: the 3D eye's half, pixel for pixel, or the whole frame — less
+     * the black bars cropped.
+     */
     private fun eyeSize(): PictureSize =
+        activeCrop()?.let { PictureSize(it.width, it.height) } ?: wholeEye()
+
+    /** The 3D eye's half of the decoder's frame, pixel for pixel, or the whole frame; black bars and all. */
+    private fun wholeEye(): PictureSize =
         PictureSize(videoWidth.takeIf { it > 0 } ?: surfaceWidth(), videoHeight.takeIf { it > 0 } ?: surfaceHeight())
             .eye(filters.stereo)
 
@@ -548,6 +699,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * them), its peak measured when [measure] (a new frame, not a redraw), then mapped into [into].
      */
     private fun copyInput(into: Frame, measure: Boolean = true) {
+        publishCrop()
+        if (measure) sampleForCrop()
         val transfer = hdr
         if (transfer == null) {
             into.bind()
@@ -625,13 +778,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * The frame just arrived, as it is coded, into the bound framebuffer. [tenBit]: an HDR frame, which the decoder's
      * surface hands over as its YUV itself where the chip can (GL_EXT_YUV_target), read nearest at the frame's size.
      */
-    private fun copyCoded(tenBit: Boolean) {
+    private fun copyCoded(tenBit: Boolean, matrix: FloatArray = frameMatrix()) {
         if (!yuvInput && tenBit && y2yProgram != 0) {
             val oes = GLES11Ext.GL_TEXTURE_EXTERNAL_OES
             GLES20.glBindTexture(oes, oesTexture)
             GLES20.glTexParameteri(oes, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
             GLES20.glTexParameteri(oes, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
-            run(y2yProgram, oes, oesTexture, frameMatrix()) { p ->
+            run(y2yProgram, oes, oesTexture, matrix) { p ->
                 GLES20.glUniformMatrix3fv(GLES20.glGetUniformLocation(p, "uColor"), 1, false, BT2020_TEN_BIT, 0)
             }
             GLES20.glBindTexture(oes, oesTexture)
@@ -640,10 +793,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             return
         }
         if (!yuvInput) {
-            run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, frameMatrix()) {}
+            run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, matrix) {}
             return
         }
-        run(yuvProgram, GLES20.GL_TEXTURE_2D, yuvTextures[0], frameMatrix()) { p ->
+        run(yuvProgram, GLES20.GL_TEXTURE_2D, yuvTextures[0], matrix) { p ->
             GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, yuvTextures[1])
             GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uU"), 1)
@@ -707,6 +860,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(motionProgram)
             GLES20.glDeleteProgram(packProgram)
             if (lumaBuffers[0] != 0) GLES20.glDeleteBuffers(2, lumaBuffers, 0)
+            if (cropBuffers[0] != 0) GLES20.glDeleteBuffers(2, cropBuffers, 0)
+            cropWorker.shutdownNow()
             GLES20.glDeleteTextures(3, intArrayOf(vectorTextures[0], vectorTextures[1], obmcTexture), 0)
             motionSearch.shutdownNow()
             GLES20.glDeleteProgram(temporalProgram)
@@ -2434,6 +2589,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** An HDR frame as it is coded, before the tone mapping, and its peak measurement's blocks (see copyInput). */
         private const val HDR_CODED = DEBANDED + 1
         private const val HDR_BLOCKS = HDR_CODED + 1
+
+        /** The picture drawn small, bars and all, for finding its black bars (see sampleForCrop). */
+        private const val CROP_SAMPLE = HDR_BLOCKS + 1
 
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()
