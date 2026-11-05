@@ -107,6 +107,7 @@ data class Settings(
     var bufferValue: Float = 5f,              // in bufferUnit
     var downscaler: String = "BILINEAR",     // Downscaler name: how video larger than 1080p is brought down
     var softwareVideoDecoding: Boolean = false, // FFmpeg before the device's decoders: last resort, drains the battery
+    var hdrToneMapping: Boolean = true,       // HDR on a screen without HDR tone-mapped by the app's stage, not the device
 ) {
     /** What [network]'s self-test found where it passed; null while it is off. */
     fun neuralMotionPassed(

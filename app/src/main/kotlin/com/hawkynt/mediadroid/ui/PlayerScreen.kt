@@ -927,9 +927,10 @@ fun PlayerScreen(
             }
         }
     }
-    // The picture filters' GL stage (see VideoFilterStage): the player draws into it while a filter is
-    // set — not for HDR, which it would flatten — and it draws into the view that shows the picture,
-    // on the phone or the second screen; otherwise the player draws straight into that view.
+    // The picture filters' GL stage (see VideoFilterStage): the player draws into it while a filter is set, and for
+    // HDR on a screen without HDR, which the stage tone-maps — HDR on a screen that shows it goes to the screen as it
+    // is, unfiltered — and it draws into the view that shows the picture, on the phone or the second screen;
+    // otherwise the player draws straight into that view.
     val filterStage = remember { arrayOfNulls<com.hawkynt.mediadroid.player.VideoFilterStage>(1) }
     val routedTo = remember { arrayOfNulls<android.view.SurfaceView>(1) }
     // A SurfaceView's surface goes when the view leaves the screen and comes anew: the stage lets go of it before
@@ -962,14 +963,21 @@ fun PlayerScreen(
             as? android.view.SurfaceView
         target?.let { watch(it) }
         videoFrameRate[0] = player.videoFormat?.frameRate ?: -1f
-        val transfer = player.videoFormat?.colorInfo?.colorTransfer
-        val hdr = transfer == C.COLOR_TRANSFER_ST2084 || transfer == C.COLOR_TRANSFER_HLG
+        val transfer = when (player.videoFormat?.colorInfo?.colorTransfer) {
+            C.COLOR_TRANSFER_ST2084 -> com.hawkynt.mediadroid.player.ToneMap.Transfer.PQ
+            C.COLOR_TRANSFER_HLG -> com.hawkynt.mediadroid.player.ToneMap.Transfer.HLG
+            else -> null
+        }
         // FFmpeg's pictures always go through the stage: it takes them as YUV planes, which spares the
         // decoder a window's buffer queue (see VideoFilterStage.setOutputBuffer). FFmpeg's renderer is pointed
         // at the stage before it starts, on every round — any new surface given to the player points it back —
         // so even its first pictures never take the slow window path; idle while a device decoder plays.
         val ffmpegVideo = videoDecoder?.startsWith("ffmpeg", ignoreCase = true) == true
-        val wanted = (ffmpegVideo || (shownPicture.hasFilters && !hdr)) && target != null &&
+        // HDR is tone-mapped in the stage where the screen cannot show it, unless the household leaves it to the
+        // device; FFmpeg's HDR pictures have no device to leave it to.
+        val toneMapped = transfer != null &&
+            (ffmpegVideo || settings.hdrToneMapping && target?.display?.isHdr != true)
+        val wanted = (ffmpegVideo || toneMapped || (shownPicture.hasFilters && transfer == null)) && target != null &&
             target.holder.surface.isValid
         val stage = filterStage[0] ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { filterStage[0] = it }
         ffmpegVideoRenderer[0]?.let { renderer ->
@@ -993,6 +1001,7 @@ fun PlayerScreen(
                 null
             }
             active.filters = shownPicture
+            active.hdr = transfer.takeIf { toneMapped }
             active.downscaler = runCatching { com.hawkynt.mediadroid.player.Downscaler.valueOf(settings.downscaler) }
                 .getOrDefault(com.hawkynt.mediadroid.player.Downscaler.DEFAULT)
             active.setVideoSize(player.videoSize.width, player.videoSize.height)

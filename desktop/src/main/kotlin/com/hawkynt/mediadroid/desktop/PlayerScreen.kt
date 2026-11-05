@@ -170,7 +170,8 @@ fun PlayerScreen(
         }
             .onFailure { error = it.message ?: it.toString() }
     }
-    // Every window frame: the picture due now — through the stage when the household set filters — the clock, the end.
+    // Every window frame: the picture due now — through the stage when the household set filters, or the video is HDR,
+    // which the stage tone-maps — the clock, the end.
     LaunchedEffect(Unit) {
         var lastShown: Any? = null
         var lastLook: Pair<PictureAdjustment, IntSize>? = null
@@ -183,10 +184,11 @@ fun PlayerScreen(
                     lastLook = look
                     // Fitted by the picture's true shape: non-square pixels (PAL DV, anamorphic DVD) widened.
                     val (w, h) = fitted((raw.width * engine.pixelAspect).toInt(), raw.height, canvas)
-                    val shown = if ((picture.hasFilters || engine.pixelAspect != 1f) && stage.ready && w > 0 && h > 0) {
+                    val staged = picture.hasFilters || engine.pixelAspect != 1f || raw.hdr != null
+                    val shown = if (staged && stage.ready && w > 0 && h > 0) {
                         withContext(Dispatchers.Default) { stage.process(raw, picture, w, h) }
                     } else {
-                        raw
+                        raw.eightBit()
                     }
                     frame = bitmap.of(shown)
                 }

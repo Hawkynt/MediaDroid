@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.FsFile
+import com.hawkynt.mediadroid.player.ToneMap
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext
 import org.bytedeco.ffmpeg.avcodec.AVPacket
 import org.bytedeco.ffmpeg.avformat.AVFormatContext
@@ -26,8 +27,21 @@ import org.bytedeco.javacpp.PointerPointer
  */
 class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
 
-    /** A decoded picture: [rgba] is [width] × [height] × 4 bytes, rows from the top. */
-    class Picture(val ptsMs: Long, val width: Int, val height: Int, val rgba: ByteArray)
+    /**
+     * A decoded picture: [rgba] is [width] × [height] × 4 bytes, rows from the top — or, for an HDR video ([hdr] its
+     * transfer), its coded BT.2020 values at 16 bits, 8 bytes a pixel (little-endian), for the stage to tone-map.
+     */
+    class Picture(
+        val ptsMs: Long,
+        val width: Int,
+        val height: Int,
+        val rgba: ByteArray,
+        val hdr: ToneMap.Transfer? = null,
+    ) {
+        /** The picture as 8-bit RGBA: an HDR one's coded values cut to 8 bits, untone-mapped (no stage to map it). */
+        fun eightBit(): Picture =
+            if (hdr == null) this else Picture(ptsMs, width, height, ByteArray(width * height * 4) { rgba[it * 2 + 1] })
+    }
 
     /** Decoded sound: [pcm] is interleaved 16-bit little-endian stereo at [SAMPLE_RATE]. */
     class Sound(val ptsMs: Long, val pcm: ByteArray)
@@ -71,6 +85,9 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     /** The shape of the picture's pixels, width over height (16/15 for PAL DV), 1 where the file does not say. */
     val pixelAspect: Float
 
+    /** How the video is coded where it is HDR (SMPTE ST 2084's PQ, or HLG), else null. */
+    val hdr: ToneMap.Transfer?
+
     /** The file's video, audio and subtitle streams as tracks, id the stream's index. */
     val tracks: List<Track>
 
@@ -100,6 +117,11 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         if (audioIndex >= 0) audio = openDecoder(audioIndex)
         width = video?.width() ?: 0
         height = video?.height() ?: 0
+        hdr = if (videoIndex < 0) null else when (format.streams(videoIndex).codecpar().color_trc()) {
+            avutil.AVCOL_TRC_SMPTE2084 -> ToneMap.Transfer.PQ
+            avutil.AVCOL_TRC_ARIB_STD_B67 -> ToneMap.Transfer.HLG
+            else -> null
+        }
         pixelAspect = if (videoIndex < 0) 1f else {
             val guessed = avformat.av_guess_sample_aspect_ratio(format, format.streams(videoIndex), null)
             if (guessed.num() > 0 && guessed.den() > 0) guessed.num().toFloat() / guessed.den() else 1f
@@ -215,23 +237,32 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     private fun picture(ptsMs: Long): Picture {
         val w = frame.width()
         val h = frame.height()
+        // HDR keeps its coded values at 16 bits, through BT.2020's matrix to full-range R'G'B'.
+        val deep = hdr != null
+        val bytes = if (deep) 8 else 4
         if (sws == null || rgbaFrame.width() != w || rgbaFrame.height() != h) {
             sws?.let { swscale.sws_freeContext(it) }
+            val target = if (deep) avutil.AV_PIX_FMT_RGBA64LE else avutil.AV_PIX_FMT_RGBA
             sws = swscale.sws_getContext(
-                w, h, frame.format(), w, h, avutil.AV_PIX_FMT_RGBA, swscale.SWS_BILINEAR,
+                w, h, frame.format(), w, h, target, swscale.SWS_BILINEAR,
                 null, null, null as DoublePointer?,
             )
+            if (deep) {
+                val bt2020 = swscale.sws_getCoefficients(swscale.SWS_CS_BT2020)
+                val full = if (frame.color_range() == avutil.AVCOL_RANGE_JPEG) 1 else 0
+                swscale.sws_setColorspaceDetails(sws, bt2020, full, bt2020, 1, 0, 1 shl 16, 1 shl 16)
+            }
             avutil.av_frame_unref(rgbaFrame)
-            rgbaFrame.width(w).height(h).format(avutil.AV_PIX_FMT_RGBA)
+            rgbaFrame.width(w).height(h).format(target)
             avutil.av_frame_get_buffer(rgbaFrame, 1)
         }
         swscale.sws_scale(sws, frame.data(), frame.linesize(), 0, h, rgbaFrame.data(), rgbaFrame.linesize())
-        val out = ByteArray(w * h * 4)
+        val out = ByteArray(w * h * bytes)
         val stride = rgbaFrame.linesize(0)
         val data: BytePointer = rgbaFrame.data(0)
-        for (y in 0 until h) data.position((y * stride).toLong()).get(out, y * w * 4, w * 4)
+        for (y in 0 until h) data.position((y * stride).toLong()).get(out, y * w * bytes, w * bytes)
         data.position(0)
-        return Picture(ptsMs, w, h, out)
+        return Picture(ptsMs, w, h, out, hdr)
     }
 
     private fun sound(ptsMs: Long): Sound? {

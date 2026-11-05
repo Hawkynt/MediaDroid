@@ -20,6 +20,8 @@ oracle that bilinear scaling would pass as well proves nothing.
 | xBRZ (`glsl/xbrz`) | the original's own output: core/imaging's reference pictures, which `Xbrz` is held to as well | the three passes as the stage runs them, every factor 2 to 6; the patterns read from the app's `Xbrz.kt` (`xbrz-table.py`) |
 | YADIF, BWDIF (`temporal.frag`) | FFmpeg's `yadif` and `bwdif` on planar RGB | three interlaced frames (`fields.py`: half still, half moving), both field orders and both fields, PAL and NTSC sizes; once more with every read addressed 1/256 texel off, which nearest sampling has to absorb |
 | Debanding (`deband-es3.frag`, `deband.frag`) | libplacebo's own `pl_shader_deband` (7.360) | run by libplacebo itself on the same Mesa's desktop OpenGL (`placebo.cpp`), on a picture of 8-bit steps (core/player's fixture) and the test picture, one to four iterations, with and without grain, frame indices 0 to 255; the frame held both ways up. The GLSL ES 1.00 variant draws other random numbers (no unsigned integers for pcg3d), so it is held only to moving no value further than the threshold lets it |
+| HDR tone mapping (`tonemap.frag`, `hdr.glsl`) | libplacebo's own `pl_shader_color_map_ex` (7.360) with `pl_tone_map_bt2390` and `pl_gamut_map_clip` | run by libplacebo itself on the same Mesa (`placebo.cpp`) on core/player's HDR picture (16 bits: a grey ramp over the whole range, BT.2020's primaries and secondaries, mid colours, near-black, highlights), read as PQ without metadata and mastered at 400, 1000 and 4000 nits, and as HLG; ours from the stage's half-float HDR frame, its uniforms worked out as libplacebo works out its own |
+| HDR peak detection (`peak.frag`) | libplacebo's own `pl_shader_detect_peak` (its defaults) | the same picture, a little darker, a good deal darker and nearly black, each as a scene's first frame (libplacebo's smoothing takes that as it is), PQ and HLG: our blocks read back as `PeakDetect` takes them, the peak and the average in PQ |
 | YUV to RGB (`yuv.frag`) | FFmpeg's own conversion (swscale, `accurate_rnd`, bilinear chroma) | a yuv420p frame uploaded as `takeYuv` uploads it, BT.601 and BT.709 limited range, the matrix as `YuvMatrix.toRgb` computes it; full range (MJPEG's) squeezed first by the FFmpeg decoder's own `mediadroid_range.h`, which unsqueezed has to fail |
 | ACNet (`glsl/acnet`) | `acnet_f8b4.glsl`, TianZerL/ACNetGLSL `c6e5940` (MIT) | in libplacebo on 16-bit YUV (BT.709, full range), grey and in colour, the chroma scaled bilinearly as the stage's doubling does — with another chroma scaler it has to differ, so that setting is known to take |
 
@@ -45,6 +47,21 @@ On an Intel HD Graphics 520 laptop (Mesa 26.2, libplacebo 7.360), per 8-bit valu
 | YADIF and BWDIF, every case, and read 1/256 texel off | 0 | 0 |
 | YUV to RGB, grey / in colour | 0 / 1 | 0 / 0.005 |
 | YUV to RGB from full range, grey / in colour (unsqueezed: 20 / 20) | 1 / 2 | 0.15 / 0.33 |
+
+HDR, on Mesa 26.2's llvmpipe (libplacebo 7.360 on the same): tone mapping per 8-bit value, peak detection in 14-bit PQ
+steps (1/16383):
+
+| Check | Max | Mean |
+|-------|-----|------|
+| Tone mapping, PQ without metadata / at 400 / 1000 / 4000 nits | 1 | 0.033 / 0.027 / 0.033 / 0.028 |
+| Tone mapping, HLG | 1 | 0.023 |
+| Peak detection, peak / average (PQ and HLG) | 5 / 2.5 steps | — |
+
+The tone mapping's ones are where libplacebo's curve, read from a 256-entry table of 16-bit floats, and ours, computed,
+round a value to different sides. The peak's steps come from the stage's HDR frame of half floats, which hold a coded
+value near the top to about four 14-bit steps (libplacebo reads 16 bits; the desktop stage does too); core/player's
+`PeakDetect` agrees with libplacebo over a whole scene, smoothing and scene changes included, within two
+(`PeakDetectTest`), its `ToneMap` within one 8-bit step (`ToneMapTest`).
 
 Debanding, on Mesa 26.2's llvmpipe (libplacebo 7.360 on the same), per 8-bit value:
 

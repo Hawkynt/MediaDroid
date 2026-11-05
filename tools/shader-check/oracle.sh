@@ -200,7 +200,7 @@ python3 -I "$HERE/../../core/player/src/test/resources/deband/make-input.py" "$W
 for name in band picture; do
   for case in "1 3 16 0 0" "1 3 16 4 3" "4 6 16 8 7" "3 5 24 2 255"; do
     # shellcheck disable=SC2086
-    "$B/placebo_deband" "$W/$name.ppm" "$W/deband-libplacebo.ppm" $case
+    "$B/placebo_oracle" deband "$W/$name.ppm" "$W/deband-libplacebo.ppm" $case
     for rows in bottom top; do
       # shellcheck disable=SC2086
       SHADER_CHECK_DEBAND=$rows "$C" deband "$W/$name.ppm" "$W/deband.ppm" $case
@@ -208,12 +208,47 @@ for name in band picture; do
         "$W/deband.ppm" "$W/deband-libplacebo.ppm" 1 0.01
     done
   done
-  "$B/placebo_deband" "$W/$name.ppm" "$W/deband-libplacebo.ppm" 1 3 16 0 0
+  "$B/placebo_oracle" deband "$W/$name.ppm" "$W/deband-libplacebo.ppm" 1 3 16 0 0
   SHADER_CHECK_DEBAND=es1 "$C" deband "$W/$name.ppm" "$W/deband-es1.ppm" 1 3 16 0 0
   check "Deband $name (GLSL ES 1.00, other random numbers) against libplacebo" "$W/deband-es1.ppm" \
     "$W/deband-libplacebo.ppm" 2 0.2
   "$C" deband "$W/$name.ppm" "$W/deband.ppm" 4 6 16 0 0
   differs "Deband $name against the picture it was given" "$W/deband.ppm" "$W/$name.ppm"
+done
+
+# HDR tone mapping: libplacebo's own colour mapping (BT.2390, gamut by hard clip, to BT.709 BT.1886), run by libplacebo
+# on the same Mesa (placebo.cpp), on core/player's HDR picture read as PQ at several peaks and as HLG; ours from the
+# stage's half-float HDR frame. libplacebo reads its curve from a 256-entry table, ours computes it (README.md). Each
+# peak has to give another picture, or the peak would not reach the pass.
+mkdir -p "$W/hdr"
+python3 -I "$HERE/../../core/player/src/test/resources/tonemap/make-input.py" "$W/hdr"
+for case in "pq 0" "pq 400" "pq 1000" "pq 4000" "hlg 0"; do
+  # shellcheck disable=SC2086
+  "$B/placebo_oracle" tonemap "$W/hdr/input.ppm" "$W/tonemap-libplacebo.ppm" $case
+  # shellcheck disable=SC2086
+  "$C" tonemap "$W/hdr/input.ppm" "$W/tonemap.ppm" $case
+  check "Tone mapping ($case) against libplacebo" "$W/tonemap.ppm" "$W/tonemap-libplacebo.ppm" 1 0.05
+done
+"$C" tonemap "$W/hdr/input.ppm" "$W/tonemap-4000.ppm" pq 4000
+differs "Tone mapping at 1000 nits against 4000" "$W/tonemap.ppm" "$W/tonemap-4000.ppm"
+
+# HDR peak detection: libplacebo's own, each picture a scene's first frame (where its smoothing takes the measurement as
+# it is), against peak.frag's blocks as PeakDetect takes them — both in PQ, within six 14-bit steps: the stage's HDR
+# frame holds half floats, which put a coded value up to four steps off near the top (libplacebo reads 16 bits), and a
+# pixel's luminance is truncated to its step.
+for transfer in pq hlg; do
+  for name in input dimmer darker dark; do
+    expected=$("$B/placebo_oracle" peak $transfer "$W/hdr/$name.ppm" 2>/dev/null)
+    ours=$("$C" peak $transfer "$W/hdr/$name.ppm")
+    echo -n "Peak detection ($transfer, $name) against libplacebo: $ours / $expected: "
+    if awk -v a="$ours" -v b="$expected" 'BEGIN { split(a, x, " "); split(b, y, " "); d = 6 / 16383;
+         exit !((x[1] - y[1]) ^ 2 <= d * d && (x[2] - y[2]) ^ 2 <= d * d) }'; then
+      echo ok
+    else
+      echo FAILED
+      failed=1
+    fi
+  done
 done
 
 # Lanczos and EWA: their kernels against libplacebo's lanczos and ewa_lanczossharp, antiringing off on both sides

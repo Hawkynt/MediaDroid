@@ -43,6 +43,44 @@ inline void writePpm(const std::string& path, const Picture& p) {
     out.write(reinterpret_cast<const char*>(p.rgb.data()), std::streamsize(p.rgb.size()));
 }
 
+// A 16-bit RGB picture (binary PPM with a maximum of 65535, big-endian samples): HDR video's coded values.
+struct Picture16 {
+    int width = 0;
+    int height = 0;
+    std::vector<uint16_t> rgb;  // rows top to bottom
+};
+
+inline Picture16 readPpm16(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::string magic;
+    int maxValue = 0;
+    Picture16 p;
+    in >> magic >> p.width >> p.height >> maxValue;
+    in.get();
+    if (magic != "P6" || maxValue != 65535) fail("not a 16-bit P6 picture: " + path);
+    std::vector<uint8_t> bytes(size_t(p.width) * p.height * 6);
+    in.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(bytes.size()));
+    if (!in) fail("short picture: " + path);
+    p.rgb.resize(bytes.size() / 2);
+    for (size_t i = 0; i < p.rgb.size(); i++) p.rgb[i] = uint16_t(bytes[2 * i] << 8 | bytes[2 * i + 1]);
+    return p;
+}
+
+// The 16-bit picture as RGBA for a texture, rows as rgba() orders them.
+inline std::vector<uint16_t> rgba16(const Picture16& p, bool topFirst) {
+    std::vector<uint16_t> out(size_t(p.width) * p.height * 4);
+    for (int y = 0; y < p.height; y++) {
+        const int row = topFirst ? y : p.height - 1 - y;
+        for (int x = 0; x < p.width; x++) {
+            for (int c = 0; c < 3; c++) {
+                out[(size_t(y) * p.width + x) * 4 + c] = p.rgb[(size_t(row) * p.width + x) * 3 + c];
+            }
+            out[(size_t(y) * p.width + x) * 4 + 3] = 65535;
+        }
+    }
+    return out;
+}
+
 inline std::string readFile(const std::string& path) {
     std::ifstream in(path);
     if (!in) fail("cannot read " + path);

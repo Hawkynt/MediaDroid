@@ -27,8 +27,8 @@ import kotlin.math.ceil
  * cannot do: denoising, sharpening, clarity. The decoder — the device's or the bundled FFmpeg's —
  * draws into [inputSurface]; every frame is copied into a texture of the video's size, filtered, and
  * drawn into the [setOutput] surface (the player view's own TextureView), with the frame's own
- * presentation time. The player uses it only while a filter is set; otherwise the decoder draws
- * straight onto the view, as before, which keeps HDR untouched.
+ * presentation time. The player uses it while a filter is set, and for HDR on a screen without HDR, which it
+ * tone-maps into the SDR picture the filters work on (see [hdr]); otherwise the decoder draws straight onto the view.
  */
 class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBufferRenderer {
 
@@ -182,7 +182,21 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var temporalProgram = 0
     private var weaveProgram = 0
     private var packProgram = 0
-    private val frames = Array(DEBANDED + 1) { Frame() }
+
+    // HDR on a screen without HDR (see hdr): the tone mapping, the measurement of the source's peak, and where GLSL ES
+    // 3.00 has GL_EXT_YUV_target the copy that reads the decoder's 10-bit YUV itself (0 without it).
+    private var tonemapProgram = 0
+    private var peakProgram = 0
+    private var y2yProgram = 0
+    private val peakDetect = PeakDetect()
+
+    // The peak measurement's read-back on ES 3: two pixel buffers taking turns, each a frame's blocks until the next
+    // frame collects them — libplacebo's delayed peak detection; ES 2 reads each frame's back at once.
+    private val peakBuffers = IntArray(2)
+    private val peakBufferSizes = IntArray(2)
+    private val peakPending = IntArray(2)
+    private var peakSlot = 0
+    private val frames = Array(HDR_BLOCKS + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -306,6 +320,19 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             if (value == field) return
             field = value
             handler.post { busy { if (hasFrame && window != EGL14.EGL_NO_SURFACE) draw(redraw = true) } }
+        }
+
+    /**
+     * How the video playing is coded when the stage is to tone-map it — HDR10's PQ or HLG, for a screen without HDR
+     * (see [ToneMap]) — or null: SDR, or HDR the screen shows itself. Its peak is measured as it plays ([PeakDetect]),
+     * afresh with every change.
+     */
+    @Volatile
+    var hdr: ToneMap.Transfer? = null
+        set(value) {
+            if (value == field) return
+            field = value
+            handler.post { peakDetect.reset() }
         }
 
     /** How a picture larger than 1080p is brought down after deinterlacing (see [reduced]). */
@@ -466,8 +493,103 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }
     }
 
-    /** The frame just arrived into the bound framebuffer: the decoder's surface, or FFmpeg's planes. */
-    private fun copyInput() {
+    /**
+     * The frame just arrived into [into] — the decoder's surface, or FFmpeg's planes — tone-mapped first where it is HDR
+     * for a screen without (see [hdr]): copied as it is coded into a frame of its own (half floats where the chip draws
+     * them), its peak measured when [measure] (a new frame, not a redraw), then mapped into [into].
+     */
+    private fun copyInput(into: Frame, measure: Boolean = true) {
+        val transfer = hdr
+        if (transfer == null) {
+            into.bind()
+            copyCoded(tenBit = false)
+            return
+        }
+        val coded = frames[HDR_CODED].ensure(into.width, into.height, half = halfTargets)
+        coded.bind()
+        copyCoded(tenBit = true)
+        if (measure) measurePeak(coded, transfer)
+        val pass = ToneMap.pass(transfer, peakDetect.peak)
+        into.bind()
+        run(tonemapProgram, GLES20.GL_TEXTURE_2D, coded.texture, identity) { p -> toneUniforms(p, pass) }
+    }
+
+    /** Hands [pass]'s uniforms (see [ToneMap.Pass.uniforms]) to [program]. */
+    private fun toneUniforms(program: Int, pass: ToneMap.Pass) = pass.uniforms { name, v ->
+        val at = GLES20.glGetUniformLocation(program, name)
+        when (v.size) {
+            1 -> GLES20.glUniform1f(at, v[0])
+            2 -> GLES20.glUniform2f(at, v[0], v[1])
+            3 -> GLES20.glUniform3f(at, v[0], v[1], v[2])
+            4 -> GLES20.glUniform4f(at, v[0], v[1], v[2], v[3])
+            else -> GLES20.glUniformMatrix3fv(at, 1, false, v, 0)
+        }
+    }
+
+    /**
+     * [coded]'s blocks measured (glsl/video/peak.frag) and taken into [peakDetect]: on ES 3 those of the frame before,
+     * read back without waiting while this frame's go into the other buffer; on ES 2 this frame's, at once.
+     */
+    private fun measurePeak(coded: Frame, transfer: ToneMap.Transfer) {
+        val side = PeakDetect.BLOCK
+        val blocks = frames[HDR_BLOCKS].ensure((coded.width + side - 1) / side, (coded.height + side - 1) / side)
+        blocks.bind()
+        run(peakProgram, GLES20.GL_TEXTURE_2D, coded.texture, identity) { p ->
+            toneUniforms(p, PeakDetect.pass(transfer))
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), coded.width.toFloat(), coded.height.toFloat())
+        }
+        val count = blocks.width * blocks.height
+        if (!es3) {
+            val bytes = ByteBuffer.allocateDirect(count * 4)
+            GLES20.glReadPixels(0, 0, blocks.width, blocks.height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
+            peakDetect.update(PeakDetect.unpack(ByteArray(count * 4).also { bytes.get(it) }, count))
+            return
+        }
+        if (peakBuffers[0] == 0) GLES30.glGenBuffers(2, peakBuffers, 0)
+        val slot = peakSlot
+        peakSlot = 1 - slot
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, peakBuffers[slot])
+        if (peakBufferSizes[slot] < count * 4) {
+            GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, count * 4, null, GLES30.GL_STREAM_READ)
+            peakBufferSizes[slot] = count * 4
+        }
+        GLES30.glReadPixels(0, 0, blocks.width, blocks.height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, 0)
+        peakPending[slot] = count
+        val other = 1 - slot
+        val waiting = peakPending[other]
+        if (waiting > 0) {
+            peakPending[other] = 0
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, peakBuffers[other])
+            val mapped = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, waiting * 4, GLES30.GL_MAP_READ_BIT)
+                as? ByteBuffer
+            if (mapped != null) {
+                val bytes = ByteArray(waiting * 4)
+                mapped.get(bytes)
+                GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+                peakDetect.update(PeakDetect.unpack(bytes, waiting))
+            }
+        }
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+    }
+
+    /**
+     * The frame just arrived, as it is coded, into the bound framebuffer. [tenBit]: an HDR frame, which the decoder's
+     * surface hands over as its YUV itself where the chip can (GL_EXT_YUV_target), read nearest at the frame's size.
+     */
+    private fun copyCoded(tenBit: Boolean) {
+        if (!yuvInput && tenBit && y2yProgram != 0) {
+            val oes = GLES11Ext.GL_TEXTURE_EXTERNAL_OES
+            GLES20.glBindTexture(oes, oesTexture)
+            GLES20.glTexParameteri(oes, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+            GLES20.glTexParameteri(oes, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+            run(y2yProgram, oes, oesTexture, frameMatrix()) { p ->
+                GLES20.glUniformMatrix3fv(GLES20.glGetUniformLocation(p, "uColor"), 1, false, BT2020_TEN_BIT, 0)
+            }
+            GLES20.glBindTexture(oes, oesTexture)
+            GLES20.glTexParameteri(oes, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(oes, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            return
+        }
         if (!yuvInput) {
             run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, frameMatrix()) {}
             return
@@ -517,6 +639,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(deinterlaceProgram)
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(debandProgram)
+            GLES20.glDeleteProgram(tonemapProgram)
+            GLES20.glDeleteProgram(peakProgram)
+            if (y2yProgram != 0) GLES20.glDeleteProgram(y2yProgram)
+            if (peakBuffers[0] != 0) GLES20.glDeleteBuffers(2, peakBuffers, 0)
             GLES20.glDeleteProgram(sharpenProgram)
             GLES20.glDeleteProgram(lanczosProgram)
             GLES20.glDeleteProgram(gsrProgram)
@@ -675,6 +801,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             debandProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_DEBAND_ES3))
         }.isSuccess
         if (!debandEs3) debandProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEBAND)
+        tonemapProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TONEMAP)
+        peakProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PEAK)
+        // The decoder's 10-bit YUV read as it is, where the chip offers it; else samplerExternalOES's RGB.
+        y2yProgram = if (es3 && "GL_EXT_YUV_target" in extensions) {
+            runCatching { linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_COPY_Y2Y_ES3)) }.getOrDefault(0)
+        } else {
+            0
+        }
         blendProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_BLEND)
         motionProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MOTION)
         packProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PACK_LUMA)
@@ -773,8 +907,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         deinterlaceFrames = 0f
         shownAt = frameTimestamp
         val copied = frames[0].ensure(width, height)
-        copied.bind()
-        copyInput()
+        copyInput(copied, measure = fresh)
         var source = copied
         if (picture.deinterlace != PictureAdjustment.Deinterlace.OFF) {
             val woven = frames[2].ensure(width, height)
@@ -1044,8 +1177,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             framesToJudge = FRAMES_TO_JUDGE
         }
         newest.ensure(width, height)
+        copyInput(newest)
         newest.bind()
-        copyInput()
         historyCount = minOf(historyCount + 1, 3)
         return afresh
     }
@@ -2244,6 +2377,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** The debanded picture, before the denoise filter reads it. */
         private const val DEBANDED = ACNET_D + 1
+
+        /** An HDR frame as it is coded, before the tone mapping, and its peak measurement's blocks (see copyInput). */
+        private const val HDR_CODED = DEBANDED + 1
+        private const val HDR_BLOCKS = HDR_CODED + 1
+
+        /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
+        private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()
 
         /** Width of xBRZ's pattern table, one texel a cell of the largest block — as glsl/xbrz/scale.frag reads it. */
         private const val XBRZ_TABLE_WIDTH = 36

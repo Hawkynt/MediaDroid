@@ -283,6 +283,18 @@ fun SettingsScreen(
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
         )
+        SwitchRow(
+            label = "HDR on this screen",
+            detail = if (settings.hdrToneMapping) {
+                "Where the screen cannot show HDR, MediaDroid brings it down itself (BT.2390, measured scene by " +
+                    "scene), so HDR videos look the same on every device and the picture filters work on them too."
+            } else {
+                "Where the screen cannot show HDR, the device brings it down — however its decoder does; the " +
+                    "picture filters skip HDR videos."
+            },
+            checked = settings.hdrToneMapping,
+            onChange = { c -> update { it.hdrToneMapping = c } },
+        )
         Spacer(Modifier.height(8.dp))
         Text("Large video", fontSize = 18.sp)
         Text(
