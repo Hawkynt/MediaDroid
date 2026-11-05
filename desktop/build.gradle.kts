@@ -149,6 +149,14 @@ tasks.matching { it.name == "createDistributable" }.configureEach {
         }
     }
 }
+// The MSI is jpackage'd from that same folder (--app-image) rather than from the jars again, which the plugin does
+// unless told: otherwise the installed app would lack the notices.
+tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>()
+    .matching { it.name == "packageMsi" }
+    .configureEach {
+        dependsOn("createDistributable")
+        appImage.set(distributable)
+    }
 
 // The portable Windows zip (unpack anywhere and run it; settings stay beside it): the app built for Windows
 // (-PdesktopTarget=windows), a Java runtime, a launcher and the `portable` marker.
