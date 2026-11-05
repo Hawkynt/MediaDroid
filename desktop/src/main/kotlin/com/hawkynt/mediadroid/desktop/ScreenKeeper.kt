@@ -1,5 +1,9 @@
 package com.hawkynt.mediadroid.desktop
 
+import org.freedesktop.dbus.annotations.DBusInterfaceName
+import org.freedesktop.dbus.connections.impl.DBusConnection
+import org.freedesktop.dbus.interfaces.DBusInterface
+import org.freedesktop.dbus.types.UInt32
 import org.lwjgl.system.JNI
 import org.lwjgl.system.Library
 import org.lwjgl.system.SharedLibrary
@@ -17,7 +21,10 @@ interface ScreenKeeper : AutoCloseable {
     override fun close() = keepOn(false)
 
     companion object {
-        /** The way this system offers: logind's idle lock on Linux, the thread's execution state on Windows. */
+        /**
+         * The way this system offers: on Linux logind's idle lock and the desktop's own screensaver
+         * (org.freedesktop.ScreenSaver), on Windows the thread's execution state.
+         */
         fun forThisSystem(): ScreenKeeper {
             val os = System.getProperty("os.name")
             return when {
@@ -34,9 +41,12 @@ interface ScreenKeeper : AutoCloseable {
 
     /**
      * An idle lock from systemd-logind, held by a `systemd-inhibit` child for as long as it runs; desktops that ask
-     * logind before blanking (KDE, GNOME, most screensavers) honour it.
+     * logind before blanking honour it. Beside it the desktop's screensaver is asked directly over the session bus
+     * (org.freedesktop.ScreenSaver: KDE, GNOME, Xfce, Cinnamon, xdg-desktop-portal setups), for those that do not.
      */
     private class LinuxKeeper : ScreenKeeper {
+        private val screensaver = ScreenSaverInhibit { SessionBus.connect() }
+
         private companion object {
             /** A refused lock makes systemd-inhibit end at once; one still running after this was granted. */
             const val REFUSED_WITHIN_MS = 300L
@@ -66,13 +76,17 @@ interface ScreenKeeper : AutoCloseable {
         }
 
         override fun close() {
-            worker.execute { apply(false) }
+            worker.execute {
+                apply(false)
+                screensaver.close()
+            }
             worker.shutdown()
             worker.awaitTermination(2, TimeUnit.SECONDS)
         }
 
         @Synchronized
         private fun apply(on: Boolean) {
+            screensaver.hold(on)
             if (on == (holder?.isAlive == true)) return
             if (on) {
                 // Screen and sleep where the system allows both; some refuse the sleep lock to a user (a machine
@@ -113,5 +127,62 @@ interface ScreenKeeper : AutoCloseable {
             const val ES_DISPLAY_REQUIRED = 0x00000002
             const val ES_SYSTEM_REQUIRED = 0x00000001
         }
+    }
+}
+
+/** The freedesktop screensaver's D-Bus interface (specifications.freedesktop.org/idle-inhibit-spec). */
+@DBusInterfaceName("org.freedesktop.ScreenSaver")
+@Suppress("FunctionName")
+interface FreedesktopScreenSaver : DBusInterface {
+    /** Holds the screensaver off for [application], saying [reason]; the cookie lets go again. */
+    fun Inhibit(application: String, reason: String): UInt32
+
+    fun UnInhibit(cookie: UInt32)
+}
+
+/**
+ * Holds the desktop's screensaver off through org.freedesktop.ScreenSaver on the session bus [connect] reaches (made
+ * when first needed). The hold belongs to the connection, so it also ends when the app does. Where no screensaver
+ * answers, nothing happens.
+ */
+internal class ScreenSaverInhibit(private val connect: () -> DBusConnection?) {
+    private var bus: DBusConnection? = null
+    private var tried = false
+    private var cookie: UInt32? = null
+
+    @Synchronized
+    fun hold(on: Boolean) {
+        if (on == (cookie != null)) return
+        val screensaver = screensaver() ?: return
+        cookie = if (on) {
+            runCatching { screensaver.Inhibit("MediaDroid", "Playing a video") }.getOrNull()
+        } else {
+            cookie?.let { runCatching { screensaver.UnInhibit(it) } }
+            null
+        }
+    }
+
+    /** Lets go and closes the connection; holding again connects afresh. */
+    @Synchronized
+    fun close() {
+        hold(false)
+        bus?.let { runCatching { it.close() } }
+        bus = null
+        tried = false
+    }
+
+    private fun screensaver(): FreedesktopScreenSaver? {
+        if (!tried) {
+            tried = true
+            bus = connect()
+        }
+        return bus?.let {
+            runCatching { it.getRemoteObject(NAME, PATH, FreedesktopScreenSaver::class.java, true) }.getOrNull()
+        }
+    }
+
+    private companion object {
+        const val NAME = "org.freedesktop.ScreenSaver"
+        const val PATH = "/org/freedesktop/ScreenSaver"
     }
 }
