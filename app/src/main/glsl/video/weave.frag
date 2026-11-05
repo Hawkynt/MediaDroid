@@ -1,6 +1,7 @@
 // Film's weave: the matched frame with the rows uRows (0 even, 1 odd, from the top; -1 none) taken
 // from the frame its other field comes from.
-precision mediump float;
+// highp: half floats cannot address 1080 rows to the row, and a row half off is the other field.
+precision highp float;
 uniform sampler2D uTex;
 uniform sampler2D uOther;
 uniform vec2 uSize;

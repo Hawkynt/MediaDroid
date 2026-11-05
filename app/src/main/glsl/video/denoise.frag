@@ -1,6 +1,8 @@
 // Bilateral filter (Tomasi & Manduchi, ICCV 1998): neighbours weigh by distance and by how alike
 // they are, so flat areas and block edges smooth while real edges stay.
-precision mediump float;
+// highp: the neighbours' positions are computed here, and half floats snap them to a grid about a pixel wide at
+// 1920 wide, blending the neighbours instead of reading them.
+precision highp float;
 uniform sampler2D uTex;
 uniform vec2 uTexel;
 uniform float uRadius;

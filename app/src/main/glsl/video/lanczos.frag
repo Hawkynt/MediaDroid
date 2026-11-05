@@ -1,6 +1,8 @@
 precision highp float;
 uniform sampler2D uTex;
 uniform vec2 uInSize;
+// How far the result is pulled into the four nearest pixels' range (VideoFilterStage.ANTIRING).
+uniform float uAntiring;
 uniform float uGrain;
 uniform float uSeed;
 // Film grain: a different random value at every pixel and frame, the same on all three channels;
@@ -42,5 +44,5 @@ void main() {
     }
   }
   vec3 c = sum / weights;
-  gl_FragColor = vec4(grain(mix(c, clamp(c, lo, hi), 0.5)), 1.0);
+  gl_FragColor = vec4(grain(mix(c, clamp(c, lo, hi), uAntiring)), 1.0);
 }

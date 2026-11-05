@@ -448,14 +448,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             texMatrix[10] = 1f
             texMatrix[13] = 1f
             texMatrix[15] = 1f
-            System.arraycopy(
-                when (buffer.colorspace) {
-                    VideoDecoderOutputBuffer.COLORSPACE_BT601 -> BT601
-                    VideoDecoderOutputBuffer.COLORSPACE_BT2020 -> BT2020
-                    else -> BT709
-                },
-                0, yuvColor, 0, 9,
-            )
+            val signalled = when (buffer.colorspace) {
+                VideoDecoderOutputBuffer.COLORSPACE_BT601 -> YuvMatrix.BT601
+                VideoDecoderOutputBuffer.COLORSPACE_BT709 -> YuvMatrix.BT709
+                VideoDecoderOutputBuffer.COLORSPACE_BT2020 -> YuvMatrix.BT2020
+                else -> null
+            }
+            System.arraycopy(YuvMatrix.of(signalled, buffer.height).toRgb(), 0, yuvColor, 0, 9)
             yuvInput = true
             draw(redraw = false)
         } finally {
@@ -655,8 +654,16 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         ewaTable = ewaTable()
         nisProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_NIS)
         nisTable = nisTable()
-        easuProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_EASU)
-        rcasProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_RCAS)
+        // FSR reads its floats' bits for AMD's approximate reciprocals where GLSL ES 3.00 can (about half the cost on
+        // a Mali G77 at 576p); the GLSL ES 1.00 passes compute the same bits from the floats' fields elsewhere.
+        val fsrEs3 = es3 && runCatching {
+            easuProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_FSR_EASU_ES3))
+            rcasProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_FSR_RCAS_ES3))
+        }.isSuccess
+        if (!fsrEs3) {
+            easuProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_EASU)
+            rcasProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_RCAS)
+        }
         blendProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_BLEND)
         motionProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MOTION)
         packProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PACK_LUMA)
@@ -764,6 +771,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             run(deinterlaceProgram, GLES20.GL_TEXTURE_2D, copied.texture, identity) { p ->
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
                 GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMode"), picture.deinterlace.ordinal)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uHeight"), height.toFloat())
+                // The first field stays, the second is rebuilt: the field order decides which rows those are.
+                GLES20.glUniform1f(
+                    GLES20.glGetUniformLocation(p, "uParity"),
+                    Deinterlacer.rebuiltParity(false, fieldOrder.topFieldFirst).toFloat(),
+                )
             }
             source = woven
         }
@@ -808,7 +821,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         next: Frame,
         secondField: Boolean,
         bwdif: Boolean,
-    ) {
+    ) = exact(prev.texture, cur.texture, next.texture) {
         target.bind()
         GLES20.glUseProgram(temporalProgram)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
@@ -940,13 +953,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 Telecine.Match.CURRENT -> cur to -1
             }
             slot.bind()
-            GLES20.glUseProgram(weaveProgram)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, other.texture)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(weaveProgram, "uOther"), 1)
-            run(weaveProgram, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
-                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRows"), rows.toFloat())
+            exact(cur.texture, other.texture) {
+                GLES20.glUseProgram(weaveProgram)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, other.texture)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(weaveProgram, "uOther"), 1)
+                run(weaveProgram, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRows"), rows.toFloat())
+                }
             }
         }
 
@@ -1058,10 +1073,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val texels = (columns + 3) / 4
         val target = frames[PACKED_LUMA].ensure(texels, rows)
         target.bind()
-        run(packProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uStep"), stepX.toFloat(), stepY.toFloat())
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSd"), if (height <= SD_HEIGHT) 1 else 0)
+        exact(from.texture) {
+            run(packProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uStep"), stepX.toFloat(), stepY.toFloat())
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSd"), if (height <= YuvMatrix.SD_HEIGHT) 1 else 0)
+            }
         }
         return Triple(columns, rows, texels)
     }
@@ -1438,7 +1455,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             }
             if (picture.upscaler == PictureAdjustment.Upscaler.LANCZOS) {
                 toScreen(outWidth, outHeight, adjusting)
-                run(lanczosProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
+                run(lanczosProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                    inSize(p)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uAntiring"), ANTIRING)
+                }
             } else if (picture.upscaler == PictureAdjustment.Upscaler.GSR) {
                 // Snapdragon GSR: one pass straight to the screen's size, any ratio.
                 toScreen(outWidth, outHeight, adjusting)
@@ -1461,6 +1481,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                         GLES20.glUniform1f(GLES20.glGetUniformLocation(p, name), value)
                     GLES20.glUniform2f(
                         GLES20.glGetUniformLocation(p, "uOutSize"), midWidth.toFloat(), midHeight.toFloat(),
+                    )
+                    // Divided here, as NVIDIA divides: exactly (see glsl/video/nis.frag).
+                    GLES20.glUniform2f(
+                        GLES20.glGetUniformLocation(p, "uScale"),
+                        width.toFloat() / midWidth, height.toFloat() / midHeight,
                     )
                     set("uDetectRatio", config.detectRatio)
                     set("uDetectThres", config.detectThres)
@@ -1492,6 +1517,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glUniform1i(GLES20.glGetUniformLocation(ewaProgram, "uTable"), 1)
                 run(ewaProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
                     inSize(p)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uAntiring"), ANTIRING)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), Ewa.RADIUS.toFloat())
                 }
                 toScreen(outWidth, outHeight, adjusting)
@@ -1584,27 +1610,29 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
                 }
                 val corners = frames[XBRZ_CORNERS].ensure(width + 1, height + 1)
-                corners.bind()
-                run(xbrzPrograms[0], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
                 val decisions = frames[XBRZ_DECISIONS].ensure(width, height)
-                decisions.bind()
-                GLES20.glUseProgram(xbrzPrograms[1])
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, corners.texture)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[1], "uCorners"), 1)
-                run(xbrzPrograms[1], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
                 val enlarged = frames[4].ensure(width * factor, height * factor)
-                enlarged.bind()
-                GLES20.glUseProgram(xbrzPrograms[2])
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, decisions.texture)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uDecisions"), 1)
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, xbrzTable)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uTable"), 2)
-                run(xbrzPrograms[2], GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                    size(p)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFactor"), factor.toFloat())
+                exact(source.texture, corners.texture, decisions.texture) {
+                    corners.bind()
+                    run(xbrzPrograms[0], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
+                    decisions.bind()
+                    GLES20.glUseProgram(xbrzPrograms[1])
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, corners.texture)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[1], "uCorners"), 1)
+                    run(xbrzPrograms[1], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
+                    enlarged.bind()
+                    GLES20.glUseProgram(xbrzPrograms[2])
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, decisions.texture)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uDecisions"), 1)
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, xbrzTable)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uTable"), 2)
+                    run(xbrzPrograms[2], GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                        size(p)
+                        GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFactor"), factor.toFloat())
+                    }
                 }
                 toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
@@ -2011,6 +2039,27 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private fun surfaceHeight() = if (window != EGL14.EGL_NO_SURFACE) query(EGL14.EGL_HEIGHT) else 1
 
     /** Draws a full-screen quad with [program] sampling [texture]; [uniforms] sets the rest. */
+    /**
+     * [block] with [textures] sampled nearest instead of linearly: for the passes that read exact pixels (YADIF and
+     * BWDIF, Film's weave, the luma read back, xBRZ). Through linear filtering a texel's centre addressed a hair off
+     * — as a GPU's division may — blends in 1/256 of the neighbour, which moves YADIF's choices by up to 139 steps;
+     * nearest tolerates half a texel. The textures are linear again afterwards.
+     */
+    private inline fun <T> exact(vararg textures: Int, block: () -> T): T {
+        sampling(textures, GLES20.GL_NEAREST)
+        try {
+            return block()
+        } finally {
+            sampling(textures, GLES20.GL_LINEAR)
+        }
+    }
+
+    private fun sampling(textures: IntArray, mode: Int) = textures.forEach {
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, it)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, mode)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, mode)
+    }
+
     private fun run(program: Int, target: Int, texture: Int, matrix: FloatArray, uniforms: (Int) -> Unit) {
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
@@ -2121,7 +2170,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         private const val MAX_LATENCY_MS = 100
 
         /** The tallest picture taken as standard definition, coloured by BT.601: PAL's 576 lines. */
-        private const val SD_HEIGHT = 576
 
         /** Film runs about five frames behind: a sixth of a second for NTSC. */
         private const val MAX_FILM_LATENCY_MS = 250
@@ -2197,6 +2245,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 position(0)
             }
 
+        /** [program], or an exception where it failed to link. */
+        private fun linked(program: Int): Int {
+            val ok = IntArray(1)
+            GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, ok, 0)
+            check(ok[0] != 0) { "Program: " + GLES20.glGetProgramInfoLog(program) }
+            return program
+        }
+
         private fun program(vertex: String, fragment: String): Int {
             fun shader(type: Int, source: String): Int = GLES20.glCreateShader(type).also {
                 GLES20.glShaderSource(it, source)
@@ -2215,10 +2271,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** Pictures from FFmpeg waiting to be drawn, beyond which the oldest is let go. */
         private const val MAX_YUV_QUEUED = 4
 
-        // Limited-range YUV to RGB, column-major, copied from Media3's VideoDecoderGLSurfaceView.
-        private val BT601 = floatArrayOf(1.164f, 1.164f, 1.164f, 0.0f, -0.392f, 2.017f, 1.596f, -0.813f, 0.0f)
-        private val BT709 = floatArrayOf(1.164f, 1.164f, 1.164f, 0.0f, -0.213f, 2.112f, 1.793f, -0.533f, 0.0f)
-        private val BT2020 = floatArrayOf(1.168f, 1.168f, 1.168f, 0.0f, -0.188f, 2.148f, 1.683f, -0.652f, 0.0f)
 
         /** NIS's sharpness, on its own 0..1 scale: the middle, NVIDIA's neutral setting. */
         private const val NIS_SHARPNESS = 0.5f
@@ -2228,6 +2280,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         private const val NIS_SPAN = 2.5f
 
         /** How many distances the EWA table holds, and how its weights (-0.25..1) map into 0..1. */
+        /**
+         * How far Lanczos and EWA pull their result into the range of the four nearest pixels: halfway, so ringing
+         * at hard edges is held back without flattening fine detail.
+         */
+        private const val ANTIRING = 0.5f
+
         private const val EWA_TABLE_SIZE = 512
         private const val EWA_OFFSET = 0.25f
         private const val EWA_SPAN = 1.25f

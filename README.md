@@ -144,21 +144,21 @@ of its own, within two seconds of the tap. All of it runs on the graphics chip b
 | --- | --- | --- |
 | Auto | rebuilds lines only where the picture combs | — |
 | Blend, Bob | both fields mixed / one field doubled | — |
-| YADIF, BWDIF | the frames before and after weighed; optionally every field as a picture (50/60 a second) | FFmpeg's [yadif](https://github.com/FFmpeg/FFmpeg/blob/master/libavfilter/vf_yadif.c), [bwdif](https://github.com/FFmpeg/FFmpeg/blob/master/libavfilter/vf_bwdif.c) — byte for byte |
+| YADIF, BWDIF | the frames before and after weighed; optionally every field as a picture (50/60 a second) | FFmpeg's [yadif](https://github.com/FFmpeg/FFmpeg/blob/master/libavfilter/vf_yadif.c), [bwdif](https://github.com/FFmpeg/FFmpeg/blob/master/libavfilter/vf_bwdif.c) — byte for byte, on the GPU too ([check](tools/shader-check)) |
 | Film | 3:2 pulldown undone: the film's own 24 frames | FFmpeg's [fieldmatch](https://github.com/FFmpeg/FFmpeg/blob/master/libavfilter/vf_fieldmatch.c) and [decimate](https://github.com/FFmpeg/FFmpeg/blob/master/libavfilter/vf_decimate.c) |
 
 **Upscaling** — a strength slider blends each into plain scaling
 
 | Choice | Kind | From |
 | --- | --- | --- |
-| Lanczos | Lanczos-3 filter | — |
-| FSR | edge-adaptive upscaling and sharpening | [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) |
-| EWA | a sharpened Jinc over a circle | [libplacebo](https://code.videolan.org/videolan/libplacebo)'s EWA Lanczos-sharp |
-| NIS | directional filters and luma sharpening | [NVIDIA Image Scaling](https://github.com/NVIDIAGameWorks/NVIDIAImageScaling) |
+| Lanczos | Lanczos-3 filter | its kernel within 1/255 of [libplacebo](https://code.videolan.org/videolan/libplacebo)'s ([check](tools/shader-check)) |
+| FSR | edge-adaptive upscaling and sharpening | [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) — RCAS bit for bit, EASU within 1/255 ([check](tools/shader-check)) |
+| EWA | a sharpened Jinc over a circle | [libplacebo](https://code.videolan.org/videolan/libplacebo)'s EWA Lanczos-sharp — kernel within 2/255 of libplacebo ([check](tools/shader-check)) |
+| NIS | directional filters and luma sharpening | [NVIDIA Image Scaling](https://github.com/NVIDIAGameWorks/NVIDIAImageScaling) — within 1/255 ([check](tools/shader-check)) |
 | GSR | one pass, edge-directed, any ratio | [Snapdragon Game Super Resolution 1](https://github.com/quic/snapdragon-gsr) — bit for bit ([check](tools/shader-check)) |
-| Anime4K | a small network for line art, 2× | [bloc97/Anime4K](https://github.com/bloc97/Anime4K) |
+| Anime4K | a small network for line art, 2× | [bloc97/Anime4K](https://github.com/bloc97/Anime4K) — within 1/255 of libplacebo ([check](tools/shader-check)) |
 | ACNet | a small network on the luma, for anime, 2× | [TianZerL/ACNetGLSL](https://github.com/TianZerL/ACNetGLSL) (F8B4), from [Anime4KCPP](https://github.com/TianZerL/Anime4KCPP) — within 1/255 of libplacebo ([check](tools/shader-check)) |
-| xBRZ | rules for pixel art and cartoons, 2–6× | [Zenju's xBRZ](https://sourceforge.net/projects/xbrz/) — pixel for pixel |
+| xBRZ | rules for pixel art and cartoons, 2–6× | [Zenju's xBRZ](https://sourceforge.net/projects/xbrz/) — pixel for pixel, on the GPU too ([check](tools/shader-check)) |
 | Real-ESRGAN | neural, 4×, in tiles (TFLite: NPU, GPU or CPU) | [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), [Qualcomm's export](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) |
 | waifu2x | neural CUnet for drawings, 2× (ncnn) | [nagadomi/waifu2x](https://github.com/nagadomi/waifu2x) via [waifu2x-ncnn-vulkan](https://github.com/nihui/waifu2x-ncnn-vulkan) |
 | Real-CUGAN | neural, for anime, 2× (ncnn) | [bilibili's Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) via [realcugan-ncnn-vulkan](https://github.com/nihui/realcugan-ncnn-vulkan) |
