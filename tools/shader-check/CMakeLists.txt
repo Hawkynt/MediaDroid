@@ -1,4 +1,4 @@
-# The desktop check of the app's upscaling shaders (app/src/main/glsl) against third-party oracles: see README.md.
+# The desktop check of the app's upscaling shaders (stage/src/main/glsl) against third-party oracles: see README.md.
 # ORACLE_DIR holds the originals oracle.sh fetches (AMD's ffx_a.h and ffx_fsr1.h, NVIDIA's NIS_Config.h …).
 cmake_minimum_required(VERSION 3.22)
 project(shader_check CXX)
@@ -17,7 +17,7 @@ pkg_check_modules(GLES REQUIRED egl glesv2)
 pkg_check_modules(GL REQUIRED egl opengl)
 
 add_executable(shader_check check.cpp)
-target_compile_definitions(shader_check PRIVATE GLSL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../app/src/main/glsl")
+target_compile_definitions(shader_check PRIVATE GLSL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../stage/src/main/glsl")
 target_include_directories(shader_check PRIVATE ${GLES_INCLUDE_DIRS} "${ORACLE_DIR}")
 target_link_libraries(shader_check ${GLES_LIBRARIES})
 

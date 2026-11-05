@@ -113,8 +113,8 @@ done
 # keep it byte for byte.
 mkdir -p "$W/nudged/video"
 sed 's|vec2(x + 0.5, uSize.y - y - 0.5) / uSize|vec2(x + 0.5 - 0.004, uSize.y - y - 0.5 + 0.004) / uSize|' \
-  "$HERE/../../app/src/main/glsl/video/temporal.frag" > "$W/nudged/video/temporal.frag"
-cp "$HERE/../../app/src/main/glsl/video/vertex.vert" "$W/nudged/video/"
+  "$HERE/../../stage/src/main/glsl/video/temporal.frag" > "$W/nudged/video/temporal.frag"
+cp "$HERE/../../stage/src/main/glsl/video/vertex.vert" "$W/nudged/video/"
 for size in "720 576" "720 480"; do
   "$C" picture "$W/interlaced-source.ppm" $size
   python3 -I "$HERE/fields.py" "$W/interlaced-source.ppm" "$W/field"

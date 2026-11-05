@@ -1,6 +1,6 @@
 # Shader check on the desktop
 
-The app's upscaling shaders (`app/src/main/glsl`) against their originals, without a phone. `shader_check` runs the
+The app's upscaling shaders (`stage/src/main/glsl`) against their originals, without a phone. `shader_check` runs the
 app's shaders headless on Mesa — EGL without a display, OpenGL ES 3.2 — the way `VideoFilterStage` runs them (the
 picture's top row where v is 1, 8-bit frames between passes, half-float textures between the networks' passes);
 `shader_oracle` runs AMD's and NVIDIA's originals as compute shaders on desktop OpenGL 4.5, as their own samples run

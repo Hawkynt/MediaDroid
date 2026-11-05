@@ -1,8 +1,8 @@
 Anime4K, by bloc97 (https://github.com/bloc97/Anime4K)
 
-app/src/main/glsl/anime4k/conv-1.frag … conv-4.frag carry the four convolution passes of
+stage/src/main/glsl/anime4k/conv-1.frag … conv-4.frag carry the four convolution passes of
 glsl/Upscale/Anime4K_Upscale_CNN_x2_S.glsl (v3.2) as GLSL ES shaders, their weights copied unchanged;
-app/src/main/glsl/anime4k/depth-to-space.frag holds its Depth-to-Space step.
+stage/src/main/glsl/anime4k/depth-to-space.frag holds its Depth-to-Space step.
 
 MIT License
 

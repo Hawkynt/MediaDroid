@@ -1,6 +1,6 @@
 Hash without Sine, by David Hoskins (https://www.shadertoy.com/view/4djSRW)
 
-app/src/main/glsl/video/sharpen.frag, lanczos.frag and fsr-rcas.frag use its hash13 for the film grain.
+stage/src/main/glsl/video/sharpen.frag, lanczos.frag and fsr-rcas.frag use its hash13 for the film grain.
 
 MIT License
 

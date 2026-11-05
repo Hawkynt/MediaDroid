@@ -1,8 +1,8 @@
 ACNet, by TianZer (https://github.com/TianZerL/ACNetGLSL, from Anime4KCPP)
 
-app/src/main/glsl/acnet/conv-1.frag … conv-11.frag carry the eleven convolution passes of glsl/acnet/acnet_f8b4.glsl
+stage/src/main/glsl/acnet/conv-1.frag … conv-11.frag carry the eleven convolution passes of glsl/acnet/acnet_f8b4.glsl
 (commit c6e5940) as GLSL ES shaders, their weights copied unchanged (tools/acnet/convert.py);
-app/src/main/glsl/acnet/pixel-shuffle.frag holds its pixel shuffle.
+stage/src/main/glsl/acnet/pixel-shuffle.frag holds its pixel shuffle.
 
 MIT License
 
