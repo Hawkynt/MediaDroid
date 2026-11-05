@@ -23,6 +23,8 @@ val ffmpegFlavour = if (fullFfmpeg) "-gpl" else ""
 dependencies {
     api(project(":engine:api"))
     api(project(":core:player"))
+    // FsFile: what the network sources (core:sources) hand over to be played.
+    api(project(":core:library"))
     implementation(project(":stage"))
     implementation(libs.lwjgl)
     implementation(libs.lwjgl.glfw)

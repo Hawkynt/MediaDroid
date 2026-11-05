@@ -4,6 +4,7 @@ import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.library.FsFile
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.TimeUnit
@@ -16,8 +17,12 @@ import java.util.concurrent.TimeUnit
  */
 class DesktopPlaybackEngine(
     override val tuning: PlaybackTuning,
+    /** The file behind a network source's location (SourceFiles.resolve); null for a local path FFmpeg opens. */
+    private val files: (String) -> FsFile? = { null },
     private val sinkFactory: () -> AudioSink = { JavaSoundSink() },
 ) : PlaybackEngine {
+
+    private fun readerOf(location: String) = MediaReader(location, files(location))
 
     private val listeners = CopyOnWriteArrayList<PlaybackEngine.Listener>()
     private val pictures = LinkedBlockingDeque<MediaReader.Picture>(PICTURES_AHEAD)
@@ -50,7 +55,7 @@ class DesktopPlaybackEngine(
 
     override fun open(request: MediaRequest, autoPlay: Boolean) {
         stop()
-        val opened = MediaReader(request.path)
+        val opened = readerOf(request.path)
         reader = opened
         openedPath = request.path
         hasSound = opened.tracks.any { it.kind == Track.Kind.AUDIO }
@@ -59,7 +64,7 @@ class DesktopPlaybackEngine(
         // Subtitle files beside the video, read whole now: they are small.
         sidecars = request.subtitles.mapIndexedNotNull { i, file ->
             runCatching {
-                MediaReader(file.path).use { r ->
+                readerOf(file.path).use { r ->
                     r.selectText(r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt())
                     val read = generateSequence { r.read() }.filterIsInstance<MediaReader.Cue>().toList()
                     Track("sidecar:$i", Track.Kind.TEXT, file.language, file.label, source = i + 1) to read
@@ -145,7 +150,7 @@ class DesktopPlaybackEngine(
                     val file = id.removePrefix(SOUND_FILE).toIntOrNull()?.takeIf { id.startsWith(SOUND_FILE) }
                     if (file != null) {
                         source.selectAudio(-1)
-                        soundSource = runCatching { MediaReader(soundFiles[file]) }.getOrNull()
+                        soundSource = runCatching { readerOf(soundFiles[file]) }.getOrNull()
                     } else {
                         source.selectAudio(id.toInt())
                     }

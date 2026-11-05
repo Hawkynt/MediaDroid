@@ -1,6 +1,7 @@
 package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.library.FsFile
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext
 import org.bytedeco.ffmpeg.avcodec.AVPacket
 import org.bytedeco.ffmpeg.avformat.AVFormatContext
@@ -19,11 +20,11 @@ import org.bytedeco.javacpp.DoublePointer
 import org.bytedeco.javacpp.PointerPointer
 
 /**
- * A media file read and decoded by FFmpeg, one item at a time: the pictures as RGBA bytes at the file's own size,
- * the sound as 16-bit stereo PCM at [SAMPLE_RATE], each with its time in milliseconds. Not thread-safe: one reader,
- * one thread.
+ * A media file read and decoded by FFmpeg, one item at a time — the one at [path], or [from] a network source with
+ * [path] its location there: the pictures as RGBA bytes at the file's own size, the sound as 16-bit stereo PCM at
+ * [SAMPLE_RATE], each with its time in milliseconds. Not thread-safe: one reader, one thread.
  */
-class MediaReader(path: String) : AutoCloseable {
+class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
 
     /** A decoded picture: [rgba] is [width] × [height] × 4 bytes, rows from the top. */
     class Picture(val ptsMs: Long, val width: Int, val height: Int, val rgba: ByteArray)
@@ -34,7 +35,14 @@ class MediaReader(path: String) : AutoCloseable {
     /** A subtitle line shown from [startMs] to [endMs], as text (SubtitleText). */
     data class Cue(val startMs: Long, val endMs: Long, val text: String)
 
-    private val format = AVFormatContext(null)
+    // A file from a network source is read through FsInput; a local one by FFmpeg itself.
+    private val input: FsInput? = from?.let(::FsInput)
+    private val format: AVFormatContext = if (input == null) {
+        AVFormatContext(null)
+    } else {
+        // Given before opening, FFmpeg marks it custom I/O itself and leaves it to us to free.
+        avformat.avformat_alloc_context().pb(input.context)
+    }
     private val packet: AVPacket = avcodec.av_packet_alloc()
     private val frame: AVFrame = avutil.av_frame_alloc()
     private val videoIndex: Int
@@ -67,7 +75,10 @@ class MediaReader(path: String) : AutoCloseable {
     val tracks: List<Track>
 
     init {
-        check(avformat.avformat_open_input(format, path, null, null as AVDictionary?) >= 0) { "cannot open $path" }
+        if (avformat.avformat_open_input(format, path, null, null as AVDictionary?) < 0) {
+            input?.close()
+            error("cannot open $path")
+        }
         check(avformat.avformat_find_stream_info(format, null as PointerPointer<*>?) >= 0) { "no streams in $path" }
         durationMs = if (format.duration() > 0) format.duration() / 1000 else 0
         videoIndex = best(avutil.AVMEDIA_TYPE_VIDEO)
@@ -249,6 +260,7 @@ class MediaReader(path: String) : AutoCloseable {
         avutil.av_frame_free(frame)
         avcodec.av_packet_free(packet)
         avformat.avformat_close_input(format)
+        input?.close()
     }
 
     companion object {

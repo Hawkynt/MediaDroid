@@ -1,10 +1,12 @@
 package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.library.FsFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.io.InputStream
 
 /** The test clip: 64 × 48, 25 fps, 2 s of FFmpeg's test pattern, a 440 Hz tone in 48 kHz stereo AAC. */
 class MediaReaderTest {
@@ -70,5 +72,36 @@ class MediaReaderTest {
         val mkv = File(requireNotNull(javaClass.getResource("/subtitled.mkv")).toURI()).path
         assertEquals(expected, cues(mkv))
         MediaReader(mkv).use { r -> assertEquals("deu", r.tracks.first { it.kind == Track.Kind.TEXT }.language) }
+    }
+
+    /** A file the way a network source offers one: a length, and a stream from any offset; no path to open. */
+    private class StreamOnly(private val file: File) : FsFile {
+        var opened = 0
+        override val name = file.name
+        override val path = "smb://nas/media/${file.name}"
+        override val isDirectory = false
+        override val parentFile: FsFile? = null
+        override fun length() = file.length()
+        override fun lastModified() = 0L
+        override fun listFiles(): List<FsFile>? = null
+        override fun child(name: String): FsFile = error("not a folder")
+        override fun open(offset: Long): InputStream {
+            opened++
+            return file.inputStream().apply { skip(offset) }
+        }
+    }
+
+    @Test
+    fun `a file from a network source plays like a local one, seeks included`() {
+        val remote = StreamOnly(File(clip))
+        MediaReader(remote.path, remote).use { r ->
+            assertEquals(2000.0, r.durationMs.toDouble(), 50.0)
+            assertEquals(listOf(Track.Kind.VIDEO, Track.Kind.AUDIO), r.tracks.map { it.kind })
+            r.seek(1000)
+            val pictures = generateSequence { r.read() }.filterIsInstance<MediaReader.Picture>().toList()
+            assertEquals(1000L, pictures.first().ptsMs)
+            assertEquals(25, pictures.size)
+        }
+        assertTrue(remote.opened >= 1)
     }
 }
