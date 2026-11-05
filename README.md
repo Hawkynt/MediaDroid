@@ -342,8 +342,10 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   announcing themselves on the local network (mDNS, `_smb._tcp`) are offered with one click — and their
   movies and shows join the local folder's on one wall; they play, subtitles and sound files beside them included,
   through FFmpeg reading the source's files directly.
-- Media keys and the system's now-playing panel (SMTC on Windows, MPRIS on Linux); the screensaver held off while
-  something plays (Windows: the thread's execution state; Linux: an idle lock from systemd-logind).
+- Media keys and the system's now-playing panel (SMTC on Windows, MPRIS on Linux): play, pause, stop, next and
+  previous in the queue, and the title of what plays; the screensaver held off while something plays (Windows: the
+  thread's execution state; Linux: an idle lock from systemd-logind and the desktop's own screensaver asked over
+  D-Bus, org.freedesktop.ScreenSaver).
 - Not on the desktop: the second screen and casting, the phone's lock and gestures for volume and brightness, the NPU;
   switching the display's refresh rate to the film's comes later.
 

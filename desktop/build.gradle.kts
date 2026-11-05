@@ -27,6 +27,12 @@ dependencies {
     implementation(libs.serialization.json)
     // SMB servers announced on the local network (mDNS), SmbDiscovery.
     implementation(libs.jmdns)
+    // The session bus on Linux (MPRIS media keys, the screensaver's inhibit): dbus-java over the JDK's own Unix
+    // sockets.
+    implementation(libs.dbus.java.core)
+    implementation(libs.dbus.java.unixsocket)
+    // Windows' system media controls (SMTC), WinRT called through JNA.
+    implementation(libs.jna)
     // LWJGL's native calls, for the system functions the window needs (ScreenKeeper); its natives come with the engine.
     implementation(libs.lwjgl)
     // The window's natives (Skia) for the system built for: -PdesktopTarget=linux|windows|all, the building machine's
@@ -58,7 +64,10 @@ compose.desktop {
             description = "Plays the movies and shows already organised in your folders"
             vendor = "Hawkynt"
             licenseFile.set(rootProject.file("LICENSE"))
-            modules("java.desktop", "java.naming", "java.sql", "jdk.unsupported", "java.management")
+            // jdk.security.auth: the user id dbus-java authenticates with on the session bus.
+            modules(
+                "java.desktop", "java.naming", "java.sql", "jdk.unsupported", "java.management", "jdk.security.auth",
+            )
             targetFormats(
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.AppImage,
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,

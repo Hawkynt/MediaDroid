@@ -81,6 +81,7 @@ import java.io.File
 fun PlayerScreen(
     store: DesktopStore,
     places: DesktopLibrary,
+    mediaKeys: MediaKeys,
     queue: List<Playing>,
     startIndex: Int,
     fullScreen: Boolean,
@@ -128,6 +129,12 @@ fun PlayerScreen(
     fun next() {
         saveProgress()
         if (index + 1 < queue.size) index++ else onExit()
+    }
+
+    // The video before in the queue; on the first, its start again.
+    fun previous() {
+        saveProgress()
+        if (index > 0) index-- else engine.seekTo(0)
     }
 
     DisposableEffect(Unit) {
@@ -211,6 +218,27 @@ fun PlayerScreen(
     val controlsShown = now < controlsUntil || !isPlaying
 
     fun togglePlay() = if (engine.isPlaying) engine.pause() else engine.play()
+
+    // The media keys and the system's now-playing panel drive this player while it is open.
+    DisposableEffect(Unit) {
+        mediaKeys.onCommand = { command ->
+            when (command) {
+                MediaCommand.PLAY -> engine.play()
+                MediaCommand.PAUSE -> engine.pause()
+                MediaCommand.PLAY_PAUSE -> togglePlay()
+                MediaCommand.STOP -> onExit()
+                MediaCommand.NEXT -> next()
+                MediaCommand.PREVIOUS -> previous()
+            }
+        }
+        onDispose {
+            mediaKeys.onCommand = {}
+            mediaKeys.show(null)
+        }
+    }
+    LaunchedEffect(index, isPlaying, duration) {
+        mediaKeys.show(NowPlaying(playing.title, isPlaying, index > 0, index + 1 < queue.size, duration))
+    }
 
     var speed by remember { mutableStateOf(store.speed) }
     fun changeSpeed(value: Float) {
