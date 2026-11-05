@@ -79,9 +79,9 @@ tasks.register<JavaExec>("icons") {
     dependsOn("testClasses")
 }
 
-// The portable Windows zip (unpack anywhere, run MediaDroid.bat; settings stay beside it): the app's jars built for
-// Windows (-PdesktopTarget=windows), Temurin's Windows JRE (fetched once, checked against its digest), a launcher and
-// the `portable` marker. ./gradlew :desktop:windowsZip -PdesktopTarget=windows → desktop/build/dist/.
+// The portable Windows zip (unpack anywhere and run it; settings stay beside it): the app built for Windows
+// (-PdesktopTarget=windows), a Java runtime, a launcher and the `portable` marker.
+// ./gradlew :desktop:windowsZip -PdesktopTarget=windows → desktop/build/dist/.
 // The MSI is built by jpackage on Windows itself (packageMsi); this zip is made on any system.
 val windowsJre = "OpenJDK21U-jre_x64_windows_hotspot_21.0.13_9.zip"
 val windowsJreUrl = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/$windowsJre"
@@ -111,20 +111,30 @@ val windowsJreUnpack = tasks.register<Sync>("windowsJreUnpack") {
     into(layout.buildDirectory.dir("windows-jre"))
 }
 
+// Built on Windows itself, the zip is createDistributable's folder — the native MediaDroid.exe launcher and its jlinked
+// runtime — with the marker; built anywhere else, it is the jars, Temurin's JRE and MediaDroid.bat.
+val onWindows = System.getProperty("os.name").startsWith("Windows")
+
 tasks.register<Zip>("windowsZip") {
     group = "distribution"
-    description = "The portable Windows zip: app, Temurin JRE, launcher"
-    dependsOn(windowsJreUnpack, tasks.named("jar"))
+    description = "The portable Windows zip: app, Java runtime, launcher"
     archiveFileName.set("MediaDroid-windows-x64.zip")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     destinationDirectory.set(layout.buildDirectory.dir("dist"))
     into("MediaDroid") {
-        into("runtime") { from(windowsJreUnpack) }
-        into("lib") {
-            from(tasks.named("jar"))
-            from(configurations.named("runtimeClasspath"))
+        if (onWindows) {
+            dependsOn("createDistributable")
+            from(layout.buildDirectory.dir("compose/binaries/main/app/MediaDroid"))
+            from(rootProject.file("desktop/windows/portable"))
+        } else {
+            dependsOn(windowsJreUnpack, tasks.named("jar"))
+            into("runtime") { from(windowsJreUnpack) }
+            into("lib") {
+                from(tasks.named("jar"))
+                from(configurations.named("runtimeClasspath"))
+            }
+            from(rootProject.file("desktop/windows"))
         }
-        from(rootProject.file("desktop/windows"))
         from(rootProject.file("LICENSE"))
         from(rootProject.file("engine/desktop/THIRD-PARTY-NOTICE.ffmpeg.txt"))
     }

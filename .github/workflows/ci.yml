@@ -9,7 +9,8 @@ name: CI
 #
 # Android gets no OS matrix: the SDK and the Gradle build are portable, and a Windows runner
 # would only prove the toolchain works twice. The full gate here is unit tests plus every
-# shipping artifact assembled — debug APK, release APK, release AAB.
+# shipping artifact assembled — debug APK, release APK, release AAB — and the desktop packages,
+# which do get Linux and Windows, since each carries its system's natives (_desktop.yml).
 on:
   pull_request:
     branches: [main]
@@ -71,3 +72,7 @@ jobs:
         uses: Hawkynt/RepositoryTemplate/repo-readme@v1
         with:
           gui: true
+
+  # The desktop apps tested and packed on Linux and Windows: a change that breaks a package cannot merge.
+  desktop:
+    uses: ./.github/workflows/_desktop.yml

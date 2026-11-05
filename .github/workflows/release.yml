@@ -30,8 +30,12 @@ jobs:
     uses: ./.github/workflows/_build.yml
     secrets: inherit                           # the release key signs the APK and AAB
 
+  desktop:
+    needs: ci
+    uses: ./.github/workflows/_desktop.yml
+
   release:
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -43,7 +47,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: app-artifacts
+          pattern: '*-artifacts'                 # the APK and AAB, and the desktop packages
+          merge-multiple: true
           path: dist
 
       - uses: actions/setup-node@v4
