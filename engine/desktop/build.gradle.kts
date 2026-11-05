@@ -12,7 +12,11 @@ kotlin {
 // The natives for the desktops we ship to; the plain artifacts carry the Java side. Published builds take FFmpeg's
 // LGPL build; `-PfullFfmpeg` takes Bytedeco's GPL build instead (x264, x265 …) — for the household's own machines
 // only, never shipped (AGENTS.md).
-val platforms = listOf("linux-x86_64", "windows-x86_64")
+// -PdesktopTarget=linux|windows|all picks whose natives come along: by default the building machine's own.
+val target = providers.gradleProperty("desktopTarget").getOrElse(
+    if (System.getProperty("os.name").startsWith("Windows")) "windows" else "linux",
+)
+val platforms = listOf("linux-x86_64", "windows-x86_64").filter { target == "all" || it.startsWith(target) }
 val fullFfmpeg = providers.gradleProperty("fullFfmpeg").isPresent
 val ffmpegFlavour = if (fullFfmpeg) "-gpl" else ""
 

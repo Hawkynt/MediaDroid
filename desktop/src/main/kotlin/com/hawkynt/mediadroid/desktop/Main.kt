@@ -50,7 +50,11 @@ fun main(args: Array<String>) = application {
         )
     }
     var library by remember { mutableStateOf<Library?>(null) }
-    Window(onCloseRequest = ::exitApplication, title = "MediaDroid", state = state) {
+    val icon = remember {
+        Thread.currentThread().contextClassLoader.getResourceAsStream("mediadroid.png")
+            ?.use { androidx.compose.ui.graphics.painter.BitmapPainter(androidx.compose.ui.res.loadImageBitmap(it)) }
+    }
+    Window(onCloseRequest = ::exitApplication, title = "MediaDroid", state = state, icon = icon) {
         System.getenv("MEDIADROID_SNAPSHOT")?.let { target ->
             androidx.compose.runtime.LaunchedEffect(Unit) {
                 kotlinx.coroutines.delay(System.getenv("MEDIADROID_SNAPSHOT_MS")?.toLongOrNull() ?: 4_000)

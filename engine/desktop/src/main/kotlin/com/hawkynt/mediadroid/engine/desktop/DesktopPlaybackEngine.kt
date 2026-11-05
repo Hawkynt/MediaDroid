@@ -65,7 +65,7 @@ class DesktopPlaybackEngine(
         }
         listeners.forEach {
             it.onTracksChanged(tracks)
-            it.onVideoSize(opened.width, opened.height, 1f)
+            it.onVideoSize(opened.width, opened.height, opened.pixelAspect)
         }
         if (autoPlay) play() else pause()
     }
@@ -174,6 +174,9 @@ class DesktopPlaybackEngine(
         }
 
     override val durationMs: Long get() = reader?.durationMs ?: 0
+
+    /** The shape of the picture's pixels (width over height), for drawing it in its true proportions. */
+    val pixelAspect: Float get() = reader?.pixelAspect ?: 1f
 
     override val isPlaying: Boolean get() = playing
 

@@ -390,6 +390,8 @@ Requires JDK 21 and an Android SDK with platform 37; `local.properties` must poi
 ./gradlew :desktop:run    # the desktop app (Windows, Linux); a video path after --args plays it at once
 ./gradlew :desktop:run -PfullFfmpeg   # the same with Bytedeco's GPL FFmpeg build, for your own machine only
 ./gradlew :engine:desktop:probe -Pfolder=<dir>   # every video in a folder opened and its start decoded
+./gradlew :desktop:appImage                      # Linux: desktop/build/dist/MediaDroid-linux-x64.AppImage (squashfs-tools)
+./gradlew :desktop:windowsZip -PdesktopTarget=windows   # Windows, portable: desktop/build/dist/MediaDroid-windows-x64.zip
 ```
 
 `build.sh` signs with the release key when `KEYSTORE` (or `KEYSTORE_BASE64`), `KEYSTORE_PASSWORD` and `KEY_ALIAS` are set — in the environment or in a git-ignored `signing.env` — and otherwise with the Android debug key, which installs on your own device but cannot update a release or nightly. The key itself lives only in the repository's secrets. `buildnonlgpl.sh` first builds FFmpeg with every decoder, demuxer and parser (`FULL=1 tools/ffmpeg/build.sh`, once, into `stage/ffmpeg-full`); that build is GPL and cannot be distributed under this licence, so it is for your own device only — see [tools/ffmpeg/README.md](tools/ffmpeg/README.md). The desktop app decodes

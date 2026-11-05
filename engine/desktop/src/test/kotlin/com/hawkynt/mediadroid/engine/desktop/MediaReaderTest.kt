@@ -42,4 +42,11 @@ class MediaReaderTest {
             val first = generateSequence { r.read() }.filterIsInstance<MediaReader.Picture>().first()
             assertEquals(1000L, first.ptsMs)
         }
+
+    @Test
+    fun `the shape of a picture's pixels comes from the file, square without one`() {
+        MediaReader(clip).use { assertEquals(1f, it.pixelAspect, 0.001f) }
+        val anamorphic = File(requireNotNull(javaClass.getResource("/anamorphic.mp4")).toURI()).path
+        MediaReader(anamorphic).use { assertEquals(16f / 15f, it.pixelAspect, 0.001f) }
+    }
 }

@@ -144,8 +144,9 @@ fun PlayerScreen(
                 if (raw !== lastShown || look != lastLook) {
                     lastShown = raw
                     lastLook = look
-                    val (w, h) = fitted(raw.width, raw.height, canvas)
-                    val shown = if (picture.hasFilters && stage.ready && w > 0 && h > 0) {
+                    // Fitted by the picture's true shape: non-square pixels (PAL DV, anamorphic DVD) widened.
+                    val (w, h) = fitted((raw.width * engine.pixelAspect).toInt(), raw.height, canvas)
+                    val shown = if ((picture.hasFilters || engine.pixelAspect != 1f) && stage.ready && w > 0 && h > 0) {
                         withContext(Dispatchers.Default) { stage.process(raw, picture, w, h) }
                     } else {
                         raw

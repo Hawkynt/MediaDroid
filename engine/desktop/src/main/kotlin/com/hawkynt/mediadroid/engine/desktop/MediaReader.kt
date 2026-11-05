@@ -53,6 +53,9 @@ class MediaReader(path: String) : AutoCloseable {
     val width: Int
     val height: Int
 
+    /** The shape of the picture's pixels, width over height (16/15 for PAL DV), 1 where the file does not say. */
+    val pixelAspect: Float
+
     /** The file's video, audio and subtitle streams as tracks, id the stream's index. */
     val tracks: List<Track>
 
@@ -78,6 +81,10 @@ class MediaReader(path: String) : AutoCloseable {
         if (audioIndex >= 0) audio = openDecoder(audioIndex)
         width = video?.width() ?: 0
         height = video?.height() ?: 0
+        pixelAspect = if (videoIndex < 0) 1f else {
+            val guessed = avformat.av_guess_sample_aspect_ratio(format, format.streams(videoIndex), null)
+            if (guessed.num() > 0 && guessed.den() > 0) guessed.num().toFloat() / guessed.den() else 1f
+        }
     }
 
     private fun best(type: Int): Int = avformat.av_find_best_stream(format, type, -1, -1, null as PointerPointer<*>?, 0)
