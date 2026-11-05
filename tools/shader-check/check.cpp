@@ -20,8 +20,9 @@
 //                                                           glsl/video/temporal.frag: one field of cur rebuilt
 //   shader_check xbrz <in.ppm> <out.ppm> <factor> <table.bin>
 //                                                           glsl/xbrz to factor (2..6) times the size
-//   shader_check yuv <in.yuv> <width> <height> <601|709|2020> <out.ppm>
-//                                                           glsl/video/yuv.frag: a yuv420p frame to RGB
+//   shader_check yuv <in.yuv> <width> <height> <601|709|2020> <out.ppm> [full]
+//                                                           glsl/video/yuv.frag: a yuv420p frame to RGB; a full
+//                                                           range one squeezed first, as the FFmpeg decoder does
 //   shader_check deinterlace <in.ppm> <out.ppm> <mode> <tff 0|1>
 //                                                           glsl/video/deinterlace.frag (1 Auto, 2 Blend, 3 Bob)
 //   shader_check anime4k <in.ppm> <out.ppm>                 glsl/anime4k to twice the size
@@ -38,6 +39,7 @@
 #include <cmath>
 
 #include "NIS_Config.h"
+#include "mediadroid_range.h"
 #include "picture.h"
 
 using namespace shadercheck;
@@ -242,10 +244,16 @@ Picture temporal(const Picture& prev, const Picture& cur, const Picture& next, b
 
 // A yuv420p frame (raw planes, rows from the top) to RGB as VideoFilterStage.takeYuv/copyInput do it: the planes as
 // luminance textures, rows from the top flipped by the texture matrix, the matrix as YuvMatrix.toRgb computes it.
-Picture yuv(const std::string& path, int w, int h, double kr, double kb) {
-    const std::string data = readFile(path);
+// A [full] range frame is first squeezed into limited range by the FFmpeg decoder's own mediadroid_range.h.
+Picture yuv(const std::string& path, int w, int h, double kr, double kb, bool full) {
+    std::string data = readFile(path);
     const int cw = (w + 1) / 2, ch = (h + 1) / 2;
     if (data.size() != size_t(w) * h + 2 * size_t(cw) * ch) fail("not a yuv420p frame of that size: " + path);
+    if (full) {
+        auto* bytes = reinterpret_cast<uint8_t*>(data.data());
+        mediadroid::fullToLimited(bytes, size_t(w) * h, false);
+        mediadroid::fullToLimited(bytes + size_t(w) * h, 2 * size_t(cw) * ch, true);
+    }
     const uint8_t* planes[3] = {reinterpret_cast<const uint8_t*>(data.data()),
                                 reinterpret_cast<const uint8_t*>(data.data()) + size_t(w) * h,
                                 reinterpret_cast<const uint8_t*>(data.data()) + size_t(w) * h + size_t(cw) * ch};
@@ -622,10 +630,10 @@ int main(int argc, char** argv) {
         writePpm(a[4], temporal(readPpm(a[1]), readPpm(a[2]), readPpm(a[3]), a[5] == "bwdif", a[6] == "1",
                                 a[7] == "1"));
     else if (a.size() == 5 && a[0] == "xbrz") writePpm(a[2], xbrz(readPpm(a[1]), std::stoi(a[3]), a[4]));
-    else if (a.size() == 6 && a[0] == "yuv") {
+    else if ((a.size() == 6 || (a.size() == 7 && a[6] == "full")) && a[0] == "yuv") {
         const double kr = a[4] == "601" ? 0.299 : a[4] == "709" ? 0.2126 : 0.2627;
         const double kb = a[4] == "601" ? 0.114 : a[4] == "709" ? 0.0722 : 0.0593;
-        writePpm(a[5], yuv(a[1], std::stoi(a[2]), std::stoi(a[3]), kr, kb));
+        writePpm(a[5], yuv(a[1], std::stoi(a[2]), std::stoi(a[3]), kr, kb, a.size() == 7));
     } else if (a.size() == 5 && a[0] == "deinterlace")
         writePpm(a[2], deinterlace(readPpm(a[1]), std::stoi(a[3]), a[4] == "1"));
     else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));

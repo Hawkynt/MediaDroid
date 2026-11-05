@@ -18,7 +18,9 @@ pkg_check_modules(GL REQUIRED egl opengl)
 
 add_executable(shader_check check.cpp)
 target_compile_definitions(shader_check PRIVATE GLSL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../stage/src/main/glsl")
-target_include_directories(shader_check PRIVATE ${GLES_INCLUDE_DIRS} "${ORACLE_DIR}")
+# mediadroid_range.h: the FFmpeg decoder's full-to-limited squeeze, run ahead of the YUV shader.
+target_include_directories(shader_check PRIVATE ${GLES_INCLUDE_DIRS} "${ORACLE_DIR}"
+                           "${CMAKE_CURRENT_SOURCE_DIR}/../ffmpeg/mediadroid/jni")
 target_link_libraries(shader_check ${GLES_LIBRARIES})
 
 add_executable(shader_oracle oracle.cpp)

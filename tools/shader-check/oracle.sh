@@ -151,6 +151,29 @@ for matrix in 601 709; do
   done
 done
 
+# Full range (MJPEG cameras' JPEG range): the FFmpeg decoder squeezes it into limited range (mediadroid_range.h)
+# before the stage reads it as limited; against FFmpeg's own conversion of the full-range frame, within the step the
+# squeeze rounds to (256 levels onto 220 and 225). Read as limited without the squeeze, as before, it has to fail.
+for matrix in 601 709; do
+  for name in grey picture; do
+    limits=$([ $name = grey ] && echo "1 0.2" || echo "2 0.4")
+    ffmpeg -loglevel error -y -i "$W/$name.ppm" -f rawvideo \
+      -vf "scale=out_color_matrix=bt$matrix:out_range=pc:flags=accurate_rnd+full_chroma_int,format=yuv420p" \
+      "$W/$name-$matrix-full.yuv"
+    ffmpeg -loglevel error -y -f rawvideo -pix_fmt yuv420p -s 320x240 -i "$W/$name-$matrix-full.yuv" \
+      -vf "scale=in_color_matrix=bt$matrix:in_range=pc:flags=accurate_rnd+full_chroma_int+bilinear,format=rgb24" \
+      "$W/$name-$matrix-full-ffmpeg.ppm"
+    "$C" yuv "$W/$name-$matrix-full.yuv" 320 240 $matrix "$W/$name-$matrix-full-ours.ppm" full
+    check "YUV BT.$matrix full range, $name, against FFmpeg" \
+      "$W/$name-$matrix-full-ours.ppm" "$W/$name-$matrix-full-ffmpeg.ppm" $limits
+    "$C" yuv "$W/$name-$matrix-full.yuv" 320 240 $matrix "$W/$name-$matrix-full-unsqueezed.ppm"
+    echo -n "YUV BT.$matrix full range, $name, read as limited (has to fail): "
+    if "$C" compare "$W/$name-$matrix-full-unsqueezed.ppm" "$W/$name-$matrix-full-ffmpeg.ppm" $limits; then
+      echo "  FAILED: the squeeze proves nothing"; failed=1
+    fi
+  done
+done
+
 # Bob and Auto: the first field stays for either field order — a frame whose top field is 200 and bottom field 50
 # has to come out all 200 top field first and all 50 bottom field first.
 python3 -I - "$W" <<'PY'

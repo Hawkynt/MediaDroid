@@ -23,6 +23,8 @@ It is built from these and nothing else (attribution: `app/THIRD-PARTY-NOTICE.ff
 - MediaDroid's own part (LGPL-3.0-or-later): `mediadroid/jni/mediadroid_demux.cc` (libavformat over a
   custom AVIOContext, after FFmpeg's `doc/examples/avio_read_callback.c`),
   `mediadroid/jni/mediadroid_codecpar.h` (how a demuxed stream's codec parameters reach the decoders),
+  `mediadroid/jni/mediadroid_range.h` (a full-range frame — MJPEG's — squeezed into the limited range
+  the decoder's output is read as),
   the thumbnail picture (libavcodec and libswscale, after FFmpeg's `doc/examples/decode_video.c`),
   `mediadroid/java/…/FfmpegDemuxer.java`, and `patches/0002-*.patch` — FFmpeg linked statically into
   one library, libyuv static, our two ABIs, and decoders found by name for `audio/x-ffmpeg-<decoder>` /

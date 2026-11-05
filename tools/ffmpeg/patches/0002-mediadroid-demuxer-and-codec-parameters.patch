@@ -177,18 +177,19 @@ index 23ccef6..e7e5a0c 100755
 +  cp "build-${abi}/libyuv.a" "./android-libs/${abi}/libyuv.a"
  done
 diff --git a/libraries/decoder_ffmpeg/src/main/jni/ffmpeg_jni.cc b/libraries/decoder_ffmpeg/src/main/jni/ffmpeg_jni.cc
-index 42271b9..85327b8 100644
+index 42271b9..16e03a6 100644
 --- a/libraries/decoder_ffmpeg/src/main/jni/ffmpeg_jni.cc
 +++ b/libraries/decoder_ffmpeg/src/main/jni/ffmpeg_jni.cc
-@@ -38,6 +38,7 @@ extern "C" {
+@@ -38,6 +38,8 @@ extern "C" {
  #include <libswresample/swresample.h>
  #include <libswscale/swscale.h>
  }
 +#include "mediadroid_codecpar.h"
++#include "mediadroid_range.h"
  
  #define LOG_TAG "ffmpeg_jni"
  #define LOGE(...) \
-@@ -275,6 +276,8 @@ AVCodecContext* createContext(JNIEnv* env, const AVCodec* codec,
+@@ -275,6 +277,8 @@ AVCodecContext* createContext(JNIEnv* env, const AVCodec* codec,
        return NULL;
      }
      env->GetByteArrayRegion(extraData, 0, size, (jbyte*)context->extradata);
@@ -197,7 +198,7 @@ index 42271b9..85327b8 100644
    }
    if (context->codec_id == AV_CODEC_ID_PCM_MULAW ||
        context->codec_id == AV_CODEC_ID_PCM_ALAW) {
-@@ -619,6 +622,8 @@ JniContext *createVideoContext(JNIEnv *env,
+@@ -619,6 +623,8 @@ JniContext *createVideoContext(JNIEnv *env,
              return NULL;
          }
          env->GetByteArrayRegion(extraData, 0, size, (jbyte *) codecContext->extradata);
@@ -206,3 +207,30 @@ index 42271b9..85327b8 100644
      }
  
      // opt decode speed.
+@@ -795,6 +801,15 @@ jint ffmpegVideoReceiveFrame(JNIEnv* env, jobject thiz, jlong jContext, jint out
+         return VIDEO_DECODER_ERROR_OTHER;
+     }
+ 
++    // MediaDroid: a full-range frame (MJPEG's yuvj formats, or a stream flagged full range)
++    // is squeezed into limited range once it is in the output buffer, which carries no range
++    // and is read as limited by everything after it (mediadroid_range.h).
++    const auto raw_format = AVPixelFormat(raw_frame->format);
++    const bool full_range = raw_frame->color_range == AVCOL_RANGE_JPEG ||
++                            raw_format == AV_PIX_FMT_YUVJ420P || raw_format == AV_PIX_FMT_YUVJ422P ||
++                            raw_format == AV_PIX_FMT_YUVJ444P || raw_format == AV_PIX_FMT_YUVJ440P ||
++                            raw_format == AV_PIX_FMT_YUVJ411P;
++
+     // Convert to YUV420P with swscale only when the decoded format differs. When the
+     // frame is already YUV420P (the common case), use it directly and skip one full
+     // frame allocation + conversion per frame.
+@@ -877,6 +892,10 @@ jint ffmpegVideoReceiveFrame(JNIEnv* env, jobject thiz, jlong jContext, jint out
+         LOGE("I420Rotate failed: %d", rotate_result);
+         return VIDEO_DECODER_ERROR_OTHER;
+     }
++    if (full_range) {
++        mediadroid::fullToLimited(data, length_y, false);
++        mediadroid::fullToLimited(data + length_y, 2 * length_uv, true);
++    }
+     return result;
+ }
+ 

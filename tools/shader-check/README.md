@@ -19,7 +19,7 @@ oracle that bilinear scaling would pass as well proves nothing.
 | Lanczos, EWA (`lanczos.frag`, `ewa.frag`) | libplacebo's `lanczos` and `ewa_lanczossharp` | their kernels, antiringing off on both sides (ours pulls into the four nearest pixels' range, libplacebo's weighs a soft minimum and maximum — a different rule, so not compared) |
 | xBRZ (`glsl/xbrz`) | the original's own output: core/imaging's reference pictures, which `Xbrz` is held to as well | the three passes as the stage runs them, every factor 2 to 6; the patterns read from the app's `Xbrz.kt` (`xbrz-table.py`) |
 | YADIF, BWDIF (`temporal.frag`) | FFmpeg's `yadif` and `bwdif` on planar RGB | three interlaced frames (`fields.py`: half still, half moving), both field orders and both fields, PAL and NTSC sizes; once more with every read addressed 1/256 texel off, which nearest sampling has to absorb |
-| YUV to RGB (`yuv.frag`) | FFmpeg's own conversion (swscale, `accurate_rnd`, bilinear chroma) | a yuv420p frame uploaded as `takeYuv` uploads it, BT.601 and BT.709 limited range, the matrix as `YuvMatrix.toRgb` computes it |
+| YUV to RGB (`yuv.frag`) | FFmpeg's own conversion (swscale, `accurate_rnd`, bilinear chroma) | a yuv420p frame uploaded as `takeYuv` uploads it, BT.601 and BT.709 limited range, the matrix as `YuvMatrix.toRgb` computes it; full range (MJPEG's) squeezed first by the FFmpeg decoder's own `mediadroid_range.h`, which unsqueezed has to fail |
 | ACNet (`glsl/acnet`) | `acnet_f8b4.glsl`, TianZerL/ACNetGLSL `c6e5940` (MIT) | in libplacebo on 16-bit YUV (BT.709, full range), grey and in colour, the chroma scaled bilinearly as the stage's doubling does — with another chroma scaler it has to differ, so that setting is known to take |
 
 1. Mesa's EGL, GLES and OpenGL (`pkg-config egl glesv2 opengl`); for Anime4K and ACNet, FFmpeg built with libplacebo and
@@ -41,6 +41,7 @@ On an Intel HD Graphics 520 laptop (Mesa 26.2, libplacebo 7.360), per 8-bit valu
 | xBRZ, three pictures at 2× to 6× | 0 | 0 |
 | YADIF and BWDIF, every case, and read 1/256 texel off | 0 | 0 |
 | YUV to RGB, grey / in colour | 0 / 1 | 0 / 0.005 |
+| YUV to RGB from full range, grey / in colour (unsqueezed: 20 / 20) | 1 / 2 | 0.15 / 0.33 |
 
 Outermost pixels are left out where the originals read past the picture: AMD's RCAS fetches beyond the edge (one
 pixel), NVIDIA's tile loader wraps an unsigned index at the top and left (eight pixels, as `NisTest` does).
