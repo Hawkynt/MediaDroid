@@ -1462,6 +1462,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform2f(
                         GLES20.glGetUniformLocation(p, "uOutSize"), midWidth.toFloat(), midHeight.toFloat(),
                     )
+                    // Divided here, as NVIDIA divides: exactly (see glsl/video/nis.frag).
+                    GLES20.glUniform2f(
+                        GLES20.glGetUniformLocation(p, "uScale"),
+                        width.toFloat() / midWidth, height.toFloat() / midHeight,
+                    )
                     set("uDetectRatio", config.detectRatio)
                     set("uDetectThres", config.detectThres)
                     set("uMinContrastRatio", config.minContrastRatio)

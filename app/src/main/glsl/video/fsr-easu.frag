@@ -1,6 +1,6 @@
 // AMD FidelityFX Super Resolution 1, EASU (edge-adaptive spatial upsampling), from ffx_fsr1.h
 // (MIT, see THIRD-PARTY-NOTICE.FidelityFX-FSR.txt): the 12 texels around 'f' read one by one where
-// AMD gathers them, the approximate reciprocals written exactly. Taps, as in the original:
+// AMD gathers them, with AMD's own approximate reciprocals (ffx-approx.glsl). Taps, as in the original:
 //     b c
 //   e f g h
 //   i j k l
@@ -9,13 +9,14 @@ precision highp float;
 uniform sampler2D uTex;
 uniform vec2 uInSize;
 varying vec2 vTex;
+#include "ffx-approx.glsl"
 vec2 fp;
 vec3 tex(float x, float y) { return texture2D(uTex, (fp + vec2(x, y) + 0.5) / uInSize).rgb; }
 float luma2(vec3 c) { return c.b * 0.5 + (c.r * 0.5 + c.g); }
 void setF(inout vec2 dir, inout float len, float w, float lA, float lB, float lC, float lD, float lE) {
   float dc = lD - lC;
   float cb = lC - lB;
-  float lenX = 1.0 / max(max(abs(dc), abs(cb)), 1e-6);
+  float lenX = APrxLoRcpF1(max(abs(dc), abs(cb)));
   float dirX = lD - lB;
   dir.x += dirX * w;
   lenX = clamp(abs(dirX) * lenX, 0.0, 1.0);
@@ -23,7 +24,7 @@ void setF(inout vec2 dir, inout float len, float w, float lA, float lB, float lC
   len += lenX * w;
   float ec = lE - lC;
   float ca = lC - lA;
-  float lenY = 1.0 / max(max(abs(ec), abs(ca)), 1e-6);
+  float lenY = APrxLoRcpF1(max(abs(ec), abs(ca)));
   float dirY = lE - lA;
   dir.y += dirY * w;
   lenY = clamp(abs(dirY) * lenY, 0.0, 1.0);
@@ -62,15 +63,15 @@ void main() {
   vec2 dir2 = dir * dir;
   float dirR = dir2.x + dir2.y;
   bool zro = dirR < 1.0 / 32768.0;
-  dirR = zro ? 1.0 : inversesqrt(dirR);
+  dirR = zro ? 1.0 : APrxLoRsqF1(dirR);
   dir.x = zro ? 1.0 : dir.x;
   dir *= dirR;
   len = len * 0.5;
   len *= len;
-  float stretch = (dir.x * dir.x + dir.y * dir.y) / max(abs(dir.x), abs(dir.y));
+  float stretch = (dir.x * dir.x + dir.y * dir.y) * APrxLoRcpF1(max(abs(dir.x), abs(dir.y)));
   vec2 len2 = vec2(1.0 + (stretch - 1.0) * len, 1.0 - 0.5 * len);
   float lob = 0.5 + ((1.0 / 4.0 - 0.04) - 0.5) * len;
-  float clp = 1.0 / lob;
+  float clp = APrxLoRcpF1(lob);
   vec3 min4 = min(min(f, g), min(j, k));
   vec3 max4 = max(max(f, g), max(j, k));
   vec3 aC = vec3(0.0);
