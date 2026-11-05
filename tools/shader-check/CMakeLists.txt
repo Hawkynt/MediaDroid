@@ -16,19 +16,21 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLES REQUIRED egl glesv2)
 pkg_check_modules(GL REQUIRED egl opengl)
 
+# libplacebo for the tone mapping's uniforms, worked out as libplacebo works out its own.
+pkg_check_modules(PLACEBO REQUIRED libplacebo egl)
+
 add_executable(shader_check check.cpp)
 target_compile_definitions(shader_check PRIVATE GLSL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../stage/src/main/glsl")
 # mediadroid_range.h: the FFmpeg decoder's full-to-limited squeeze, run ahead of the YUV shader.
-target_include_directories(shader_check PRIVATE ${GLES_INCLUDE_DIRS} "${ORACLE_DIR}"
+target_include_directories(shader_check PRIVATE ${GLES_INCLUDE_DIRS} ${PLACEBO_INCLUDE_DIRS} "${ORACLE_DIR}"
                            "${CMAKE_CURRENT_SOURCE_DIR}/../ffmpeg/mediadroid/jni")
-target_link_libraries(shader_check ${GLES_LIBRARIES})
+target_link_libraries(shader_check ${GLES_LIBRARIES} ${PLACEBO_LIBRARIES})
 
 add_executable(shader_oracle oracle.cpp)
 target_include_directories(shader_oracle PRIVATE ${GL_INCLUDE_DIRS} "${ORACLE_DIR}")
 target_link_libraries(shader_oracle ${GL_LIBRARIES})
 
-# libplacebo's own debanding, run by libplacebo on Mesa's OpenGL (placebo.cpp).
-pkg_check_modules(PLACEBO REQUIRED libplacebo egl)
-add_executable(placebo_deband placebo.cpp)
-target_include_directories(placebo_deband PRIVATE ${PLACEBO_INCLUDE_DIRS})
-target_link_libraries(placebo_deband ${PLACEBO_LIBRARIES})
+# libplacebo's own debanding, tone mapping and peak detection, run by libplacebo on Mesa's OpenGL (placebo.cpp).
+add_executable(placebo_oracle placebo.cpp)
+target_include_directories(placebo_oracle PRIVATE ${PLACEBO_INCLUDE_DIRS})
+target_link_libraries(placebo_oracle ${PLACEBO_LIBRARIES})

@@ -32,6 +32,12 @@
 //                                                           SHADER_CHECK_DEBAND=es1 its GLSL ES 1.00 variant,
 //                                                           SHADER_CHECK_DEBAND=top the picture's top row at v = 0
 //                                                           (the stages hold it at v = 1)
+//   shader_check tonemap <in16.ppm> <out.ppm> <pq|hlg> <peak nits>
+//                                                           glsl/video/tonemap.frag: 16-bit PQ or HLG BT.2020 RGB
+//                                                           (held in half floats, as the stage's HDR frame) to
+//                                                           BT.709; <peak nits> the source's peak (0: nominal)
+//   shader_check peak <pq|hlg> <in16.ppm>                   glsl/video/peak.frag's blocks: prints the picture's
+//                                                           peak and average in PQ, before any smoothing
 //   shader_check compare <a.ppm> <b.ppm> <max> <mean> [border]
 //                                                           fails when they differ by more (in 8-bit steps), the
 //                                                           border's pixels on every side left out
@@ -39,6 +45,9 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl32.h>
+#include <libplacebo/colorspace.h>
+#include <libplacebo/shaders/colorspace.h>
+#include <libplacebo/tone_mapping.h>
 
 #include <algorithm>
 #include <cmath>
@@ -612,6 +621,147 @@ Picture deband(const Picture& in, int iterations, float threshold, float radius,
     return fromRgba(data, out.width, out.height, top);
 }
 
+// A 16-bit picture as the stage's HDR frame holds it: half floats, the picture's top row where v is 1.
+Target uploadHdr(const Picture16& p) {
+    Target t = target(p.width, p.height, true);
+    std::vector<uint16_t> data = rgba16(p, false);
+    std::vector<float> values(data.size());
+    for (size_t i = 0; i < data.size(); i++) values[i] = data[i] / 65535.0f;
+    glBindTexture(GL_TEXTURE_2D, t.texture);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.width, p.height, GL_RGBA, GL_FLOAT, values.data());
+    return t;
+}
+
+// A value as libplacebo prints it into its shaders (%f).
+float printed(double v) {
+    char text[64];
+    std::snprintf(text, sizeof text, "%f", v);
+    return std::strtof(text, nullptr);
+}
+
+void setMatrix(GLuint prog, const char* name, const pl_matrix3x3& m) {
+    // GLSL's mat3 takes columns; libplacebo's matrices are rows.
+    glUniformMatrix3fv(glGetUniformLocation(prog, name), 1, GL_TRUE, &m.m[0][0]);
+}
+
+// hdr.glsl's uniforms for [csp] as libplacebo's pl_shader_linearize computes them — what ToneMap.Pass hands the stage.
+void linearizeUniforms(GLuint prog, const pl_color_space& csp) {
+    float min = 0, max = 0;
+    pl_nominal_luma_params luma{};
+    luma.color = &csp;
+    luma.metadata = PL_HDR_METADATA_HDR10;
+    luma.scaling = PL_HDR_NORM;
+    luma.out_min = &min;
+    luma.out_max = &max;
+    pl_color_space_nominal_luma_ex(&luma);
+    const float y = 1.2f * powf(1.111f, log2f(max / (1000.0f / 203.0f)));
+    const float b = sqrtf(3 * powf(min / max, 1 / y));
+    const pl_matrix3x3 rgb2xyz = pl_get_rgb2xyz_matrix(pl_raw_primaries_get(PL_COLOR_PRIM_BT_2020));
+    glUniform1f(glGetUniformLocation(prog, "uHlg"), csp.transfer == PL_COLOR_TRC_HLG ? 1.0f : 0.0f);
+    glUniform2f(glGetUniformLocation(prog, "uHlgLift"), printed(1 - b), printed(b));
+    glUniform2f(glGetUniformLocation(prog, "uHlgOotf"), printed(max), printed(y - 1));
+    glUniform3f(glGetUniformLocation(prog, "uLuma"), printed(rgb2xyz.m[1][0]), printed(rgb2xyz.m[1][1]),
+                printed(rgb2xyz.m[1][2]));
+}
+
+pl_color_space hdrSource(const std::string& transfer, float peakNits) {
+    pl_color_space csp{};
+    csp.primaries = PL_COLOR_PRIM_BT_2020;
+    csp.transfer = transfer == "hlg" ? PL_COLOR_TRC_HLG : PL_COLOR_TRC_PQ;
+    csp.hdr.max_luma = peakNits;
+    return csp;
+}
+
+// HDR tone mapping as the stages run it (VideoFilterStage.copyInput, GlStage): the uniforms worked out the way
+// libplacebo's pl_shader_color_map_ex works out its own for PQ or HLG BT.2020 to BT.709 BT.1886.
+Picture tonemap(const Picture16& in, const std::string& transfer, float peakNits) {
+    GLuint prog = appProgram("video/tonemap.frag");
+    Target source = uploadHdr(in);
+    Target out = target(in.width, in.height);
+    pl_color_space src = hdrSource(transfer, peakNits), dst = pl_color_space_bt709;
+    pl_color_space_infer_map(&src, &dst);
+    pl_tone_map_params tone{};
+    tone.function = &pl_tone_map_bt2390;
+    tone.constants = pl_color_map_default_params.tone_constants;
+    tone.input_scaling = PL_HDR_PQ;
+    tone.output_scaling = PL_HDR_PQ;
+    pl_nominal_luma_params inLuma{};
+    inLuma.color = &src;
+    inLuma.metadata = PL_HDR_METADATA_ANY;
+    inLuma.scaling = PL_HDR_PQ;
+    inLuma.out_min = &tone.input_min;
+    inLuma.out_max = &tone.input_max;
+    pl_color_space_nominal_luma_ex(&inLuma);
+    pl_nominal_luma_params outLuma{};
+    outLuma.color = &dst;
+    outLuma.metadata = PL_HDR_METADATA_HDR10;
+    outLuma.scaling = PL_HDR_PQ;
+    outLuma.out_min = &tone.output_min;
+    outLuma.out_max = &tone.output_max;
+    pl_color_space_nominal_luma_ex(&outLuma);
+    pl_tone_map_params_infer(&tone);
+    if (std::fabs(tone.input_max - tone.output_max) < 1e-6) tone.output_max = tone.input_max;
+    if (std::fabs(tone.input_min - tone.output_min) < 1e-6) tone.output_min = tone.input_min;
+    tone.output_max = std::fmin(tone.output_max, tone.input_max);
+    // libplacebo's bt2390, its constants relative to the source's range.
+    const float range = tone.input_max - tone.input_min;
+    const float minLum = (tone.output_min - tone.input_min) / range;
+    const float maxLum = (tone.output_max - tone.input_min) / range;
+    const float knee = 2 * maxLum - 1;
+    const float power = minLum > 0 ? std::fmin(1 / minLum, 4) : 4;
+    const float gain = maxLum < 1 ? 1 / (1 + minLum / maxLum * powf(1 - maxLum, power)) : 1;
+    float screenMin = 0, screenMax = 0;
+    pl_nominal_luma_params screen{};
+    screen.color = &dst;
+    screen.metadata = PL_HDR_METADATA_HDR10;
+    screen.scaling = PL_HDR_NORM;
+    screen.out_min = &screenMin;
+    screen.out_max = &screenMax;
+    pl_color_space_nominal_luma_ex(&screen);
+    const float lb = powf(screenMin, 1 / 2.4f), lw = powf(screenMax, 1 / 2.4f);
+    glUseProgram(prog);
+    linearizeUniforms(prog, src);
+    setMatrix(prog, "uRgbToLms", pl_ipt_rgb2lms(pl_raw_primaries_get(PL_COLOR_PRIM_BT_2020)));
+    setMatrix(prog, "uLmsToIpt", pl_ipt_lms2ipt);
+    setMatrix(prog, "uIptToLms", pl_ipt_ipt2lms);
+    setMatrix(prog, "uLmsToRgb", pl_ipt_lms2rgb(pl_raw_primaries_get(PL_COLOR_PRIM_BT_709)));
+    glUniform4f(glGetUniformLocation(prog, "uCurve"), tone.input_min, tone.input_max, minLum, maxLum);
+    glUniform3f(glGetUniformLocation(prog, "uKnee"), knee, power, gain);
+    glUniform2f(glGetUniformLocation(prog, "uOutput"), tone.output_min, tone.output_max);
+    glUniform2f(glGetUniformLocation(prog, "uBt1886"), printed(1.0 / powf(lw - lb, 2.4f)), printed(lb / (lw - lb)));
+    draw(prog, out, source.texture);
+    return download(out);
+}
+
+// Peak detection's measurement as the stages run it: peak.frag over the HDR frame, its blocks read back, then the
+// frame's peak and the blocks' mean average as PeakDetect.update takes them before smoothing.
+void peak(const Picture16& in, const std::string& transfer) {
+    GLuint prog = appProgram("video/peak.frag");
+    Target source = uploadHdr(in);
+    Target out = target((in.width + 15) / 16, (in.height + 15) / 16);
+    pl_color_space csp = hdrSource(transfer, 0);
+    pl_color_space_infer(&csp);
+    glUseProgram(prog);
+    linearizeUniforms(prog, csp);
+    glUniform2f(glGetUniformLocation(prog, "uSize"), float(in.width), float(in.height));
+    draw(prog, out, source.texture);
+    glBindFramebuffer(GL_FRAMEBUFFER, out.framebuffer);
+    std::vector<uint8_t> data(size_t(out.width) * out.height * 4);
+    glReadPixels(0, 0, out.width, out.height, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
+    unsigned brightest = 0, active = 0;
+    unsigned long long sum = 0;
+    for (size_t i = 0; i < data.size(); i += 4) {
+        unsigned max = data[i] << 8 | data[i + 1], average = data[i + 2] << 8 | data[i + 3];
+        if (!max) continue;
+        active++;
+        sum += average;
+        brightest = std::max(brightest, max);
+    }
+    const float pqMax = 16383;
+    if (active) std::printf("%.9g %.9g\n", brightest / pqMax, float(sum) / float(active * pqMax));
+    else std::printf("%.9g %.9g\n", 1e-6f, 1e-6f);
+}
+
 int compare(const Picture& a, const Picture& b, int maxAllowed, double meanAllowed, int border) {
     if (a.width != b.width || a.height != b.height) fail("the pictures differ in size");
     int worst = 0;
@@ -673,6 +823,9 @@ int main(int argc, char** argv) {
     else if (a.size() == 8 && a[0] == "deband")
         writePpm(a[2], deband(readPpm(a[1]), std::stoi(a[3]), std::stof(a[4]), std::stof(a[5]), std::stof(a[6]),
                               std::stoi(a[7])));
+    else if (a.size() == 5 && a[0] == "tonemap")
+        writePpm(a[2], tonemap(readPpm16(a[1]), a[3], std::stof(a[4])));
+    else if (a.size() == 3 && a[0] == "peak") peak(readPpm16(a[2]), a[1]);
     else fail("usage: see the head of tools/shader-check/check.cpp");
     if (glGetError() != GL_NO_ERROR) fail("GL error");
     return 0;

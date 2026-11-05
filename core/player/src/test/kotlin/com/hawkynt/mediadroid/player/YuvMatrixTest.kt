@@ -45,4 +45,13 @@ class YuvMatrixTest {
             for (i in expected.indices) assertEquals("$matrix [$i]", expected[i], actual[i], 1e-5f)
         }
     }
+
+    @Test
+    fun `the 10-bit BT2020 matrix is Media3's for HDR frames`() {
+        // DefaultShaderProgram's BT2020_LIMITED_RANGE_YUV_TO_RGB_COLOR_TRANSFORM_MATRIX (Media3, Apache-2.0), to the
+        // four decimals it gives.
+        val media3 = floatArrayOf(1.1689f, 1.1689f, 1.1689f, 0f, -0.1881f, 2.1502f, 1.6853f, -0.6530f, 0f)
+        val actual = YuvMatrix.BT2020.toRgbTenBit()
+        for (i in media3.indices) assertEquals("[$i]", media3[i], actual[i], 1e-4f)
+    }
 }
