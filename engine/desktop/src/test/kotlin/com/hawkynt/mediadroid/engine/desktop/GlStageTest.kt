@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.ToneMap
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
@@ -28,6 +29,20 @@ class GlStageTest {
         assertEquals(picture.width, out.width)
         val worst = picture.rgba.indices.filter { it % 4 != 3 }
             .maxOf { abs((picture.rgba[it].toInt() and 255) - (out.rgba[it].toInt() and 255)) }
+        assertTrue("off by $worst", worst <= 1)
+    }
+
+    @Test
+    fun `a crop takes that part of the picture alone, pixel for pixel`() {
+        val part = PictureCrop(10, 6, 40, 20)
+        val out = stage.process(picture, PictureAdjustment.Neutral, part.width, part.height, part)
+        assertEquals(part.width * part.height * 4, out.rgba.size)
+        var worst = 0
+        for (y in 0 until part.height) for (x in 0 until part.width) for (c in 0..2) {
+            val inside = ((part.top + y) * picture.width + part.left + x) * 4 + c
+            val shown = (y * part.width + x) * 4 + c
+            worst = maxOf(worst, abs((picture.rgba[inside].toInt() and 255) - (out.rgba[shown].toInt() and 255)))
+        }
         assertTrue("off by $worst", worst <= 1)
     }
 

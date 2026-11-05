@@ -71,7 +71,9 @@ import com.hawkynt.mediadroid.engine.Tracks
 import com.hawkynt.mediadroid.engine.desktop.DesktopPlaybackEngine
 import com.hawkynt.mediadroid.engine.desktop.MediaReader
 import com.hawkynt.mediadroid.library.Sidecars
+import com.hawkynt.mediadroid.player.AutoCrop
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.PlaybackMath
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -184,19 +186,48 @@ fun PlayerScreen(
     // which the stage tone-maps — the clock, the end.
     LaunchedEffect(Unit) {
         var lastShown: Any? = null
-        var lastLook: Pair<PictureAdjustment, IntSize>? = null
+        var lastLook: Triple<PictureAdjustment, IntSize, PictureCrop?>? = null
+        // Black bars (AutoCrop): a sample of the picture every SAMPLE_INTERVAL_MS, judged off the window's thread,
+        // afresh for every video; the crop found, for pictures of the size it was found on.
+        val autoCrop = AutoCrop()
+        var cropVideo: String? = null
+        var lastSampleMs = 0L
+        var crop: PictureCrop? = null
         while (true) {
             withFrameNanos { }
             engine.picture()?.let { raw ->
-                val look = picture to canvas
+                val nowMs = System.currentTimeMillis()
+                if (engine.openedPath != cropVideo || !picture.cropBlackBars || !stage.ready) {
+                    cropVideo = engine.openedPath
+                    autoCrop.restart()
+                    crop = null
+                    lastSampleMs = 0L
+                }
+                if (picture.cropBlackBars && stage.ready && raw !== lastShown &&
+                    nowMs - lastSampleMs >= AutoCrop.SAMPLE_INTERVAL_MS
+                ) {
+                    lastSampleMs = nowMs
+                    crop = withContext(Dispatchers.Default) {
+                        val size = AutoCrop.sampleSize(raw.width, raw.height)
+                        val deep = if (raw.hdr != null) 2 else 1
+                        autoCrop.add(AutoCrop.luma(raw.rgba, raw.width, raw.height, deep, size))
+                        autoCrop.crop(raw.width, raw.height).takeUnless { it.isWhole(raw.width, raw.height) }
+                    }
+                }
+                val part = crop?.takeIf { it.left + it.width <= raw.width && it.top + it.height <= raw.height }
+                val look = Triple(picture, canvas, part)
                 if (raw !== lastShown || look != lastLook) {
                     lastShown = raw
                     lastLook = look
                     // Fitted by the picture's true shape: non-square pixels (PAL DV, anamorphic DVD) widened.
-                    val (w, h) = fitted((raw.width * engine.pixelAspect).toInt(), raw.height, canvas)
+                    val (w, h) = fitted(
+                        ((part?.width ?: raw.width) * engine.pixelAspect).toInt(),
+                        part?.height ?: raw.height,
+                        canvas,
+                    )
                     val staged = picture.hasFilters || engine.pixelAspect != 1f || raw.hdr != null
                     val shown = if (staged && stage.ready && w > 0 && h > 0) {
-                        withContext(Dispatchers.Default) { stage.process(raw, picture, w, h) }
+                        withContext(Dispatchers.Default) { stage.process(raw, picture, w, h, part) }
                     } else {
                         raw.eightBit()
                     }
