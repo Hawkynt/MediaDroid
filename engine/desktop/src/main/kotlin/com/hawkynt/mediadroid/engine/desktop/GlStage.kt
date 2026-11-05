@@ -4,7 +4,9 @@ import com.hawkynt.mediadroid.imaging.Xbrz
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Ewa
 import com.hawkynt.mediadroid.player.Nis
+import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.ToneMap
 import com.hawkynt.mediadroid.shaders.Shaders
 import org.lwjgl.glfw.GLFW
 import org.lwjgl.opengl.GL
@@ -18,7 +20,8 @@ import kotlin.math.pow
 /**
  * The picture stage on the desktop: the Android stage's shaders (:stage) on OpenGL 4.3 — which compiles GLSL ES 1.00
  * and 3.00 as they are — in a hidden window's context on a thread of its own. A decoded picture goes in, the picture
- * as the household set it comes out at the size it is shown: deinterlaced (Auto, Blend, Bob, YADIF, BWDIF), debanded,
+ * as the household set it comes out at the size it is shown: an HDR one tone-mapped to SDR as it comes in (ToneMap,
+ * its peak measured as it plays: PeakDetect), deinterlaced (Auto, Blend, Bob, YADIF, BWDIF), debanded,
  * denoised, sharpened, enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the neural ones plain for now),
  * colour-corrected. The passes and their
  * uniforms are the Android stage's (VideoFilterStage), the shaders those tools/shader-check holds to their originals.
@@ -36,6 +39,10 @@ class GlStage : AutoCloseable {
 
     // Debanding's frame index, which seeds its random numbers: libplacebo's 8-bit counter.
     private var debandFrame = 0
+
+    // HDR's peak as measured over the pictures so far, and the transfer it was measured for.
+    private val peakDetect = PeakDetect()
+    private var peakTransfer: ToneMap.Transfer? = null
     private var history = ArrayDeque<Target>()
     private var lastPicture: MediaReader.Picture? = null
     private var out: ByteBuffer? = null
@@ -334,13 +341,15 @@ class GlStage : AutoCloseable {
         }
     }
 
-    // [half]: 16-bit floats, for a network's layers, whose values reach past 0..1.
-    private fun target(name: String, w: Int, h: Int, half: Boolean = false): Target {
+    // [half]: 16-bit floats, for a network's layers, whose values reach past 0..1; [deep]: 16-bit values, for HDR's.
+    private fun target(name: String, w: Int, h: Int, half: Boolean = false, deep: Boolean = false): Target {
         targets[name]?.let { if (it.width == w && it.height == h) return it else free(it) }
         val texture = glGenTextures()
         glBindTexture(GL_TEXTURE_2D, texture)
         if (half) {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_HALF_FLOAT, null as ByteBuffer?)
+        } else if (deep) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16, w, h, 0, GL_RGBA, GL_UNSIGNED_SHORT, null as ByteBuffer?)
         } else {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, null as ByteBuffer?)
         }
@@ -360,16 +369,55 @@ class GlStage : AutoCloseable {
     }
 
     // The stage holds its frames with the picture's top row where v is 1, as on Android: rows uploaded bottom first.
+    // An HDR picture goes into a 16-bit frame of its own, its peak is measured, and it is tone-mapped into [into].
     private fun upload(into: Target, picture: MediaReader.Picture) {
         val w = picture.width
         val h = picture.height
-        val buffer = MemoryUtil.memAlloc(w * h * 4)
-        for (y in 0 until h) buffer.put(picture.rgba, (h - 1 - y) * w * 4, w * 4)
+        val transfer = picture.hdr
+        val bytes = if (transfer == null) 4 else 8
+        val buffer = MemoryUtil.memAlloc(w * h * bytes)
+        for (y in 0 until h) buffer.put(picture.rgba, (h - 1 - y) * w * bytes, w * bytes)
         buffer.flip()
-        glBindTexture(GL_TEXTURE_2D, into.texture)
+        val coded = if (transfer == null) into else target("hdr-coded", w, h, deep = true)
+        glBindTexture(GL_TEXTURE_2D, coded.texture)
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buffer)
+        if (transfer == null) {
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buffer)
+        } else {
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_SHORT, buffer.asShortBuffer())
+        }
         MemoryUtil.memFree(buffer)
+        if (transfer == null) return
+        if (transfer != peakTransfer) {
+            peakDetect.reset()
+            peakTransfer = transfer
+        }
+        val side = PeakDetect.BLOCK
+        val blocks = target("hdr-blocks", (w + side - 1) / side, (h + side - 1) / side)
+        pass("peak.frag", blocks, coded.texture) { p ->
+            toneUniforms(p, PeakDetect.pass(transfer))
+            glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
+        }
+        val count = blocks.width * blocks.height
+        val read = MemoryUtil.memAlloc(count * 4)
+        glPixelStorei(GL_PACK_ALIGNMENT, 1)
+        glReadPixels(0, 0, blocks.width, blocks.height, GL_RGBA, GL_UNSIGNED_BYTE, read)
+        peakDetect.update(PeakDetect.unpack(ByteArray(count * 4).also { read.get(it) }, count))
+        MemoryUtil.memFree(read)
+        val tone = ToneMap.pass(transfer, peakDetect.peak)
+        pass("tonemap.frag", into, coded.texture) { p -> toneUniforms(p, tone) }
+    }
+
+    /** Hands [pass]'s uniforms (ToneMap.Pass.uniforms) to [program]. */
+    private fun toneUniforms(program: Int, pass: ToneMap.Pass) = pass.uniforms { name, v ->
+        val at = glGetUniformLocation(program, name)
+        when (v.size) {
+            1 -> glUniform1f(at, v[0])
+            2 -> glUniform2f(at, v[0], v[1])
+            3 -> glUniform3f(at, v[0], v[1], v[2])
+            4 -> glUniform4f(at, v[0], v[1], v[2], v[3])
+            else -> glUniformMatrix3fv(at, false, v)
+        }
     }
 
     private fun download(from: Target, ptsMs: Long): MediaReader.Picture {
@@ -465,6 +513,8 @@ class GlStage : AutoCloseable {
             "temporal.frag" to Shaders.VIDEO_TEMPORAL,
             "deinterlace.frag" to Shaders.VIDEO_DEINTERLACE,
             "deband-es3.frag" to Shaders.VIDEO_DEBAND_ES3,
+            "tonemap.frag" to Shaders.VIDEO_TONEMAP,
+            "peak.frag" to Shaders.VIDEO_PEAK,
             "denoise.frag" to Shaders.VIDEO_DENOISE,
             "sharpen.frag" to Shaders.VIDEO_SHARPEN,
             "adjust.frag" to Shaders.VIDEO_ADJUST,

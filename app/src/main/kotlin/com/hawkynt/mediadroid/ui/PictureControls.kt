@@ -199,7 +199,7 @@ fun PictureSliders(
             }
         }
         Text(
-            "Filters run on the graphics chip; HDR videos skip them.",
+            "Filters run on the graphics chip; on HDR videos where the screen shows HDR itself, they are skipped.",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

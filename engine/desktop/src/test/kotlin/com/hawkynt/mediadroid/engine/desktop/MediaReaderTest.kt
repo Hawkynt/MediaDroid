@@ -2,7 +2,9 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.FsFile
+import com.hawkynt.mediadroid.player.ToneMap
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -50,6 +52,25 @@ class MediaReaderTest {
         MediaReader(clip).use { assertEquals(1f, it.pixelAspect, 0.001f) }
         val anamorphic = File(requireNotNull(javaClass.getResource("/anamorphic.mp4")).toURI()).path
         MediaReader(anamorphic).use { assertEquals(16f / 15f, it.pixelAspect, 0.001f) }
+    }
+
+    @Test
+    fun `an HDR10 video's pictures keep their coded values at 16 bits, for the stage to tone-map`() {
+        MediaReader(clip).use { assertNull(it.hdr) }
+        // hdr10.mkv: FFmpeg's test pattern, 64 × 48, 10-bit BT.2020, tagged PQ (FFV1, so any FFmpeg decodes it).
+        val hdr10 = File(requireNotNull(javaClass.getResource("/hdr10.mkv")).toURI()).path
+        MediaReader(hdr10).use { r ->
+            assertEquals(ToneMap.Transfer.PQ, r.hdr)
+            val picture = generateSequence { r.read() }.filterIsInstance<MediaReader.Picture>().first()
+            assertEquals(ToneMap.Transfer.PQ, picture.hdr)
+            assertEquals(64 * 48 * 8, picture.rgba.size)
+            // Limited range brought to full: the pattern's white comes out near the top of the 16 bits.
+            val values = (0 until 64 * 48 * 4).map {
+                (picture.rgba[2 * it].toInt() and 255) or ((picture.rgba[2 * it + 1].toInt() and 255) shl 8)
+            }
+            assertTrue(values.max() > 60000)
+            assertEquals(64 * 48 * 4, picture.eightBit().rgba.size)
+        }
     }
 
     private fun cues(path: String): List<MediaReader.Cue> = MediaReader(path).use { r ->
