@@ -19,6 +19,9 @@ interface PlaybackEngine : AutoCloseable {
 
     fun seekTo(positionMs: Long)
 
+    /** The path of what is open (the last [open]'s [MediaRequest.path]), or null before anything was. */
+    val openedPath: String?
+
     /** Where playback is, in milliseconds. */
     val positionMs: Long
 

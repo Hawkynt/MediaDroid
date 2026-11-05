@@ -35,4 +35,10 @@ class TracksTest {
     fun `tracks are grouped by kind in their order`() {
         assertEquals(listOf("t1", "t2", "t3"), Tracks.of(tracks, Track.Kind.TEXT).map { it.id })
     }
+
+    @Test
+    fun `a track names the file it comes from, the video itself by default`() {
+        assertEquals(0, Track("a1", Track.Kind.AUDIO, "deu", null).source)
+        assertEquals(2, Track("a2", Track.Kind.AUDIO, "eng", "Director's commentary", source = 2).source)
+    }
 }
