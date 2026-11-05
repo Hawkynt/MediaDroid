@@ -1,4 +1,4 @@
-// The app's own upscaling shaders (app/src/main/glsl) run headless on Mesa — EGL without a display, OpenGL ES 3.2 —
+// The app's own upscaling shaders (stage/src/main/glsl) run headless on Mesa — EGL without a display, OpenGL ES 3.2 —
 // the way the filters' stage (VideoFilterStage) runs them, for oracle.sh to compare with the originals. See README.md.
 //
 //   shader_check picture <out.ppm> <width> <height> [gray]  the test picture
