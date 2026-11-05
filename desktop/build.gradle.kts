@@ -9,6 +9,7 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 kotlin {
@@ -22,6 +23,8 @@ dependencies {
     implementation(project(":core:player"))
     implementation(project(":core:sources"))
     implementation(project(":engine:desktop"))
+    // The settings file, settings.json (DesktopStore).
+    implementation(libs.serialization.json)
     // LWJGL's native calls, for the system functions the window needs (ScreenKeeper); its natives come with the engine.
     implementation(libs.lwjgl)
     // The window's natives (Skia) for the system built for: -PdesktopTarget=linux|windows|all, the building machine's

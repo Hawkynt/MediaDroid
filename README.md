@@ -334,7 +334,8 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
 - Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
   language last picked is where the next video starts. Sound tracks likewise, the file's own and those beside it
   (`Film.en.ac3`). Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.
-- Settings, watched state and secrets stay on the machine: in the user's application-data folder, the passwords
+- Settings, watched state and secrets stay on the machine: in the user's application-data folder, the settings and
+  watched marks as JSON (`settings.json`, taken over once from the `state.properties` of earlier builds), the passwords
   encrypted by the system (DPAPI on Windows, the Secret Service on Linux; where no Secret Service runs, in a file only
   the user can read).
 - Network sources are added from the wall's Network sources button — tried once before they are kept — and their
