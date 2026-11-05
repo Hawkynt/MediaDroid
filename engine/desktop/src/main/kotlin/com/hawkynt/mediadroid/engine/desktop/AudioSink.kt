@@ -28,8 +28,13 @@ interface AudioSink : AutoCloseable {
     var volume: Float
 }
 
-/** The JVM's own sound output (Java Sound: PulseAudio/PipeWire/ALSA on Linux, WASAPI/DirectSound on Windows). */
-class JavaSoundSink(private val bufferMs: Int = 250) : AudioSink {
+/**
+ * The JVM's own sound output (Java Sound: PulseAudio/PipeWire/ALSA on Linux, WASAPI/DirectSound on Windows). Its
+ * buffer is deep — [bufferMs] — because a video decoder hands its pictures out several frames after their packets:
+ * with a shallow one the sound, written as read, fills it and holds the reader up before the pictures due arrive.
+ * The clock counts what was played, not what was written, so the depth does not move it.
+ */
+class JavaSoundSink(private val bufferMs: Int = 1_000) : AudioSink {
 
     private var line: SourceDataLine? = null
     private var rate = 48_000

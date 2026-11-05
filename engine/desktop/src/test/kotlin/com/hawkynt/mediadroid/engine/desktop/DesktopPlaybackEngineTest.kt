@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackTuning
+import com.hawkynt.mediadroid.engine.Track
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -10,14 +11,19 @@ import java.io.File
 
 class DesktopPlaybackEngineTest {
 
-    private val clip: String = File(requireNotNull(javaClass.getResource("/clip.mp4")).toURI()).path
+    private fun fixture(name: String): String = File(requireNotNull(javaClass.getResource("/$name")).toURI()).path
+    private val clip: String = fixture("clip.mp4")
 
     /** A sound output whose played time the test moves on by hand. */
     private class ManualSink : AudioSink {
         @Volatile var playedMs = 0L
         @Volatile var flushed = 0
+        @Volatile var written = 0L
         override fun open(sampleRate: Int, channels: Int) = Unit
-        override fun write(pcm: ByteArray) = Thread.sleep(1)
+        override fun write(pcm: ByteArray) {
+            written += pcm.size
+            Thread.sleep(1)
+        }
         override fun playedMs(): Long = playedMs
         override fun pause() = Unit
         override fun resume() = Unit
@@ -70,6 +76,78 @@ class DesktopPlaybackEngineTest {
             assertNull(engine.picture())
             assertEquals(0L, engine.durationMs)
             assertTrue(engine.tracks.isEmpty())
+        }
+    }
+
+    @Test
+    fun `a subtitle file beside the video is a track, and its line shows while it is due`() {
+        val sink = ManualSink()
+        val srt = MediaRequest.SubtitleFile(fixture("clip.de.srt"), null, "de", "Deutsch", forced = false)
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(clip, subtitles = listOf(srt)))
+            waitFor { engine.isPlaying }
+            val track = engine.tracks.single { it.kind == Track.Kind.TEXT }
+            assertEquals(1, track.source)
+            assertNull(engine.subtitle())
+            engine.select(Track.Kind.TEXT, track.id)
+            assertTrue(engine.tracks.single { it.kind == Track.Kind.TEXT }.selected)
+            Thread.sleep(100) // the reader thread takes the switch in
+            sink.playedMs = 300
+            waitFor { engine.subtitle() == "First line" }
+            sink.playedMs = 900
+            waitFor { engine.subtitle() == null }
+            engine.subtitlesOn = false
+            sink.playedMs = 1200
+            Thread.sleep(20)
+            assertNull(engine.subtitle())
+        }
+    }
+
+    @Test
+    fun `a file's own subtitle stream shows the same way once picked`() {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(fixture("subtitled.mkv")))
+            waitFor { engine.isPlaying }
+            val track = engine.tracks.single { it.kind == Track.Kind.TEXT }
+            assertEquals(0, track.source)
+            engine.select(Track.Kind.TEXT, track.id)
+            sink.playedMs = 1200
+            waitFor { engine.subtitle() == "Second line\nwith two rows" }
+        }
+    }
+
+    @Test
+    fun `a sound file beside the video is a track, and once picked its sound plays with the pictures`() {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(clip, audio = listOf(fixture("clip.en.ac3"))))
+            waitFor { engine.isPlaying }
+            val sound = engine.tracks.filter { it.kind == Track.Kind.AUDIO }
+            assertEquals(listOf(0, 1), sound.map { it.source })
+            assertEquals(listOf(true, false), sound.map { it.selected })
+            engine.select(Track.Kind.AUDIO, sound[1].id)
+            waitFor { sink.flushed > 0 }
+            assertEquals(listOf(false, true), engine.tracks.filter { it.kind == Track.Kind.AUDIO }.map { it.selected })
+            val before = sink.written
+            waitFor { sink.written > before + 4 * 48_000 / 10 }
+            sink.playedMs = 600
+            waitFor { (engine.picture()?.ptsMs ?: 0) >= 560 }
+        }
+    }
+
+    @Test
+    fun `at twice the speed the clock runs twice as fast as the sound played`() {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(clip))
+            waitFor { engine.isPlaying }
+            engine.speed = 2f
+            waitFor { sink.flushed > 0 }
+            val from = engine.positionMs
+            sink.playedMs = 300
+            assertEquals(from + 600, engine.positionMs)
+            waitFor { engine.picture()?.ptsMs == (from + 600) / 40 * 40 }
         }
     }
 }

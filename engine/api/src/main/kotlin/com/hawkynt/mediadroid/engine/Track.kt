@@ -4,7 +4,7 @@ package com.hawkynt.mediadroid.engine
  * One track of what is playing, as the screens show it: its [id] (the engine's own, to hand back when picking it),
  * [kind], [language] (ISO 639 as the file names it, or null) and [label] (the file's or sidecar's name for it, or
  * null); [selected] when it is the one playing; [source] the file it comes from — 0 the video itself, n the n-th of
- * [MediaRequest.audio].
+ * the files beside it of its kind ([MediaRequest.audio] for sound, [MediaRequest.subtitles] for subtitles).
  */
 data class Track(
     val id: String,

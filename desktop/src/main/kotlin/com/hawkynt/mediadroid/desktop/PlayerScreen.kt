@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,7 +44,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -51,6 +54,9 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -58,15 +64,23 @@ import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackTuning
+import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.Tracks
 import com.hawkynt.mediadroid.engine.desktop.DesktopPlaybackEngine
+import com.hawkynt.mediadroid.library.Sidecars
+import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PlaybackMath
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.io.File
 
 /** The player: the picture letterboxed in the window, controls that fade, keys for everything. */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun PlayerScreen(
     store: DesktopStore,
+    places: DesktopLibrary,
     queue: List<Playing>,
     startIndex: Int,
     fullScreen: Boolean,
@@ -76,17 +90,31 @@ fun PlayerScreen(
     var index by remember { mutableIntStateOf(startIndex) }
     val playing = queue[index]
     val engine = remember {
-        DesktopPlaybackEngine(PlaybackTuning.Mutable()).apply {
+        DesktopPlaybackEngine(PlaybackTuning.Mutable(), files = places::remoteFile).apply {
             // MEDIADROID_MUTE=1: checks and documentation runs play silently.
             if (System.getenv("MEDIADROID_MUTE") == "1") volume = 0f
+            speed = store.speed
         }
     }
     val bitmap = remember { PictureBitmap() }
+    // The picture stage (deinterlacing, upscalers, colour) on the graphics card, made once per player.
+    val stage = remember { com.hawkynt.mediadroid.engine.desktop.GlStage() }
+    var picture by remember { mutableStateOf(store.picture) }
+    // MEDIADROID_SHOW=panel: the picture panel open from the start (documentation and checks).
+    var panel by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "panel") }
+    var canvas by remember { mutableStateOf(IntSize.Zero) }
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var tracks by remember { mutableStateOf(emptyList<Track>()) }
+    // A sound file's track named as the picker shows a sidecar: `EN`, `DE · commentary`.
+    val soundNames = remember(index) {
+        sidecarsOf(places, playing.video).filter { it.kind == Sidecars.Kind.AUDIO }
+            .associate { it.name to it.describe() }
+    }
+    var subtitle by remember { mutableStateOf<String?>(null) }
     var controlsUntil by remember { mutableLongStateOf(System.currentTimeMillis() + CONTROLS_MS) }
     val focus = remember { FocusRequester() }
 
@@ -113,33 +141,66 @@ fun PlayerScreen(
             saveProgress()
             engine.removeListener(listener)
             engine.close()
+            stage.close()
         }
     }
+    // A subtitle picked becomes the household's language for the next videos; off stays off.
+    fun pick(kind: Track.Kind, id: String?) {
+        engine.select(kind, id)
+        if (kind == Track.Kind.TEXT) {
+            store.subtitleLanguage = engine.tracks.firstOrNull { it.id == id }?.language.orEmpty()
+        }
+    }
+
     LaunchedEffect(index) {
         error = null
+        tracks = emptyList()
         frame = null
-        runCatching { engine.open(MediaRequest(playing.video, startMs = store.resumeMs(playing.video))) }
+        // Off the window's thread: on a network source, finding the files beside it and opening it take round trips.
+        runCatching {
+            val startMs = store.resumeMs(playing.video)
+            withContext(Dispatchers.IO) { engine.open(requestFor(places, playing.video, startMs)) }
+        }
             .onFailure { error = it.message ?: it.toString() }
     }
-    // Every window frame: the picture due now, the clock, the end.
+    // Every window frame: the picture due now — through the stage when the household set filters — the clock, the end.
     LaunchedEffect(Unit) {
         var lastShown: Any? = null
+        var lastLook: Pair<PictureAdjustment, IntSize>? = null
         while (true) {
             withFrameNanos { }
-            engine.picture()?.let { picture ->
-                if (picture !== lastShown) {
-                    frame = bitmap.of(picture)
-                    lastShown = picture
+            engine.picture()?.let { raw ->
+                val look = picture to canvas
+                if (raw !== lastShown || look != lastLook) {
+                    lastShown = raw
+                    lastLook = look
+                    // Fitted by the picture's true shape: non-square pixels (PAL DV, anamorphic DVD) widened.
+                    val (w, h) = fitted((raw.width * engine.pixelAspect).toInt(), raw.height, canvas)
+                    val shown = if ((picture.hasFilters || engine.pixelAspect != 1f) && stage.ready && w > 0 && h > 0) {
+                        withContext(Dispatchers.Default) { stage.process(raw, picture, w, h) }
+                    } else {
+                        raw
+                    }
+                    frame = bitmap.of(shown)
                 }
             }
             position = engine.positionMs
             duration = engine.durationMs
+            val wereEmpty = tracks.none { it.kind == Track.Kind.TEXT }
+            tracks = engine.tracks
+            // A video's subtitles start in the household's language, as on the phone.
+            if (wereEmpty) Tracks.preferredText(tracks, store.subtitleLanguage)?.let { pick(Track.Kind.TEXT, it.id) }
+            subtitle = engine.subtitle()
             val wasPlaying = isPlaying
             isPlaying = engine.isPlaying
             if (wasPlaying && !isPlaying && duration > 0 && position >= duration - 100) next()
         }
     }
     LaunchedEffect(Unit) { focus.requestFocus() }
+    // The screen stays on while a video plays — from the window's thread, which Windows ties the state to.
+    val keeper = remember { ScreenKeeper.forThisSystem() }
+    LaunchedEffect(isPlaying) { keeper.keepOn(isPlaying) }
+    DisposableEffect(keeper) { onDispose { keeper.close() } }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -150,6 +211,21 @@ fun PlayerScreen(
     val controlsShown = now < controlsUntil || !isPlaying
 
     fun togglePlay() = if (engine.isPlaying) engine.pause() else engine.play()
+
+    var speed by remember { mutableStateOf(store.speed) }
+    fun changeSpeed(value: Float) {
+        val clamped = (kotlin.math.round(value * 20f) / 20f).coerceIn(PlaybackMath.SPEED_MIN, PlaybackMath.SPEED_MAX)
+        speed = clamped
+        engine.speed = clamped
+        store.speed = clamped
+    }
+
+    // S: the next subtitle track, after the last one off again.
+    fun nextSubtitles() {
+        val text = engine.tracks.filter { it.kind == Track.Kind.TEXT }
+        val at = text.indexOfFirst { it.selected }
+        pick(Track.Kind.TEXT, text.getOrNull(at + 1)?.id)
+    }
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
@@ -164,13 +240,41 @@ fun PlayerScreen(
                     Key.DirectionLeft -> engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, false))
                     Key.F -> onFullScreen()
                     Key.N -> next()
+                    Key.P -> panel = !panel
+                    Key.S -> nextSubtitles()
+                    Key.LeftBracket -> changeSpeed(speed - SPEED_STEP)
+                    Key.RightBracket -> changeSpeed(speed + SPEED_STEP)
                     Key.Escape -> if (fullScreen) onFullScreen() else onExit()
                     else -> return@onKeyEvent false
                 }
                 true
             },
     ) {
-        frame?.let { image -> Canvas(Modifier.fillMaxSize()) { drawLetterboxed(image) } }
+        Canvas(Modifier.fillMaxSize().onSizeChanged { canvas = it }) { frame?.let { drawLetterboxed(it) } }
+        subtitle?.let { line ->
+            SubtitleLine(
+                line,
+                Modifier.align(Alignment.BottomCenter).padding(start = 48.dp, end = 48.dp,
+                    bottom = if (controlsShown) 120.dp else 40.dp),
+            )
+        }
+        if (panel) {
+            PicturePanel(
+                picture,
+                onChange = {
+                    picture = it
+                    store.picture = it
+                },
+                modifier = Modifier.align(Alignment.CenterEnd),
+                tracks = tracks.map { t ->
+                    val named = t.kind == Track.Kind.AUDIO && t.source > 0
+                    if (named) t.copy(label = soundNames[t.label] ?: t.label) else t
+                },
+                onPick = ::pick,
+                speed = speed,
+                onSpeed = ::changeSpeed,
+            )
+        }
         error?.let {
             Text("This video cannot be played: $it", color = Color.White, fontSize = 20.sp,
                 modifier = Modifier.align(Alignment.Center).padding(32.dp))
@@ -206,6 +310,9 @@ fun PlayerScreen(
                     }
                     Text("${clock(position)} · ${clock(duration)}", color = Color.White, fontSize = 15.sp)
                     Spacer(Modifier.weight(1f))
+                    IconButton(onClick = { panel = !panel }) {
+                        Icon(Icons.Default.Tune, "Picture", tint = Color.White)
+                    }
                     IconButton(onClick = onFullScreen) {
                         Icon(if (fullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
                             "Full screen", tint = Color.White)
@@ -214,6 +321,41 @@ fun PlayerScreen(
             }
         }
     }
+}
+
+/** The subtitle and sound files beside [video] (Sidecars), by name — on this computer or a network source. */
+private fun sidecarsOf(places: DesktopLibrary, video: String): List<Sidecars.Sidecar> {
+    val file = places.file(video)
+    return Sidecars.of(file.name, file.parentFile?.listFiles()?.map { it.name }.orEmpty())
+}
+
+/** What to open for [video]: from [startMs], with the subtitle and sound files beside it. */
+private fun requestFor(places: DesktopLibrary, video: String, startMs: Long): MediaRequest {
+    val folder = places.file(video).parentFile
+    fun pathOf(name: String) = folder?.child(name)?.path ?: name
+    val sidecars = sidecarsOf(places, video)
+    val subtitles = sidecars.filter { it.kind == Sidecars.Kind.SUBTITLES }.map {
+        MediaRequest.SubtitleFile(pathOf(it.name), it.mimeType, it.language, it.describe(), it.forced)
+    }
+    val audio = sidecars.filter { it.kind == Sidecars.Kind.AUDIO }.map { pathOf(it.name) }
+    return MediaRequest(video, subtitles = subtitles, audio = audio, startMs = startMs)
+}
+
+/** A subtitle line: white, with a dark outline that keeps it readable over any picture. */
+@Composable
+private fun SubtitleLine(text: String, modifier: Modifier) {
+    Box(modifier) {
+        val style = TextStyle(fontSize = 30.sp, textAlign = TextAlign.Center, lineHeight = 38.sp)
+        Text(text, style = style.copy(color = Color.Black, drawStyle = Stroke(width = 6f, join = StrokeJoin.Round)))
+        Text(text, style = style.copy(color = Color.White))
+    }
+}
+
+/** A [w] × [h] picture's size fitted into [canvas], its shape kept. */
+private fun fitted(w: Int, h: Int, canvas: IntSize): Pair<Int, Int> {
+    if (canvas.width <= 0 || canvas.height <= 0) return w to h
+    val scale = minOf(canvas.width.toFloat() / w, canvas.height.toFloat() / h)
+    return (w * scale).toInt().coerceAtLeast(1) to (h * scale).toInt().coerceAtLeast(1)
 }
 
 /** [image] as large as the canvas allows, its shape kept, centred. */
@@ -234,3 +376,6 @@ private fun clock(ms: Long): String {
 }
 
 private const val CONTROLS_MS = 3_000L
+
+/** How much [ and ] change the speed. */
+private const val SPEED_STEP = 0.05f

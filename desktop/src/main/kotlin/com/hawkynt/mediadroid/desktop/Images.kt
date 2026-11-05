@@ -16,9 +16,12 @@ import java.util.concurrent.ConcurrentHashMap
 object Art {
     private val cache = ConcurrentHashMap<String, ImageBitmap?>()
 
+    /** How a location's bytes are read: this computer's files, or a network source's once the app says so. */
+    @Volatile var reader: (String) -> ByteArray = { File(it).readBytes() }
+
     fun load(path: String?): ImageBitmap? = path?.let { p ->
         cache.getOrPut(p) {
-            runCatching { Image.makeFromEncoded(File(p).readBytes()).toComposeImageBitmap() }.getOrNull()
+            runCatching { Image.makeFromEncoded(reader(p)).toComposeImageBitmap() }.getOrNull()
         }
     }
 }

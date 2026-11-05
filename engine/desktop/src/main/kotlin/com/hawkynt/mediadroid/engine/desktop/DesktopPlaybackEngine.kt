@@ -4,6 +4,7 @@ import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.library.FsFile
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.TimeUnit
@@ -16,8 +17,12 @@ import java.util.concurrent.TimeUnit
  */
 class DesktopPlaybackEngine(
     override val tuning: PlaybackTuning,
+    /** The file behind a network source's location (SourceFiles.resolve); null for a local path FFmpeg opens. */
+    private val files: (String) -> FsFile? = { null },
     private val sinkFactory: () -> AudioSink = { JavaSoundSink() },
 ) : PlaybackEngine {
+
+    private fun readerOf(location: String) = MediaReader(location, files(location))
 
     private val listeners = CopyOnWriteArrayList<PlaybackEngine.Listener>()
     private val pictures = LinkedBlockingDeque<MediaReader.Picture>(PICTURES_AHEAD)
@@ -30,23 +35,45 @@ class DesktopPlaybackEngine(
     @Volatile private var playing = false
     @Volatile private var ended = false
     @Volatile private var pendingSeekMs: Long? = null
-    @Volatile private var pendingAudio: Int? = null
+    @Volatile private var pendingAudio: String? = null
+    @Volatile private var soundFiles: List<String> = emptyList()
+    @Volatile private var selectedSound: String? = null
     @Volatile private var baseMs = 0L
+    @Volatile private var pendingSpeed: Float? = null
+    @Volatile private var clockSpeed = 1f
     @Volatile private var hasSound = false
     @Volatile private var wallStartNs = 0L
     @Volatile private var wallPausedMs = 0L
     @Volatile private var shown: MediaReader.Picture? = null
+    @Volatile private var pendingText: Int? = null
+    @Volatile private var sidecars: List<Pair<Track, List<MediaReader.Cue>>> = emptyList()
+    @Volatile private var selectedText: String? = null
+    private val cues = java.util.concurrent.CopyOnWriteArrayList<MediaReader.Cue>()
 
     override var openedPath: String? = null
         private set
 
     override fun open(request: MediaRequest, autoPlay: Boolean) {
         stop()
-        val opened = MediaReader(request.path)
+        val opened = readerOf(request.path)
         reader = opened
         openedPath = request.path
         hasSound = opened.tracks.any { it.kind == Track.Kind.AUDIO }
-        sink = sinkFactory().also { if (hasSound) it.open(MediaReader.SAMPLE_RATE, 2) }
+        soundFiles = request.audio
+        selectedSound = opened.tracks.firstOrNull { it.kind == Track.Kind.AUDIO && it.selected }?.id
+        // Subtitle files beside the video, read whole now: they are small.
+        sidecars = request.subtitles.mapIndexedNotNull { i, file ->
+            runCatching {
+                readerOf(file.path).use { r ->
+                    r.selectText(r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt())
+                    val read = generateSequence { r.read() }.filterIsInstance<MediaReader.Cue>().toList()
+                    Track("sidecar:$i", Track.Kind.TEXT, file.language, file.label, source = i + 1) to read
+                }
+            }.getOrNull()
+        }
+        selectedText = null
+        cues.clear()
+        sink = sinkFactory().also { if (hasSound || soundFiles.isNotEmpty()) it.open(MediaReader.SAMPLE_RATE, 2) }
         sink?.volume = volume
         baseMs = 0
         ended = false
@@ -58,6 +85,9 @@ class DesktopPlaybackEngine(
         }
         wallStartNs = System.nanoTime()
         wallPausedMs = 0
+        clockSpeed = 1f
+        // The speed carries over from the video before: the new reader's filter takes it in at once.
+        pendingSpeed = speed.takeIf { it != 1f }
         running = true
         thread = Thread({ readLoop(opened) }, "mediadroid-reader").apply {
             isDaemon = true
@@ -65,18 +95,36 @@ class DesktopPlaybackEngine(
         }
         listeners.forEach {
             it.onTracksChanged(tracks)
-            it.onVideoSize(opened.width, opened.height, 1f)
+            it.onVideoSize(opened.width, opened.height, opened.pixelAspect)
         }
         if (autoPlay) play() else pause()
     }
 
     private fun readLoop(source: MediaReader) {
+        // A sound file beside the video, when one is picked: read alongside, whichever of the two is behind.
+        var soundSource: MediaReader? = null
+        var pictureMs = Long.MIN_VALUE
+        var soundMs = Long.MIN_VALUE
+        val tempo = Tempo()
         try {
             while (running) {
+                pendingSpeed?.let { value ->
+                    // The clock starts again from here at the new rate, the sound held back by the filter dropped.
+                    pendingSpeed = null
+                    val at = positionMs
+                    tempo.speed = value
+                    if (pendingSeekMs == null) pendingSeekMs = at
+                }
                 pendingSeekMs?.let { target ->
                     pendingSeekMs = null
+                    tempo.reset()
+                    clockSpeed = tempo.speed
                     source.seek(target)
+                    soundSource?.seek(target)
+                    pictureMs = Long.MIN_VALUE
+                    soundMs = Long.MIN_VALUE
                     pictures.clear()
+                    if (selectedText?.startsWith("sidecar:") == false) cues.clear()
                     sink?.flush()
                     baseMs = target
                     wallStartNs = System.nanoTime()
@@ -84,16 +132,47 @@ class DesktopPlaybackEngine(
                     shown = null
                     ended = false
                 }
-                pendingAudio?.let { index ->
+                pendingText?.let { index ->
+                    pendingText = null
+                    source.selectText(index)
+                    // A stream of the file itself: read again from here so its lines arrive; a file beside it
+                    // brought all of its lines along when it was picked.
+                    if (index >= 0) {
+                        cues.clear()
+                        pendingSeekMs = positionMs
+                    }
+                }
+                pendingAudio?.let { id ->
                     pendingAudio = null
-                    source.selectAudio(index)
-                    pendingSeekMs = positionMs
+                    val at = positionMs
+                    soundSource?.close()
+                    soundSource = null
+                    val file = id.removePrefix(SOUND_FILE).toIntOrNull()?.takeIf { id.startsWith(SOUND_FILE) }
+                    if (file != null) {
+                        source.selectAudio(-1)
+                        soundSource = runCatching { readerOf(soundFiles[file]) }.getOrNull()
+                    } else {
+                        source.selectAudio(id.toInt())
+                    }
+                    hasSound = soundSource != null || file == null
+                    selectedSound = id
+                    listeners.forEach { it.onTracksChanged(tracks) }
+                    pendingSeekMs = at
                 }
                 if (!playing && pictures.remainingCapacity() == 0) {
                     Thread.sleep(5)
                     continue
                 }
-                when (val item = source.read()) {
+                val sound = soundSource
+                val item = if (sound != null && soundMs <= pictureMs) {
+                    // Only its sound: a cover picture in the file (an MP3's art) is no part of the video.
+                    generateSequence { sound.read() }.firstOrNull { it is MediaReader.Sound }
+                        ?.also { soundMs = (it as MediaReader.Sound).ptsMs }
+                        ?: source.read().also { soundMs = Long.MAX_VALUE }
+                } else {
+                    source.read()
+                }
+                when (item) {
                     null -> {
                         if (!ended) {
                             ended = true
@@ -101,13 +180,23 @@ class DesktopPlaybackEngine(
                         }
                         Thread.sleep(10)
                     }
-                    is MediaReader.Picture -> while (running && pendingSeekMs == null) {
-                        if (pictures.offer(item, 10, TimeUnit.MILLISECONDS)) break
+                    is MediaReader.Picture -> {
+                        pictureMs = item.ptsMs
+                        while (running && pendingSeekMs == null) {
+                            if (pictures.offer(item, 10, TimeUnit.MILLISECONDS)) break
+                        }
                     }
-                    is MediaReader.Sound -> sink?.write(item.pcm)
+                    is MediaReader.Sound -> {
+                        val pcm = tempo.process(item.pcm)
+                        if (pcm.isNotEmpty()) sink?.write(pcm)
+                    }
+                    is MediaReader.Cue -> cues += item
                 }
             }
         } catch (_: InterruptedException) {
+        } finally {
+            soundSource?.close()
+            tempo.close()
         }
     }
 
@@ -170,15 +259,23 @@ class DesktopPlaybackEngine(
             } else {
                 wallPausedMs
             }
-            return baseMs + played
+            return baseMs + (played * clockSpeed).toLong()
         }
 
     override val durationMs: Long get() = reader?.durationMs ?: 0
 
+    /** The shape of the picture's pixels (width over height), for drawing it in its true proportions. */
+    val pixelAspect: Float get() = reader?.pixelAspect ?: 1f
+
     override val isPlaying: Boolean get() = playing
 
-    /** Speed other than 1 is not played yet on the desktop (#288): the value is kept. */
+    /** How fast it plays, the sound at its own pitch (Tempo); taken in by the reader at its next turn. */
     override var speed: Float = 1f
+        set(value) {
+            if (value == field || value <= 0f) return
+            field = value
+            pendingSpeed = value
+        }
 
     override var volume: Float = 1f
         set(value) {
@@ -187,10 +284,45 @@ class DesktopPlaybackEngine(
         }
 
     override val tracks: List<Track>
-        get() = reader?.tracks.orEmpty()
+        get() {
+            val own = reader?.tracks.orEmpty()
+            val files = soundFiles.mapIndexed { i, path ->
+                Track("$SOUND_FILE$i", Track.Kind.AUDIO, null, java.io.File(path).name, source = i + 1)
+            }
+            return (own + files + sidecars.map { it.first }).map {
+                when (it.kind) {
+                    Track.Kind.TEXT -> it.copy(selected = it.id == selectedText)
+                    Track.Kind.AUDIO -> it.copy(selected = it.id == selectedSound)
+                    Track.Kind.VIDEO -> it
+                }
+            }
+        }
 
     override fun select(kind: Track.Kind, id: String?) {
-        if (kind == Track.Kind.AUDIO && id != null) pendingAudio = id.toInt()
+        when (kind) {
+            Track.Kind.AUDIO -> if (id != null && id != selectedSound) pendingAudio = id
+            Track.Kind.TEXT -> {
+                selectedText = id
+                val sidecar = sidecars.firstOrNull { it.first.id == id }
+                if (sidecar != null) {
+                    pendingText = -1
+                    cues.clear()
+                    cues.addAll(sidecar.second)
+                } else {
+                    cues.clear()
+                    pendingText = id?.toInt() ?: -1
+                }
+                listeners.forEach { it.onTracksChanged(tracks) }
+            }
+            Track.Kind.VIDEO -> Unit
+        }
+    }
+
+    /** The subtitle line due by the clock, while subtitles are on and a subtitle track is picked; else null. */
+    fun subtitle(): String? {
+        if (!subtitlesOn || selectedText == null) return null
+        val now = positionMs
+        return cues.firstOrNull { now >= it.startMs && now < it.endMs }?.text
     }
 
     override var subtitlesOn: Boolean = true
@@ -221,5 +353,8 @@ class DesktopPlaybackEngine(
     private companion object {
         /** Pictures decoded ahead of the clock: a fifth of a second at 25 fps. */
         const val PICTURES_AHEAD = 6
+
+        /** The id prefix of a sound file beside the video: `sound:0` the first of [MediaRequest.audio]. */
+        const val SOUND_FILE = "sound:"
     }
 }

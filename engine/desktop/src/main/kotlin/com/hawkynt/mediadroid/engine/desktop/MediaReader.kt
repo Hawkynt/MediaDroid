@@ -1,6 +1,7 @@
 package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.library.FsFile
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext
 import org.bytedeco.ffmpeg.avcodec.AVPacket
 import org.bytedeco.ffmpeg.avformat.AVFormatContext
@@ -19,11 +20,11 @@ import org.bytedeco.javacpp.DoublePointer
 import org.bytedeco.javacpp.PointerPointer
 
 /**
- * A media file read and decoded by FFmpeg, one item at a time: the pictures as RGBA bytes at the file's own size,
- * the sound as 16-bit stereo PCM at [SAMPLE_RATE], each with its time in milliseconds. Not thread-safe: one reader,
- * one thread.
+ * A media file read and decoded by FFmpeg, one item at a time — the one at [path], or [from] a network source with
+ * [path] its location there: the pictures as RGBA bytes at the file's own size, the sound as 16-bit stereo PCM at
+ * [SAMPLE_RATE], each with its time in milliseconds. Not thread-safe: one reader, one thread.
  */
-class MediaReader(path: String) : AutoCloseable {
+class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
 
     /** A decoded picture: [rgba] is [width] × [height] × 4 bytes, rows from the top. */
     class Picture(val ptsMs: Long, val width: Int, val height: Int, val rgba: ByteArray)
@@ -31,13 +32,27 @@ class MediaReader(path: String) : AutoCloseable {
     /** Decoded sound: [pcm] is interleaved 16-bit little-endian stereo at [SAMPLE_RATE]. */
     class Sound(val ptsMs: Long, val pcm: ByteArray)
 
-    private val format = AVFormatContext(null)
+    /** A subtitle line shown from [startMs] to [endMs], as text (SubtitleText). */
+    data class Cue(val startMs: Long, val endMs: Long, val text: String)
+
+    // A file from a network source is read through FsInput; a local one by FFmpeg itself.
+    private val input: FsInput? = from?.let(::FsInput)
+    private val format: AVFormatContext = if (input == null) {
+        AVFormatContext(null)
+    } else {
+        // Given before opening, FFmpeg marks it custom I/O itself and leaves it to us to free.
+        avformat.avformat_alloc_context().pb(input.context)
+    }
     private val packet: AVPacket = avcodec.av_packet_alloc()
     private val frame: AVFrame = avutil.av_frame_alloc()
     private val videoIndex: Int
     private var audioIndex: Int
     private var video: AVCodecContext? = null
     private var audio: AVCodecContext? = null
+    private var textIndex = -1
+    private var text: AVCodecContext? = null
+    private val subtitle = org.bytedeco.ffmpeg.avcodec.AVSubtitle()
+    private val gotSubtitle = org.bytedeco.javacpp.IntPointer(1)
     private var sws: SwsContext? = null
     private var swr: SwrContext? = null
     private val rgbaFrame: AVFrame = avutil.av_frame_alloc()
@@ -53,11 +68,17 @@ class MediaReader(path: String) : AutoCloseable {
     val width: Int
     val height: Int
 
+    /** The shape of the picture's pixels, width over height (16/15 for PAL DV), 1 where the file does not say. */
+    val pixelAspect: Float
+
     /** The file's video, audio and subtitle streams as tracks, id the stream's index. */
     val tracks: List<Track>
 
     init {
-        check(avformat.avformat_open_input(format, path, null, null as AVDictionary?) >= 0) { "cannot open $path" }
+        if (avformat.avformat_open_input(format, path, null, null as AVDictionary?) < 0) {
+            input?.close()
+            error("cannot open $path")
+        }
         check(avformat.avformat_find_stream_info(format, null as PointerPointer<*>?) >= 0) { "no streams in $path" }
         durationMs = if (format.duration() > 0) format.duration() / 1000 else 0
         videoIndex = best(avutil.AVMEDIA_TYPE_VIDEO)
@@ -78,6 +99,10 @@ class MediaReader(path: String) : AutoCloseable {
         if (audioIndex >= 0) audio = openDecoder(audioIndex)
         width = video?.width() ?: 0
         height = video?.height() ?: 0
+        pixelAspect = if (videoIndex < 0) 1f else {
+            val guessed = avformat.av_guess_sample_aspect_ratio(format, format.streams(videoIndex), null)
+            if (guessed.num() > 0 && guessed.den() > 0) guessed.num().toFloat() / guessed.den() else 1f
+        }
     }
 
     private fun best(type: Int): Int = avformat.av_find_best_stream(format, type, -1, -1, null as PointerPointer<*>?, 0)
@@ -92,14 +117,27 @@ class MediaReader(path: String) : AutoCloseable {
         return context
     }
 
-    /** Plays the audio stream [index] (a track id) from the next read on. */
+    /** Plays the audio stream [index] (a track id) from the next read on; -1 for no sound from this file. */
     fun selectAudio(index: Int) {
-        if (index == audioIndex || format.streams(index).codecpar().codec_type() != avutil.AVMEDIA_TYPE_AUDIO) return
+        if (index == audioIndex) return
+        if (index >= 0 && format.streams(index).codecpar().codec_type() != avutil.AVMEDIA_TYPE_AUDIO) return
         audio?.let { avcodec.avcodec_free_context(it) }
+        audio = null
         swr?.let { swresample.swr_free(it) }
         swr = null
         audioIndex = index
-        audio = openDecoder(index)
+        if (index >= 0) audio = openDecoder(index)
+    }
+
+    /** Decodes the text subtitle stream [index] (a track id) from the next read on, as [Cue]s; -1 for none. */
+    fun selectText(index: Int) {
+        if (index == textIndex) return
+        text?.let { avcodec.avcodec_free_context(it) }
+        text = null
+        textIndex = -1
+        if (index < 0 || format.streams(index).codecpar().codec_type() != avutil.AVMEDIA_TYPE_SUBTITLE) return
+        textIndex = index
+        text = openDecoder(index)
     }
 
     /**
@@ -129,6 +167,7 @@ class MediaReader(path: String) : AutoCloseable {
             when (index) {
                 videoIndex -> video?.let { drain(it, packet) }
                 audioIndex -> audio?.let { drain(it, packet) }
+                textIndex -> text?.let { cue(it, packet) }
             }
             avcodec.av_packet_unref(packet)
         }
@@ -150,6 +189,26 @@ class MediaReader(path: String) : AutoCloseable {
             }
             avutil.av_frame_unref(frame)
         }
+    }
+
+    private fun cue(context: AVCodecContext, input: AVPacket) {
+        val decoded = avcodec.avcodec_decode_subtitle2(context, subtitle, gotSubtitle, input)
+        if (decoded < 0 || gotSubtitle.get() == 0) return
+        val stream = format.streams(textIndex)
+        val base = stream.time_base()
+        val pts = if (input.pts() != avutil.AV_NOPTS_VALUE) input.pts() else input.dts()
+        val atMs = Math.round(pts * 1000.0 * base.num() / base.den())
+        val startMs = atMs + subtitle.start_display_time()
+        val endMs = if (subtitle.end_display_time() > subtitle.start_display_time()) {
+            atMs + subtitle.end_display_time()
+        } else {
+            atMs + Math.round(input.duration() * 1000.0 * base.num() / base.den())
+        }
+        val lines = (0 until subtitle.num_rects()).mapNotNull { i ->
+            subtitle.rects(i).ass()?.string?.let { com.hawkynt.mediadroid.player.SubtitleText.fromAssEvent(it) }
+        }.filter { it.isNotEmpty() }
+        if (lines.isNotEmpty() && endMs >= skipBeforeMs) pending.addLast(Cue(startMs, endMs, lines.joinToString("\n")))
+        avcodec.avsubtitle_free(subtitle)
     }
 
     private fun picture(ptsMs: Long): Picture {
@@ -195,11 +254,13 @@ class MediaReader(path: String) : AutoCloseable {
         swr?.let { swresample.swr_free(it) }
         video?.let { avcodec.avcodec_free_context(it) }
         audio?.let { avcodec.avcodec_free_context(it) }
+        text?.let { avcodec.avcodec_free_context(it) }
         avutil.av_frame_free(rgbaFrame)
         avutil.av_frame_free(soundFrame)
         avutil.av_frame_free(frame)
         avcodec.av_packet_free(packet)
         avformat.avformat_close_input(format)
+        input?.close()
     }
 
     companion object {

@@ -31,8 +31,13 @@ jobs:
     with:
       ref: ${{ github.sha }}
 
+  desktop:
+    uses: ./.github/workflows/_desktop.yml
+    with:
+      ref: ${{ github.sha }}
+
   publish:
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -44,7 +49,8 @@ jobs:
         run: echo "TAG=nightly-$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
-          name: app-artifacts
+          pattern: '*-artifacts'                 # the APK and AAB, and the desktop packages
+          merge-multiple: true
           path: dist
       - uses: actions/setup-node@v4
         with:

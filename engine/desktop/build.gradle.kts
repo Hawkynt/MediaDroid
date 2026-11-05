@@ -12,17 +12,34 @@ kotlin {
 // The natives for the desktops we ship to; the plain artifacts carry the Java side. Published builds take FFmpeg's
 // LGPL build; `-PfullFfmpeg` takes Bytedeco's GPL build instead (x264, x265 …) — for the household's own machines
 // only, never shipped (AGENTS.md).
-val platforms = listOf("linux-x86_64", "windows-x86_64")
+// -PdesktopTarget=linux|windows|all picks whose natives come along: by default the building machine's own.
+val target = providers.gradleProperty("desktopTarget").getOrElse(
+    if (System.getProperty("os.name").startsWith("Windows")) "windows" else "linux",
+)
+val platforms = listOf("linux-x86_64", "windows-x86_64").filter { target == "all" || it.startsWith(target) }
 val fullFfmpeg = providers.gradleProperty("fullFfmpeg").isPresent
 val ffmpegFlavour = if (fullFfmpeg) "-gpl" else ""
 
 dependencies {
     api(project(":engine:api"))
+    api(project(":core:player"))
+    // FsFile: what the network sources (core:sources) hand over to be played.
+    api(project(":core:library"))
+    implementation(project(":stage"))
+    // Xbrz: the table of its patterns' shares the xBRZ shader reads.
+    implementation(project(":core:imaging"))
+    implementation(libs.lwjgl)
+    implementation(libs.lwjgl.glfw)
+    implementation(libs.lwjgl.opengl)
     implementation(libs.ffmpeg)
     implementation(libs.javacpp)
     platforms.forEach { platform ->
         runtimeOnly(variantOf(libs.ffmpeg) { classifier(platform + ffmpegFlavour) })
         runtimeOnly(variantOf(libs.javacpp) { classifier(platform) })
+        val natives = if (platform.startsWith("windows")) "natives-windows" else "natives-linux"
+        runtimeOnly(variantOf(libs.lwjgl) { classifier(natives) })
+        runtimeOnly(variantOf(libs.lwjgl.glfw) { classifier(natives) })
+        runtimeOnly(variantOf(libs.lwjgl.opengl) { classifier(natives) })
     }
     testImplementation(libs.junit)
 }

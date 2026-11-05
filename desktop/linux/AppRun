@@ -1,0 +1,4 @@
+#!/bin/sh
+# The AppImage's entry: the app folder inside it, with whatever was passed (a video to play).
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/MediaDroid" "$@"

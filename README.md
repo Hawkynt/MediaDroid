@@ -279,7 +279,7 @@ video brought down to 1080p first; Fit, Fill or Stretch, and a zoom. How the net
 
 **Android** 8.0 (API 26) or newer, phone, tablet, or TV box. Not on the Play Store (yet): download the APK from [Releases](https://github.com/Hawkynt/MediaDroid/releases) — a dated stable build or a `nightly-*` build. Take `MediaDroid.apk`, the signed release build, and enable installation from unknown sources; `MediaDroid-debug.apk` is for development and cannot update over it. Storage stays on your device; the app needs access only to the folders you point it at.
 
-**Windows** 10/11 (x64) and **Linux** (x64, arm64) — planned ([#291](https://github.com/Hawkynt/MediaDroid/issues/291)):
+**Windows** 10/11 (x64) and **Linux** (x64; arm64 to follow) — in progress ([#291](https://github.com/Hawkynt/MediaDroid/issues/291)), in the nightlies:
 from the same Releases, `MediaDroid-windows-x64.msi` (installs, updates in place) or `MediaDroid-windows-x64.zip`
 (portable: unpack anywhere and run `MediaDroid.exe`, settings beside it), and `MediaDroid-linux-x64.AppImage` /
 `MediaDroid-linux-arm64.AppImage` (mark it executable and run it). Java comes inside; a Vulkan driver for the neural
@@ -322,14 +322,22 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   WebDAV), browsing, search and filters, resume and binge, every picture choice and every neural network, the same
   self-test and dry run deciding what is offered — on a desktop graphics card DAIN, FLAVR, RealSR and Real-CUGAN keep
   up where a phone refuses them.
-- The picture stage is the Android one: the same GLSL ES shaders on OpenGL ES 3 (EGL on Linux, ANGLE on Windows),
-  held to the same oracles (`tools/shader-check`).
+- The picture stage is the Android one: the same GLSL ES shaders, compiled as they are by desktop OpenGL 4.3 (which
+  takes GLSL ES 1.00 and 3.00), held to the same oracles (`tools/shader-check`).
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
-  (space to pause, arrows to seek, F to go full screen), a window that remembers its size.
+  (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture and track panel,
+  N for the next episode, [ and ] for slower and faster), a window that remembers its size and place.
+- Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
+  language last picked is where the next video starts. Sound tracks likewise, the file's own and those beside it
+  (`Film.en.ac3`). Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.
 - Settings, watched state and secrets stay on the machine: in the user's application-data folder, the passwords
-  encrypted by the system (DPAPI on Windows, the Secret Service on Linux).
+  encrypted by the system (DPAPI on Windows, the Secret Service on Linux; where no Secret Service runs, in a file only
+  the user can read).
+- Network sources are added from the wall's Network sources button — tried once before they are kept — and their
+  movies and shows join the local folder's on one wall; they play, subtitles and sound files beside them included,
+  through FFmpeg reading the source's files directly.
 - Media keys and the system's now-playing panel (SMTC on Windows, MPRIS on Linux); the screensaver held off while
-  something plays.
+  something plays (Windows: the thread's execution state; Linux: an idle lock from systemd-logind).
 - Not on the desktop: the second screen and casting, the phone's lock and gestures for volume and brightness, the NPU;
   switching the display's refresh rate to the film's comes later.
 
@@ -354,13 +362,13 @@ would for its menus.
 | `:core:player` | the binge queue, the picture's rules (deinterlacing, scaling, smooth motion, the checks), the models catalogue | everywhere (JVM) |
 | `:core:imaging` | decoders for TIFF, TGA and PCX art | everywhere (JVM) |
 | `:core:sources` | SMB, NFS, FTP/SFTP and WebDAV | everywhere (JVM) |
-| `:engine:api` | planned ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): the playback engine the screens talk to | everywhere (JVM) |
+| `:engine:api` | built ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): the playback engine the screens talk to | everywhere (JVM) |
 | `:engine:android` | planned ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): Media3 behind that engine | Android |
-| `:stage` | planned ([#284](https://github.com/Hawkynt/MediaDroid/issues/284)): the picture stage's passes against an OpenGL ES interface, the shaders with it | everywhere (JVM) |
+| `:stage` | in progress ([#284](https://github.com/Hawkynt/MediaDroid/issues/284)), the shaders so far: the picture stage's passes against an OpenGL ES interface, the shaders with it | everywhere (JVM) |
 | `native/` | planned ([#285](https://github.com/Hawkynt/MediaDroid/issues/285)): the neural networks as one CMake tree | Android, Windows, Linux |
 | `:ui` | planned ([#286](https://github.com/Hawkynt/MediaDroid/issues/286)): every screen, in Compose Multiplatform | Android, Windows, Linux |
-| `:engine:desktop` | planned ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): FFmpeg, the stage on OpenGL ES 3 (EGL, ANGLE), audio and sync | Windows, Linux |
-| `:desktop` | planned ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): the desktop shell — window, menus, keyboard, file chooser | Windows, Linux |
+| `:engine:desktop` | in progress ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): FFmpeg, the stage on OpenGL 4.3, audio and sync, network sources | Windows, Linux |
+| `:desktop` | in progress ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): the desktop shell — window, menus, keyboard, file chooser | Windows, Linux |
 
 The cores import no Android, so parsing, search, binge and the picture's rules are unit-tested in seconds without a
 device; shaders live in `stage/src/main/glsl`.
@@ -390,9 +398,11 @@ Requires JDK 21 and an Android SDK with platform 37; `local.properties` must poi
 ./gradlew :desktop:run    # the desktop app (Windows, Linux); a video path after --args plays it at once
 ./gradlew :desktop:run -PfullFfmpeg   # the same with Bytedeco's GPL FFmpeg build, for your own machine only
 ./gradlew :engine:desktop:probe -Pfolder=<dir>   # every video in a folder opened and its start decoded
+./gradlew :desktop:appImage                      # Linux: desktop/build/dist/MediaDroid-linux-x64.AppImage (squashfs-tools)
+./gradlew :desktop:windowsZip -PdesktopTarget=windows   # Windows, portable: desktop/build/dist/MediaDroid-windows-x64.zip
 ```
 
-`build.sh` signs with the release key when `KEYSTORE` (or `KEYSTORE_BASE64`), `KEYSTORE_PASSWORD` and `KEY_ALIAS` are set — in the environment or in a git-ignored `signing.env` — and otherwise with the Android debug key, which installs on your own device but cannot update a release or nightly. The key itself lives only in the repository's secrets. `buildnonlgpl.sh` first builds FFmpeg with every decoder, demuxer and parser (`FULL=1 tools/ffmpeg/build.sh`, once, into `stage/ffmpeg-full`, ignored by git); that build is GPL and cannot be distributed under this licence, so it is for your own device only — see [tools/ffmpeg/README.md](tools/ffmpeg/README.md). The desktop app decodes
+`build.sh` signs with the release key when `KEYSTORE` (or `KEYSTORE_BASE64`), `KEYSTORE_PASSWORD` and `KEY_ALIAS` are set — in the environment or in a git-ignored `signing.env` — and otherwise with the Android debug key, which installs on your own device but cannot update a release or nightly. The key itself lives only in the repository's secrets. `buildnonlgpl.sh` first builds FFmpeg with every decoder, demuxer and parser (`FULL=1 tools/ffmpeg/build.sh`, once, into `stage/ffmpeg-full`); that build is GPL and cannot be distributed under this licence, so it is for your own device only — see [tools/ffmpeg/README.md](tools/ffmpeg/README.md). The desktop app decodes
 with FFmpeg through [Bytedeco's JavaCPP presets](https://github.com/bytedeco/javacpp-presets): FFmpeg's LGPL build in
 what is published, the GPL one with `-PfullFfmpeg` (see `engine/desktop/THIRD-PARTY-NOTICE.ffmpeg.txt`).
 

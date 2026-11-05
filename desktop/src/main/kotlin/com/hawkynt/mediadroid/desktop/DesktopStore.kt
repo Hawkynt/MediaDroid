@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.desktop
 
+import com.hawkynt.mediadroid.library.Source
 import java.io.File
 import java.util.Properties
 
@@ -16,6 +17,76 @@ class DesktopStore(private val folder: File) {
         get() = properties.getProperty("library")
         set(value) {
             if (value == null) properties.remove("library") else properties.setProperty("library", value)
+            save()
+        }
+
+    /** The household's picture: every video starts with it (PictureAdjustment's fields, as text). */
+    var picture: com.hawkynt.mediadroid.player.PictureAdjustment
+        get() {
+            val p = com.hawkynt.mediadroid.player.PictureAdjustment.Neutral
+            fun f(key: String, default: Float) = properties.getProperty("picture.$key")?.toFloatOrNull() ?: default
+            return p.copy(
+                brightness = f("brightness", p.brightness),
+                gamma = f("gamma", p.gamma),
+                contrast = f("contrast", p.contrast),
+                saturation = f("saturation", p.saturation),
+                sharpness = f("sharpness", p.sharpness),
+                clarity = f("clarity", p.clarity),
+                noise = f("noise", p.noise),
+                deinterlace = runCatching {
+                    com.hawkynt.mediadroid.player.PictureAdjustment.Deinterlace.valueOf(
+                        properties.getProperty("picture.deinterlace"),
+                    )
+                }.getOrDefault(p.deinterlace),
+                upscaler = runCatching {
+                    com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.valueOf(
+                        properties.getProperty("picture.upscaler"),
+                    )
+                }.getOrDefault(p.upscaler),
+            )
+        }
+        set(value) {
+            mapOf(
+                "brightness" to value.brightness, "gamma" to value.gamma, "contrast" to value.contrast,
+                "saturation" to value.saturation, "sharpness" to value.sharpness, "clarity" to value.clarity,
+                "noise" to value.noise, "deinterlace" to value.deinterlace.name, "upscaler" to value.upscaler.name,
+            ).forEach { (k, v) -> properties.setProperty("picture.$k", "$v") }
+            save()
+        }
+
+    /** The household's subtitle language (ISO 639-1), or empty for subtitles off: the last one picked. */
+    var subtitleLanguage: String
+        get() = properties.getProperty("subtitles.language").orEmpty()
+        set(value) {
+            properties.setProperty("subtitles.language", value)
+            save()
+        }
+
+    /** The household's playback speed, 1 for as filmed: every video starts at it. */
+    var speed: Float
+        get() = properties.getProperty("speed")?.toFloatOrNull() ?: 1f
+        set(value) {
+            properties.setProperty("speed", "$value")
+            save()
+        }
+
+    /** Where the window was and how large, as `x,y,width,height` in dp, and whether it was maximized. */
+    var window: String?
+        get() = properties.getProperty("window")
+        set(value) {
+            if (value == null) properties.remove("window") else properties.setProperty("window", value)
+            save()
+        }
+
+    /** The network sources added (core:library's Source, as JSON), in the order they were added. */
+    var sources: List<Source>
+        get() = properties.stringPropertyNames().filter { it.startsWith("source.") }.sorted()
+            .mapNotNull { key -> runCatching { Source.decode(properties.getProperty(key)) }.getOrNull() }
+        set(value) {
+            properties.stringPropertyNames().filter { it.startsWith("source.") }.forEach { properties.remove(it) }
+            value.forEachIndexed { i, source ->
+                properties.setProperty("source.%03d".format(i), Source.encode(source))
+            }
             save()
         }
 
