@@ -22,6 +22,8 @@
 //                                                           glsl/xbrz to factor (2..6) times the size
 //   shader_check yuv <in.yuv> <width> <height> <601|709|2020> <out.ppm>
 //                                                           glsl/video/yuv.frag: a yuv420p frame to RGB
+//   shader_check deinterlace <in.ppm> <out.ppm> <mode> <tff 0|1>
+//                                                           glsl/video/deinterlace.frag (1 Auto, 2 Blend, 3 Bob)
 //   shader_check anime4k <in.ppm> <out.ppm>                 glsl/anime4k to twice the size
 //   shader_check acnet <in.ppm> <out.ppm>                   glsl/acnet to twice the size
 //   shader_check compare <a.ppm> <b.ppm> <max> <mean> [border]
@@ -269,6 +271,20 @@ Picture yuv(const std::string& path, int w, int h, double kr, double kb) {
     glUniformMatrix3fv(glGetUniformLocation(prog, "uColor"), 1, GL_FALSE, matrix);
     glUniform1f(glGetUniformLocation(prog, "uChroma"), 1.0f);
     draw(prog, out, tex[0], flip);
+    return download(out);
+}
+
+// Auto, Blend or Bob (Deinterlace's ordinal [mode]) as the stage runs it, the first field kept for [tff].
+Picture deinterlace(const Picture& in, int mode, bool tff) {
+    GLuint prog = appProgram("video/deinterlace.frag");
+    Target source = upload(in);
+    Target out = target(in.width, in.height);
+    glUseProgram(prog);
+    glUniform2f(glGetUniformLocation(prog, "uTexel"), 1.0f / in.width, 1.0f / in.height);
+    glUniform1i(glGetUniformLocation(prog, "uMode"), mode);
+    glUniform1f(glGetUniformLocation(prog, "uHeight"), float(in.height));
+    glUniform1f(glGetUniformLocation(prog, "uParity"), float(tff ? 0 : 1));
+    draw(prog, out, source.texture);
     return download(out);
 }
 
@@ -600,7 +616,9 @@ int main(int argc, char** argv) {
         const double kr = a[4] == "601" ? 0.299 : a[4] == "709" ? 0.2126 : 0.2627;
         const double kb = a[4] == "601" ? 0.114 : a[4] == "709" ? 0.0722 : 0.0593;
         writePpm(a[5], yuv(a[1], std::stoi(a[2]), std::stoi(a[3]), kr, kb));
-    } else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));
+    } else if (a.size() == 5 && a[0] == "deinterlace")
+        writePpm(a[2], deinterlace(readPpm(a[1]), std::stoi(a[3]), a[4] == "1"));
+    else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));
     else if (a.size() == 3 && a[0] == "acnet") writePpm(a[2], acnet(readPpm(a[1])));
     else fail("usage: see the head of tools/shader-check/check.cpp");
     if (glGetError() != GL_NO_ERROR) fail("GL error");
