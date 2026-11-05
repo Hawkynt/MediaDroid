@@ -11,7 +11,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.application
-import androidx.compose.ui.window.rememberWindowState
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.WindowState
 import com.hawkynt.mediadroid.library.Library
 import com.hawkynt.mediadroid.library.LibraryScanner
 import java.io.File
@@ -35,6 +37,29 @@ val MediaDroidColors = darkColorScheme(
     onBackground = Color(0xFFEDEDF5),
 )
 
+/** The window as it was left (WindowPlace), else 1280 × 800 in the middle of the screen. */
+private fun windowState(saved: String?): WindowState {
+    val place = WindowPlace.parse(saved) ?: return WindowState(size = DpSize(1280.dp, 800.dp))
+    return WindowState(
+        placement = if (place.maximized) WindowPlacement.Maximized else WindowPlacement.Floating,
+        position = WindowPosition(place.x.dp, place.y.dp),
+        size = DpSize(place.width.dp, place.height.dp),
+    )
+}
+
+// Full screen is the player's, not a place to come back to: the window as it was before is kept then (null).
+private fun describe(state: WindowState): String? {
+    if (state.placement == WindowPlacement.Fullscreen) return null
+    val p = state.position
+    return WindowPlace(
+        x = if (p.isSpecified) p.x.value else 0f,
+        y = if (p.isSpecified) p.y.value else 0f,
+        width = state.size.width.value,
+        height = state.size.height.value,
+        maximized = state.placement == WindowPlacement.Maximized,
+    ).toString()
+}
+
 /**
  * Starts the app; a video file given on the command line (or by the system, opening a file with it) plays at once.
  * `MEDIADROID_SNAPSHOT=<file.png>` writes the window's own picture to that file after `MEDIADROID_SNAPSHOT_MS`
@@ -42,7 +67,7 @@ val MediaDroidColors = darkColorScheme(
  */
 fun main(args: Array<String>) = application {
     val store = remember { DesktopStore(AppFolder.current()) }
-    val state = rememberWindowState(width = 1280.dp, height = 800.dp)
+    val state = remember { windowState(store.window) }
     val opened = remember { args.firstOrNull()?.let(::File)?.takeIf { it.isFile } }
     var screen by remember {
         mutableStateOf(
@@ -54,7 +79,11 @@ fun main(args: Array<String>) = application {
         Thread.currentThread().contextClassLoader.getResourceAsStream("mediadroid.png")
             ?.use { androidx.compose.ui.graphics.painter.BitmapPainter(androidx.compose.ui.res.loadImageBitmap(it)) }
     }
-    Window(onCloseRequest = ::exitApplication, title = "MediaDroid", state = state, icon = icon) {
+    val close = {
+        describe(state)?.let { store.window = it }
+        exitApplication()
+    }
+    Window(onCloseRequest = close, title = "MediaDroid", state = state, icon = icon) {
         System.getenv("MEDIADROID_SNAPSHOT")?.let { target ->
             androidx.compose.runtime.LaunchedEffect(Unit) {
                 kotlinx.coroutines.delay(System.getenv("MEDIADROID_SNAPSHOT_MS")?.toLongOrNull() ?: 4_000)

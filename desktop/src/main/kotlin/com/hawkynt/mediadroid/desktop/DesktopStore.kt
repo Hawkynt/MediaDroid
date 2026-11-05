@@ -69,6 +69,14 @@ class DesktopStore(private val folder: File) {
             save()
         }
 
+    /** Where the window was and how large, as `x,y,width,height` in dp, and whether it was maximized. */
+    var window: String?
+        get() = properties.getProperty("window")
+        set(value) {
+            if (value == null) properties.remove("window") else properties.setProperty("window", value)
+            save()
+        }
+
     fun resumeMs(video: String): Long = properties.getProperty("resume.$video")?.toLongOrNull() ?: 0
 
     fun setResume(video: String, positionMs: Long) {

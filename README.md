@@ -326,7 +326,7 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   held to the same oracles (`tools/shader-check`).
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
   (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture and track panel,
-  N for the next episode, [ and ] for slower and faster), a window that remembers its size.
+  N for the next episode, [ and ] for slower and faster), a window that remembers its size and place.
 - Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
   language last picked is where the next video starts. Sound tracks likewise, the file's own and those beside it
   (`Film.en.ac3`). Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.

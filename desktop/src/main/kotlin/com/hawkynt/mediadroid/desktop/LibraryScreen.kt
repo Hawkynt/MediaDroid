@@ -23,6 +23,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -46,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.library.Library
+import com.hawkynt.mediadroid.library.LibraryQuery
 import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
@@ -106,7 +111,11 @@ fun LibraryScreen(
 
 @Composable
 private fun Wall(store: DesktopStore, library: Library, onOpen: (MediaItem) -> Unit, onFolder: () -> Unit) {
-    val items: List<MediaItem> = (library.movies + library.shows).sortedBy { it.title.lowercase() }
+    val all: List<MediaItem> = remember(library) { (library.movies + library.shows).sortedBy { it.title.lowercase() } }
+    var query by remember { mutableStateOf("") }
+    var genres by remember { mutableStateOf(emptySet<String>()) }
+    val facets = remember(all) { LibraryQuery.genreFacets(all) }
+    val items = remember(all, query, genres) { LibraryQuery.filterByGenres(LibraryQuery.search(all, query), genres) }
     Column(Modifier.fillMaxSize().padding(24.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -115,11 +124,32 @@ private fun Wall(store: DesktopStore, library: Library, onOpen: (MediaItem) -> U
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
             )
+            Spacer(Modifier.width(24.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search titles") },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                singleLine = true,
+                modifier = Modifier.width(360.dp),
+            )
             Spacer(Modifier.weight(1f))
             Text("${library.movies.size} movies · ${library.shows.size} shows", color = Color.Gray)
             TextButton(onClick = onFolder) { Text("Change folder") }
         }
+        if (facets.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
+                items(facets) { (genre, count) ->
+                    FilterChip(
+                        selected = genre in genres,
+                        onClick = { genres = if (genre in genres) genres - genre else genres + genre },
+                        label = { Text("$genre · $count") },
+                    )
+                }
+            }
+        }
         Spacer(Modifier.padding(8.dp))
+        if (items.isEmpty()) Text("Nothing matches.", color = Color.Gray, fontSize = 18.sp)
         LazyVerticalGrid(GridCells.Adaptive(170.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             items(items, key = { it.key }) { item ->
