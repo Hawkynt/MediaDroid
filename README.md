@@ -406,7 +406,11 @@ device; shaders live in `stage/src/main/glsl`.
 | [RIFE 4.25 lite](https://github.com/TNTwise/rife-ncnn-vulkan), [IFRNet-S](https://github.com/nihui/ifrnet-ncnn-vulkan), [waifu2x CUnet](https://github.com/nihui/waifu2x-ncnn-vulkan), [Real-CUGAN SE](https://github.com/nihui/realcugan-ncnn-vulkan), [Real-ESRGAN x4v3](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) | carried in the app | MIT, BSD-3-Clause |
 | [DAIN](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/dain), [XVFI](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/xvfi), [FLAVR](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/flavr), [CAIN](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/cain), [RealSR](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/realsr) on [Hawkynt/mediadroid-models](https://huggingface.co/Hawkynt/mediadroid-models) | fetched when picked, each file checked against its digest | MIT; research and education only; Apache-2.0 |
 
-Each third party's notice sits beside the app as `app/THIRD-PARTY-NOTICE.*.txt`.
+Each third party's notice sits beside the app as `app/THIRD-PARTY-NOTICE.*.txt`. The desktop app adds
+[Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform) (Apache-2.0), [LWJGL](https://www.lwjgl.org/)
+with GLFW (BSD-3-Clause, zlib), FFmpeg's LGPL build through [JavaCPP](https://github.com/bytedeco/javacpp-presets)
+(Apache-2.0) and a Java runtime ([Eclipse Temurin](https://adoptium.net/), GPL-2.0 with the Classpath Exception); every
+desktop package carries `LICENSE` and all of these notices on its top level (`desktop/THIRD-PARTY-NOTICE.desktop.txt`).
 
 ## 🛠️ Building
 
@@ -416,11 +420,12 @@ Requires JDK 21 and an Android SDK with platform 37; `local.properties` must poi
 ./gradlew assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew test            # parser, library, and binge-logic unit tests
 ./build.sh                # signed release build: dist/MediaDroid.apk
+./build.sh --desktop      # the same, and the desktop app packed for this system into dist/ (AppImage; MSI and zip)
 ./buildnonlgpl.sh         # the same with the GPL + nonfree FFmpeg: dist/MediaDroid-nonlgpl.apk
 ./gradlew :desktop:run    # the desktop app (Windows, Linux); a video path after --args plays it at once
 ./gradlew :desktop:run -PfullFfmpeg   # the same with Bytedeco's GPL FFmpeg build, for your own machine only
 ./gradlew :engine:desktop:probe -Pfolder=<dir>   # every video in a folder opened and its start decoded
-./gradlew :desktop:appImage                      # Linux: desktop/build/dist/MediaDroid-linux-x64.AppImage (squashfs-tools)
+./gradlew :desktop:appImage                      # Linux: desktop/build/dist/MediaDroid-linux-x64.AppImage
 ./gradlew :desktop:windowsZip -PdesktopTarget=windows   # Windows, portable: desktop/build/dist/MediaDroid-windows-x64.zip
 ./gradlew :native:desktopLibrary                 # the native tree for this desktop: native/build/desktop/lib
 ./gradlew :engine:desktop:test -PnativeLibrary   # the desktop tests with the native library's, built first
