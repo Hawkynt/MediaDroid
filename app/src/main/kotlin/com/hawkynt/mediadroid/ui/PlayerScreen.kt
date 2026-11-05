@@ -48,6 +48,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -312,9 +315,12 @@ fun PlayerScreen(
         if (darkPhone.leave()) com.hawkynt.mediadroid.player.PhoneLock.lockNow(context)
         phoneDark = false
     }
+    // Whether it plays, for the controls that show only while paused (the frame steps).
+    var playingNow by remember { mutableStateOf(false) }
     DisposableEffect(player) {
         fun publish() {
             PlayerWindow.playing = engine.isPlaying
+            playingNow = engine.isPlaying
             val size = player.videoSize
             PlayerWindow.aspect = PlaybackMath.pipAspect(size.width, size.height, size.pixelWidthHeightRatio)
                 ?.let { (w, h) -> android.util.Rational(w, h) }
@@ -452,6 +458,46 @@ fun PlayerScreen(
         if (demo) null else com.hawkynt.mediadroid.data.SeekPreviews.of(context).open(queue[index].videoPath)
     }
     DisposableEffect(seekPreviews) { onDispose { seekPreviews?.close() } }
+
+    // The file's own chapters (Chapters), listed and stepped through; the part repeated between two marks (AbLoop).
+    var chapters by remember { mutableStateOf(emptyList<com.hawkynt.mediadroid.library.Chapter>()) }
+    var chapterPicker by remember { mutableStateOf(false) }
+    var abLoop by remember { mutableStateOf(com.hawkynt.mediadroid.player.AbLoop.OFF) }
+    fun jumpChapter(forward: Boolean) {
+        val position = engine.positionMs
+        val target = if (forward) {
+            com.hawkynt.mediadroid.player.ChapterSteps.next(chapters, position)
+        } else {
+            com.hawkynt.mediadroid.player.ChapterSteps.previous(chapters, position)
+        } ?: return
+        engine.seekTo(target)
+        com.hawkynt.mediadroid.player.ChapterSteps.current(chapters, target)?.let {
+            show(com.hawkynt.mediadroid.player.ChapterSteps.name(chapters, it))
+        }
+    }
+    // One picture on or back, paused there (as mpv's frame steps pause).
+    fun stepFrame(forward: Boolean) {
+        if (engine.isPlaying) engine.pause()
+        engine.seekTo(
+            com.hawkynt.mediadroid.player.FrameStep.target(
+                engine.positionMs,
+                engine.frameRate,
+                forward,
+                engine.durationMs,
+            ),
+        )
+    }
+    fun markRepeat() {
+        abLoop = abLoop.mark(engine.positionMs)
+        val (a, b) = abLoop.a to abLoop.b
+        show(
+            when {
+                a != null && b != null -> "Repeating ${clock(a)} – ${clock(b)}"
+                a != null -> "Repeat from ${clock(a)} — press again where it should end"
+                else -> "Repeat off"
+            },
+        )
+    }
     val externalDisplay = rememberExternalDisplay()
     var onSecondScreen by remember { mutableStateOf(false) }
     var presentation by remember { mutableStateOf<VideoPresentation?>(null) }
@@ -521,7 +567,9 @@ fun PlayerScreen(
             store.save()
         }
         subtitleLook = store.subtitleLookFor(playable.videoPath)
-        val chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        abLoop = com.hawkynt.mediadroid.player.AbLoop.OFF
+        chapters = emptyList()
+        chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             // Chapters mark intros and credits for videos on network sources as for local ones.
             com.hawkynt.mediadroid.data.SourceAccess.resolve(context, playable.videoPath)
                 ?.let { com.hawkynt.mediadroid.library.Chapters.read(it) }
@@ -746,6 +794,11 @@ fun PlayerScreen(
             delay(500)
             if (!engine.isPlaying) continue
             val position = engine.positionMs
+            // A part repeating is the viewer's choice: no intro or credits jump takes it away.
+            if (abLoop.a != null) {
+                if (++tick % 6 == 0) saveProgress(position)
+                continue
+            }
             // Inside a known intro (also one after a cold open): jump to its end.
             SkipRules.skipTarget(position, introSpanMs)?.let {
                 engine.seekTo(it)
@@ -759,6 +812,20 @@ fun PlayerScreen(
             }
             if (++tick % 6 == 0) saveProgress(position)
         }
+    }
+
+    // Back to the part's start once its end is reached, checked often enough to land within a few frames.
+    LaunchedEffect(abLoop) {
+        if (!abLoop.repeating) return@LaunchedEffect
+        while (true) {
+            delay(AB_CHECK_MS)
+            if (engine.isPlaying) abLoop.jumpFrom(engine.positionMs)?.let { engine.seekTo(it) }
+        }
+    }
+    // The chapters marked on the time bar.
+    LaunchedEffect(chapters, playerView) {
+        val starts = chapters.map { it.startMs }.filter { it > 0 }.sorted().toLongArray()
+        playerView?.setExtraAdGroupMarkers(starts, BooleanArray(starts.size))
     }
 
     LaunchedEffect(sleepAt) {
@@ -1208,6 +1275,21 @@ fun PlayerScreen(
                     if (!volumeKey && native.action == android.view.KeyEvent.ACTION_DOWN) lockHintStamp++
                     return@onPreviewKeyEvent !volumeKey
                 }
+                // mpv's keys for the same: . and , step a frame, Page Up and Down a chapter, L repeats a part.
+                val command: (() -> Unit)? = when (native.keyCode) {
+                    android.view.KeyEvent.KEYCODE_MEDIA_STEP_FORWARD, android.view.KeyEvent.KEYCODE_PERIOD ->
+                        { -> stepFrame(true) }
+                    android.view.KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD, android.view.KeyEvent.KEYCODE_COMMA ->
+                        { -> stepFrame(false) }
+                    android.view.KeyEvent.KEYCODE_PAGE_UP -> { -> jumpChapter(true) }
+                    android.view.KeyEvent.KEYCODE_PAGE_DOWN -> { -> jumpChapter(false) }
+                    android.view.KeyEvent.KEYCODE_L -> { -> markRepeat() }
+                    else -> null
+                }
+                if (command != null) {
+                    if (native.action == android.view.KeyEvent.ACTION_DOWN) command()
+                    return@onPreviewKeyEvent true
+                }
                 val forward = when (native.keyCode) {
                     android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> true
                     android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> false
@@ -1422,6 +1504,44 @@ fun PlayerScreen(
                                 contentDescription = "Darken this phone",
                                 tint = Color.White,
                             )
+                        }
+                    }
+                    if (!playingNow) {
+                        IconButton(onClick = { stepFrame(false); keepControls() }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "One frame back",
+                                tint = Color.White,
+                            )
+                        }
+                        IconButton(onClick = { stepFrame(true); keepControls() }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "One frame forward",
+                                tint = Color.White,
+                            )
+                        }
+                    }
+                    TextButton(onClick = { markRepeat(); keepControls() }) {
+                        Text(
+                            when {
+                                abLoop.repeating -> "Stop repeating"
+                                abLoop.a != null -> "Mark the end"
+                                else -> "Repeat a part"
+                            },
+                            color = if (abLoop.a != null) MaterialTheme.colorScheme.primary else Color.White,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                        )
+                    }
+                    if (chapters.isNotEmpty()) {
+                        IconButton(
+                            onClick = {
+                                chapterPicker = true
+                                playerView?.hideController()
+                            },
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Chapters", tint = Color.White)
                         }
                     }
                     IconButton(
@@ -1786,6 +1906,17 @@ fun PlayerScreen(
                 onDismiss = { infoOpen = false },
             )
         }
+        if (chapterPicker) {
+            ChapterDialog(
+                chapters = chapters,
+                current = com.hawkynt.mediadroid.player.ChapterSteps.current(chapters, engine.positionMs),
+                onDismiss = { chapterPicker = false },
+                onPick = { start ->
+                    engine.seekTo(start)
+                    chapterPicker = false
+                },
+            )
+        }
         if (audioPicker) {
             // Audio files beside the video are merged in as sources 1, 2 …: their names say what they are.
             val audioFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
@@ -1848,6 +1979,39 @@ fun PlayerScreen(
             )
         }
     }
+}
+
+/** The file's chapters with where each begins, the playing one marked; picking one plays from its start. */
+@Composable
+private fun ChapterDialog(
+    chapters: List<com.hawkynt.mediadroid.library.Chapter>,
+    current: Int?,
+    onDismiss: () -> Unit,
+    onPick: (Long) -> Unit,
+) {
+    val ordered = chapters.indices.sortedBy { chapters[it].startMs }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close", fontSize = 18.sp) } },
+        title = { Text("Chapters") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                ordered.forEach { i ->
+                    val playing = i == current
+                    TextButton(onClick = { onPick(chapters[i].startMs) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            com.hawkynt.mediadroid.player.ChapterSteps.name(chapters, i),
+                            fontSize = 20.sp,
+                            fontWeight = if (playing) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(clock(chapters[i].startMs), fontSize = 18.sp)
+                    }
+                }
+            }
+        },
+    )
 }
 
 /** Lists the audio or subtitle tracks of the current item; "Automatic" clears the pick. */
@@ -1991,6 +2155,9 @@ private fun clock(ms: Long): String {
     val sec = total % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
 }
+
+/** How often a repeated part's end is looked for. */
+private const val AB_CHECK_MS = 40L
 
 /** How long a skip button must be held before it starts stepping on its own. */
 private const val HOLD_START_MS = 400L

@@ -106,6 +106,8 @@ specification.
   ([Media3 FFmpeg extension](https://github.com/androidx/media/tree/1.11.1/libraries/decoder_ffmpeg)) for
   everything else — WMV, VC-1, RealVideo, DV, AC3, DTS, TrueHD and more.
 - Speed 0.2×–5×, held skips that grow, sleep timer, repeat, rotation, picture in picture, media keys everywhere.
+- The file's chapters listed and jumped to, one frame forward and back while paused, and a part repeated between two
+  marks.
 - Even frames: the speed nudged so every frame stays on screen equally long where the screen cannot switch its rate.
 - Snapshot: the camera button saves the picture on screen — filters and all — as a PNG in Pictures, ready to share.
 
@@ -122,6 +124,9 @@ specification.
 - Rotation in the gear: auto, landscape or portrait, held for the session; leaving the player hands rotation back to the system.
 - Sleep timer in the gear: off, 15, 30, 45, 60 or 90 minutes, or at the end of this video. While it runs the top bar shows the minutes left; when it runs out the sound fades over ten seconds and playback pauses. It never carries over to the next start.
 - Repeat in the gear: off, this video, or all of it (the show or the folder, round again from the start) — for the film a child wants to see again and again. It lasts for the session.
+- Repeat a part, in the top bar: one press marks where the part starts, the next where it ends, and from then on reaching the end jumps back to the start — for a song, a dance or a goal — until the third press. Intros and credits are not skipped meanwhile; the next video starts without it. On a keyboard L does the same, as in mpv.
+- Chapters: where the file has its own (Matroska / WebM, MP4 / MOV, Ogg), the top bar lists them with where each begins, the one playing in bold, and a tap plays from there; the time bar marks where each begins. Page Up and Page Down go to the next and the previous chapter — a few seconds into one, the previous goes back to its start first, as in mpv.
+- One frame at a time: while paused, the arrows in the top bar step one frame forward or back (and so do the media step keys, `.` and `,`). The step follows the video's frame rate, film's where the file does not say it.
 - With the controls up, the bar also tells when the film will be over on the clock ("Ends 21:35", in the device's 12/24-hour format), allowing for the playback speed.
 - The player shows nothing but the picture: a tap brings the controls up, a few seconds untouched fade them out, and the status and navigation bars stay hidden while watching.
 - Video plays on the device's own hardware decoders; the bundled FFmpeg decoders only step in for what they cannot play — WMV, VC-1, RealVideo, DV, MS-MPEG4 and whatever a device lacks — in software, their pictures handed to the graphics chip as YUV planes, so they keep their full frame rate. Settings can put software decoding first, with a warning: it drains the battery fast and is meant for videos that otherwise do not play at all or only with errors.
@@ -348,8 +353,9 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   takes GLSL ES 1.00 and 3.00), held to the same oracles (`tools/shader-check`).
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
   (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture and track panel,
-  N for the next episode, [ and ] for slower and faster, C for a snapshot), a window that remembers its size and
-  place.
+  N for the next episode, [ and ] for slower and faster, C for a snapshot, `,` and `.` for one frame back and
+  forward, Page Up and Page Down for the next and the previous chapter, L to repeat a part), a window that remembers
+  its size and place.
 - Snapshot: the camera button (or C) saves the picture as the stage shows it, filters and all, as a PNG in the user's
   Pictures folder (`MediaDroid` inside it; on Linux the one xdg-user-dirs names) and shows where it went.
 - Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
