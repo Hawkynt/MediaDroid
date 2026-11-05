@@ -23,7 +23,6 @@ class SmtcControls(private val onCommand: (MediaCommand) -> Unit) : MediaControl
     private val player: Pointer
     private val smtc: Pointer
     private val updater: Pointer
-    private val video: Pointer
     private val token: Long
 
     init {
@@ -41,7 +40,6 @@ class SmtcControls(private val onCommand: (MediaCommand) -> Unit) : MediaControl
             Com.call(smtc, it, 1).ok("SystemMediaTransportControls #$it")
         }
         updater = Com.get(smtc, DISPLAY_UPDATER)
-        video = Com.get(updater, UPDATER_VIDEO_PROPERTIES)
         val handler = ComButtonHandler(Smtc.BUTTON_HANDLER_IID) { button -> Smtc.command(button)?.let(onCommand) }
         val tokenOut = LongByReference()
         Com.call(smtc, ADD_BUTTON_PRESSED, handler.pointer, tokenOut.pointer).ok("ButtonPressed")
@@ -57,8 +55,15 @@ class SmtcControls(private val onCommand: (MediaCommand) -> Unit) : MediaControl
         if (now == null) {
             Com.call(updater, UPDATER_CLEAR_ALL)
         } else {
+            // The video properties are there only once the type says video (ERROR_NOT_SUPPORTED before), and
+            // ClearAll takes the type away again: so set, then asked for afresh each time.
             Com.call(updater, UPDATER_SET_TYPE, MEDIA_PLAYBACK_TYPE_VIDEO).ok("DisplayUpdater.Type")
-            WinRt.string(now.title) { Com.call(video, VIDEO_SET_TITLE, it) }.ok("VideoProperties.Title")
+            val video = Com.get(updater, UPDATER_VIDEO_PROPERTIES)
+            try {
+                WinRt.string(now.title) { Com.call(video, VIDEO_SET_TITLE, it) }.ok("VideoProperties.Title")
+            } finally {
+                Com.release(video)
+            }
         }
         Com.call(updater, UPDATER_UPDATE).ok("DisplayUpdater.Update")
     }
@@ -67,7 +72,7 @@ class SmtcControls(private val onCommand: (MediaCommand) -> Unit) : MediaControl
         apartment()
         Com.call(smtc, REMOVE_BUTTON_PRESSED, token)
         Com.call(smtc, SET_PLAYBACK_STATUS, Smtc.status(null))
-        listOf(video, updater, smtc, player).forEach(Com::release)
+        listOf(updater, smtc, player).forEach(Com::release)
     }
 
     /** WinRT on this thread, in the multithreaded apartment (a thread already in another keeps that one). */
