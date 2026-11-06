@@ -22,6 +22,18 @@ class NeuralModelsTest {
     }
 
     @Test
+    fun `every network on ncnn names its files, Real-ESRGAN four times the size from its compact video model`() {
+        assertEquals(NeuralModels.REALESRGAN, NeuralModels.files(PictureAdjustment.Upscaler.NEURAL))
+        assertEquals(4, NeuralEnlarging.scale(PictureAdjustment.Upscaler.NEURAL))
+        assertEquals(3, NativeInterpolation.enlargerKind(PictureAdjustment.Upscaler.NEURAL))
+        assertEquals(NeuralModels.RIFE, NeuralModels.files(PictureAdjustment.Interpolation.RIFE))
+        assertEquals(NeuralModels.DAIN, NeuralModels.files(PictureAdjustment.Interpolation.DAIN))
+        assertEquals(NeuralModels.WAIFU2X, NeuralModels.files(PictureAdjustment.Upscaler.WAIFU2X))
+        assertEquals(NeuralModels.REALSR, NeuralModels.files(PictureAdjustment.Upscaler.REALSR))
+        assertEquals(null, NeuralModels.files(PictureAdjustment.Upscaler.FSR))
+    }
+
+    @Test
     fun `a downloaded file counts only with its exact size and digest`() {
         val file = NeuralModels.File("a.bin", 3, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
         assertTrue(file.matches("abc".toByteArray().inputStream()))

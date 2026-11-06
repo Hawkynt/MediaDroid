@@ -22,6 +22,10 @@ object NeuralTestProcess {
     private const val MOTION = "motion"
     private const val UPSCALER = "upscaler"
 
+    /** Test processes started so far. */
+    @Volatile var processes = 0
+        private set
+
     /** [network]'s self-test with the models in [models]; blocks. */
     fun selfTest(models: File, network: PictureAdjustment.Interpolation): NeuralSelfTest.Outcome =
         NeuralSelfTest.across(NeuralInterpolation::fastEnough) { unit, until ->
@@ -59,6 +63,7 @@ object NeuralTestProcess {
         }
         val process = runCatching { ProcessBuilder(command).redirectErrorStream(false).start() }.getOrNull()
             ?: return inProcess(models, kind, name, unit, until, smallestHeight)
+        processes++
         val err = process.errorStream
         thread(isDaemon = true) { err.copyTo(OutputStream.nullOutputStream()) }
         val lock = Any()

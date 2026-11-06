@@ -43,11 +43,11 @@ import kotlinx.coroutines.launch
 
 /**
  * The choices the desktop stage runs (GlStage, Film in the engine, the networks on ncnn through DesktopNeural); every
- * one of Android's but Real-ESRGAN, which follows.
+ * one of Android's, Real-ESRGAN on ncnn too.
  */
 val DesktopDeinterlacers = PictureAdjustment.Deinterlace.entries.toList()
 val DesktopInterpolations = PictureAdjustment.Interpolation.entries.toList()
-val DesktopUpscalers = PictureAdjustment.Upscaler.entries.filter { it != PictureAdjustment.Upscaler.NEURAL }
+val DesktopUpscalers = PictureAdjustment.Upscaler.entries.toList()
 
 /** How a track picker names [track]: its own label, else its language, else its place among its kind ([number]). */
 fun trackName(track: Track, number: Int): String =

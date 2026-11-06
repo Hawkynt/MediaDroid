@@ -6,8 +6,9 @@ package com.hawkynt.mediadroid.player
  * other neural choices, one is taken only where a self-test finds the device runs it right and fast enough.
  */
 object NeuralEnlarging {
-    /** How much larger [upscaler] makes a picture: RealSR four times, the others twice. */
-    fun scale(upscaler: PictureAdjustment.Upscaler): Int = if (upscaler == PictureAdjustment.Upscaler.REALSR) 4 else 2
+    /** How much larger [upscaler] makes a picture: RealSR and Real-ESRGAN four times, the others twice. */
+    fun scale(upscaler: PictureAdjustment.Upscaler): Int =
+        if (upscaler == PictureAdjustment.Upscaler.REALSR || upscaler == PictureAdjustment.Upscaler.NEURAL) 4 else 2
 
     /** What one 576p picture may take: a frame at 25 frames a second. */
     const val BUDGET_MS = 40.0

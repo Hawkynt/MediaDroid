@@ -432,7 +432,7 @@ class GlStage : AutoCloseable {
             PictureAdjustment.Upscaler.ANIME4K -> anime4k(from)
             PictureAdjustment.Upscaler.ACNET -> acnet(from)
             PictureAdjustment.Upscaler.XBRZ -> xbrz(from, outW, outH)
-            else -> if (upscaler.isEnlarger) enlarged(upscaler, from) ?: from else from
+            else -> if (DesktopNeural.onNcnn(upscaler)) enlarged(upscaler, from) ?: from else from
         }
     }
 

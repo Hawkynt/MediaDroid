@@ -68,6 +68,10 @@ std::unique_ptr<Enlarger> openRealCugan(const Loader& load, bool gpu);
 // RealSR's DF2K_JPEG model (its "x4"), four times the size, on the GPU or the CPU; null where it does not load.
 std::unique_ptr<Enlarger> openRealSr(const Loader& load, bool gpu);
 
+// Real-ESRGAN's compact video model (its "realesr-animevideov3-x4", as Real-ESRGAN-ncnn-vulkan ships it), four times
+// the size, on the GPU or the CPU; null where it does not load.
+std::unique_ptr<Enlarger> openRealEsrgan(const Loader& load, bool gpu);
+
 // CAIN (its "cain") and IFRNet (its "ifrnet"), two frames to the in-between, on the GPU or the CPU; null where they
 // do not load.
 std::unique_ptr<Interpolator> openCain(const Loader& load, bool gpu);

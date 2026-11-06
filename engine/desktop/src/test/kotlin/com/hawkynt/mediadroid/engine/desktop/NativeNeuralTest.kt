@@ -61,8 +61,11 @@ class NativeNeuralTest {
     }
 
     @Test
-    fun `waifu2x and Real-CUGAN enlarge right on the CPU`() {
-        for (upscaler in listOf(PictureAdjustment.Upscaler.WAIFU2X, PictureAdjustment.Upscaler.REALCUGAN)) {
+    fun `waifu2x, Real-CUGAN and Real-ESRGAN enlarge right on the CPU`() {
+        val upscalers = listOf(
+            PictureAdjustment.Upscaler.WAIFU2X, PictureAdjustment.Upscaler.REALCUGAN, PictureAdjustment.Upscaler.NEURAL,
+        )
+        for (upscaler in upscalers) {
             val timing = NeuralTestProcess.test(folder.root, "upscaler", upscaler.name, "CPU", quiet)
             assertNotNull("$upscaler ran wrong", timing)
         }
@@ -71,8 +74,10 @@ class NativeNeuralTest {
     @Test
     fun `the self-test runs each unit in a process of its own and answers within its time`() {
         val start = System.nanoTime()
+        val before = NeuralTestProcess.processes
         val outcome = NeuralTestProcess.selfTest(folder.root, PictureAdjustment.Interpolation.IFRNET)
         val ms = (System.nanoTime() - start) / 1e6
+        assertEquals(2, NeuralTestProcess.processes - before)
         // The GPU's process answers, says it cannot run it or ends — a broken Vulkan driver takes only that process
         // down, never this one; the CPU's answers or is cut short.
         assertTrue("$outcome", outcome is NeuralSelfTest.Outcome.Ran)

@@ -127,6 +127,7 @@ val notices = tasks.register<Sync>("notices") {
     from(rootProject.file("LICENSE"))
     from("THIRD-PARTY-NOTICE.desktop.txt")
     from(rootProject.file("engine/desktop/THIRD-PARTY-NOTICE.ffmpeg.txt"))
+    from(rootProject.file("engine/desktop/THIRD-PARTY-NOTICE.Real-ESRGAN-ncnn.txt"))
     from(rootProject.file("app")) {
         listOf("ACNet", "Anime4K", "FidelityFX-FSR", "NVIDIA-Image-Scaling", "Snapdragon-GSR", "hash-without-sine")
             .forEach { include("THIRD-PARTY-NOTICE.$it.txt") }
