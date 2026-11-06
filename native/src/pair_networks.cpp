@@ -75,7 +75,9 @@ struct Ifrnet : Interpolator {
         const float half[3] = {0.5f, 0.5f, 0.5f};
         ncnn::Mat result;
         {
-            ncnn::Mat timestep(roundUp32(w), roundUp32(h), 1);
+            // At the network's coarsest level, a sixteenth of the padded size each way, as ifrnet-ncnn-vulkan makes
+            // it: the network joins it there with its features (cat_0), and a whole-size plane overran that join.
+            ncnn::Mat timestep(roundUp32(w) / 16, roundUp32(h) / 16, 1);
             timestep.fill(time);
             ncnn::Extractor ex = net.create_extractor();
             ex.input("in0", planes(first, w, h, half, ncnn::BORDER_CONSTANT));
@@ -104,13 +106,8 @@ std::unique_ptr<Interpolator> openIfrnet(const Loader& load, bool gpu) {
     auto ifrnet = std::make_unique<Ifrnet>();
     configure(ifrnet->net, gpu && gpuReady());
     // On the CPU every blob one channel a plane: ncnn's own Concat overruns its output when it joins the warp's
-    // unpacked blobs with packed ones (AddressSanitizer: heap-buffer-overflow in Concat_x86_avx), as IFRNet does. And
-    // one thread: on an AVX-512 desktop CPU, four corrupted the heap within seconds of 480p in-betweens, one never
-    // did — a hypothesis from running it, the faulty kernel not found.
-    if (!ifrnet->net.opt.use_vulkan_compute) {
-        ifrnet->net.opt.use_packing_layout = false;
-        ifrnet->net.opt.num_threads = 1;
-    }
+    // unpacked blobs with packed ones (AddressSanitizer: heap-buffer-overflow in Concat_x86_avx), as IFRNet does.
+    if (!ifrnet->net.opt.use_vulkan_compute) ifrnet->net.opt.use_packing_layout = false;
     ifrnet->net.register_custom_layer("ifrnet.Warp", createFlowFirstWarpLayer);
     if (load(ifrnet->net, "ifrnet") != 0) return nullptr;
     return ifrnet;

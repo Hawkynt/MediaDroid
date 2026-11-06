@@ -38,6 +38,29 @@ class NativeNeuralTest {
     }
 
     @Test
+    fun `IFRNet makes the same in-between again and again, the heap around it left whole`() {
+        // Its time plane once went in at the whole size where the network joins it at a sixteenth: ncnn's Concat wrote
+        // past its output (AddressSanitizer), and within a few 480p in-betweens the process went down (Android too).
+        val net = requireNotNull(DesktopNeural(folder.root).interpolator(PictureAdjustment.Interpolation.IFRNET, false))
+        net.use {
+            val w = 854
+            val h = 480
+            val a = NeuralChecks.testFrame(w, h, 0)
+            val b = NeuralChecks.testFrame(w, h, 2)
+            val first = requireNotNull(it.run(a, b, w, h)).let { out -> ByteArray(w * h * 3).also(out::get) }
+            repeat(8) { _ ->
+                val again = requireNotNull(it.run(a, b, w, h)).let { out -> ByteArray(w * h * 3).also(out::get) }
+                assertTrue(first.contentEquals(again))
+            }
+        }
+        // The native heap still serves another network: a corrupted one fails here at the latest.
+        val rife = DesktopNeural(folder.root).interpolator(PictureAdjustment.Interpolation.RIFE, false)
+        requireNotNull(rife).use {
+            assertNotNull(it.run(NeuralChecks.testFrame(256, 256, 0), NeuralChecks.testFrame(256, 256, 2), 256, 256))
+        }
+    }
+
+    @Test
     fun `waifu2x and Real-CUGAN enlarge right on the CPU`() {
         for (upscaler in listOf(PictureAdjustment.Upscaler.WAIFU2X, PictureAdjustment.Upscaler.REALCUGAN)) {
             val timing = NeuralTestProcess.test(folder.root, "upscaler", upscaler.name, "CPU", quiet)
