@@ -258,3 +258,62 @@ tasks.register("desktopLibrary") {
         run("--build", build, "--config", "Release", "--parallel", jobs)
     }
 }
+
+// What the desktop packages carry of the native tree: the library and the OpenMP runtime ncnn's releases are built
+// against, which neither system can be counted on to have and a jlinked Java runtime does not bring — on Linux
+// libgomp.so.1 (GCC's, GPL-3.0 with the GCC Runtime Library Exception), the one the library resolves to here; on
+// Windows vcomp140.dll from Visual Studio's redistributable folder (VC\Redist\MSVC, whose files its licence lets an app
+// carry unmodified). ./gradlew :native:desktopRuntime → native/build/desktop/runtime, where :desktop's packages take it
+// from. The C library of the machine that builds it sets the oldest glibc it runs on: the published AppImage's is built
+// on Ubuntu 22.04 (glibc 2.35, as ncnn's release).
+val desktopRuntimeDir = layout.buildDirectory.dir("desktop/runtime")
+
+/** The text [command] writes, or null where it cannot run or fails. */
+fun outputOf(vararg command: String): String? = runCatching {
+    val process = ProcessBuilder(*command).redirectErrorStream(true).start()
+    process.outputStream.close()
+    val text = process.inputStream.bufferedReader().readText()
+    text.takeIf { process.waitFor() == 0 }
+}.getOrNull()
+
+tasks.register("desktopRuntime") {
+    group = "build"
+    description = "The native library for this desktop with the runtime it needs, as the packages carry it"
+    dependsOn("desktopLibrary")
+    inputs.dir(desktopLibraryDir)
+    outputs.dir(desktopRuntimeDir)
+    val library = desktopLibraryDir
+    val out = desktopRuntimeDir
+    val windows = hostSystem == "windows"
+    doLast {
+        val target = out.get().asFile.apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        val built = library.get().asFile.listFiles().orEmpty().filter { it.isFile }
+        check(built.isNotEmpty()) { "the native library was not built" }
+        built.forEach { it.copyTo(File(target, it.name)) }
+        val name = if (windows) "vcomp140.dll" else "libgomp.so.1"
+        val openMp = if (windows) {
+            val vswhere = File(
+                System.getenv("ProgramFiles(x86)") ?: "C:\\Program Files (x86)",
+                "Microsoft Visual Studio\\Installer\\vswhere.exe",
+            )
+            outputOf(
+                vswhere.path, "-latest", "-products", "*",
+                "-find", "VC\\Redist\\MSVC\\**\\x64\\Microsoft.VC*.OpenMP\\vcomp140.dll",
+            ).orEmpty().lines().map { it.trim() }
+                .filter { it.isNotEmpty() && "onecore" !in it.lowercase() && "debug" !in it.lowercase() }
+                .maxOrNull()?.let(::File)
+        } else {
+            // Where the system's loader finds it for the library: the GCC runtime it was linked against.
+            val linked = built.first { it.name == "libmediadroid.so" }
+            outputOf("ldd", linked.path).orEmpty().lines()
+                .firstNotNullOfOrNull { Regex("""^\s*libgomp\.so\.1 => (\S+)""").find(it)?.groupValues?.get(1) }
+                ?.let { File(it).canonicalFile }
+        }
+        checkNotNull(openMp?.takeIf { it.isFile }) { "$name, the OpenMP runtime the native library needs, not found" }
+            .copyTo(File(target, name))
+        println("native runtime: ${target.list()?.sorted()?.joinToString()} ($name from $openMp)")
+    }
+}
