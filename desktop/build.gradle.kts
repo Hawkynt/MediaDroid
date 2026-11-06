@@ -131,26 +131,54 @@ val notices = tasks.register<Sync>("notices") {
     from(rootProject.file("app")) {
         listOf("ACNet", "Anime4K", "FidelityFX-FSR", "NVIDIA-Image-Scaling", "Snapdragon-GSR", "hash-without-sine")
             .forEach { include("THIRD-PARTY-NOTICE.$it.txt") }
-        // ncnn and the networks the desktop carries (DesktopNeural.CARRIED).
-        listOf("ncnn", "RIFE", "IFRNet", "waifu2x", "Real-CUGAN").forEach { include("THIRD-PARTY-NOTICE.$it.txt") }
+        // ncnn and the networks the desktop carries (DesktopNeural.CARRIED); libass, FreeType, FriBidi and HarfBuzz,
+        // inside the native library with ncnn.
+        listOf("ncnn", "RIFE", "IFRNet", "waifu2x", "Real-CUGAN", "libass")
+            .forEach { include("THIRD-PARTY-NOTICE.$it.txt") }
     }
+    // The OpenMP runtime beside the native library (:native:desktopRuntime): GCC's on Linux, Visual C++'s on Windows.
+    val windows = System.getProperty("os.name").startsWith("Windows")
+    from(if (windows) "THIRD-PARTY-NOTICE.vcomp140.txt" else "THIRD-PARTY-NOTICE.libgomp.txt")
     listOf("imaging", "library", "player", "sources").forEach { core ->
         from(rootProject.file("core/$core/THIRD_PARTY_NOTICES.md")) { rename { "THIRD-PARTY-NOTICE.core-$core.md" } }
     }
     into(layout.buildDirectory.dir("notices"))
 }
 
+// The native library (native/: the neural networks on ncnn, libass) built for this system, with the OpenMP runtime it
+// needs: the packages carry it beside the app's jars, where NativeNetworks looks for it.
+val nativeRuntime = rootProject.layout.projectDirectory.dir("native/build/desktop/runtime")
+
 // createDistributable's folder is what the MSI, the Windows-built zip and the AppImage are made from: the notices go
-// in there (the task comes once the Compose plugin has read the configuration, hence matching rather than named).
+// in there, the native library into its app folder — lib/app on Linux, app on Windows, beside the jars (the task comes
+// once the Compose plugin has read the configuration, hence matching rather than named).
 val distributable = layout.buildDirectory.dir("compose/binaries/main/app/MediaDroid")
 tasks.matching { it.name == "createDistributable" }.configureEach {
+    dependsOn(":native:desktopRuntime")
     inputs.files(notices)
+    inputs.dir(nativeRuntime)
     doLast {
         fileOps.copy {
             from(notices)
             into(distributable)
         }
+        val root = distributable.get().asFile
+        val app = listOf(File(root, "lib/app"), File(root, "app")).first { it.isDirectory }
+        fileOps.copy {
+            from(nativeRuntime)
+            into(app)
+        }
     }
+}
+
+// The runtime jlinked for the packages keeps its `java` launcher (the plugin strips the runtime's commands by default):
+// the neural networks' self-test runs each network in a Java process of its own (NeuralTestProcess), so a network that
+// crashes ends the test rather than the player. The switch is internal to the plugin, hence reached by its name; a
+// plugin without it fails the build here rather than shipping a runtime without the launcher.
+tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask>().configureEach {
+    @Suppress("UNCHECKED_CAST")
+    val strip = javaClass.methods.single { it.name.startsWith("getStripNativeCommands") }.invoke(this) as Property<Boolean>
+    strip.set(false)
 }
 // The MSI is jpackage'd from that same folder (--app-image) rather than from the jars again, which the plugin does
 // unless told: otherwise the installed app would lack the notices.

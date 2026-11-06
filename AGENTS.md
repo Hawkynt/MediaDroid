@@ -31,8 +31,8 @@ The same app is coming to **Windows and Linux** ([#291](https://github.com/Hawky
 "Platform support"). The split, phase by phase: `:engine:api` (plain JVM — the playback engine the screens talk to),
 `:engine:android` (Media3 behind it), `:stage` (plain JVM — the picture stage's passes against an OpenGL ES interface,
 the shaders with it), `native/` (one CMake tree for the ncnn networks on Android, Windows and Linux), `:ui` (every
-screen in Compose Multiplatform's commonMain), `:engine:desktop` (FFmpeg, the stage on OpenGL ES 3 through EGL or
-ANGLE, audio and sync) and the shells `:app` (Android) and `:desktop`. Code goes to the lowest layer that can hold it:
+screen in Compose Multiplatform's commonMain), `:engine:desktop` (FFmpeg, the stage's GLSL ES shaders on desktop
+OpenGL 4.3 — no ANGLE, README "Platform support" says why —, audio and sync) and the shells `:app` (Android) and `:desktop`. Code goes to the lowest layer that can hold it:
 anything without a platform API belongs in a core, `:engine:api`, `:stage` or `:ui`'s commonMain — never in a shell.
 
 **The README is a forward-looking specification** — it is authoritative. The app is an early skeleton:

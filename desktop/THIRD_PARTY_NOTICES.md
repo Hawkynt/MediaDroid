@@ -10,6 +10,10 @@ The desktop app's platform services use these libraries, taken as published on M
 | [JNA](https://github.com/java-native-access/jna) | 5.19.1 | Apache-2.0 (or LGPL-2.1) | Windows' System Media Transport Controls, WinRT called through it |
 | [SLF4J API](https://www.slf4j.org/) | as JmDNS and smbj pull it in | MIT | JmDNS's and dbus-java's logging |
 
+Beside the native library the packages carry the OpenMP runtime it needs, unmodified: GCC's `libgomp.so.1` in the
+AppImage (GPL-3.0 with the GCC Runtime Library Exception, `THIRD-PARTY-NOTICE.libgomp.txt`) and Visual C++'s
+`vcomp140.dll` in the MSI and the zip (Visual Studio's distributable code, `THIRD-PARTY-NOTICE.vcomp140.txt`).
+
 The System Media Transport Controls are called by each function's place in its interface table and by the interfaces'
 ids, as the Windows SDK's `windows.media.h` and `windows.media.playback.h` give them (read from the bindings
 [windows-rs](https://github.com/microsoft/windows-rs) generates from Microsoft's own metadata, MIT / Apache-2.0); the
