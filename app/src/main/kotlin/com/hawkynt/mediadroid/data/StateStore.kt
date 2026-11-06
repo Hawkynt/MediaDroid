@@ -5,6 +5,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import com.hawkynt.mediadroid.library.FileSort
+import com.hawkynt.mediadroid.library.FolderDefaults
+import com.hawkynt.mediadroid.library.FolderPlace
 import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.SortOrder
 import com.hawkynt.mediadroid.library.Source
@@ -197,6 +199,8 @@ data class AppData(
     val resume: MutableMap<String, ResumeInfo> = mutableMapOf(),
     val picture: MutableMap<String, PictureOverride> = mutableMapOf(),
     val logos: MutableMap<String, LogoOverride> = mutableMapOf(), // a station logo hidden, by the videos' folder
+    // Pictures per folder or share, by FolderPlace.key ("sourceId|folder"): what the videos in it start with.
+    val folderPictures: MutableMap<String, PictureOverride> = mutableMapOf(),
     val audioDelays: MutableMap<String, Int> = mutableMapOf(), // lip-sync per audio output, in ms
     val sorts: MutableMap<String, String> = mutableMapOf(), // SortOrder per LibrarySection, by name
     var wallMode: String = "",                 // WallMode by name; "" is posters
@@ -351,8 +355,16 @@ class StateStore(context: Context) {
     private fun deinterlaceOf(name: String) =
         runCatching { PictureAdjustment.Deinterlace.valueOf(name) }.getOrDefault(PictureAdjustment.Deinterlace.OFF)
 
-    /** The picture for [videoPath]: its own correction if one was set, else the default. */
-    fun pictureFor(videoPath: String): PictureAdjustment = ownPictureFor(videoPath).copy(logo = logoFor(videoPath))
+    /**
+     * The picture for [videoPath]: its own correction if one was set, else its folder's (the nearest folder or share
+     * above it with a picture of its own, see [FolderDefaults]), else the household's default — with its show's station
+     * logo hidden.
+     */
+    fun pictureFor(videoPath: String): PictureAdjustment = FolderDefaults.resolve(
+        data.picture[videoPath]?.let(::adjustmentOf),
+        folderPictureFor(videoPath),
+        defaultPicture(),
+    ).copy(logo = logoFor(videoPath))
 
     /** The folder a video's station logo is remembered for: its show's. */
     private fun showOf(videoPath: String): String = videoPath.substringBeforeLast('/', "")
@@ -364,38 +376,97 @@ class StateStore(context: Context) {
         }.getOrNull()
     }
 
-    private fun ownPictureFor(videoPath: String): PictureAdjustment =
-        data.picture[videoPath]?.let {
-            PictureAdjustment(
-                it.brightness,
-                it.gamma,
-                it.contrast,
-                it.saturation,
-                it.sharpness,
-                it.clarity,
-                it.noise ?: PictureAdjustment.noiseOfLevel(it.denoise),
-                deinterlaceOf(it.deinterlace),
-                upscalerOf(it.upscaler),
-                interpolationOf(it.interpolation),
-                it.fieldRate,
-                runCatching { PictureAdjustment.Stereo.valueOf(it.stereo) }.getOrDefault(PictureAdjustment.Stereo.OFF),
-                it.upscalerStrength,
-                it.deband,
-                it.cropBlackBars,
-                AspectOverride.entries.firstOrNull { a -> a.name == it.aspect } ?: AspectOverride.AUTO,
-                chroma = chromaOf(it.chroma),
-                upscalerModel = it.upscalerModel,
-                upscalerTta = it.upscalerTta,
-                deblock = it.deblock,
-                dering = it.dering,
-                shader = it.shader,
-                temporalDenoise = it.temporalDenoise,
-                dotCrawl = it.dotCrawl,
-            )
-        }
-            ?: defaultPicture()
+    /** What [videoPath] starts from without a picture of its own: its folder's, else the household's default. */
+    fun basePictureFor(videoPath: String): PictureAdjustment = folderPictureFor(videoPath) ?: defaultPicture()
 
-    /** Remembers [picture] for [videoPath]; the default (or null) drops the video's own entry. */
+    /** The folder or share whose picture [videoPath] takes, if any does: the nearest above it with one. */
+    fun pictureFolderOf(videoPath: String): FolderPlace? =
+        FolderDefaults.nearest(folderPictures(), FolderDefaults.placeOf(sources, videoPath))?.first
+
+    private fun folderPictureFor(videoPath: String): PictureAdjustment? =
+        FolderDefaults.nearest(folderPictures(), FolderDefaults.placeOf(sources, videoPath))?.second
+
+    /** Every folder or share with a picture of its own. */
+    fun folderPictures(): Map<FolderPlace, PictureAdjustment> = data.folderPictures.mapNotNull { (key, kept) ->
+        FolderPlace.of(key)?.let { it to adjustmentOf(kept) }
+    }.toMap()
+
+    /**
+     * Keeps [picture] as the picture every video in [place] starts with (the 3D eye and the shape stay each video's
+     * own); null forgets the folder's picture.
+     */
+    fun saveFolderPicture(place: FolderPlace, picture: PictureAdjustment?) {
+        if (picture == null) {
+            data.folderPictures.remove(place.key)
+        } else {
+            val shared = picture.copy(stereo = PictureAdjustment.Stereo.OFF, aspect = AspectOverride.AUTO, logo = null)
+            data.folderPictures[place.key] = overrideOf(shared)
+        }
+        save()
+    }
+
+    /** The folder [videoPath] lies in, as [FolderDefaults] keeps it. */
+    fun folderOf(videoPath: String): FolderPlace = FolderDefaults.placeOf(sources, videoPath)
+
+    private fun adjustmentOf(it: PictureOverride): PictureAdjustment = PictureAdjustment(
+        it.brightness,
+        it.gamma,
+        it.contrast,
+        it.saturation,
+        it.sharpness,
+        it.clarity,
+        it.noise ?: PictureAdjustment.noiseOfLevel(it.denoise),
+        deinterlaceOf(it.deinterlace),
+        upscalerOf(it.upscaler),
+        interpolationOf(it.interpolation),
+        it.fieldRate,
+        runCatching { PictureAdjustment.Stereo.valueOf(it.stereo) }.getOrDefault(PictureAdjustment.Stereo.OFF),
+        it.upscalerStrength,
+        it.deband,
+        it.cropBlackBars,
+        AspectOverride.entries.firstOrNull { a -> a.name == it.aspect } ?: AspectOverride.AUTO,
+        chroma = chromaOf(it.chroma),
+        upscalerModel = it.upscalerModel,
+        upscalerTta = it.upscalerTta,
+        deblock = it.deblock,
+        dering = it.dering,
+        shader = it.shader,
+        temporalDenoise = it.temporalDenoise,
+        dotCrawl = it.dotCrawl,
+    )
+
+    private fun overrideOf(picture: PictureAdjustment): PictureOverride = PictureOverride(
+        picture.brightness,
+        picture.gamma,
+        picture.contrast,
+        picture.saturation,
+        picture.sharpness,
+        picture.clarity,
+        0,
+        picture.noise,
+        picture.deinterlace.name,
+        picture.upscaler.name,
+        picture.interpolation.name,
+        picture.fieldRate,
+        picture.stereo.name,
+        picture.upscalerStrength,
+        picture.deband,
+        picture.cropBlackBars,
+        picture.aspect.name,
+        chroma = picture.chroma.name,
+        upscalerModel = picture.upscalerModel,
+        upscalerTta = picture.upscalerTta,
+        deblock = picture.deblock,
+        dering = picture.dering,
+        shader = picture.shader,
+        temporalDenoise = picture.temporalDenoise,
+        dotCrawl = picture.dotCrawl,
+    )
+
+    /**
+     * Remembers [picture] for [videoPath]; what it would start from anyway — its folder's picture, else the
+     * household's default — (or null) drops the video's own entry.
+     */
     fun savePicture(videoPath: String, picture: PictureAdjustment?) {
         // The logo is the show's, kept for its folder; the rest is the video's own.
         val logo = picture?.logo
@@ -408,36 +479,10 @@ class StateStore(context: Context) {
     }
 
     private fun savePictureOwn(videoPath: String, picture: PictureAdjustment?) {
-        if (picture == null || picture == defaultPicture()) {
+        if (picture == null || picture == basePictureFor(videoPath)) {
             data.picture.remove(videoPath)
         } else {
-            data.picture[videoPath] = PictureOverride(
-                picture.brightness,
-                picture.gamma,
-                picture.contrast,
-                picture.saturation,
-                picture.sharpness,
-                picture.clarity,
-                0,
-                picture.noise,
-                picture.deinterlace.name,
-                picture.upscaler.name,
-                picture.interpolation.name,
-                picture.fieldRate,
-                picture.stereo.name,
-                picture.upscalerStrength,
-                picture.deband,
-                picture.cropBlackBars,
-                picture.aspect.name,
-                chroma = picture.chroma.name,
-                upscalerModel = picture.upscalerModel,
-                upscalerTta = picture.upscalerTta,
-                deblock = picture.deblock,
-                dering = picture.dering,
-                shader = picture.shader,
-                temporalDenoise = picture.temporalDenoise,
-                dotCrawl = picture.dotCrawl,
-            )
+            data.picture[videoPath] = overrideOf(picture)
         }
         save()
     }

@@ -39,7 +39,8 @@ fun HistogramOverlay(histogram: Histogram?, modifier: Modifier = Modifier) {
             if (shown.samples == 0) {
                 "Waiting for a picture…"
             } else {
-                "At full black %.1f %% · at full white %.1f %%".format(shown.clippedBlack * 100, shown.clippedWhite * 100)
+                "At full black %.1f %% · at full white %.1f %%"
+                    .format(shown.clippedBlack * 100, shown.clippedWhite * 100)
             },
             color = Color.White,
             fontSize = 12.sp,

@@ -86,6 +86,7 @@ import com.hawkynt.mediadroid.player.AutoCrop
 import com.hawkynt.mediadroid.player.ChapterSteps
 import com.hawkynt.mediadroid.player.FrameStep
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.library.FolderDefaults
 import com.hawkynt.mediadroid.player.BurnInDrift
 import com.hawkynt.mediadroid.player.Histogram
 import com.hawkynt.mediadroid.player.PictureCrop
@@ -164,10 +165,17 @@ fun PlayerScreen(
             folder.listFiles().orEmpty().filter { it.isFile }.associate { it.name to it.readText() },
         )
     }
-    var picture by remember { mutableStateOf(store.picture) }
+    // The picture this video starts with: its folder's, else the household's (FolderDefaults).
+    var picture by remember { mutableStateOf(store.pictureFor(playing.video)) }
+    // The folder or share whose picture that is, if any has one.
+    var pictureFolder by remember { mutableStateOf(store.pictureFolderOf(playing.video)) }
     // This video's shape where its file's flag is wrong, and the setup of the screen the window is on (a lens).
     var aspect by remember { mutableStateOf(store.aspectOf(playing.video)) }
-    LaunchedEffect(index) { aspect = store.aspectOf(playing.video) }
+    LaunchedEffect(index) {
+        aspect = store.aspectOf(playing.video)
+        picture = store.pictureFor(playing.video)
+        pictureFolder = store.pictureFolderOf(playing.video)
+    }
     var screenSetup by remember { mutableStateOf(store.screenSetup(screen().key)) }
     // MEDIADROID_SHOW=panel: the picture panel open from the start (documentation and checks).
     var panel by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "panel") }
@@ -626,9 +634,23 @@ fun PlayerScreen(
                 picture,
                 onChange = {
                     picture = it
-                    // The logo is the show's, kept for its folder; the rest is the household's.
-                    store.picture = it.copy(logo = null)
+                    // The logo is the show's, kept for its folder; the rest goes to the folder with a picture of its
+                    // own, else to the household.
                     store.saveLogo(playing.video, it.logo)
+                    val place = pictureFolder
+                    val kept = it.copy(logo = null)
+                    if (place != null) store.setFolderPicture(place, kept) else store.picture = kept
+                },
+                folderName = FolderDefaults.label(pictureFolder ?: store.folderOf(playing.video), store.sources),
+                forFolder = pictureFolder != null,
+                onForFolder = { own ->
+                    if (own) {
+                        store.setFolderPicture(store.folderOf(playing.video), picture.copy(logo = null))
+                    } else {
+                        pictureFolder?.let { store.setFolderPicture(it, null) }
+                        picture = store.pictureFor(playing.video)
+                    }
+                    pictureFolder = store.pictureFolderOf(playing.video)
                 },
                 modifier = Modifier.align(Alignment.CenterEnd),
                 tracks = tracks.map { t ->

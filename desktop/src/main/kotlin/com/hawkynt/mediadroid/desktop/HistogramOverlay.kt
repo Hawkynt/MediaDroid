@@ -20,7 +20,8 @@ import com.hawkynt.mediadroid.player.Histogram
 /**
  * The picture's [histogram] over it, beside the picture panel, as on the phone: luma in white, the colour differences
  * Cb in light blue and Cr in pink, on a log scale, each above a dotted yellow line that spans the 256 levels — as
- * DScaler's Histogram filter draws it. Levels outside the video range are dimmer, the ends red where pixels pile up clipped.
+ * DScaler's Histogram filter draws it. Levels outside the video range are dimmer, the ends red where pixels pile up
+ * clipped.
  */
 @Composable
 fun HistogramOverlay(histogram: Histogram?, modifier: Modifier = Modifier) {
@@ -39,7 +40,8 @@ fun HistogramOverlay(histogram: Histogram?, modifier: Modifier = Modifier) {
             if (shown.samples == 0) {
                 "Waiting for a picture…"
             } else {
-                "At full black %.1f %% · at full white %.1f %%".format(shown.clippedBlack * 100, shown.clippedWhite * 100)
+                "At full black %.1f %% · at full white %.1f %%"
+                    .format(shown.clippedBlack * 100, shown.clippedWhite * 100)
             },
             color = Color.White,
             fontSize = 12.sp,
