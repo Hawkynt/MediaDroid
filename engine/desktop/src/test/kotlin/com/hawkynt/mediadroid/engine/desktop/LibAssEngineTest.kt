@@ -43,6 +43,7 @@ class LibAssEngineTest {
     private class SilentSink : AudioSink {
         override fun open(sampleRate: Int, channels: Int) = Unit
         override fun write(pcm: ByteArray) = Thread.sleep(1)
+        override fun available(): Int = Int.MAX_VALUE
         override fun playedMs(): Long = 0
         override fun pause() = Unit
         override fun resume() = Unit

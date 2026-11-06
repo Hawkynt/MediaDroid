@@ -4,6 +4,7 @@ import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.engine.Tracks
+import com.hawkynt.mediadroid.player.PlaybackMath
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -16,30 +17,43 @@ class DesktopPlaybackEngineTest {
     private fun fixture(name: String): String = File(requireNotNull(javaClass.getResource("/$name")).toURI()).path
     private val clip: String = fixture("clip.mp4")
 
-    /** A sound output whose played time the test moves on by hand. */
-    private class ManualSink : AudioSink {
+    /**
+     * A sound output whose played time the test moves on by hand; with a [bufferMs], as deep as JavaSoundSink's, a
+     * write waits while that much is queued and not yet played.
+     */
+    private class ManualSink(private val bufferMs: Long? = null) : AudioSink {
         @Volatile var playedMs = 0L
         @Volatile var flushed = 0
         @Volatile var written = 0L
         @Volatile var peak = 0
+        // Written since the last flush, in bytes.
+        @Volatile private var queued = 0L
+        private fun room(): Long = bufferMs?.let { (it + playedMs) * BYTES_PER_MS - queued } ?: Long.MAX_VALUE
         override fun open(sampleRate: Int, channels: Int) = Unit
         override fun write(pcm: ByteArray) {
+            while (room() < pcm.size) Thread.sleep(1)
             peak = maxOf(peak, peakOf(pcm))
             written += pcm.size
+            queued += pcm.size
             Thread.sleep(1)
         }
+        override fun available(): Int = room().coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
         override fun playedMs(): Long = playedMs
         override fun pause() = Unit
         override fun resume() = Unit
         override fun flush() {
             flushed++
             playedMs = 0
+            queued = 0
         }
         override var volume: Float = 1f
         override fun close() = Unit
     }
 
     private companion object {
+        /** 16-bit stereo at MediaReader.SAMPLE_RATE. */
+        const val BYTES_PER_MS = MediaReader.SAMPLE_RATE / 1000 * 4
+
         /** The loudest sample in 16-bit little-endian PCM. */
         fun peakOf(pcm: ByteArray): Int {
             var peak = 0
@@ -361,6 +375,41 @@ class DesktopPlaybackEngineTest {
             waitFor { engine.picture()?.ptsMs == 400L }
             sink.playedMs = 1000
             waitFor { engine.picture()?.ptsMs == 600L }
+        }
+    }
+
+    @Test
+    fun `a sound set later than the sound output holds still finds the picture due by the sound's clock`() {
+        // Up to Android's +2.5 s, against an output a second deep, as JavaSoundSink is.
+        for (delay in listOf(1_500, PlaybackMath.AUDIO_DELAY_LIMIT_MS)) {
+            val sink = ManualSink(bufferMs = 1_000)
+            val tuning = PlaybackTuning.Mutable().apply { audioDelayMs = delay }
+            DesktopPlaybackEngine(tuning) { sink }.use { engine ->
+                engine.open(MediaRequest(clip))
+                waitFor { engine.isPlaying }
+                // Due at a sound clock of t: the last picture at or before t + delay (the clip's last is at 1.96 s).
+                fun due(t: Long) = minOf((t + delay) / 40 * 40, 1_960L)
+                waitFor { engine.picture()?.ptsMs == due(0) }
+                assertEquals(0L, engine.positionMs)
+                sink.playedMs = 300
+                waitFor { engine.picture()?.ptsMs == due(300) }
+            }
+        }
+    }
+
+    @Test
+    fun `with Film on, a sound set later than the sound output holds still finds the picture due`() {
+        val sink = ManualSink(bufferMs = 1_000)
+        val tuning = PlaybackTuning.Mutable().apply { audioDelayMs = 1_500 }
+        DesktopPlaybackEngine(tuning) { sink }.use { engine ->
+            engine.film = true
+            engine.open(MediaRequest(clip))
+            waitFor { engine.isPlaying }
+            // Film holds a few pictures and spreads a cycle's over its own time: a picture of the last cycle due.
+            waitFor { (engine.picture()?.ptsMs ?: 0L) in 1_300L..1_500L }
+            assertEquals(0L, engine.positionMs)
+            sink.playedMs = 300
+            waitFor { (engine.moment()?.shown?.ptsMs ?: 0L) in 1_600L..1_800L }
         }
     }
 }

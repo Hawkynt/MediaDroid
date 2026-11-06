@@ -425,9 +425,10 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.
 - Sound settings in the same panel, through the very sample code Android runs (`LoudnessChain` in `:core:player`):
   the loudness gain (−12 … +12 dB), even loudness (ReplayGain from the tags FFmpeg reads, else EBU R128 measured as it
-  plays), night mode for the evening, and the audio delay in 50 ms steps with Sooner and Later; all but night mode
-  are kept for the next video. A sound set sooner than the picture holds that many more decoded pictures back, up to
-  half a gigabyte of them, and a sound set later by more than about a second leaves the picture behind.
+  plays), night mode for the evening, and the audio delay, −2.5 … +2.5 s as on the phone, in 50 ms steps with Sooner
+  and Later; all but night mode are kept for the next video. A sound set sooner than the picture holds that many more
+  decoded pictures back, up to half a gigabyte of them; a sound set later is held that long before the sound output,
+  so the reader runs ahead to the pictures due.
 - Settings, watched state and secrets stay on the machine: in the user's application-data folder, the settings and
   watched marks as JSON (`settings.json`, taken over once from the `state.properties` of earlier builds), the passwords
   encrypted by the system (DPAPI on Windows, the Secret Service on Linux; where no Secret Service runs, in a file only
