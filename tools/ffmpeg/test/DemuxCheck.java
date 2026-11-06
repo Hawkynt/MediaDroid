@@ -1,6 +1,7 @@
 import com.hawkynt.mediadroid.ffmpeg.FfmpegDemuxer;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.util.Locale;
 
 /**
  * Prints what FfmpegDemuxer finds in each file — the container, every stream, how many packets and
@@ -47,7 +48,7 @@ public final class DemuxCheck {
                   + " format=" + s.rawFormat
                   + " " + s.width + "x" + s.height + " " + s.sampleRate + "Hz " + s.channels + "ch"
                   + " params=" + s.parameters.length + "B"
-                  + (s.pixelAspectRatio != 1f ? String.format(" pixel=%.4f", s.pixelAspectRatio) : ""));
+                  + (s.pixelAspectRatio != 1f ? String.format(Locale.ROOT, " pixel=%.4f", s.pixelAspectRatio) : ""));
         }
         long[] packets = new long[streams.length];
         long[] keys = new long[streams.length];

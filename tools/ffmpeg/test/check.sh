@@ -39,8 +39,10 @@ g++ -O1 -I"$SRC/jni" -I"$P/include" "$HERE/codecpar_check.cc" $LIBS -o "$OUT/cod
   echo "$HERE/DemuxCheck.java"; } | sed 's/.*/"&"/' > "$OUT/sources.txt"
 "$JAVA_HOME/bin/javac" -d "$OUT/classes" @"$OUT/sources.txt"
 
-FILES=$(ls "$S"/* | sort)
-"$JAVA_HOME/bin/java" -Dffmpeg.lib="$OUT/libffmpegJNI.so" -Dframes.dir="$OUT/frames" -cp "$OUT/classes" \
+# In bytes order: a German collation puts sample-full.y4m after sample.y4m.
+FILES=$(ls "$S"/* | LC_ALL=C sort)
+# Under a German locale whatever the machine's: the report must not change with the decimal separator (#329).
+"$JAVA_HOME/bin/java" -Duser.language=de -Duser.country=DE -Dffmpeg.lib="$OUT/libffmpegJNI.so" -Dframes.dir="$OUT/frames" -cp "$OUT/classes" \
   DemuxCheck $FILES > "$OUT/demux.txt"
 {
   echo "== DemuxCheck (FfmpegDemuxer over JNI)"
