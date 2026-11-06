@@ -388,6 +388,16 @@ JNIEXPORT jintArray JNICALL Java_com_hawkynt_mediadroid_ffmpeg_FfmpegDemuxer_nFr
     SwsContext* scaler = sws_getContext(frame->width, frame->height, (AVPixelFormat)frame->format, width,
                                         height, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
     if (scaler) {
+      // The source's range from the frame: sws_getContext takes limited for every YUV format but MJPEG's
+      // yuvj ones, so a full-range yuv420p frame would come out with its darks and lights clipped.
+      int* inverse = nullptr;
+      int* table = nullptr;
+      int sourceRange = 0, targetRange = 0, brightness = 0, contrast = 0, saturation = 0;
+      if (frame->color_range == AVCOL_RANGE_JPEG &&
+          sws_getColorspaceDetails(scaler, &inverse, &sourceRange, &table, &targetRange, &brightness, &contrast,
+                                   &saturation) >= 0) {
+        sws_setColorspaceDetails(scaler, inverse, 1, table, targetRange, brightness, contrast, saturation);
+      }
       pixels = env->NewIntArray(width * height);
       jint* out = pixels ? env->GetIntArrayElements(pixels, nullptr) : nullptr;
       if (out) {

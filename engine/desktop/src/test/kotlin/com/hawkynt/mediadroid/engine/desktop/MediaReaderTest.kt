@@ -85,6 +85,24 @@ class MediaReaderTest {
         }
     }
 
+    private fun firstPicture(resource: String): MediaReader.Picture =
+        MediaReader(File(requireNotNull(javaClass.getResource(resource)).toURI()).path).use { r ->
+            generateSequence { r.read() }.filterIsInstance<MediaReader.Picture>().first()
+        }
+
+    @Test
+    fun `a full-range yuv420p picture comes out like the same picture in limited range`() {
+        // FFmpeg's test pattern, 64 × 48, yuv420p tagged pc (0..255) and tv (16..235), FFV1 so nothing is lost.
+        val full = firstPicture("/full-range.mkv")
+        val limited = firstPicture("/limited-range.mkv")
+        assertEquals(limited.rgba.size, full.rgba.size)
+        // Read as limited, a full-range picture's darks and lights clip: the difference runs to dozens of steps.
+        val worst = full.rgba.indices.maxOf {
+            Math.abs((full.rgba[it].toInt() and 255) - (limited.rgba[it].toInt() and 255))
+        }
+        assertTrue("worst difference $worst", worst <= 4)
+    }
+
     private fun cues(path: String): List<MediaReader.Cue> = MediaReader(path).use { r ->
         r.selectText(r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt())
         generateSequence { r.read() }.filterIsInstance<MediaReader.Cue>().toList()

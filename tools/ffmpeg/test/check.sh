@@ -27,6 +27,8 @@ $F $A -c:v mpeg4 -c:a mp2 -ar 48000 "$S/sample.nut"
 $F $A -c:v mpeg2video -c:a mp2 -ar 48000 "$S/sample.wtv"
 $F -c:v mpeg2video -f mpeg2video "$S/sample.m2v"
 $F -pix_fmt yuv420p "$S/sample.y4m"
+# Full range (0..255) in plain yuv420p, not MJPEG's yuvj: the thumbnail must take the range from the frame.
+$F -vf scale=out_range=pc -pix_fmt yuv420p -color_range pc "$S/sample-full.y4m"
 
 LIBS="$P/lib/libavformat.a $P/lib/libavcodec.a $P/lib/libswscale.a $P/lib/libswresample.a $P/lib/libavutil.a
   -lz -lm -lpthread"

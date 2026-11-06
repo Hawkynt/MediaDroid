@@ -19,6 +19,7 @@ import org.bytedeco.ffmpeg.swresample.SwrContext
 import org.bytedeco.ffmpeg.swscale.SwsContext
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.DoublePointer
+import org.bytedeco.javacpp.IntPointer
 import org.bytedeco.javacpp.PointerPointer
 
 /**
@@ -276,11 +277,13 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
                 w, h, frame.format(), w, h, target, swscale.SWS_BILINEAR,
                 null, null, null as DoublePointer?,
             )
-            if (deep) {
-                val bt2020 = swscale.sws_getCoefficients(swscale.SWS_CS_BT2020)
-                val full = if (frame.color_range() == avutil.AVCOL_RANGE_JPEG) 1 else 0
-                swscale.sws_setColorspaceDetails(sws, bt2020, full, bt2020, 1, 0, 1 shl 16, 1 shl 16)
-            }
+            // The source's range from the frame: sws_getContext assumes limited for every YUV format but MJPEG's
+            // yuvj, so a full-range yuv420p frame would come out with its blacks and whites clipped.
+            val full = frame.color_range() == avutil.AVCOL_RANGE_JPEG || sourceRange(sws) == 1
+            val coefficients = swscale.sws_getCoefficients(if (deep) swscale.SWS_CS_BT2020 else swscale.SWS_CS_DEFAULT)
+            swscale.sws_setColorspaceDetails(
+                sws, coefficients, if (full) 1 else 0, coefficients, 1, 0, 1 shl 16, 1 shl 16,
+            )
             avutil.av_frame_unref(rgbaFrame)
             rgbaFrame.width(w).height(h).format(target)
             avutil.av_frame_get_buffer(rgbaFrame, 1)
@@ -327,6 +330,15 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     companion object {
         /** The rate all sound is resampled to for the output. */
         const val SAMPLE_RATE = 48_000
+
+        /** The source range [context] was set up with: 1 for full (MJPEG's yuvj formats), 0 for limited. */
+        private fun sourceRange(context: SwsContext?): Int {
+            val range = IntPointer(1L)
+            val unused = IntPointer(1L)
+            val tables = PointerPointer<IntPointer>(1L)
+            swscale.sws_getColorspaceDetails(context, tables, range, tables, unused, unused, unused, unused)
+            return range.get()
+        }
 
         init {
             // FFmpeg's notes about estimated rates and durations are for its own command line, not a player's log.
