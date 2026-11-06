@@ -212,6 +212,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     var cropShare: Pair<Float, Float> = 1f to 1f
         private set
 
+    /**
+     * The black bars' crop in effect and the size of the picture it is a part of (the eye's), null without one — for
+     * the subtitles libass lays out on the whole video (AssOverlayView).
+     */
+    @Volatile
+    var cropArea: Pair<PictureCrop, PictureSize>? = null
+        private set
+
     /** Told on this thread whenever [cropShare] changes. */
     @Volatile
     var onCrop: ((widthShare: Float, heightShare: Float) -> Unit)? = null
@@ -248,6 +256,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         publishedCrop = now
         val share = now?.let { it.width.toFloat() / barCropFor.width to it.height.toFloat() / barCropFor.height }
             ?: (1f to 1f)
+        cropArea = now?.let { it to barCropFor }
         cropShare = share
         onCrop?.invoke(share.first, share.second)
     }

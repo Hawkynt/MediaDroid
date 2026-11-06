@@ -171,12 +171,15 @@ void Track::fontsIfChanged() {
         systemFonts_ ? ASS_FONTPROVIDER_AUTODETECT : ASS_FONTPROVIDER_NONE, nullptr, 1);
 }
 
-bool Track::render(int64_t timeMs, int width, int height, int storageWidth, int storageHeight, Overlay& out) {
+bool Track::render(int64_t timeMs, int width, int height, int storageWidth, int storageHeight, Overlay& out,
+    int marginTop, int marginBottom, int marginLeft, int marginRight) {
     std::lock_guard<std::mutex> guard(lock_);
     out = Overlay();
     if (!track_ || width <= 0 || height <= 0) return false;
     fontsIfChanged();
     ass_set_frame_size(renderer_, width, height);
+    ass_set_margins(renderer_, marginTop, marginBottom, marginLeft, marginRight);
+    ass_set_use_margins(renderer_, marginTop != 0 || marginBottom != 0 || marginLeft != 0 || marginRight != 0);
     ass_set_storage_size(renderer_, storageWidth > 0 ? storageWidth : width, storageHeight > 0 ? storageHeight : height);
     int change = 0;
     const ASS_Image* images = ass_render_frame(renderer_, track_, timeMs, &change);

@@ -46,8 +46,9 @@ object LibAss {
     external fun flush(handle: Long)
 
     /**
-     * The track at [timeMs] for a frame [width] × [height]: null where it is the picture drawn last, else x, y, width
-     * and height of the box that holds it, then its pixels (0xAARRGGBB, rows from the top) — width 0 for nothing.
+     * The track at [timeMs] for a frame [width] × [height] — the whole video reaching the margins past it (0 or below,
+     * [AssFrame]) where it shows part of it: null where it is the picture drawn last, else x, y, width and height of
+     * the box that holds it, then its pixels (0xAARRGGBB, rows from the top) — width 0 for nothing.
      */
     external fun render(
         handle: Long,
@@ -56,5 +57,9 @@ object LibAss {
         height: Int,
         storageWidth: Int,
         storageHeight: Int,
+        marginTop: Int,
+        marginBottom: Int,
+        marginLeft: Int,
+        marginRight: Int,
     ): IntArray?
 }

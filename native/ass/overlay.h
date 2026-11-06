@@ -62,9 +62,12 @@ public:
     void flush();
 
     // The track at [timeMs] drawn for a frame [width] × [height], the video's own pixels [storageWidth] ×
-    // [storageHeight] (for the shapes the script's resolution implies; 0 for the frame's). Returns whether the picture
-    // differs from the last one drawn; [out] is filled either way.
-    bool render(int64_t timeMs, int width, int height, int storageWidth, int storageHeight, Overlay& out);
+    // [storageHeight] (for the shapes the script's resolution implies; 0 for the frame's). Where the frame shows only
+    // part of the video, the margins say how far the whole video reaches past it on each side (0 or below): signs keep
+    // their place on the whole video, lines without one stay inside the frame (libass's use_margins). Returns whether
+    // the picture differs from the last one drawn; [out] is filled either way.
+    bool render(int64_t timeMs, int width, int height, int storageWidth, int storageHeight, Overlay& out,
+        int marginTop = 0, int marginBottom = 0, int marginLeft = 0, int marginRight = 0);
 
 private:
     void fontsIfChanged();

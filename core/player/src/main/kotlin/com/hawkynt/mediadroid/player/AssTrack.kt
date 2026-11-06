@@ -44,11 +44,22 @@ class AssTrack : AutoCloseable {
      * The track at [timeMs] drawn for a frame [width] × [height] — the size it is shown at, for sharp text — over a
      * video of [videoWidth] × [videoHeight] pixels (0 for the frame's); null where the picture is the one drawn last.
      */
+    fun render(timeMs: Long, width: Int, height: Int, videoWidth: Int = 0, videoHeight: Int = 0): AssPicture? =
+        render(timeMs, AssFrame(0, 0, width, height), videoWidth, videoHeight)
+
+    /**
+     * The track at [timeMs] drawn for [frame] — the part of the video the screen shows, the whole video reaching its
+     * margins past it — over a video of [videoWidth] × [videoHeight] pixels (0 for the frame's): the picture's box in
+     * the frame's own pixels (its x and y not added); null where the picture is the one drawn last.
+     */
     @Synchronized
-    fun render(timeMs: Long, width: Int, height: Int, videoWidth: Int = 0, videoHeight: Int = 0): AssPicture? {
+    fun render(timeMs: Long, frame: AssFrame, videoWidth: Int = 0, videoHeight: Int = 0): AssPicture? {
         val h = handle
         if (h == 0L) return null
-        return LibAss.render(h, timeMs, width, height, videoWidth, videoHeight)?.let(AssPicture::of)
+        return LibAss.render(
+            h, timeMs, frame.width, frame.height, videoWidth, videoHeight,
+            frame.marginTop, frame.marginBottom, frame.marginLeft, frame.marginRight,
+        )?.let(AssPicture::of)
     }
 
     @Synchronized

@@ -93,13 +93,18 @@ JNIEXPORT void JNICALL Java_com_hawkynt_mediadroid_player_LibAss_flush(JNIEnv*, 
     track(handle)->flush();
 }
 
-// The track at [timeMs] for a frame [width] × [height] (the video's own pixels [storageWidth] × [storageHeight]): null
+// The track at [timeMs] for a frame [width] × [height] (the video's own pixels [storageWidth] × [storageHeight]; the
+// whole video reaching the margins past the frame, 0 or below, where the frame shows part of it): null
 // where the picture is the one drawn last, else x, y, width and height of the box that holds it followed by its pixels
 // as 0xAARRGGBB, rows from the top — width 0 where nothing shows.
 JNIEXPORT jintArray JNICALL Java_com_hawkynt_mediadroid_player_LibAss_render(
-    JNIEnv* env, jobject, jlong handle, jlong timeMs, jint width, jint height, jint storageWidth, jint storageHeight) {
+    JNIEnv* env, jobject, jlong handle, jlong timeMs, jint width, jint height, jint storageWidth, jint storageHeight,
+    jint marginTop, jint marginBottom, jint marginLeft, jint marginRight) {
     Overlay overlay;
-    if (!track(handle)->render(timeMs, width, height, storageWidth, storageHeight, overlay)) return nullptr;
+    if (!track(handle)->render(timeMs, width, height, storageWidth, storageHeight, overlay, marginTop, marginBottom,
+            marginLeft, marginRight)) {
+        return nullptr;
+    }
     const jsize size = static_cast<jsize>(4 + overlay.pixels.size());
     jintArray made = env->NewIntArray(size);
     if (!made) return nullptr;

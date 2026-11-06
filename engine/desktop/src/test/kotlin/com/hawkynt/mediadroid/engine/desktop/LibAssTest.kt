@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.engine.desktop
 
+import com.hawkynt.mediadroid.player.AssFrame
 import com.hawkynt.mediadroid.player.AssPicture
 import com.hawkynt.mediadroid.player.AssTrack
 import com.hawkynt.mediadroid.player.LibAss
@@ -132,6 +133,32 @@ class LibAssTest {
             listOf(actual.x, actual.y, actual.width, actual.height),
         )
         assertTrue("the pictures differ", expected.pixels.contentEquals(actual.pixels))
+    }
+
+    @Test
+    fun `a frame showing part of the video keeps signs in place and lines inside`() {
+        // The whole video is 640 x 360; the frame shows rows 60 to 300 of it (black bars cropped, or Fill).
+        val part = AssFrame.of(0, 0, WIDTH, 240, 0f, -60f, WIDTH.toFloat(), 300f)!!
+        AssTrack().use { track ->
+            track.addFont("NotoSans-Basic.ttf", resource("NotoSans-Basic.ttf"))
+            val script = String(resource("styled.ass"))
+            track.header(script.substringBefore("Dialogue:").toByteArray())
+            track.event("0,0,Default,,0,0,0,,Hello there".toByteArray(), 0, 1000)
+            track.event("1,0,Default,,0,0,0,,{\\an5\\pos(320,150)}Sign".toByteArray(), 2000, 1000)
+            track.event("2,0,Default,,0,0,0,,{\\an5\\pos(320,20)}Above".toByteArray(), 4000, 1000)
+
+            // A line without a place of its own: inside the frame, at its foot.
+            val line = track.render(500, part, WIDTH, HEIGHT)!!
+            assertTrue(!line.isEmpty && line.y + line.height <= part.height && line.y > part.height / 2)
+            // A sign: exactly where it is on the whole video, moved up by the 60 rows cut away above.
+            val whole = track.render(2500, WIDTH, HEIGHT, WIDTH, HEIGHT)!!
+            val shown = track.render(2500, part, WIDTH, HEIGHT)!!
+            assertEquals(listOf(whole.x, whole.y - 60, whole.width, whole.height),
+                listOf(shown.x, shown.y, shown.width, shown.height))
+            assertTrue(whole.pixels.contentEquals(shown.pixels))
+            // A sign on the part cut away does not show.
+            assertTrue(track.render(4500, part, WIDTH, HEIGHT)!!.isEmpty)
+        }
     }
 
     /** The largest difference of two ARGB pixels' alpha or premultiplied colours. */

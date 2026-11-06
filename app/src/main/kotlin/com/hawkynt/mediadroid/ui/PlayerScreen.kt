@@ -465,6 +465,22 @@ fun PlayerScreen(
         val (pictureWidth, pictureHeight) = PictureLayout.size(fit, drawn, w, h)
         return ScreenWarp.of(setup, ScreenRect.centred(pictureWidth, pictureHeight, w, h), panorama)
     }
+    // Where the picture is drawn on this view when a keystone has the stage draw the whole screen; null otherwise.
+    fun PlayerView.placeFor(video: androidx.media3.common.VideoSize): ScreenRect? {
+        val setup = store.screenSetup(screenKey(display))
+        if (!setup.keystoned || !warpShown.wholeScreen) return null
+        val drawn = drawnAspect(video, cropShare, picture.aspect, setup.shape) ?: return null
+        val w = rootView.width
+        val h = rootView.height
+        if (w <= 0 || h <= 0) return null
+        val (pictureWidth, pictureHeight) = PictureLayout.size(fit, drawn, w, h)
+        return ScreenRect.centred(pictureWidth, pictureHeight, w, h)
+    }
+    // The stage's crop itself and the size of the picture it is part of, for the ASS subtitles laid out on the whole
+    // video (AssOverlayView); null without.
+    val assCrop = remember {
+        arrayOfNulls<Pair<com.hawkynt.mediadroid.player.PictureCrop, com.hawkynt.mediadroid.player.PictureSize>>(1)
+    }
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     // Short-lived on-screen confirmation of a gesture: "+15 s", "Volume 40 %".
@@ -969,11 +985,14 @@ fun PlayerScreen(
         if (onSecondScreen && display != null) {
             presentation = VideoPresentation(context, display, player).also {
                 it.show()
+                val view = it.playerView
                 com.hawkynt.mediadroid.player.AssOverlayView.attach(
-                    it.playerView,
+                    view,
                     engine.assSubtitles,
                     positionMs = { player.currentPosition - engine.tuning.subtitleDelayMs },
                     videoSize = { player.videoSize.width to player.videoSize.height },
+                    crop = { assCrop[0] },
+                    place = { view.placeFor(player.videoSize) },
                 )
             }
             darkPhone.secondScreen(true)
@@ -1192,6 +1211,7 @@ fun PlayerScreen(
         // Only a picture drawn by the stage is cropped, or panoramic.
         cropShare = if (routedTo[0] != null) stage.cropShare else 1f to 1f
         warpShown = if (routedTo[0] != null) stage.warp else ScreenWarp.None
+        assCrop[0] = if (routedTo[0] != null) stage.cropArea else null
     }
     freshSurface[0] = {
         val stage = filterStage[0]
@@ -1415,6 +1435,8 @@ fun PlayerScreen(
                         engine.assSubtitles,
                         positionMs = { player.currentPosition - engine.tuning.subtitleDelayMs },
                         videoSize = { player.videoSize.width to player.videoSize.height },
+                        crop = { assCrop[0] },
+                        place = { placeFor(player.videoSize) },
                     )
                 }
             },
