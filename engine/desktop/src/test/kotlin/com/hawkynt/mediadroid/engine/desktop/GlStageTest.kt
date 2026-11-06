@@ -496,8 +496,9 @@ class GlStageTest {
 
     @Test
     fun `temporal denoising agrees with the reference, the pictures either side read as decoded`() {
+        // Too low for the motion search's two blocks: the pictures either side are read as they are.
         val w = 48
-        val h = 32
+        val h = 24
         var state = 7
         fun grainy(k: Int) = MediaReader.Picture(k * 40L, w, h, ByteArray(w * h * 4) { i ->
             state = state * 1103515245 + 12345
@@ -506,7 +507,8 @@ class GlStageTest {
         val frames = (0..2).map(::grainy)
         val look = PictureAdjustment(temporalDenoise = 0.5f)
         val out = stage.process(Moment(frames[1], frames[0], frames[2]), look, w, h)
-        val params = requireNotNull(look.temporalDenoiseParams())
+        // The noise level any picture before read.
+        val params = requireNotNull(look.temporalDenoiseParams(stage.noiseLevel.sigma))
         fun channel(p: MediaReader.Picture, c: Int) = ByteArray(w * h) { p.rgba[it * 4 + c] }
         var worst = 0
         var changed = 0
@@ -546,6 +548,57 @@ class GlStageTest {
         }
         assertTrue("off by $worst", worst <= 1)
         assertTrue(!expected.contentEquals(rgb(frames[1])))
+    }
+
+    @Test
+    fun `temporal denoising moves the pictures either side along the motion, as the reference does`() {
+        val w = 256
+        val h = 192
+        val random = java.util.Random(9)
+        // The waves panning four pixels a frame, with grain of three steps.
+        fun grainy(k: Int): MediaReader.Picture {
+            val clean = waves(w, h, 4 * k, 0, k * 40L)
+            val rgba = clean.rgba.copyOf()
+            for (i in rgba.indices) {
+                if (i % 4 == 3) continue
+                rgba[i] = ((rgba[i].toInt() and 255) + 3.0 * random.nextGaussian()).roundToInt().coerceIn(0, 255)
+                    .toByte()
+            }
+            return MediaReader.Picture(clean.ptsMs, w, h, rgba)
+        }
+        val frames = (0..2).map(::grainy)
+        val look = PictureAdjustment(temporalDenoise = 0.5f)
+        val moment = Moment(frames[1], frames[0], frames[2])
+        stage.process(moment, look, w, h)
+        val deadline = System.nanoTime() + 5_000_000_000L
+        fun vectors() = listOf(
+            stage.denoiseMotion.vectors(frames[0], frames[1]),
+            stage.denoiseMotion.vectors(frames[1], frames[2]),
+        )
+        while (vectors().any { it == null } && System.nanoTime() < deadline) Thread.sleep(20)
+        val (before, after) = vectors().map { requireNotNull(it) { "the search never came in" } }
+        val out = stage.process(moment, look, w, h)
+        val params = requireNotNull(TemporalDenoise.params(0.5f, stage.noiseLevel.sigma))
+        assertTrue("noise read ${stage.noiseLevel.sigma}", abs(requireNotNull(stage.noiseLevel.sigma) - 3.0) < 1.0)
+        fun channel(p: MediaReader.Picture, c: Int) = ByteArray(w * h) { p.rgba[it * 4 + c] }
+        var worst = 0
+        var off = 0
+        var changed = 0
+        for (c in 0..2) {
+            val moved =
+                TemporalDenoise.aligned(channel(frames[0], c), w, h, before.motion(), TemporalDenoise.Side.BEFORE)
+            val ahead =
+                TemporalDenoise.aligned(channel(frames[2], c), w, h, after.motion(), TemporalDenoise.Side.AFTER)
+            val expected = TemporalDenoise.apply(moved, channel(frames[1], c), ahead, params)
+            for (i in 0 until w * h) {
+                val d = abs((out.rgba[i * 4 + c].toInt() and 255) - (expected[i].toInt() and 255))
+                worst = maxOf(worst, d)
+                if (d > 0) off++
+                if (expected[i] != frames[1].rgba[i * 4 + c]) changed++
+            }
+        }
+        assertTrue("off by $worst at $off values", worst <= 1)
+        assertTrue("only $changed changed", changed > w * h)
     }
 
     @Test

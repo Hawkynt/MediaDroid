@@ -4,6 +4,7 @@ import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.MotionInterpolation
 import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.SearchScale
+import com.hawkynt.mediadroid.player.TemporalDenoise
 import com.hawkynt.mediadroid.player.YuvMatrix
 import java.util.concurrent.Executors
 
@@ -16,14 +17,24 @@ import java.util.concurrent.Executors
  */
 class MotionSearch : AutoCloseable {
 
-    /** One pair's vectors: [grid] blocks across and down, as bytes (x + 128, y + 128) per block; [cut] a scene cut. */
+    /**
+     * One pair's vectors: [grid] blocks across and down, as bytes (x + 128, y + 128) per block; [cut] a scene cut;
+     * [noise] the later picture's noise level in 8-bit steps (TemporalDenoise.noiseSigma on the luma searched).
+     */
     class Vectors(
         val gridWidth: Int,
         val gridHeight: Int,
         val scale: Int,
         val bytes: ByteArray,
         val cut: Boolean,
-    )
+        val noise: Double = 0.0,
+    ) {
+        /** The vectors as TemporalDenoise reads them. */
+        fun motion() = TemporalDenoise.Motion(
+            gridWidth, gridHeight, scale,
+            IntArray(gridWidth * gridHeight * 2) { (bytes[(it / 2) * 4 + it % 2].toInt() and 255) - VECTOR_ZERO },
+        )
+    }
 
     private class Pair(val earlier: MediaReader.Picture, val later: MediaReader.Picture) {
         @Volatile var vectors: Vectors? = null
@@ -68,6 +79,11 @@ class MotionSearch : AutoCloseable {
         return pair.vectors
     }
 
+    /** Whether the search between [earlier] and [later] has ended: with vectors, or none for pictures too small. */
+    @Synchronized
+    fun ended(earlier: MediaReader.Picture, later: MediaReader.Picture): Boolean =
+        pairs.firstOrNull { it.earlier === earlier && it.later === later }?.done == true
+
     private fun search(pair: Pair, region: PictureCrop, intervalNanos: Long) {
         val width = region.width
         val height = region.height
@@ -94,7 +110,8 @@ class MotionSearch : AutoCloseable {
             bytes[k * 4] = (search.vectors[k * 2] + VECTOR_ZERO).toByte()
             bytes[k * 4 + 1] = (search.vectors[k * 2 + 1] + VECTOR_ZERO).toByte()
         }
-        pair.vectors = Vectors(search.blocksWide, search.blocksHigh, width / a.width, bytes, cut)
+        val noise = TemporalDenoise.noiseSigma(b)
+        pair.vectors = Vectors(search.blocksWide, search.blocksHigh, width / a.width, bytes, cut, noise)
         pair.done = true
         pace.report(took, intervalNanos, pair.late)
     }
