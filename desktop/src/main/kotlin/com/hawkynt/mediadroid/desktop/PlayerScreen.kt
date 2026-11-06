@@ -85,6 +85,7 @@ import com.hawkynt.mediadroid.player.AutoCrop
 import com.hawkynt.mediadroid.player.ChapterSteps
 import com.hawkynt.mediadroid.player.FrameStep
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.Histogram
 import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.PictureFit
 import com.hawkynt.mediadroid.player.PictureLayout
@@ -166,6 +167,9 @@ fun PlayerScreen(
     var fit by remember { mutableStateOf(PictureFit.FIT) }
     // A test pattern shown instead of the video, the video paused meanwhile; null for the video.
     var pattern by remember { mutableStateOf<TestPattern?>(null) }
+    // The histogram of the picture on screen, off until switched on in the panel; its last count.
+    var histogramShown by remember { mutableStateOf(false) }
+    var histogram by remember { mutableStateOf<Histogram?>(null) }
     LaunchedEffect(pattern) { if (pattern != null) engine.pause() }
     var shownSize by remember { mutableStateOf(IntSize.Zero) }
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -284,6 +288,7 @@ fun PlayerScreen(
         var shownVisible: IntArray? = null
         // A test pattern drawn at the window's size, kept while the pattern and the size stay.
         var still: MediaReader.Picture? = null
+        var histogramAtMs = 0L
         var stillOf: TestPattern? = null
         while (true) {
             withFrameNanos { }
@@ -438,6 +443,14 @@ fun PlayerScreen(
                     }
                     shownPicture[0] = shown
                     frame = bitmap.of(shown)
+                    // Counted twice a second off the window's thread, as the stage drew the picture.
+                    val nowMs = System.currentTimeMillis()
+                    if (histogramShown && nowMs - histogramAtMs >= HISTOGRAM_MS) {
+                        histogramAtMs = nowMs
+                        histogram = withContext(Dispatchers.Default) {
+                            Histogram.of(shown.rgba, shown.width, shown.height)
+                        }
+                    }
                 }
             }
             position = engine.positionMs
@@ -572,6 +585,9 @@ fun PlayerScreen(
         secondLine?.let { line ->
             SubtitleLine(line, Modifier.align(Alignment.TopCenter).padding(start = 48.dp, end = 48.dp, top = 40.dp))
         }
+        if (histogramShown) {
+            HistogramOverlay(histogram, Modifier.align(Alignment.TopStart).padding(top = 72.dp, start = 12.dp))
+        }
         if (panel) {
             PicturePanel(
                 picture,
@@ -604,6 +620,11 @@ fun PlayerScreen(
                 onFit = { fit = it },
                 pattern = pattern,
                 onPattern = { pattern = it },
+                histogramShown = histogramShown,
+                onHistogram = {
+                    histogramShown = it
+                    if (!it) histogram = null
+                },
                 aspect = aspect,
                 onAspect = {
                     aspect = it
@@ -774,6 +795,9 @@ private fun clock(ms: Long): String {
 }
 
 private const val CONTROLS_MS = 3_000L
+
+/** How often the histogram is counted. */
+private const val HISTOGRAM_MS = 500L
 
 /** How long a snapshot's file stays named on screen. */
 private const val SNAPSHOT_NOTE_MS = 5_000L

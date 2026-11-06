@@ -45,6 +45,8 @@ fun PlaybackInfoDialog(
     statisticsShown: Boolean,
     onStatistics: (Boolean) -> Unit,
     onDismiss: () -> Unit,
+    histogramShown: Boolean = false,
+    onHistogram: (Boolean) -> Unit = {},
 ) {
     val file = File(videoPath)
     AlertDialog(
@@ -110,6 +112,17 @@ fun PlaybackInfoDialog(
                 }
                 Text(
                     "Frame times, jitter and judder, the processor's work and Motion's search, over the last seconds.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Histogram over the picture", fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = histogramShown, onCheckedChange = onHistogram)
+                }
+                Text(
+                    "How often each brightness and colour occurs on screen, to set brightness and contrast in the " +
+                        "gear without clipping: the darkest peak should sit just right of the left end, the brightest " +
+                        "just left of the right end.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
