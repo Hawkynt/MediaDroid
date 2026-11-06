@@ -428,11 +428,13 @@ class DesktopPlaybackEngine(
     /**
      * The moment due now by the clock: the latest picture not later than it (paused after a seek, the first from
      * there), the one shown before it, the two after it decoded already, and how far the clock is between it and the
-     * next; null before the first.
+     * next; null before the first. [aheadMs]: how far ahead of the clock the moment is seen — half the screen's
+     * refresh (RefreshPeriod), as Android's stage shows a picture due within half a refresh at that refresh, so a
+     * picture is on the screen as near its time as the refreshes allow rather than up to a whole one late.
      */
     @Synchronized
-    fun moment(): Moment? {
-        val now = positionMs + soundDelayMs()
+    fun moment(aheadMs: Long = 0): Moment? {
+        val now = positionMs + soundDelayMs() + aheadMs
         while (true) {
             val next = pictures.peekFirst() ?: break
             if (next.ptsMs > now) break

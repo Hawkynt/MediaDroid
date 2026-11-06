@@ -131,6 +131,24 @@ class DesktopPlaybackEngineTest {
     }
 
     @Test
+    fun `asked for a moment a little ahead, the picture due by then is the one shown`() {
+        // The screen asks half a refresh ahead (RefreshPeriod): a picture due within it shows at this refresh, not
+        // a whole refresh late at the next.
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(clip))
+            waitFor { engine.picture()?.ptsMs == 0L }
+            sink.playedMs = 112
+            waitFor { engine.moment()?.shown?.ptsMs == 80L }
+            // Once decoded, the picture at 120 is due 8 ms ahead, where the clock alone still shows 80's.
+            waitFor { engine.moment(aheadMs = 8)?.shown?.ptsMs == 120L }
+            assertEquals(0f, requireNotNull(engine.moment(aheadMs = 8)).phase, 1e-6f)
+            // The position itself stays the sound's.
+            assertEquals(112L, engine.positionMs)
+        }
+    }
+
+    @Test
     fun `with Film on, progressive pictures still come through, every one of a cycle without a repeat`() {
         val sink = ManualSink()
         DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
