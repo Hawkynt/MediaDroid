@@ -331,6 +331,7 @@ internal data class PictureSettings(
     val dering: Float = PictureAdjustment.Neutral.dering,
     /** An mpv user shader's file name in the shaders folder (MpvShaders), or null. */
     val shader: String? = null,
+    val temporalDenoise: Float = PictureAdjustment.Neutral.temporalDenoise,
 ) {
     fun toAdjustment(): PictureAdjustment {
         val p = PictureAdjustment.Neutral
@@ -358,6 +359,7 @@ internal data class PictureSettings(
             deblock = deblock,
             dering = dering,
             shader = shader,
+            temporalDenoise = temporalDenoise,
         )
     }
 
@@ -384,6 +386,7 @@ internal data class PictureSettings(
             deblock = p.deblock,
             dering = p.dering,
             shader = p.shader,
+            temporalDenoise = p.temporalDenoise,
         )
     }
 }

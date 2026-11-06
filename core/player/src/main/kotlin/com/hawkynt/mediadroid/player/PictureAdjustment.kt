@@ -81,6 +81,12 @@ data class PictureAdjustment(
      * run on the picture before and after it is enlarged, as mpv runs them.
      */
     val shader: String? = null,
+    /**
+     * Temporal denoising, 0 (off) to 1: each pixel averaged with the frames before and after it where it barely
+     * changed (see [TemporalDenoise]) — grain removed from still parts without softening them, motion left alone;
+     * FFmpeg's thresholds at a quarter, four times as tolerant at 1. On Android the picture then runs one frame behind.
+     */
+    val temporalDenoise: Float = 0f,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
@@ -332,6 +338,8 @@ data class PictureAdjustment(
 
     /** The deringing [dering] asks for, or null when it is off. */
     fun deringParams(): Cdef.Params? = Cdef.params(dering)
+    /** The temporal denoising [temporalDenoise] asks for, or null when it is off. */
+    fun temporalDenoiseParams(): TemporalDenoise.Params? = TemporalDenoise.params(temporalDenoise)
 
     /** The debanding [deband] asks for, or null when it is off. */
     fun debandParams(): Deband.Params? = Deband.params(deband)
@@ -350,6 +358,7 @@ data class PictureAdjustment(
     val hasFilters: Boolean
         get() = sharpness > 0f || clarity > 0f || noise != 0f || deband > 0f || cropBlackBars || logo != null ||
             shader != null || deblock > 0f || dering > 0f ||
+            temporalDenoise > 0f ||
             deinterlace != Deinterlace.OFF ||
             upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF || stereo != Stereo.OFF ||
             colorize != Colorize.OFF ||

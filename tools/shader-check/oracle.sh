@@ -416,6 +416,18 @@ for case in "8 2 5" "15 4 6" "4 0 3" "0 2 4" "3 1 4"; do
   check "CDEF ($case) against dav1d's" "$W/cdef.ppm" "$R/cdef/$(echo $case | tr ' ' -).ppm" 0 0
 done
 differs "CDEF against the picture it was given" "$W/cdef.ppm" "$R/cdef/input.ppm"
+# Temporal denoising: against FFmpeg's own atadenoise filter over three frames, run by core/player's harness on grainy
+# frames with a moving bar — its captured output, the fixtures core/player's TemporalDenoiseTest holds the reference to
+# (make-expected.sh there makes them afresh, the harness first held to FFmpeg's command line over five). Byte for byte;
+# it has to change the picture.
+T="$HERE/../../core/player/src/test/resources/temporal-denoise"
+for case in "0.02 0.04" "0.08 0.16"; do
+  # shellcheck disable=SC2086
+  "$C" temporal-denoise "$T/frame1.ppm" "$T/frame2.ppm" "$T/frame3.ppm" "$W/temporal-denoise.ppm" $case
+  check "Temporal denoising ($case) against FFmpeg's atadenoise" "$W/temporal-denoise.ppm" \
+    "$T/$(echo $case | tr ' ' -).ppm" 0 0
+done
+differs "Temporal denoising against the picture it was given" "$W/temporal-denoise.ppm" "$T/frame2.ppm"
 
 # Bob and Auto: the first field stays for either field order — a frame whose top field is 200 and bottom field 50
 # has to come out all 200 top field first and all 50 bottom field first.

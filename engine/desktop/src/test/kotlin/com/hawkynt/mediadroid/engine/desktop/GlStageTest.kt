@@ -16,6 +16,7 @@ import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.ScreenRect
 import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.ScreenWarp
+import com.hawkynt.mediadroid.player.TemporalDenoise
 import com.hawkynt.mediadroid.player.TestPattern
 import com.hawkynt.mediadroid.player.ToneMap
 import org.junit.AfterClass
@@ -490,6 +491,34 @@ class GlStageTest {
         }
         assertTrue("off by $worst", worst <= 1)
         assertTrue(!expected.contentEquals(rgb))
+    }
+
+    @Test
+    fun `temporal denoising agrees with the reference, the pictures either side read as decoded`() {
+        val w = 48
+        val h = 32
+        var state = 7
+        fun grainy(k: Int) = MediaReader.Picture(k * 40L, w, h, ByteArray(w * h * 4) { i ->
+            state = state * 1103515245 + 12345
+            if (i % 4 == 3) -1 else (100 + (i / 4 % w) + ((state ushr 16) % 7) - 3).toByte()
+        })
+        val frames = (0..2).map(::grainy)
+        val look = PictureAdjustment(temporalDenoise = 0.5f)
+        val out = stage.process(Moment(frames[1], frames[0], frames[2]), look, w, h)
+        val params = requireNotNull(look.temporalDenoiseParams())
+        fun channel(p: MediaReader.Picture, c: Int) = ByteArray(w * h) { p.rgba[it * 4 + c] }
+        var worst = 0
+        var changed = 0
+        for (c in 0..2) {
+            val (before, current, after) = frames.map { channel(it, c) }
+            val expected = TemporalDenoise.apply(before, current, after, params)
+            for (i in 0 until w * h) {
+                worst = maxOf(worst, abs((out.rgba[i * 4 + c].toInt() and 255) - (expected[i].toInt() and 255)))
+                if (expected[i] != frames[1].rgba[i * 4 + c]) changed++
+            }
+        }
+        assertTrue("off by $worst", worst <= 1)
+        assertTrue("only $changed changed", changed > w * h / 4)
     }
 
     @Test

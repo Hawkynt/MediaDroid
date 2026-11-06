@@ -37,6 +37,8 @@
 //                                                           glsl/video/deblock-es3.frag's three passes
 //   shader_check cdef <in.ppm> <out.ppm> <primary> <secondary> <damping>
 //                                                           glsl/video/cdef-direction-es3.frag, then cdef-es3.frag
+//   shader_check temporal-denoise <before.ppm> <current.ppm> <after.ppm> <out.ppm> <a> <b>
+//                                                           glsl/video/temporal-denoise.frag
 //   shader_check deinterlace <in.ppm> <out.ppm> <mode> <tff 0|1>
 //                                                           glsl/video/deinterlace.frag (1 Auto, 2 Blend, 3 Bob)
 //   shader_check anime4k <in.ppm> <out.ppm>                 glsl/anime4k to twice the size
@@ -475,6 +477,30 @@ Picture cdef(const Picture& in, int primary, int secondary, int damping) {
     glUniform1i(glGetUniformLocation(filter, "uSecondary"), secondary);
     glUniform1i(glGetUniformLocation(filter, "uDamping"), damping);
     draw(filter, out, source.texture);
+    return download(out);
+}
+
+// Temporal denoising as the stages run it: the current picture against the ones either side, read nearest
+// (TemporalDenoise; the thresholds as FFmpeg keeps them).
+Picture temporalDenoise(const Picture& before, const Picture& current, const Picture& after, float a, float b) {
+    GLuint prog = appProgram("video/temporal-denoise.frag");
+    Target p = upload(before), c = upload(current), n = upload(after);
+    for (GLuint t : {p.texture, c.texture, n.texture}) {
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+    Target out = target(current.width, current.height);
+    glUseProgram(prog);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, p.texture);
+    glUniform1i(glGetUniformLocation(prog, "uPrev"), 1);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, n.texture);
+    glUniform1i(glGetUniformLocation(prog, "uNext"), 2);
+    glUniform1f(glGetUniformLocation(prog, "uA"), float(int(a * 256.0f - 1.0f)));
+    glUniform1f(glGetUniformLocation(prog, "uB"), float(int(b * 256.0f - 1.0f)));
+    draw(prog, out, c.texture);
     return download(out);
 }
 
@@ -1051,6 +1077,8 @@ int main(int argc, char** argv) {
         writePpm(a[2], deblock(readPpm(a[1]), a[3] == "strong", thresholds));
     } else if (a.size() == 6 && a[0] == "cdef")
         writePpm(a[2], cdef(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4]), std::stoi(a[5])));
+    else if (a.size() == 7 && a[0] == "temporal-denoise")
+        writePpm(a[4], temporalDenoise(readPpm(a[1]), readPpm(a[2]), readPpm(a[3]), std::stof(a[5]), std::stof(a[6])));
     else if (a.size() == 5 && a[0] == "deinterlace")
         writePpm(a[2], deinterlace(readPpm(a[1]), std::stoi(a[3]), a[4] == "1"));
     else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));

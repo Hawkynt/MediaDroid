@@ -401,6 +401,7 @@ fun SettingsScreen(
                     it.deblock = defaultPicture.deblock
                     it.dering = defaultPicture.dering
                     it.shader = defaultPicture.shader
+                    it.temporalDenoise = defaultPicture.temporalDenoise
                 }
             },
             check = pictureCheck(androidx.compose.ui.platform.LocalContext.current, store),
