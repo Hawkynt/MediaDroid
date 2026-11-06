@@ -316,8 +316,8 @@ video brought down to 1080p first; Fit, Fill or Stretch, and a zoom. How the net
 
 **Windows** 10/11 (x64) and **Linux** (x64; arm64 to follow) — in progress ([#291](https://github.com/Hawkynt/MediaDroid/issues/291)), in the nightlies:
 from the same Releases, `MediaDroid-windows-x64.msi` (installs, updates in place) or `MediaDroid-windows-x64.zip`
-(portable: unpack anywhere and run `MediaDroid.exe`, settings beside it), and `MediaDroid-linux-x64.AppImage` /
-`MediaDroid-linux-arm64.AppImage` (mark it executable and run it). Java comes inside, and so does the native library
+(portable: unpack anywhere and run `MediaDroid.exe`, settings beside it), and `MediaDroid-linux-x64.AppImage` (mark it
+executable and run it; an arm64 AppImage follows once CI builds one). Java comes inside, and so does the native library
 the neural networks and ASS subtitles run on, with the OpenMP runtime it needs (Visual C++'s `vcomp140.dll`, GCC's
 `libgomp.so.1`); a Vulkan driver for the networks on the graphics card and, on Linux, Fontconfig come from the system.
 The AppImage runs on Linux with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later); the graphics card
