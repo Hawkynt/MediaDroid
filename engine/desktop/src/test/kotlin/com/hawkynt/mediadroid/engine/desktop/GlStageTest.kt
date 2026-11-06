@@ -6,6 +6,7 @@ import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.ChromaUpscaling
 import com.hawkynt.mediadroid.player.LogoMask
+import com.hawkynt.mediadroid.player.MpvShaders
 import com.hawkynt.mediadroid.player.OldGame
 import com.hawkynt.mediadroid.player.Panorama
 import com.hawkynt.mediadroid.player.TemporalSmoothing
@@ -374,6 +375,40 @@ class GlStageTest {
         }
         assertTrue("off by $worst", worst <= 1.5)
     }
+
+    /** A fixture of `resources/mpv/` (make-expected.sh there): a binary PPM as a picture. */
+    private fun mpvPicture(name: String): MediaReader.Picture {
+        val data = requireNotNull(javaClass.getResourceAsStream("/mpv/$name")) { name }.use { it.readBytes() }
+        val header = String(data, 0, 20, Charsets.US_ASCII).split(Regex("\\s+"))
+        val w = header[1].toInt()
+        val h = header[2].toInt()
+        val rgb = data.copyOfRange(data.size - w * h * 3, data.size)
+        return MediaReader.Picture(0, w, h, ByteArray(w * h * 4) { if (it % 4 == 3) -1 else rgb[it / 4 * 3 + it % 4] })
+    }
+
+    /** [shader] (`resources/mpv/`) run by the stage on [input] at twice its size, against libplacebo's [expected]. */
+    private fun checkMpv(shader: String, input: String, expected: String, max: Int, mean: Double) {
+        val text = requireNotNull(javaClass.getResourceAsStream("/mpv/$shader")).use { String(it.readBytes()) }
+        MpvShaders.load(mapOf(shader to text))
+        val picture = mpvPicture(input)
+        val theirs = mpvPicture(expected)
+        val out = stage.process(picture, PictureAdjustment(shader = shader), theirs.width, theirs.height)
+        val d = out.rgba.indices.filter { it % 4 != 3 }
+            .map { abs((out.rgba[it].toInt() and 255) - (theirs.rgba[it].toInt() and 255)) }
+        val plain = stage.process(picture, PictureAdjustment.Neutral, theirs.width, theirs.height)
+        val changed = out.rgba.indices.count { out.rgba[it] != plain.rgba[it] }
+        assertTrue("$shader: no different from plain scaling", changed > 1000)
+        assertTrue("$shader: off by ${d.max()} at worst", d.max() <= max)
+        assertTrue("$shader: off by ${d.average()} on average", d.average() <= mean)
+    }
+
+    @Test
+    fun `an mpv shader hooking MAIN runs as libplacebo runs it`() =
+        checkMpv("Anime4K_Upscale_CNN_x2_S.glsl", "picture.ppm", "anime4k.ppm", 2, 0.1)
+
+    @Test
+    fun `an mpv shader hooking LUMA runs as libplacebo runs it, the colour following`() =
+        checkMpv("FSRCNNX_x2_8-0-4-1.glsl", "grey.ppm", "fsrcnnx.ppm", 2, 0.1)
 
     @Test
     fun `chroma enlarged from the planes agrees with the reference, spline36 and KrigBilateral alike`() {

@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.player.LogoMask
+import com.hawkynt.mediadroid.player.MpvShaders
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCheck
@@ -239,6 +240,27 @@ fun PictureSliders(
             }
         }
         chroma.Below(picture.chroma.description)
+        // The mpv user shaders in the folder picked in Settings (MpvShaders), each tried before it is taken.
+        val shaders = remember { Trial() }
+        Text("mpv shaders", fontSize = 16.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            (listOf<String?>(null) + MpvShaders.choices).forEach { name ->
+                val label = name?.removeSuffix(".glsl") ?: "Off"
+                FilterChip(
+                    selected = picture.shader == name,
+                    enabled = shaders.trying == null,
+                    onClick = { shaders.pick(picture, picture.copy(shader = name), label, check, take) },
+                    label = { Text(label, fontSize = 15.sp) },
+                )
+            }
+        }
+        shaders.Below(
+            picture.shader?.let { MpvShaders.library[it]?.description } ?: if (MpvShaders.choices.isEmpty()) {
+                "Pick a folder of mpv .glsl shaders in Settings to choose them here."
+            } else {
+                "Off: no mpv shader runs."
+            },
+        )
         val motion = remember { Trial() }
         Text("Smooth motion", fontSize = 16.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

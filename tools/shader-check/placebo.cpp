@@ -24,6 +24,10 @@
 //                     plane_upscaler) or by an mpv user shader hooking CHROMA (KrigBilateral); out the YCbCr itself
 //                     at the luma's size, 16 bits a value (Y, Cb, Cr in place of R, G, B) — or with [rgb] the
 //                     picture in 8-bit RGB, as the stage's pass draws it
+//   placebo_oracle hook <in.ppm> <shader.glsl> <out.ppm> <width> <height> [yuv]
+//                     an mpv user shader run by libplacebo's renderer (pl_mpv_user_shader_parse) on the picture,
+//                     shown at <width> x <height> (bilinear where the shader leaves scaling to do); with [yuv] the
+//                     picture is handed over as full-range BT.709 YCbCr planes, so the shader's LUMA hooks run
 //
 // The picture as one RGBA texture (8 or 16 bits), top row first, as libplacebo's own frames are.
 #include <EGL/egl.h>
@@ -405,6 +409,73 @@ int chroma(char** argv) {
     return 0;
 }
 
+// An mpv user shader through libplacebo's renderer, the picture as RGB or as full-range BT.709 YCbCr planes.
+int hook(char** argv, bool yuv) {
+    Picture in = readPpm(argv[0]);
+    const std::string shader = readFile(argv[1]);
+    const int w = std::atoi(argv[3]);
+    const int h = std::atoi(argv[4]);
+    const pl_hook* hook = pl_mpv_user_shader_parse(gpu, shader.data(), shader.size());
+    if (!hook) fail(std::string("libplacebo cannot read ") + argv[1]);
+    pl_frame image{};
+    std::vector<pl_tex> textures;
+    std::vector<uint8_t> rgbaIn;
+    std::vector<std::vector<uint8_t>> planes(3, std::vector<uint8_t>(size_t(in.width) * in.height));
+    if (yuv) {
+        for (size_t i = 0; i < size_t(in.width) * in.height; i++) {
+            const double r = in.rgb[i * 3], g = in.rgb[i * 3 + 1], b = in.rgb[i * 3 + 2];
+            const double y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            const double values[3] = {y, (b - y) / 1.8556 + 128, (r - y) / 1.5748 + 128};
+            for (int c = 0; c < 3; c++) {
+                planes[c][i] = uint8_t(std::lround(std::fmin(255.0, std::fmax(0.0, values[c]))));
+            }
+        }
+        image.num_planes = 3;
+        for (int c = 0; c < 3; c++) {
+            textures.push_back(planeTexture(in.width, in.height, planes[c].data()));
+            image.planes[c].texture = textures.back();
+            image.planes[c].components = 1;
+            image.planes[c].component_mapping[0] = c;
+        }
+        image.repr.sys = PL_COLOR_SYSTEM_BT_709;
+        image.repr.levels = PL_COLOR_LEVELS_FULL;
+    } else {
+        rgbaIn = rgba(in, true);
+        textures.push_back(texture(in.width, in.height, "rgba8", rgbaIn.data(), false));
+        image.num_planes = 1;
+        image.planes[0].texture = textures.back();
+        image.planes[0].components = 3;
+        for (int c = 0; c < 3; c++) image.planes[0].component_mapping[c] = c;
+        image.repr = pl_color_repr_rgb;
+    }
+    image.color = pl_color_space_bt709;
+    pl_tex out = texture(w, h, "rgba8", nullptr, true);
+    pl_frame target{};
+    target.num_planes = 1;
+    target.planes[0].texture = out;
+    target.planes[0].components = 3;
+    for (int c = 0; c < 3; c++) target.planes[0].component_mapping[c] = c;
+    target.repr = pl_color_repr_rgb;
+    target.color = pl_color_space_bt709;
+    pl_render_params params{};
+    params.color_map_params = &pl_color_map_default_params;
+    params.color_adjustment = &pl_color_adjustment_neutral;
+    params.upscaler = &pl_filter_bilinear;
+    params.downscaler = &pl_filter_bilinear;
+    params.plane_upscaler = &pl_filter_bilinear;
+    params.disable_linear_scaling = true;
+    params.hooks = &hook;
+    params.num_hooks = 1;
+    pl_renderer renderer = pl_renderer_create(logger, gpu);
+    if (!pl_render_image(renderer, &image, &target, &params)) fail("the render failed");
+    writePpm(argv[2], readBack(out, w, h));
+    pl_mpv_user_shader_destroy(&hook);
+    pl_renderer_destroy(&renderer);
+    pl_tex_destroy(gpu, &out);
+    for (pl_tex& t : textures) pl_tex_destroy(gpu, &t);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -419,6 +490,8 @@ int main(int argc, char** argv) {
     else if (mode == "peak" && argc > 3) result = peak(argv[2], argc - 3, argv + 3);
     else if (mode == "chroma" && (argc == 7 || (argc == 8 && std::string(argv[7]) == "rgb")))
         result = chroma(argv + 2);
+    else if (mode == "hook" && (argc == 7 || (argc == 8 && std::string(argv[7]) == "yuv")))
+        result = hook(argv + 2, argc == 8);
     else fail("usage: see the head of tools/shader-check/placebo.cpp");
     pl_opengl_destroy(&gl);
     pl_log_destroy(&logger);

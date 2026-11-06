@@ -157,6 +157,13 @@ fun PlayerScreen(
         value = com.hawkynt.mediadroid.player.Colorizing.offered(available)
     }
     val trial = remember { DesktopTrial(store, neural) }
+    // The mpv user shaders the household put in the app-data folder's shaders/ (MpvShaders), read as the player opens.
+    remember {
+        val folder = File(AppFolder.current(), "shaders").apply { mkdirs() }
+        com.hawkynt.mediadroid.player.MpvShaders.load(
+            folder.listFiles().orEmpty().filter { it.isFile }.associate { it.name to it.readText() },
+        )
+    }
     var picture by remember { mutableStateOf(store.picture) }
     // This video's shape where its file's flag is wrong, and the setup of the screen the window is on (a lens).
     var aspect by remember { mutableStateOf(store.aspectOf(playing.video)) }

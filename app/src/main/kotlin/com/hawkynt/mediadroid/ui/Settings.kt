@@ -350,6 +350,31 @@ fun SettingsScreen(
             fontSize = 15.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // The folder of mpv user shaders (.glsl): picked once, its permission kept, its shaders offered below.
+        val context = androidx.compose.ui.platform.LocalContext.current
+        var shaderCount by remember { mutableStateOf(com.hawkynt.mediadroid.player.MpvShaders.choices.size) }
+        val pickShaders = androidx.activity.compose.rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
+        ) { uri: android.net.Uri? ->
+            uri ?: return@rememberLauncherForActivityResult
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            update { it.shaderFolder = uri.toString() }
+            com.hawkynt.mediadroid.data.MpvShaderFolder.load(context, uri.toString())
+            shaderCount = com.hawkynt.mediadroid.player.MpvShaders.choices.size
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
+            Text(
+                if (settings.shaderFolder.isEmpty()) "No folder of mpv shaders" else "mpv shaders found: $shaderCount",
+                fontSize = 16.sp,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedButton(onClick = { pickShaders.launch(null) }) { Text("Shader folder…", fontSize = 16.sp) }
+        }
         PictureSliders(
             picture = defaultPicture,
             onChange = { defaultPicture = it },
@@ -375,6 +400,7 @@ fun SettingsScreen(
                     it.upscalerTta = defaultPicture.upscalerTta
                     it.deblock = defaultPicture.deblock
                     it.dering = defaultPicture.dering
+                    it.shader = defaultPicture.shader
                 }
             },
             check = pictureCheck(androidx.compose.ui.platform.LocalContext.current, store),

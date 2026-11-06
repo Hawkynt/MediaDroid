@@ -71,6 +71,8 @@ data class PictureOverride(
     /** Deblocking and deringing, 0 (off) .. 1. */
     val deblock: Float = 0f,
     val dering: Float = 0f,
+    /** An mpv user shader's file name in the shader folder, or null. */
+    val shader: String? = null,
 )
 
 /** How one output screen is set up (see [com.hawkynt.mediadroid.player.ScreenSetup]); names, as kept. */
@@ -123,6 +125,8 @@ data class Settings(
     var upscalerTta: Boolean = false,         // the upscaler's network run eight ways
     var deblock: Float = 0f,                  // 0 (off) .. 1, MPEG's block edges smoothed
     var dering: Float = 0f,                   // 0 (off) .. 1, the ripples beside edges smoothed
+    var shader: String? = null,               // an mpv user shader's file name in shaderFolder (MpvShaders)
+    var shaderFolder: String = "",            // the folder of mpv user shaders, a document tree URI; "" none
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -323,6 +327,7 @@ class StateStore(context: Context) {
             upscalerTta = upscalerTta,
             deblock = deblock,
             dering = dering,
+            shader = shader,
         )
     }
 
@@ -375,6 +380,7 @@ class StateStore(context: Context) {
                 upscalerTta = it.upscalerTta,
                 deblock = it.deblock,
                 dering = it.dering,
+                shader = it.shader,
             )
         }
             ?: defaultPicture()
@@ -418,6 +424,7 @@ class StateStore(context: Context) {
                 upscalerTta = picture.upscalerTta,
                 deblock = picture.deblock,
                 dering = picture.dering,
+                shader = picture.shader,
             )
         }
         save()

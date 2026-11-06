@@ -76,6 +76,11 @@ data class PictureAdjustment(
      * stronger towards 1.
      */
     val dering: Float = 0f,
+    /**
+     * An mpv user shader the household put in its shader folder, by file name (see [MpvShaders]), or null: its hooks
+     * run on the picture before and after it is enlarged, as mpv runs them.
+     */
+    val shader: String? = null,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
@@ -344,7 +349,7 @@ data class PictureAdjustment(
      */
     val hasFilters: Boolean
         get() = sharpness > 0f || clarity > 0f || noise != 0f || deband > 0f || cropBlackBars || logo != null ||
-            deblock > 0f || dering > 0f ||
+            shader != null || deblock > 0f || dering > 0f ||
             deinterlace != Deinterlace.OFF ||
             upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF || stereo != Stereo.OFF ||
             colorize != Colorize.OFF ||
