@@ -17,8 +17,8 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
- * Runs a neural network's self-test (NeuralInterpolator.selfTest) on one unit in a process of its own
- * (`:neuraltest`): a network that takes more memory than the device gives, or so long a GPU job that the GPU is lost
+ * Runs a neural network's self-test (NeuralChecks, through NeuralInterpolator.selfTest) on one unit in a process
+ * of its own (`:neuraltest`): a network that takes more memory than the device gives, or so long a GPU job that the GPU is lost
  * for the process, ends only that process — and a test that takes longer than [NeuralInterpolation.MAX_WAIT_MS] all
  * told is cut short by ending it, as a run on the device cannot be stopped otherwise.
  * The app ends the process after each test, so the next starts afresh.
@@ -53,7 +53,7 @@ class NeuralTestService : Service() {
             runCatching { reply.send(message) }
         }
         send(STARTED)
-        val progress = object : NeuralInterpolator.Companion.Progress {
+        val progress = object : NeuralChecks.Progress {
             override fun running(height: Int) = send(RUNNING, height)
 
             override fun timed(height: Int, ms: Double) = send(TIMED, height, ms)
@@ -67,7 +67,7 @@ class NeuralTestService : Service() {
         }
         // The app ends the process on this answer — whatever the network left behind, memory or a lost GPU, goes
         // with it.
-        send(RESULT, passed = timing?.let { NeuralInterpolation.Passed(it.unit.name, it.msByHeight).encode() })
+        send(RESULT, passed = timing?.let { NeuralInterpolation.Passed(it.unit, it.msByHeight).encode() })
     }
 
     override fun onBind(intent: Intent): IBinder = requests.binder
