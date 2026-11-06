@@ -390,6 +390,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // a seek are read back as luma — every fourth column, rows from the top — and judged in threes.
     private val fieldOrder = FieldOrder()
     private val lumas = arrayOfNulls<Deinterlacer.Plane>(3)
+
+    // Adaptive: whether the picture has stood still long enough to be woven whole, from each new frame's luma.
+    private val motionAdaptive = MotionAdaptive()
+    private var adaptiveLuma: Deinterlacer.Plane? = null
     private var framesToJudge = 0
     private var readBack: ByteBuffer? = null
 
@@ -1297,9 +1301,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
-     * YADIF or BWDIF (see [PictureAdjustment.Deinterlace]): a [fresh] frame joins the last three, and
-     * the one before it is shown with a field rebuilt from its neighbours — one frame behind, which the
-     * sound is told to wait. Until three have come, the missing neighbours are the frames there are.
+     * A temporal deinterlacer — YADIF, BWDIF, Greedy HM, Greedy 2-Frame, Adaptive (see
+     * [PictureAdjustment.Deinterlace]): a [fresh] frame joins the last three, and the one before it is shown with a
+     * field rebuilt from its neighbours — or, Adaptive on a still picture, woven as it is — one frame behind, which
+     * the sound is told to wait. Until three have come, the missing neighbours are the frames there are.
      */
     private fun temporal(
         picture: PictureAdjustment,
@@ -1309,8 +1314,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         secondField: Boolean,
     ): Frame {
         if (fresh || historyCount == 0) {
-            remember(width, height)
+            val afresh = remember(width, height)
             if (framesToJudge > 0) judge(width, height)
+            if (picture.deinterlace == PictureAdjustment.Deinterlace.ADAPTIVE) adapt(width, height, afresh)
         }
         val next = frames[history[2]]
         val cur = if (historyCount >= 2) frames[history[1]] else next
@@ -1320,19 +1326,34 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         deinterlaceLatencyMs = intervalMs.toInt().coerceIn(0, MAX_LATENCY_MS)
         deinterlaceFrames = if (historyCount >= 2) 1f else 0f
         val woven = frames[2].ensure(width, height, deepInput(picture))
-        rebuildField(woven, prev, cur, next, secondField, picture.deinterlace == PictureAdjustment.Deinterlace.BWDIF)
+        val method = if (picture.deinterlace == PictureAdjustment.Deinterlace.ADAPTIVE && motionAdaptive.weave) {
+            Deinterlacer.WEAVE
+        } else {
+            Deinterlacer.shaderMethod(picture.deinterlace.method ?: Deinterlacer.Method.YADIF)
+        }
+        rebuildField(woven, prev, cur, next, secondField, method)
         val shrunk = reduced(woven)
         return denoised(picture, shrunk, shrunk.width, shrunk.height)
     }
 
-    /** YADIF or BWDIF into [target]: [cur] with a field rebuilt from its neighbours. */
+    /**
+     * Adaptive (see MotionAdaptive): the newest frame's luma, every fourth column, read back and weighed against the
+     * frame before's; a new history starts the count afresh.
+     */
+    private fun adapt(width: Int, height: Int, afresh: Boolean) {
+        val luma = packedLuma(frames[history[2]], width, height, JUDGED_COLUMN_STEP, 1)
+        motionAdaptive.add(if (afresh) null else adaptiveLuma, luma, JUDGED_COLUMN_STEP)
+        adaptiveLuma = luma
+    }
+
+    /** A temporal deinterlacer into [target] ([method]: temporal.frag's uMethod): [cur] with a field rebuilt. */
     private fun rebuildField(
         target: Frame,
         prev: Frame,
         cur: Frame,
         next: Frame,
         secondField: Boolean,
-        bwdif: Boolean,
+        method: Int,
     ) = exact(prev.texture, cur.texture, next.texture) {
         target.bind()
         GLES20.glUseProgram(temporalProgram)
@@ -1349,7 +1370,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glGetUniformLocation(p, "uParity"),
                 Deinterlacer.rebuiltParity(secondField, fieldOrder.topFieldFirst).toFloat(),
             )
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uBwdif"), if (bwdif) 1 else 0)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMethod"), method)
         }
     }
 
@@ -1449,7 +1470,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val slot = frames[FILM_SLOTS + filmBank * Telecine.CYCLE + filmPosition].ensure(width, height)
         val judged = verdict.judged
         if (judged.combed) {
-            rebuildField(slot, prev, cur, next, secondField = false, bwdif = false)
+            val yadif = Deinterlacer.shaderMethod(Deinterlacer.Method.YADIF)
+            rebuildField(slot, prev, cur, next, secondField = false, method = yadif)
         } else {
             val (other, rows) = when (judged.match) {
                 Telecine.Match.PREVIOUS -> prev to judged.field
@@ -2743,7 +2765,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /**
          * How many frames the picture runs behind: half a frame while frames blend (the change shows half-way
-         * to the next), two with Motion, one with YADIF or BWDIF, five with Film; 0 without such a filter.
+         * to the next), two with Motion, one with a temporal deinterlacer, five with Film; 0 without such a filter.
          * Turned into time by the video's frame rate (PlaybackMath.pictureLatencyMs), which holds still where
          * the measured gaps do not.
          */

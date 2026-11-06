@@ -73,6 +73,66 @@ class DeinterlacerTest {
         check(Deinterlacer.Method.BWDIF, "bwdif-1-bff.gray", fieldRate = true, topFirst = false)
     }
 
+    /**
+     * Greedy High Motion against GStreamer 1.28.8's own `greedyh` (its C path), every field in turn: its picture 2k
+     * keeps frame k's first field, 2k + 1 its second (`make-greedy.sh`).
+     */
+    @Test
+    fun `Greedy High Motion rebuilds each field exactly as GStreamer does, either field first`() {
+        for (topFirst in listOf(true, false)) {
+            val suffix = if (topFirst) "" else "-bff"
+            val frames = resource("input$suffix.gray")
+            for (k in 1..3) {
+                for (second in listOf(false, true)) {
+                    val out = Deinterlacer.deinterlace(
+                        Deinterlacer.Method.GREEDY_HM,
+                        plane(frames, k - 1),
+                        plane(frames, k),
+                        plane(frames, k + 1),
+                        second,
+                        topFirst,
+                    )
+                    val expected = plane(resource("greedyh$suffix.gray"), 2 * k + if (second) 1 else 0)
+                    assertArrayEquals("frame $k, second $second, top first $topFirst", expected.pixels, out.pixels)
+                }
+            }
+        }
+    }
+
+    /**
+     * Greedy 2-Frame against xine-lib's port of DScaler's, run as an oracle (`make-greedy.sh`), frames 1 to 3 with
+     * their second field rebuilt and then their first. Where the top rows are rebuilt the port copies the third row
+     * of the newest field to the first; that one row is left out — ours weaves the newest field's own first row.
+     */
+    @Test
+    fun `Greedy 2-Frame rebuilds each field as DScaler's does, either field first`() {
+        for (topFirst in listOf(true, false)) {
+            val suffix = if (topFirst) "" else "-bff"
+            val frames = resource("input$suffix.gray")
+            for (k in 1..3) {
+                for (second in listOf(false, true)) {
+                    val out = Deinterlacer.deinterlace(
+                        Deinterlacer.Method.GREEDY_2FRAME,
+                        plane(frames, k - 1),
+                        plane(frames, k),
+                        plane(frames, k + 1),
+                        second,
+                        topFirst,
+                    ).pixels
+                    val index = 2 * (k - 1) + if (second) 1 else 0
+                    val expected = plane(resource("greedy2frame$suffix.gray"), index).pixels
+                    val topRebuilt = Deinterlacer.rebuiltParity(second, topFirst) == 1
+                    val from = if (topRebuilt) WIDTH else 0
+                    assertArrayEquals(
+                        "frame $k, second $second, top first $topFirst",
+                        expected.copyOfRange(from, expected.size),
+                        out.copyOfRange(from, out.size),
+                    )
+                }
+            }
+        }
+    }
+
     @Test
     fun `the kept field passes through untouched`() {
         val out = Deinterlacer.deinterlace(
@@ -87,6 +147,11 @@ class DeinterlacerTest {
     fun `only the temporal deinterlacers need the neighbouring frames and can run at field rate`() {
         assertTrue(PictureAdjustment.Deinterlace.YADIF.isTemporal)
         assertTrue(PictureAdjustment.Deinterlace.BWDIF.isTemporal)
+        assertTrue(PictureAdjustment.Deinterlace.GREEDY_HM.isTemporal)
+        assertTrue(PictureAdjustment.Deinterlace.GREEDY_2FRAME.isTemporal)
+        assertTrue(PictureAdjustment.Deinterlace.ADAPTIVE.isTemporal)
+        assertEquals(Deinterlacer.Method.BWDIF, PictureAdjustment.Deinterlace.ADAPTIVE.method)
+        assertFalse(PictureAdjustment.Deinterlace.FILM.isTemporal)
         assertFalse(PictureAdjustment.Deinterlace.BOB.isTemporal)
         assertFalse(PictureAdjustment.Deinterlace.AUTO.isTemporal)
         assertTrue(PictureAdjustment(deinterlace = PictureAdjustment.Deinterlace.YADIF, fieldRate = true).isFieldRate)
