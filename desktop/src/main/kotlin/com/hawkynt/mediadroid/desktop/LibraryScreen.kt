@@ -55,6 +55,7 @@ import com.hawkynt.mediadroid.library.LibraryQuery
 import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
+import com.hawkynt.mediadroid.player.BingeQueue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.swing.JFileChooser
@@ -205,12 +206,18 @@ private fun Cover(item: MediaItem, watched: Boolean, onClick: () -> Unit) {
     }
 }
 
+/**
+ * Every episode of [show] in the order a binge plays them (BingeQueue: seasons, then episodes), the watched ones
+ * kept — the one picked plays, and the rest of the show after it.
+ */
+internal fun showQueue(show: Show): List<Playing> = BingeQueue.queue(show.seasons, skipWatched = false).map {
+    Playing("${show.title} · S%02dE%02d".format(it.season, it.episode.number), it.episode.videoPath)
+}
+
 @Composable
 private fun ShowScreen(store: DesktopStore, show: Show, onBack: () -> Unit, onPlay: (List<Playing>, Int) -> Unit) {
-    val episodes = show.seasons.flatMap { season -> season.episodes.map { season.number to it } }
-    val queue = episodes.map { (season, e) ->
-        Playing("${show.title} · S%02dE%02d".format(season, e.number), e.videoPath)
-    }
+    val episodes = BingeQueue.queue(show.seasons, skipWatched = false).map { it.season to it.episode }
+    val queue = showQueue(show)
     Column(Modifier.fillMaxSize().padding(24.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
