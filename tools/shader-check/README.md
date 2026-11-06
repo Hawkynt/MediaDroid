@@ -20,6 +20,7 @@ oracle that bilinear scaling would pass as well proves nothing.
 | xBRZ (`glsl/xbrz`) | the original's own output: core/imaging's reference pictures, which `Xbrz` is held to as well | the three passes as the stage runs them, every factor 2 to 6; the patterns read from the app's `Xbrz.kt` (`xbrz-table.py`) |
 | YADIF, BWDIF (`temporal.frag`) | FFmpeg's `yadif` and `bwdif` on planar RGB | three interlaced frames (`fields.py`: half still, half moving), both field orders and both fields, PAL and NTSC sizes; once more with every read addressed 1/256 texel off, which nearest sampling has to absorb |
 | Greedy HM (`temporal.frag`) | GStreamer 1.28's own `deinterlace` element, `method=greedyh` (tvtime's, relicensed LGPL; its C path, which planar pictures take) | the same frames, each colour channel fed as the luma of a Y444 picture (`planes.py`), both field orders and both fields, PAL and NTSC sizes |
+| TomsMoComp (`temporal.frag`) | GStreamer 1.28.8's own (`tvtime/tomsmocomp`, Tom Barry's, LGPL) — its MMXEXT search at effort 5, which GStreamer's x86-64 builds leave out, built from its sources through core/player's `tomsmocomp-harness.c` | the same frames, each colour channel fed as a grey picture (the search works on every byte on its own), both field orders and both fields, PAL and NTSC sizes |
 | Old console (`temporal.frag`) | FFmpeg's `field` and bilinear `scale` filters | the same frames, each field of the middle one stretched back to the full height, both orders and both fields, PAL and NTSC sizes; averaging a still 240p picture's fields has to change nothing, and a moving one's has to |
 | Greedy 2-Frame (`temporal.frag`) | DScaler's, as xine-lib ports it (`greedy2frame_template.c` at `5388979`, GPL-2.0: run as an oracle only, through core/player's `greedy2frame-harness.c`) | the same frames in grey, where its choice on YUY2's luma is ours on all three channels; the port copies the newest field's third row to the first, so where the top rows are rebuilt that row is left out |
 | Debanding (`deband-es3.frag`, `deband.frag`) | libplacebo's own `pl_shader_deband` (7.360) | run by libplacebo itself on the same Mesa's desktop OpenGL (`placebo.cpp`), on a picture of 8-bit steps (core/player's fixture) and the test picture, one to four iterations, with and without grain, frame indices 0 to 255; the frame held both ways up. The GLSL ES 1.00 variant draws other random numbers (no unsigned integers for pcg3d), so it is held only to moving no value further than the threshold lets it |
@@ -52,7 +53,7 @@ On an Intel HD Graphics 520 laptop (Mesa 26.2, libplacebo 7.360), per 8-bit valu
 | Lanczos and EWA kernels at 1.5× and 2× | ≤ 2 | ≤ 0.083 |
 | xBRZ, three pictures at 2× to 6× | 0 | 0 |
 | YADIF and BWDIF, every case, and read 1/256 texel off | 0 | 0 |
-| Greedy HM and Greedy 2-Frame, every case (Mesa 26.2's llvmpipe) | 0 | 0 |
+| Greedy HM, Greedy 2-Frame and TomsMoComp, every case (Mesa 26.2's llvmpipe) | 0 | 0 |
 | Old console's stretch, every case (swscale's fixed-point rounding against ours) | 1 | ≤ 0.014 |
 | YUV to RGB, grey / in colour | 0 / 1 | 0 / 0.005 |
 | YUV to RGB from full range, grey / in colour (unsqueezed: 20 / 20) | 1 / 2 | 0.15 / 0.33 |

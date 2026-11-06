@@ -247,7 +247,8 @@ data class PictureAdjustment(
      * above and below in the same direction — so progressive pictures pass untouched. [YADIF] and
      * [BWDIF] are temporal (see [Deinterlacer]): they look at the frames before and after too, so still
      * parts keep their full detail, and the picture runs one frame behind, the sound waiting as long. So are
-     * DScaler's [GREEDY_HM] and [GREEDY_2FRAME], and [ADAPTIVE] (see [MotionAdaptive]), which weaves the frame whole
+     * DScaler's [GREEDY_HM] and [GREEDY_2FRAME], [TOMSMOCOMP] — motion-compensated, a search along the motion between
+     * the fields either side — and [ADAPTIVE] (see [MotionAdaptive]), which weaves the frame whole
      * while the picture stands still and is BWDIF while it moves. [OLD_CONSOLE] (see [OldGame]) is for 240p game
      * consoles: each field a picture of its own, stretched smoothly, never deinterlaced.
      * [FILM] undoes pulldown (see [FilmCadence]) — 3:2 for film on NTSC video, 24 frames a second spread
@@ -263,6 +264,10 @@ data class PictureAdjustment(
         BWDIF("BWDIF", "FFmpeg's BWDIF: like YADIF with finer filters, the best detail in motion."),
         GREEDY_HM("Greedy HM", "DScaler's Greedy High Motion: each line from the nearer field, diagonals smoothed."),
         GREEDY_2FRAME("Greedy 2F", "DScaler's Greedy 2-Frame: woven where nothing moved, rebuilt where it did."),
+        TOMSMOCOMP(
+            "TomsMoComp",
+            "Tom Barry's motion search: each missing pixel from the fields either side, along the motion.",
+        ),
         ADAPTIVE("Adaptive", "Woven whole while the picture stands still, BWDIF as soon as it moves."),
         OLD_CONSOLE(
             "Old console",
@@ -281,6 +286,7 @@ data class PictureAdjustment(
                 BWDIF, ADAPTIVE -> Deinterlacer.Method.BWDIF
                 GREEDY_HM -> Deinterlacer.Method.GREEDY_HM
                 GREEDY_2FRAME -> Deinterlacer.Method.GREEDY_2FRAME
+                TOMSMOCOMP -> Deinterlacer.Method.TOMSMOCOMP
                 else -> null
             }
     }

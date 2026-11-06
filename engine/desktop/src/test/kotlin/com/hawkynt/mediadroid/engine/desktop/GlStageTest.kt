@@ -258,7 +258,7 @@ class GlStageTest {
         a.indices.filter { it % 4 != 3 }.maxOf { abs((a[it].toInt() and 255) - (b[it].toInt() and 255)) }
 
     @Test
-    fun `Greedy HM and Greedy 2-Frame draw what the core's reference draws`() {
+    fun `Greedy HM, Greedy 2-Frame and TomsMoComp draw what the core's reference draws`() {
         val w = 64
         val h = 48
         val p = (0 until 3).map { combed(it * 40L, it * 7) }
@@ -267,6 +267,7 @@ class GlStageTest {
         val modes = mapOf(
             PictureAdjustment.Deinterlace.GREEDY_HM to Deinterlacer.Method.GREEDY_HM,
             PictureAdjustment.Deinterlace.GREEDY_2FRAME to Deinterlacer.Method.GREEDY_2FRAME,
+            PictureAdjustment.Deinterlace.TOMSMOCOMP to Deinterlacer.Method.TOMSMOCOMP,
         )
         for ((mode, method) in modes) {
             val out = stage.process(Moment(p[1], p[0], p[2]), PictureAdjustment(deinterlace = mode), w, h)

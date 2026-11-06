@@ -17,7 +17,8 @@
 //                                                           glsl/video/lanczos.frag to that size
 //   shader_check nis <in.ppm> <out.ppm> <width> <height>    glsl/video/nis.frag to that size (at most twice)
 //   shader_check temporal <prev.ppm> <cur.ppm> <next.ppm> <out.ppm>
-//                         <yadif|bwdif|greedyh|greedy2frame|weave|oldconsole|oldconsole-average> <tff 0|1> <second 0|1>
+//                         <yadif|bwdif|greedyh|greedy2frame|weave|oldconsole|oldconsole-average|tomsmocomp>
+//                         <tff 0|1> <second 0|1>
 //                                                           glsl/video/temporal.frag: one field of cur rebuilt
 //   shader_check xbrz <in.ppm> <out.ppm> <factor> <table.bin>
 //                                                           glsl/xbrz to factor (2..6) times the size
@@ -976,7 +977,8 @@ int main(int argc, char** argv) {
         writePpm(a[3], gsrQualcomm(a[1], readPpm(a[2]), std::stoi(a[4]), std::stoi(a[5])));
     else if (a.size() == 3 && a[0] == "fsr-rcas") writePpm(a[2], rcasOnly(readPpm(a[1])));
     else if (a.size() == 8 && a[0] == "temporal") {
-        const std::vector<std::string> methods = {"yadif", "bwdif", "greedyh", "greedy2frame", "weave", "oldconsole"};
+        const std::vector<std::string> methods = {"yadif", "bwdif", "greedyh", "greedy2frame", "weave", "oldconsole",
+                                                  "tomsmocomp"};
         const bool average = a[5] == "oldconsole-average";
         const auto method = std::find(methods.begin(), methods.end(), average ? "oldconsole" : a[5]);
         if (method == methods.end()) fail("temporal: no such method");

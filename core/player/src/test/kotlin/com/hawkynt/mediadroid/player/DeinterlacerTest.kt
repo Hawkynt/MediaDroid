@@ -133,6 +133,33 @@ class DeinterlacerTest {
         }
     }
 
+    /**
+     * TomsMoComp against GStreamer 1.28.8's own, its MMXEXT search at effort 5 run through `tomsmocomp-harness.c`
+     * (`make-tomsmocomp.sh`): frames 1 to 3 with their second field rebuilt and then their first, either field first.
+     */
+    @Test
+    fun `TomsMoComp rebuilds each field exactly as GStreamer's search does, either field first`() {
+        for (topFirst in listOf(true, false)) {
+            val suffix = if (topFirst) "" else "-bff"
+            val frames = resource("input$suffix.gray")
+            for (k in 1..3) {
+                for (second in listOf(false, true)) {
+                    val out = Deinterlacer.deinterlace(
+                        Deinterlacer.Method.TOMSMOCOMP,
+                        plane(frames, k - 1),
+                        plane(frames, k),
+                        plane(frames, k + 1),
+                        second,
+                        topFirst,
+                    )
+                    val index = 2 * (k - 1) + if (second) 1 else 0
+                    val expected = plane(resource("tomsmocomp$suffix.gray"), index)
+                    assertArrayEquals("frame $k, second $second, top first $topFirst", expected.pixels, out.pixels)
+                }
+            }
+        }
+    }
+
     @Test
     fun `the kept field passes through untouched`() {
         val out = Deinterlacer.deinterlace(
@@ -150,6 +177,7 @@ class DeinterlacerTest {
         assertTrue(PictureAdjustment.Deinterlace.GREEDY_HM.isTemporal)
         assertTrue(PictureAdjustment.Deinterlace.GREEDY_2FRAME.isTemporal)
         assertTrue(PictureAdjustment.Deinterlace.ADAPTIVE.isTemporal)
+        assertTrue(PictureAdjustment.Deinterlace.TOMSMOCOMP.isTemporal)
         assertEquals(Deinterlacer.Method.BWDIF, PictureAdjustment.Deinterlace.ADAPTIVE.method)
         assertFalse(PictureAdjustment.Deinterlace.FILM.isTemporal)
         assertFalse(PictureAdjustment.Deinterlace.BOB.isTemporal)
