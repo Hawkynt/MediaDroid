@@ -178,6 +178,8 @@ fun PlayerScreen(
             .associate { it.name to it.describe() }
     }
     var subtitle by remember { mutableStateOf<String?>(null) }
+    // The line of the subtitle track shown second, at the top.
+    var secondLine by remember { mutableStateOf<String?>(null) }
     var controlsUntil by remember { mutableLongStateOf(System.currentTimeMillis() + CONTROLS_MS) }
     // The file's own chapters, and the part repeated between two marks — as on the phone.
     var chapters by remember { mutableStateOf(emptyList<Chapter>()) }
@@ -266,6 +268,7 @@ fun PlayerScreen(
         var crop: PictureCrop? = null
         var staged: MediaReader.Picture? = null
         var drawn = AssPicture.EMPTY
+        var drawnSecond = AssPicture.EMPTY
         // The part of the video the staged picture shows, for the subtitles libass lays out on the whole video.
         var shownPart: PictureCrop? = null
         var shownPlace: IntArray? = null
@@ -376,12 +379,24 @@ fun PlayerScreen(
                     drawn = it
                     changed = true
                 }
+                withContext(Dispatchers.Default) {
+                    engine.secondSubtitlePicture(
+                        base.width, base.height, shownPart,
+                        shownPlace.takeIf { asStaged }, shownVisible.takeIf { asStaged },
+                    )
+                }?.let {
+                    drawnSecond = it
+                    changed = true
+                }
                 if (changed) {
-                    val shown = if (drawn.isEmpty) {
+                    val shown = if (drawn.isEmpty && drawnSecond.isEmpty) {
                         base
                     } else {
                         MediaReader.Picture(base.ptsMs, base.width, base.height, base.rgba.copyOf())
-                            .also { drawn.blendInto(it.rgba, it.width, it.height) }
+                            .also {
+                                drawn.blendInto(it.rgba, it.width, it.height)
+                                drawnSecond.blendInto(it.rgba, it.width, it.height)
+                            }
                     }
                     shownPicture[0] = shown
                     frame = bitmap.of(shown)
@@ -395,6 +410,7 @@ fun PlayerScreen(
             // A video's subtitles start in the household's language, as on the phone.
             if (wereEmpty) Tracks.preferredText(tracks, store.subtitleLanguage)?.let { pick(Track.Kind.TEXT, it.id) }
             subtitle = engine.subtitle()
+            secondLine = engine.secondSubtitleLine()
             val wasPlaying = isPlaying
             isPlaying = engine.isPlaying
             if (wasPlaying && !isPlaying && duration > 0 && position >= duration - 100) next()
@@ -515,6 +531,9 @@ fun PlayerScreen(
                     bottom = if (controlsShown) 120.dp else 40.dp),
             )
         }
+        secondLine?.let { line ->
+            SubtitleLine(line, Modifier.align(Alignment.TopCenter).padding(start = 48.dp, end = 48.dp, top = 40.dp))
+        }
         if (panel) {
             PicturePanel(
                 picture,
@@ -528,6 +547,7 @@ fun PlayerScreen(
                     if (named) t.copy(label = soundNames[t.label] ?: t.label) else t
                 },
                 onPick = ::pick,
+                onPickSecond = { engine.secondSubtitle = it },
                 speed = speed,
                 onSpeed = ::changeSpeed,
                 check = { candidate, say ->

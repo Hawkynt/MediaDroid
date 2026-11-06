@@ -41,6 +41,12 @@ class AssTrack : AutoCloseable {
     fun flush() = ifOpen { LibAss.flush(it) }
 
     /**
+     * Where lines without a place of their own stand: 0 where their style puts them, 100 at the top — for a track shown
+     * second, above the first (libass's line position).
+     */
+    fun linePosition(percent: Double) = ifOpen { LibAss.linePosition(it, percent) }
+
+    /**
      * The track at [timeMs] drawn for a frame [width] × [height] — the size it is shown at, for sharp text — over a
      * video of [videoWidth] × [videoHeight] pixels (0 for the frame's); null where the picture is the one drawn last.
      */

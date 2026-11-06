@@ -22,12 +22,13 @@ import java.util.concurrent.Executors
  * (the track's id). The file's attached fonts come from [fonts] (MatroskaFonts); both are read off the player's
  * thread. Chinese, Japanese or Korean text no font of the file's draws falls back to the device's own face for its
  * script ([ScriptFallback]), loaded once the first such line arrives. Where the native library is missing,
- * [available] is false and Media3 draws SSA as before.
+ * [available] is false and Media3 draws SSA as before. A track shown second ([top]) has its lines at the top.
  */
 @OptIn(UnstableApi::class)
 class AssSubtitles(
     private val fonts: () -> List<Pair<String, ByteArray>>,
     private val file: (String) -> ByteArray?,
+    private val top: Boolean = false,
 ) {
 
     /** The track being drawn: the picked ASS track while the renderer is on, else null. */
@@ -50,6 +51,7 @@ class AssSubtitles(
         val made = AssTrack()
         if (!made.open) return
         defaultFont?.let { made.defaultFont(path = it) }
+        if (top) made.linePosition(TOP)
         val fallback = ScriptFallback.Track(Locale.getDefault().toLanguageTag())
         track = made
         scripts = fallback
@@ -186,6 +188,9 @@ class AssSubtitles(
                 "/system/fonts/DroidSans.ttf",
             ).firstOrNull { File(it).isFile }
         }
+
+        /** libass's line position for a track shown second: its lines at the top. */
+        private const val TOP = 100.0
 
         /** The one thread the fallback faces load on: a system's CJK font is large. */
         private val fallbackLoader = Executors.newSingleThreadExecutor {

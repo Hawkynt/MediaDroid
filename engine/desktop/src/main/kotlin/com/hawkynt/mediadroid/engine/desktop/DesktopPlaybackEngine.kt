@@ -71,6 +71,13 @@ class DesktopPlaybackEngine(
     @Volatile private var assShown = false
     private val cues = java.util.concurrent.CopyOnWriteArrayList<MediaReader.Cue>()
 
+    // The subtitle track shown second, at the top (secondSubtitle): the same, for it.
+    @Volatile private var pendingSecond: String? = null
+    @Volatile private var secondText: String? = null
+    @Volatile private var secondAss: AssTrack? = null
+    @Volatile private var secondAssShown = false
+    private val secondCues = java.util.concurrent.CopyOnWriteArrayList<MediaReader.Cue>()
+
     override var openedPath: String? = null
         private set
 
@@ -100,6 +107,10 @@ class DesktopPlaybackEngine(
             }.getOrNull()
         }
         selectedText = null
+        secondText = null
+        secondAss?.close()
+        secondAss = null
+        secondCues.clear()
         // The fonts the file carries, for its ASS subtitles and those beside it.
         fonts = if (libass) opened.fonts else emptyList()
         cues.clear()
@@ -167,6 +178,7 @@ class DesktopPlaybackEngine(
                     pictures.clear()
                     pulldown.reset()
                     if (selectedText?.startsWith("sidecar:") == false) cues.clear()
+                    if (secondText?.startsWith("sidecar:") == false) secondCues.clear()
                     sink?.flush()
                     baseMs = target
                     wallStartNs = System.nanoTime()
@@ -182,6 +194,14 @@ class DesktopPlaybackEngine(
                     // brought all of its lines along when it was picked.
                     if (id.isNotEmpty()) {
                         cues.clear()
+                        pendingSeekMs = positionMs
+                    }
+                }
+                pendingSecond?.let { id ->
+                    pendingSecond = null
+                    source.selectSecondText(id.takeIf { it.isNotEmpty() })
+                    if (id.isNotEmpty()) {
+                        secondCues.clear()
                         pendingSeekMs = positionMs
                     }
                 }
@@ -260,8 +280,9 @@ class DesktopPlaybackEngine(
                             sink?.write(pcm)
                         }
                     }
-                    is MediaReader.Cue -> cues += item
-                    is MediaReader.AssEvent -> ass?.event(item.data.toByteArray(), item.startMs, item.durationMs)
+                    is MediaReader.Cue -> if (item.second) secondCues += item else cues += item
+                    is MediaReader.AssEvent -> (if (item.second) secondAss else ass)
+                        ?.event(item.data.toByteArray(), item.startMs, item.durationMs)
                 }
             }
         } catch (_: InterruptedException) {
@@ -423,7 +444,7 @@ class DesktopPlaybackEngine(
             }
             return (own + files + sidecars.map { it.track }).map {
                 when (it.kind) {
-                    Track.Kind.TEXT -> it.copy(selected = it.id == selectedText)
+                    Track.Kind.TEXT -> it.copy(selected = it.id == selectedText, second = it.id == secondText)
                     Track.Kind.AUDIO -> it.copy(selected = it.id == selectedSound)
                     Track.Kind.VIDEO -> it
                 }
@@ -434,6 +455,8 @@ class DesktopPlaybackEngine(
         when (kind) {
             Track.Kind.AUDIO -> if (id != null && id != selectedSound) pendingAudio = id
             Track.Kind.TEXT -> {
+                // The one shown second, picked first, is first only.
+                if (id != null && id == secondText) secondSubtitle = null
                 selectedText = id
                 ass?.close()
                 ass = null
@@ -442,15 +465,11 @@ class DesktopPlaybackEngine(
                     pendingText = ""
                     cues.clear()
                     cues.addAll(sidecar.cues)
-                    ass = sidecar.assHeader?.let { header ->
-                        assTrack(header)?.apply {
-                            sidecar.assEvents.forEach { event(it.data.toByteArray(), it.startMs, it.durationMs) }
-                        }
-                    }
+                    ass = sidecar.assHeader?.let { header -> sidecarAss(sidecar, header, top = false) }
                 } else {
                     cues.clear()
                     pendingText = id.orEmpty()
-                    ass = id?.toIntOrNull()?.let { reader?.assHeader(it) }?.let(::assTrack)
+                    ass = id?.toIntOrNull()?.let { reader?.assHeader(it) }?.let { assTrack(it) }
                     ass?.let { track -> prefetch(track, id!!.toInt()) }
                 }
                 listeners.forEach { it.onTracksChanged(tracks) }
@@ -459,16 +478,47 @@ class DesktopPlaybackEngine(
         }
     }
 
-    /** A libass track with [header] and the file's fonts, the system's own behind them; null without libass. */
-    private fun assTrack(header: ByteArray): AssTrack? {
+    override var secondSubtitle: String?
+        get() = secondText
+        set(value) {
+            val id = value?.takeIf { it != selectedText && tracks.any { t -> t.kind == Track.Kind.TEXT && t.id == it } }
+            secondText = id
+            secondAss?.close()
+            secondAss = null
+            secondCues.clear()
+            val sidecar = sidecars.firstOrNull { it.track.id == id }
+            if (sidecar != null) {
+                pendingSecond = ""
+                secondCues.addAll(sidecar.cues.map { it.copy(second = true) })
+                secondAss = sidecar.assHeader?.let { header -> sidecarAss(sidecar, header, top = true) }
+            } else {
+                pendingSecond = id.orEmpty()
+                secondAss = id?.toIntOrNull()?.let { reader?.assHeader(it) }?.let { assTrack(it, top = true) }
+                secondAss?.let { track -> prefetch(track, id!!.toInt()) }
+            }
+            listeners.forEach { it.onTracksChanged(tracks) }
+        }
+
+    /**
+     * A libass track with [header] and the file's fonts, the system's own behind them — its lines at the top where it
+     * is the one shown second ([top]); null without libass.
+     */
+    private fun assTrack(header: ByteArray, top: Boolean = false): AssTrack? {
         if (!libass) return null
         val track = AssTrack()
         if (!track.open) return null
         fonts.forEach { (name, data) -> track.addFont(name, data) }
         track.defaultFont(path = defaultFont.orEmpty(), system = true)
+        if (top) track.linePosition(TOP)
         track.header(header)
         return track
     }
+
+    /** A libass track of an ASS file beside the video, its every event fed. */
+    private fun sidecarAss(sidecar: Sidecar, header: ByteArray, top: Boolean): AssTrack? =
+        assTrack(header, top)?.apply {
+            sidecar.assEvents.forEach { event(it.data.toByteArray(), it.startMs, it.durationMs) }
+        }
 
     /**
      * A local file's ASS stream [index] read through once on a thread of its own, every event into [track]: a seek
@@ -481,7 +531,7 @@ class DesktopPlaybackEngine(
         Thread({
             runCatching {
                 MediaReader(path).use { r ->
-                    r.forEachAssEvent(index, { ass !== track }) {
+                    r.forEachAssEvent(index, { ass !== track && secondAss !== track }) {
                         track.event(it.data.toByteArray(), it.startMs, it.durationMs)
                     }
                 }
@@ -492,8 +542,8 @@ class DesktopPlaybackEngine(
         }
     }
 
-    /** Whether the picked subtitles are drawn by libass ([subtitlePicture]) rather than shown as text. */
-    val drawsSubtitles: Boolean get() = ass != null && subtitlesOn
+    /** Whether subtitles are drawn by libass ([subtitlePicture], [secondSubtitlePicture]) rather than shown as text. */
+    val drawsSubtitles: Boolean get() = (ass != null || secondAss != null) && subtitlesOn
 
     /**
      * The picked ASS subtitles due with the picture (less the subtitle delay) drawn for a picture of [width] ×
@@ -518,6 +568,35 @@ class DesktopPlaybackEngine(
             return AssPicture.EMPTY
         }
         assShown = true
+        return draw(track, width, height, crop, place, visible)
+    }
+
+    /** The ASS subtitles shown second, at the top, as [subtitlePicture] draws the first. */
+    fun secondSubtitlePicture(
+        width: Int,
+        height: Int,
+        crop: PictureCrop? = null,
+        place: IntArray? = null,
+        visible: IntArray? = null,
+    ): AssPicture? {
+        val track = secondAss
+        if (track == null || !subtitlesOn) {
+            if (!secondAssShown) return null
+            secondAssShown = false
+            return AssPicture.EMPTY
+        }
+        secondAssShown = true
+        return draw(track, width, height, crop, place, visible)
+    }
+
+    private fun draw(
+        track: AssTrack,
+        width: Int,
+        height: Int,
+        crop: PictureCrop?,
+        place: IntArray?,
+        visible: IntArray?,
+    ): AssPicture? {
         val opened = reader
         val atMs = positionMs + soundDelayMs() - tuning.subtitleDelayMs
         val videoWidth = opened?.width ?: 0
@@ -536,10 +615,20 @@ class DesktopPlaybackEngine(
     /** The subtitle line due with the picture, while subtitles are on and a subtitle track is picked; else null. */
     fun subtitle(): String? {
         if (!subtitlesOn || selectedText == null || ass != null) return null
+        return due(cues)
+    }
+
+    /** The line of the track shown second due with the picture, as [subtitle]; null where it is drawn or none. */
+    fun secondSubtitleLine(): String? {
+        if (!subtitlesOn || secondText == null || secondAss != null) return null
+        return due(secondCues)
+    }
+
+    private fun due(lines: List<MediaReader.Cue>): String? {
         val now = positionMs + soundDelayMs()
         // The latest begun: a teletext page shows until the next replaces it (MediaReader.UNTIL_REPLACED), and a
         // cleared page is an empty one.
-        return cues.filter { now >= it.startMs && now < it.endMs }.maxByOrNull { it.startMs }?.text
+        return lines.filter { now >= it.startMs && now < it.endMs }.maxByOrNull { it.startMs }?.text
             ?.takeIf { it.isNotEmpty() }
     }
 
@@ -564,6 +653,8 @@ class DesktopPlaybackEngine(
         reader = null
         ass?.close()
         ass = null
+        secondAss?.close()
+        secondAss = null
         playing = false
         pictures.clear()
         shown = null
@@ -584,6 +675,9 @@ class DesktopPlaybackEngine(
     private val libass: Boolean by lazy { NativeNetworks.loaded && LibAss.available }
 
     private companion object {
+        /** libass's line position for the track shown second: its lines at the top. */
+        const val TOP = 100.0
+
         /**
          * The font for what neither the file's fonts nor the system's provider draw (a Linux built without Fontconfig):
          * the first of the usual sans faces this machine has.

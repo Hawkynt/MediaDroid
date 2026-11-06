@@ -75,6 +75,8 @@ fun PicturePanel(
     modifier: Modifier = Modifier,
     tracks: List<Track> = emptyList(),
     onPick: (Track.Kind, String?) -> Unit = { _, _ -> },
+    /** Picks the subtitle track shown second, at the top (null for none). */
+    onPickSecond: (String?) -> Unit = {},
     speed: Float = 1f,
     onSpeed: (Float) -> Unit = {},
     check: PictureTry = { _, _ -> PictureVerdict(true) },
@@ -135,6 +137,26 @@ fun PicturePanel(
                         onClick = { onPick(Track.Kind.TEXT, track.id) },
                         label = { Text(trackName(track, i + 1)) },
                     )
+                }
+            }
+            // A second track at the top: a language to learn by, or the signs beside the dialogue.
+            if (subtitles.size > 1) {
+                Text("Second subtitles, at the top", color = Color.White)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(
+                        selected = subtitles.none { it.second },
+                        onClick = { onPickSecond(null) },
+                        label = { Text("None") },
+                    )
+                    subtitles.forEachIndexed { i, track ->
+                        if (!track.selected) {
+                            FilterChip(
+                                selected = track.second,
+                                onClick = { onPickSecond(track.id) },
+                                label = { Text(trackName(track, i + 1)) },
+                            )
+                        }
+                    }
                 }
             }
         }

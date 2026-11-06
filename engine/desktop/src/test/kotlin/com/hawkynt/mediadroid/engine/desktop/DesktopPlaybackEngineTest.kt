@@ -3,6 +3,7 @@ package com.hawkynt.mediadroid.engine.desktop
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.Tracks
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -193,6 +194,39 @@ class DesktopPlaybackEngineTest {
             engine.select(Track.Kind.TEXT, track.id)
             sink.playedMs = 1200
             waitFor { engine.subtitle() == "Second line\nwith two rows" }
+        }
+    }
+
+    @Test
+    fun `a second subtitle track shows beside the first, never the first's own`() {
+        // two-subtitles.mkv: subtitled.mkv's German stream and an English one ("One", "Two") at the same times.
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(fixture("two-subtitles.mkv")))
+            waitFor { engine.isPlaying }
+            val (german, english) = engine.tracks.filter { it.kind == Track.Kind.TEXT }
+            engine.select(Track.Kind.TEXT, german.id)
+            engine.secondSubtitle = english.id
+            assertEquals(english.id, Tracks.second(engine.tracks)?.id)
+            Thread.sleep(100) // the reader thread takes the switches in
+            // The pictures taken as the screen takes them, so the reading goes on.
+            sink.playedMs = 300
+            waitFor {
+                engine.moment()
+                engine.subtitle() == "First line" && engine.secondSubtitleLine() == "One"
+            }
+            sink.playedMs = 1200
+            waitFor {
+                engine.moment()
+                engine.subtitle() == "Second line\nwith two rows" && engine.secondSubtitleLine() == "Two"
+            }
+            // The first's own track cannot be second; picked first, the second goes.
+            engine.secondSubtitle = german.id
+            assertNull(engine.secondSubtitle)
+            engine.secondSubtitle = english.id
+            engine.select(Track.Kind.TEXT, english.id)
+            assertNull(engine.secondSubtitle)
+            assertNull(Tracks.second(engine.tracks))
         }
     }
 

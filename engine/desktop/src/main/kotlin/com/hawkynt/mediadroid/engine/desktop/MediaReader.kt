@@ -72,13 +72,13 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
      * A subtitle line shown from [startMs] to [endMs], as text (SubtitleText). A teletext page's ([UNTIL_REPLACED])
      * shows until the next one of its track: empty [text] where the page was cleared.
      */
-    data class Cue(val startMs: Long, val endMs: Long, val text: String)
+    data class Cue(val startMs: Long, val endMs: Long, val text: String, val second: Boolean = false)
 
     /**
      * An ASS/SSA event as libass takes it ([data]: `ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text`),
      * shown from [startMs] for [durationMs]: read alongside the [Cue] while the selected stream is ASS (AssEvents).
      */
-    class AssEvent(val startMs: Long, val durationMs: Long, val data: String)
+    class AssEvent(val startMs: Long, val durationMs: Long, val data: String, val second: Boolean = false)
 
     // A file from a network source is read through FsInput; a local one by FFmpeg itself.
     private val input: FsInput? = from?.let(::FsInput)
@@ -94,10 +94,50 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     private var audioIndex: Int
     private var video: AVCodecContext? = null
     private var audio: AVCodecContext? = null
-    private var textIndex = -1
-    private var textIsAss = false
-    private var teletext: Teletext.Decoder? = null
-    private var text: AVCodecContext? = null
+    // The subtitle track read and the one read second ([selectSecondText]): its stream, its decoder (or a teletext
+    // page's), and whether it is ASS.
+    private inner class TextSlot(val second: Boolean) {
+        var index = -1
+        var isAss = false
+        var teletext: Teletext.Decoder? = null
+        var context: AVCodecContext? = null
+
+        fun select(id: String?) {
+            val page = id?.let(Teletext::ofTrackId)
+            if (page == null) {
+                select(id?.toIntOrNull() ?: -1)
+                return
+            }
+            select(-1)
+            if (page.first !in 0 until format.nb_streams()) return
+            index = page.first
+            teletext = Teletext.Decoder(page.second)
+        }
+
+        fun select(stream: Int) {
+            if (stream == index && teletext == null) return
+            close()
+            if (stream < 0 || format.streams(stream).codecpar().codec_type() != avutil.AVMEDIA_TYPE_SUBTITLE) return
+            index = stream
+            context = openDecoder(stream)
+            isAss = assHeader(stream) != null
+        }
+
+        fun packet(input: AVPacket) {
+            teletext?.let { page(this, it, input) } ?: context?.let { cue(this, it, input) }
+        }
+
+        fun close() {
+            context?.let { avcodec.avcodec_free_context(it) }
+            context = null
+            teletext = null
+            index = -1
+            isAss = false
+        }
+    }
+
+    private val text = TextSlot(second = false)
+    private val secondText = TextSlot(second = true)
     private val subtitle = org.bytedeco.ffmpeg.avcodec.AVSubtitle()
     private val gotSubtitle = org.bytedeco.javacpp.IntPointer(1)
     private var sws: SwsContext? = null
@@ -249,31 +289,16 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
      * Decodes the subtitle track [id] from the next read on, as [Cue]s: a stream's index, or a teletext page's
      * ([Teletext.trackId]); null for none.
      */
-    fun selectText(id: String?) {
-        val page = id?.let(Teletext::ofTrackId)
-        if (page == null) {
-            selectText(id?.toIntOrNull() ?: -1)
-            return
-        }
-        selectText(-1)
-        if (page.first !in 0 until format.nb_streams()) return
-        textIndex = page.first
-        teletext = Teletext.Decoder(page.second)
-    }
+    fun selectText(id: String?) = text.select(id)
 
     /** Decodes the text subtitle stream [index] (a track id) from the next read on, as [Cue]s; -1 for none. */
-    fun selectText(index: Int) {
-        if (index == textIndex && teletext == null) return
-        text?.let { avcodec.avcodec_free_context(it) }
-        text = null
-        teletext = null
-        textIndex = -1
-        textIsAss = false
-        if (index < 0 || format.streams(index).codecpar().codec_type() != avutil.AVMEDIA_TYPE_SUBTITLE) return
-        textIndex = index
-        text = openDecoder(index)
-        textIsAss = assHeader(index) != null
-    }
+    fun selectText(index: Int) = text.select(index)
+
+    /**
+     * Decodes the subtitle track [id] as well, shown second (as [selectText] does; null for none): its [Cue]s and
+     * [AssEvent]s come marked [Cue.second].
+     */
+    fun selectSecondText(id: String?) = secondText.select(id)
 
     /** The header of the subtitle stream [index] (its codec private) where it is ASS or SSA, else null. */
     fun assHeader(index: Int): ByteArray? {
@@ -295,7 +320,8 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         avformat.av_seek_frame(format, -1, positionMs * 1000, avformat.AVSEEK_FLAG_BACKWARD)
         video?.let { avcodec.avcodec_flush_buffers(it) }
         audio?.let { avcodec.avcodec_flush_buffers(it) }
-        teletext?.reset()
+        text.teletext?.reset()
+        secondText.teletext?.reset()
         pending.clear()
         ended = false
         skipBeforeMs = positionMs
@@ -308,10 +334,10 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
      */
     fun forEachAssEvent(index: Int, cancelled: () -> Boolean, each: (AssEvent) -> Unit) {
         selectText(index)
-        if (!textIsAss) return
-        val context = text ?: return
+        if (!text.isAss) return
+        val context = text.context ?: return
         while (!cancelled() && avformat.av_read_frame(format, packet) >= 0) {
-            if (packet.stream_index() == textIndex) cue(context, packet)
+            if (packet.stream_index() == text.index) cue(text, context, packet)
             avcodec.av_packet_unref(packet)
             while (pending.isNotEmpty()) (pending.removeFirst() as? AssEvent)?.let(each)
         }
@@ -331,8 +357,10 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
             when (index) {
                 videoIndex -> video?.let { drain(it, packet) }
                 audioIndex -> audio?.let { drain(it, packet) }
-                textIndex -> teletext?.let { page(it, packet) } ?: text?.let { cue(it, packet) }
             }
+            // Both subtitle tracks may be pages of one teletext stream.
+            if (index == text.index) text.packet(packet)
+            if (index == secondText.index) secondText.packet(packet)
             avcodec.av_packet_unref(packet)
         }
         return pending.removeFirst()
@@ -355,10 +383,10 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         }
     }
 
-    private fun cue(context: AVCodecContext, input: AVPacket) {
+    private fun cue(slot: TextSlot, context: AVCodecContext, input: AVPacket) {
         val decoded = avcodec.avcodec_decode_subtitle2(context, subtitle, gotSubtitle, input)
         if (decoded < 0 || gotSubtitle.get() == 0) return
-        val stream = format.streams(textIndex)
+        val stream = format.streams(slot.index)
         val base = stream.time_base()
         val pts = if (input.pts() != avutil.AV_NOPTS_VALUE) input.pts() else input.dts()
         val atMs = Math.round(pts * 1000.0 * base.num() / base.den())
@@ -371,19 +399,19 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         val events = (0 until subtitle.num_rects()).mapNotNull { i -> subtitle.rects(i).ass()?.string }
         val lines = events.map { SubtitleText.fromAssEvent(it) }.filter { it.isNotEmpty() }
         if (endMs >= skipBeforeMs) {
-            if (textIsAss) events.forEach { pending.addLast(AssEvent(startMs, endMs - startMs, it)) }
-            if (lines.isNotEmpty()) pending.addLast(Cue(startMs, endMs, lines.joinToString("\n")))
+            if (slot.isAss) events.forEach { pending.addLast(AssEvent(startMs, endMs - startMs, it, slot.second)) }
+            if (lines.isNotEmpty()) pending.addLast(Cue(startMs, endMs, lines.joinToString("\n"), slot.second))
         }
         avcodec.avsubtitle_free(subtitle)
     }
 
     /** A teletext packet into [decoder]: where its page shows something new, that as a [Cue] until replaced. */
-    private fun page(decoder: Teletext.Decoder, input: AVPacket) {
+    private fun page(slot: TextSlot, decoder: Teletext.Decoder, input: AVPacket) {
         val size = input.size()
         if (size <= 0) return
         val data = ByteArray(size).also { input.data().get(it) }
         val shown = decoder.feed(data) ?: return
-        val stream = format.streams(textIndex)
+        val stream = format.streams(slot.index)
         val base = stream.time_base()
         val pts = if (input.pts() != avutil.AV_NOPTS_VALUE) input.pts() else input.dts()
         if (pts == avutil.AV_NOPTS_VALUE) return
@@ -399,7 +427,7 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
             0
         }
         val atMs = Math.round((pts - origin) * 1000.0 * base.num() / base.den())
-        pending.addLast(Cue(atMs, UNTIL_REPLACED, shown.text))
+        pending.addLast(Cue(atMs, UNTIL_REPLACED, shown.text, slot.second))
     }
 
     private fun picture(ptsMs: Long): Picture {
@@ -480,7 +508,8 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         swr?.let { swresample.swr_free(it) }
         video?.let { avcodec.avcodec_free_context(it) }
         audio?.let { avcodec.avcodec_free_context(it) }
-        text?.let { avcodec.avcodec_free_context(it) }
+        text.close()
+        secondText.close()
         avutil.av_frame_free(rgbaFrame)
         avutil.av_frame_free(soundFrame)
         avutil.av_frame_free(frame)

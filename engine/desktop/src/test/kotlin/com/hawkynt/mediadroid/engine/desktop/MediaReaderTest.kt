@@ -141,6 +141,30 @@ class MediaReaderTest {
     }
 
     @Test
+    fun `a second subtitle track is read beside the first, its lines marked second`() {
+        val mkv = File(requireNotNull(javaClass.getResource("/two-subtitles.mkv")).toURI()).path
+        MediaReader(mkv).use { r ->
+            val (german, english) = r.tracks.filter { it.kind == Track.Kind.TEXT }
+            r.selectText(german.id)
+            r.selectSecondText(english.id)
+            val cues = generateSequence { r.read() }.filterIsInstance<MediaReader.Cue>().toList()
+            assertEquals(expected, cues.filter { !it.second })
+            assertEquals(listOf("One", "Two"), cues.filter { it.second }.map { it.text })
+        }
+        // Two pages of one teletext stream, one first and one second.
+        val ts = File(requireNotNull(javaClass.getResource("/teletext/subtitles.ts")).toURI()).path
+        MediaReader(ts).use { r ->
+            val (page888, page777) = r.tracks.filter { it.kind == Track.Kind.TEXT }
+            r.selectText(page888.id)
+            r.selectSecondText(page777.id)
+            val cues = generateSequence { r.read() }.filterIsInstance<MediaReader.Cue>().toList()
+            val first = cues.filter { !it.second }.map { it.text }
+            assertEquals(listOf("Hallo!\nGrüße aus Hamburg", "", "Bis bald."), first)
+            assertEquals(listOf("(Musik)", "(Applaus)", ""), cues.filter { it.second }.map { it.text })
+        }
+    }
+
+    @Test
     fun `a file's own subtitle stream reads the same, with its language`() {
         val mkv = File(requireNotNull(javaClass.getResource("/subtitled.mkv")).toURI()).path
         assertEquals(expected, cues(mkv))

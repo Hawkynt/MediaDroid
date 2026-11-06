@@ -93,6 +93,11 @@ JNIEXPORT void JNICALL Java_com_hawkynt_mediadroid_player_LibAss_flush(JNIEnv*, 
     track(handle)->flush();
 }
 
+JNIEXPORT void JNICALL Java_com_hawkynt_mediadroid_player_LibAss_linePosition(
+    JNIEnv*, jobject, jlong handle, jdouble percent) {
+    track(handle)->setLinePosition(percent);
+}
+
 // The track at [timeMs] for a frame [width] × [height] (the video's own pixels [storageWidth] × [storageHeight]; the
 // whole video reaching the margins past the frame, 0 or below, where the frame shows part of it): null
 // where the picture is the one drawn last, else x, y, width and height of the box that holds it followed by its pixels

@@ -45,6 +45,9 @@ object LibAss {
     /** Every event dropped; the header stays. */
     external fun flush(handle: Long)
 
+    /** Where lines without a place of their own stand: 0 where their style puts them, 100 at the top. */
+    external fun linePosition(handle: Long, percent: Double)
+
     /**
      * The track at [timeMs] for a frame [width] × [height] — the whole video reaching the margins past it (0 or below,
      * [AssFrame]) where it shows part of it: null where it is the picture drawn last, else x, y, width and height of
