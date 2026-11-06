@@ -280,6 +280,9 @@ fun PlayerScreen(
     var infoOpen by remember { mutableStateOf(false) }
     // The statistics over the picture (Info › Advanced), for this session only.
     var statisticsShown by remember { mutableStateOf(false) }
+    // The histogram of the picture on screen, off until switched on beneath the statistics; its last count.
+    var histogramShown by remember { mutableStateOf(false) }
+    var histogram by remember { mutableStateOf<com.hawkynt.mediadroid.player.Histogram?>(null) }
     val statistics = remember { com.hawkynt.mediadroid.player.PlaybackStatistics() }
     // PlayerView opens its shutter only for a first frame drawn into its own surface; one drawn by the filters'
     // stage from FFmpeg's planes is announced to analytics alone, so the shutter is opened from here.
@@ -1166,7 +1169,8 @@ fun PlayerScreen(
         val bend = (presentation?.takeIf { it.isShowing }?.playerView ?: playerView)
             ?.warpFor(player.videoSize) ?: ScreenWarp.None
         val wanted =
-            (ffmpegVideo || toneMapped || ((shownPicture.hasFilters || !bend.isIdentity) && transfer == null)) &&
+            (ffmpegVideo || toneMapped ||
+                ((shownPicture.hasFilters || !bend.isIdentity || histogramShown) && transfer == null)) &&
                 target != null && target.holder.surface.isValid
         val stage = filterStage[0] ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { made ->
             filterStage[0] = made
@@ -1183,6 +1187,19 @@ fun PlayerScreen(
         if (wanted) {
             val active = stage
             active.statistics = if (statisticsShown) statistics else null
+            // Counted on the stage's thread from its small sample; shown on the main one.
+            active.onScreenSample = if (histogramShown) {
+                val main = android.os.Handler(android.os.Looper.getMainLooper())
+                val take: (com.hawkynt.mediadroid.player.VideoFilterStage.ReadBack) -> Unit = { sample ->
+                    val counted = com.hawkynt.mediadroid.player.Histogram.of(
+                        sample.rgba, sample.width, sample.height, step = 1,
+                    )
+                    main.post { histogram = counted }
+                }
+                take
+            } else {
+                null
+            }
             active.appContext = context.applicationContext
             active.neuralMotion = settings.neuralMotionOffered.associateWith { settings.neuralMotionPassed(it)!! }
             active.neuralEnlargers =
@@ -1961,8 +1978,14 @@ fun PlayerScreen(
                 modifier = Modifier.align(Alignment.CenterEnd).then(safeArea),
             )
         }
-        if (statisticsShown) {
-            StatisticsOverlay(statistics, Modifier.align(Alignment.TopStart).then(safeArea).padding(8.dp))
+        if (statisticsShown || histogramShown) {
+            // The statistics, and beneath them the histogram — on the left, beside the gear's picture controls.
+            Column(Modifier.align(Alignment.TopStart).then(safeArea).padding(8.dp)) {
+                if (statisticsShown) StatisticsOverlay(statistics, Modifier)
+                if (histogramShown) {
+                    HistogramOverlay(histogram, Modifier.padding(top = if (statisticsShown) 8.dp else 0.dp))
+                }
+            }
         }
         if (locked) {
             LockOverlay(stamp = lockHintStamp, onTouch = { lockHintStamp++ }, onUnlock = { locked = false })
@@ -2006,6 +2029,11 @@ fun PlayerScreen(
                 statisticsShown = statisticsShown,
                 onStatistics = { statisticsShown = it },
                 onDismiss = { infoOpen = false },
+                histogramShown = histogramShown,
+                onHistogram = {
+                    histogramShown = it
+                    if (!it) histogram = null
+                },
             )
         }
         if (chapterPicker) {

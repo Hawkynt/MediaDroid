@@ -369,7 +369,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val peakBufferSizes = IntArray(2)
     private val peakPending = IntArray(2)
     private var peakSlot = 0
-    private val frames = Array(LOGO_MASKED + 1) { Frame() }
+    private val frames = Array(SCREEN_SAMPLE + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -464,6 +464,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      */
     private fun swap() {
         if (waitForGpu) GLES20.glFinish()
+        onScreenSample?.let { take ->
+            val now = System.nanoTime()
+            if (now - lastScreenSampleNs >= SCREEN_SAMPLE_NS) {
+                lastScreenSampleNs = now
+                runCatching { sampleWindow() }.getOrNull()?.let(take)
+            }
+        }
         snapshotTaker?.let { take ->
             snapshotTaker = null
             handler.removeCallbacks(snapshotTimeout)
@@ -474,6 +481,51 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     /** A picture read back from the window: RGBA rows from the bottom, as OpenGL reads them. */
     class ReadBack(val rgba: ByteArray, val width: Int, val height: Int)
+
+    /**
+     * Handed, on the stage's thread, a small copy of the picture on screen — every filter and the colour correction
+     * applied — twice a second while set: for the histogram (see [Histogram]). Null takes none.
+     */
+    @Volatile
+    var onScreenSample: ((ReadBack) -> Unit)? = null
+
+    private var lastScreenSampleNs = 0L
+
+    /**
+     * The window's picture as drawn so far, every [Histogram.step]th pixel: on GLSL ES 3 chips copied small on the
+     * graphics chip first, nearest pixel (no level that is not on screen), then read back; otherwise read whole and
+     * stepped through here.
+     */
+    private fun sampleWindow(): ReadBack {
+        val width = query(EGL14.EGL_WIDTH)
+        val height = query(EGL14.EGL_HEIGHT)
+        val step = Histogram.step(width, height)
+        if (!es3 || step == 1) {
+            val whole = readWindow()
+            if (step == 1) return whole
+            val w = width / step
+            val h = height / step
+            val small = ByteArray(w * h * 4)
+            for (y in 0 until h) for (x in 0 until w) {
+                System.arraycopy(whole.rgba, ((y * step) * width + x * step) * 4, small, (y * w + x) * 4, 4)
+            }
+            return ReadBack(small, w, h)
+        }
+        val w = width / step
+        val h = height / step
+        val sample = frames[SCREEN_SAMPLE].ensure(w, h)
+        GLES30.glBindFramebuffer(GLES30.GL_READ_FRAMEBUFFER, 0)
+        GLES30.glBindFramebuffer(GLES30.GL_DRAW_FRAMEBUFFER, sample.framebuffer)
+        GLES30.glBlitFramebuffer(0, 0, width, height, 0, 0, w, h, GLES30.GL_COLOR_BUFFER_BIT, GLES30.GL_NEAREST)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, sample.framebuffer)
+        val bytes = ByteBuffer.allocateDirect(w * h * 4)
+        GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, 1)
+        GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        val rgba = ByteArray(w * h * 4)
+        bytes.get(rgba)
+        return ReadBack(rgba, w, h)
+    }
 
     // A snapshot waiting for the next picture handed to the window, and what ends the wait when none comes.
     private var snapshotTaker: ((ReadBack?) -> Unit)? = null
@@ -2884,6 +2936,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** The colour-corrected picture at the screen's size in half floats, for the dithering (see output). */
         private const val DITHER_INPUT = CROP_SAMPLE + 1
 
+        /** How often the histogram's sample is taken. */
+        private const val SCREEN_SAMPLE_NS = 500_000_000L
+
         /** The screen's bits per value: the window's EGL configuration is RGBA8888. */
         private const val SCREEN_BITS = 8
 
@@ -2900,6 +2955,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** The picture with its station logo hidden (see LogoMask). */
         private const val LOGO_MASKED = CHROMA_FULL + 1
+
+        // The picture on screen taken small for the histogram (see onScreenSample).
+        private const val SCREEN_SAMPLE = LOGO_MASKED + 1
 
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()

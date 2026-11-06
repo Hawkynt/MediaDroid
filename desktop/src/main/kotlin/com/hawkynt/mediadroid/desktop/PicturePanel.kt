@@ -91,6 +91,8 @@ fun PicturePanel(
     onFit: (PictureFit) -> Unit = {},
     pattern: TestPattern? = null,
     onPattern: (TestPattern?) -> Unit = {},
+    histogramShown: Boolean = false,
+    onHistogram: (Boolean) -> Unit = {},
     aspect: AspectOverride = AspectOverride.AUTO,
     onAspect: (AspectOverride) -> Unit = {},
     screenName: String = "This screen",
@@ -210,6 +212,14 @@ fun PicturePanel(
                 valueRange = -1f..1f,
             )
         }
+        // The histogram beside the controls, to set brightness and contrast without clipping (Histogram).
+        SwitchRow(
+            "Histogram over the picture",
+            "How often each brightness and colour occurs on screen: the darkest peak just right of the left end, " +
+                "the brightest just left of the right end.",
+            histogramShown,
+            onHistogram,
+        )
         // Found as the video plays and cut away before every filter (AutoCrop), as on the phone.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("Crop black bars", color = Color.White, modifier = Modifier.weight(1f))
