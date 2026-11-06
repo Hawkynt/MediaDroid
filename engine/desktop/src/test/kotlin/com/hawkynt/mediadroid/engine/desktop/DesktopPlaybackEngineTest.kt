@@ -8,6 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import kotlin.math.pow
 
 class DesktopPlaybackEngineTest {
 
@@ -19,8 +20,10 @@ class DesktopPlaybackEngineTest {
         @Volatile var playedMs = 0L
         @Volatile var flushed = 0
         @Volatile var written = 0L
+        @Volatile var peak = 0
         override fun open(sampleRate: Int, channels: Int) = Unit
         override fun write(pcm: ByteArray) {
+            peak = maxOf(peak, peakOf(pcm))
             written += pcm.size
             Thread.sleep(1)
         }
@@ -33,6 +36,38 @@ class DesktopPlaybackEngineTest {
         }
         override var volume: Float = 1f
         override fun close() = Unit
+    }
+
+    private companion object {
+        /** The loudest sample in 16-bit little-endian PCM. */
+        fun peakOf(pcm: ByteArray): Int {
+            var peak = 0
+            for (i in 0 until pcm.size / 2) {
+                val sample = (pcm[2 * i].toInt() and 0xFF) or (pcm[2 * i + 1].toInt() shl 8)
+                peak = maxOf(peak, kotlin.math.abs(sample.toShort().toInt()))
+            }
+            return peak
+        }
+    }
+
+    /** The loudest sample of a file's sound as decoded, untouched. */
+    private fun decodedPeak(path: String): Int = MediaReader(path).use { r ->
+        generateSequence { r.read() }.filterIsInstance<MediaReader.Sound>().maxOf { peakOf(it.pcm) }
+    }
+
+    /** Plays [path] with [tuning] to near its end into a sink and returns the loudest sample the sink was given. */
+    private fun playedPeak(path: String, tuning: PlaybackTuning): Int {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(tuning) { sink }.use { engine ->
+            engine.open(MediaRequest(path))
+            // The clock moved on by hand, so the pictures are taken and the reader goes on.
+            waitFor {
+                sink.playedMs += 20
+                engine.picture()
+                engine.durationMs > 0 && sink.written >= engine.durationMs * 48 * 4 * 9 / 10
+            }
+        }
+        return sink.peak
     }
 
     private fun waitFor(condition: () -> Boolean) {
@@ -192,6 +227,50 @@ class DesktopPlaybackEngineTest {
             sink.playedMs = 300
             assertEquals(from + 600, engine.positionMs)
             waitFor { engine.picture()?.ptsMs == (from + 600) / 40 * 40 }
+        }
+    }
+
+    @Test
+    fun `the loudness setting turns the sound down or up on its way to the output`() {
+        val untouched = decodedPeak(clip)
+        val quieter = playedPeak(clip, PlaybackTuning.Mutable().apply { loudnessDb = -20f })
+        assertEquals(untouched / 10.0, quieter.toDouble(), 2.0)
+        val louder = playedPeak(clip, PlaybackTuning.Mutable().apply { loudnessDb = 6f })
+        assertTrue("$louder against $untouched", louder > untouched * 3 / 2)
+    }
+
+    @Test
+    fun `with even loudness a file plays at its ReplayGain`() {
+        val tagged = fixture("replaygain.flac")
+        val untouched = decodedPeak(tagged)
+        val even = playedPeak(tagged, PlaybackTuning.Mutable().apply { normalizeLoudness = true })
+        assertEquals(untouched * 10.0.pow(-7.5 / 20), even.toDouble(), 2.0)
+        assertEquals(untouched, playedPeak(tagged, PlaybackTuning.Mutable()))
+    }
+
+    @Test
+    fun `night mode lifts a quiet sound`() {
+        val untouched = decodedPeak(clip)
+        val night = playedPeak(clip, PlaybackTuning.Mutable().apply { nightMode = true })
+        assertTrue("$night against $untouched", night > untouched * 3 / 2)
+    }
+
+    @Test
+    fun `an audio delay moves the pictures against the sound`() {
+        val sink = ManualSink()
+        val tuning = PlaybackTuning.Mutable().apply { audioDelayMs = 200 }
+        DesktopPlaybackEngine(tuning) { sink }.use { engine ->
+            engine.open(MediaRequest(clip))
+            waitFor { engine.isPlaying }
+            // The sound later: the picture is ahead of what is heard.
+            waitFor { engine.picture()?.ptsMs == 200L }
+            assertEquals(0L, engine.positionMs)
+            // The sound sooner: the picture waits, held back further than the few pictures usually decoded ahead.
+            tuning.audioDelayMs = -400
+            sink.playedMs = 800
+            waitFor { engine.picture()?.ptsMs == 400L }
+            sink.playedMs = 1000
+            waitFor { engine.picture()?.ptsMs == 600L }
         }
     }
 }

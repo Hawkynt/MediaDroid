@@ -357,15 +357,20 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   checks (`PictureTrial` in `:core:player`), the dry run on a stage of its own drawing at the size the largest screen
   shows 576p, at that screen's refresh rate.
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
-  (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture and track panel,
-  N for the next episode, [ and ] for slower and faster, C for a snapshot, `,` and `.` for one frame back and
-  forward, Page Up and Page Down for the next and the previous chapter, L to repeat a part), a window that remembers
-  its size and place.
+  (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture, sound and
+  track panel, N for the next episode, [ and ] for slower and faster, C for a snapshot, `,` and `.` for one frame back
+  and forward, Page Up and Page Down for the next and the previous chapter, L to repeat a part), a window that
+  remembers its size and place.
 - Snapshot: the camera button (or C) saves the picture as the stage shows it, filters and all, as a PNG in the user's
   Pictures folder (`MediaDroid` inside it; on Linux the one xdg-user-dirs names) and shows where it went.
 - Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
   language last picked is where the next video starts. Sound tracks likewise, the file's own and those beside it
   (`Film.en.ac3`). Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.
+- Sound settings in the same panel, through the very sample code Android runs (`LoudnessChain` in `:core:player`):
+  the loudness gain (−12 … +12 dB), even loudness (ReplayGain from the tags FFmpeg reads, else EBU R128 measured as it
+  plays), night mode for the evening, and the audio delay in 50 ms steps with Sooner and Later; all but night mode
+  are kept for the next video. A sound set sooner than the picture holds that many more decoded pictures back, up to
+  half a gigabyte of them, and a sound set later by more than about a second leaves the picture behind.
 - Settings, watched state and secrets stay on the machine: in the user's application-data folder, the settings and
   watched marks as JSON (`settings.json`, taken over once from the `state.properties` of earlier builds), the passwords
   encrypted by the system (DPAPI on Windows, the Secret Service on Linux; where no Secret Service runs, in a file only

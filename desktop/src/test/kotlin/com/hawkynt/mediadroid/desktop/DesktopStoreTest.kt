@@ -33,6 +33,7 @@ class DesktopStoreTest {
             )
             subtitleLanguage = "de"
             speed = 1.5f
+            sound = SoundSettings(loudnessDb = -4f, evenLoudness = true, audioDelayMs = -150)
             window = "10.0,20.0,800.0,600.0,false"
             sources = listOf(nas)
             setResume("/v/a.mkv", 42_000)
@@ -50,6 +51,7 @@ class DesktopStoreTest {
         assertFalse(again.picture.cropBlackBars)
         assertEquals("de", again.subtitleLanguage)
         assertEquals(1.5f, again.speed)
+        assertEquals(SoundSettings(loudnessDb = -4f, evenLoudness = true, audioDelayMs = -150), again.sound)
         assertEquals("10.0,20.0,800.0,600.0,false", again.window)
         assertEquals(listOf(nas), again.sources)
         assertEquals(42_000L, again.resumeMs("/v/a.mkv"))
@@ -83,6 +85,7 @@ class DesktopStoreTest {
         assertEquals(PictureAdjustment.Neutral.copy(cropBlackBars = true), store.picture)
         assertEquals("", store.subtitleLanguage)
         assertEquals(1f, store.speed)
+        assertEquals(SoundSettings(0f, false, 0), store.sound)
         assertEquals(emptyList<Source>(), store.sources)
         store.setResume("/v/a.mkv", 5_000)
         store.markWatched("/v/a.mkv")

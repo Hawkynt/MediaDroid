@@ -78,7 +78,7 @@ tasks.configureEach {
 tasks.withType<Test>().configureEach {
     if (!project.hasProperty("screenshots")) {
         exclude("**/screenshots/**")
-        // Without them the app has no fast-tier tests of its own; that is expected, not a misconfiguration.
+        // Without them a filtered run may find none of the app's few fast-tier tests; that is expected.
         failOnNoDiscoveredTests = false
     }
     // Robolectric's Android 16 sandbox reaches into these JDK internals.
