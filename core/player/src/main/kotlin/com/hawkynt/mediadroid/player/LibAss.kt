@@ -27,6 +27,12 @@ object LibAss {
      */
     external fun defaultFont(handle: Long, path: String, family: String, system: Boolean)
 
+    /**
+     * The face [index] of the font file at [path] made the family libass falls back to, for scripts the other fonts
+     * lack; the file is read once however often it is named. Its family name, empty where the file does not read.
+     */
+    external fun fallbackFont(handle: Long, path: String, index: Int): String
+
     /** A stream's header, its codec private: `[Script Info]`, the styles, the events' format. */
     external fun header(handle: Long, data: ByteArray)
 

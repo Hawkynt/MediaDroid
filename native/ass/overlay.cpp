@@ -1,10 +1,17 @@
 #include "overlay.h"
 
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 
 extern "C" {
 #include <ass.h>
 }
+
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#include FT_SFNT_NAMES_H
+#include FT_TRUETYPE_IDS_H
 
 namespace mediadroid::subtitles {
 
@@ -12,6 +19,63 @@ namespace {
 
 // libass's messages are for its own tools; the player has nowhere to show them.
 void quiet(int, const char*, va_list, void*) {}
+
+// A name of the font's name table (UTF-16, big-endian) as UTF-8.
+std::string utf8(const FT_Byte* text, FT_UInt length) {
+    std::string made;
+    for (FT_UInt i = 0; i + 1 < length; i += 2) {
+        uint32_t code = static_cast<uint32_t>(text[i]) << 8 | text[i + 1];
+        if (code >= 0xD800 && code < 0xDC00 && i + 3 < length) {
+            const uint32_t low = static_cast<uint32_t>(text[i + 2]) << 8 | text[i + 3];
+            if (low >= 0xDC00 && low < 0xE000) {
+                code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                i += 2;
+            }
+        }
+        if (code < 0x80) {
+            made += static_cast<char>(code);
+        } else if (code < 0x800) {
+            made += static_cast<char>(0xC0 | code >> 6);
+            made += static_cast<char>(0x80 | (code & 0x3F));
+        } else if (code < 0x10000) {
+            made += static_cast<char>(0xE0 | code >> 12);
+            made += static_cast<char>(0x80 | (code >> 6 & 0x3F));
+            made += static_cast<char>(0x80 | (code & 0x3F));
+        } else {
+            made += static_cast<char>(0xF0 | code >> 18);
+            made += static_cast<char>(0x80 | (code >> 12 & 0x3F));
+            made += static_cast<char>(0x80 | (code >> 6 & 0x3F));
+            made += static_cast<char>(0x80 | (code & 0x3F));
+        }
+    }
+    return made;
+}
+
+// The family name libass knows the face [index] of the font file at [path] by: one of its Windows family names (the
+// ones libass reads, ass_fontselect.c's get_font_info), US English where there is one, else FreeType's; empty where
+// the file does not open.
+std::string familyOf(const std::string& path, int index) {
+    FT_Library freetype = nullptr;
+    if (FT_Init_FreeType(&freetype)) return {};
+    std::string family;
+    FT_Face face = nullptr;
+    if (!FT_New_Face(freetype, path.c_str(), index, &face)) {
+        const FT_UInt names = FT_Get_Sfnt_Name_Count(face);
+        for (FT_UInt i = 0; i < names; i++) {
+            FT_SfntName name;
+            if (FT_Get_Sfnt_Name(face, i, &name) || name.platform_id != TT_PLATFORM_MICROSOFT ||
+                name.name_id != TT_NAME_ID_FONT_FAMILY) continue;
+            if (family.empty() || name.language_id == TT_MS_LANGID_ENGLISH_UNITED_STATES) {
+                family = utf8(name.string, name.string_len);
+            }
+            if (name.language_id == TT_MS_LANGID_ENGLISH_UNITED_STATES) break;
+        }
+        if (family.empty() && face->family_name) family = face->family_name;
+        FT_Done_Face(face);
+    }
+    FT_Done_FreeType(freetype);
+    return family;
+}
 
 }  // namespace
 
@@ -45,6 +109,34 @@ void Track::setDefaultFont(const std::string& path, const std::string& family, b
     fontFamily_ = family;
     systemFonts_ = system;
     fontsChanged_ = true;
+}
+
+std::string Track::fallbackFont(const std::string& path, int index) {
+    const std::string family = familyOf(path, index);
+    if (family.empty()) return {};
+    // Read outside the lock: a system's CJK font is large, and frames go on being drawn meanwhile.
+    std::vector<char> data;
+    bool known;
+    {
+        std::lock_guard<std::mutex> guard(lock_);
+        known = std::find(fallbackFiles_.begin(), fallbackFiles_.end(), path) != fallbackFiles_.end();
+    }
+    if (!known) {
+        std::ifstream file(path, std::ios::binary);
+        data.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        if (data.empty()) return {};
+    }
+    std::lock_guard<std::mutex> guard(lock_);
+    if (!library_) return {};
+    if (!known && std::find(fallbackFiles_.begin(), fallbackFiles_.end(), path) == fallbackFiles_.end()) {
+        const size_t slash = path.find_last_of("/\\");
+        const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+        ass_add_font(library_, name.c_str(), data.data(), static_cast<int>(data.size()));
+        fallbackFiles_.push_back(path);
+    }
+    fontFamily_ = family;
+    fontsChanged_ = true;
+    return family;
 }
 
 void Track::header(const uint8_t* data, size_t size) {

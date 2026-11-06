@@ -18,6 +18,15 @@ class AssTrack : AutoCloseable {
     fun defaultFont(path: String = "", family: String = "", system: Boolean = false) =
         ifOpen { LibAss.defaultFont(it, path, family, system) }
 
+    /**
+     * The face [index] of the font file at [path] — a system's Chinese, Japanese or Korean font ([ScriptFallback]) —
+     * as what libass falls back to for the scripts the other fonts lack. Its family name; empty where it does not
+     * read or the track is closed.
+     */
+    @Synchronized
+    fun fallbackFont(path: String, index: Int = 0): String =
+        handle.takeIf { it != 0L }?.let { LibAss.fallbackFont(it, path, index) }.orEmpty()
+
     /** A stream's header (its codec private). */
     fun header(data: ByteArray) = ifOpen { LibAss.header(it, data) }
 

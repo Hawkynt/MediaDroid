@@ -43,6 +43,11 @@ public:
     // [system] the system's own fonts are asked too (DirectWrite, Fontconfig), where this build has a way to.
     void setDefaultFont(const std::string& path, const std::string& family, bool system);
 
+    // A face for the scripts the other fonts lack (a system's Chinese, Japanese or Korean font): the file at [path],
+    // its face [index] in a collection, made the family libass falls back to; the file is read once however often it
+    // is named. Returns that face's family name, empty where the file does not read.
+    std::string fallbackFont(const std::string& path, int index);
+
     // A stream's header (its codec private: [Script Info], styles, the events' format).
     void header(const uint8_t* data, size_t size);
 
@@ -70,6 +75,7 @@ private:
     ass_track* track_ = nullptr;
     std::string fontPath_;
     std::string fontFamily_;
+    std::vector<std::string> fallbackFiles_;
     bool systemFonts_ = false;
     bool fontsChanged_ = true;
     bool first_ = true;
