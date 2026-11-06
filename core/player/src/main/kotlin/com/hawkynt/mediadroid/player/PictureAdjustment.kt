@@ -243,7 +243,8 @@ data class PictureAdjustment(
      * [BWDIF] are temporal (see [Deinterlacer]): they look at the frames before and after too, so still
      * parts keep their full detail, and the picture runs one frame behind, the sound waiting as long. So are
      * DScaler's [GREEDY_HM] and [GREEDY_2FRAME], and [ADAPTIVE] (see [MotionAdaptive]), which weaves the frame whole
-     * while the picture stands still and is BWDIF while it moves.
+     * while the picture stands still and is BWDIF while it moves. [OLD_CONSOLE] (see [OldGame]) is for 240p game
+     * consoles: each field a picture of its own, stretched smoothly, never deinterlaced.
      * [FILM] undoes pulldown (see [FilmCadence]) — 3:2 for film on NTSC video, 24 frames a second spread
      * over 30: the fields matched back into whole film frames and the repeated one of every five dropped; 2:2 for
      * film on PAL video ([Pulldown22]): woven whole, and anything that is not film deinterlaced.
@@ -258,11 +259,15 @@ data class PictureAdjustment(
         GREEDY_HM("Greedy HM", "DScaler's Greedy High Motion: each line from the nearer field, diagonals smoothed."),
         GREEDY_2FRAME("Greedy 2F", "DScaler's Greedy 2-Frame: woven where nothing moved, rebuilt where it did."),
         ADAPTIVE("Adaptive", "Woven whole while the picture stands still, BWDIF as soon as it moves."),
+        OLD_CONSOLE(
+            "Old console",
+            "For 240p games and old computers: each field its own picture, smoothed, not deinterlaced.",
+        ),
         FILM("Film", "For films on video: the film's own frames put back together, NTSC's 3:2 and PAL's 2:2."),
         ;
 
         /** Whether it needs the neighbouring frames, and so can show every field as a picture of its own. */
-        val isTemporal: Boolean get() = method != null
+        val isTemporal: Boolean get() = method != null || this == OLD_CONSOLE
 
         /** The temporal deinterlacer it runs — while the picture moves, for [ADAPTIVE] — or null. */
         val method: Deinterlacer.Method?

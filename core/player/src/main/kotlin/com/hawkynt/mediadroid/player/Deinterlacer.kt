@@ -83,6 +83,9 @@ object Deinterlacer {
     /** The graphics pass's `uMethod` that rebuilds nothing: the frame woven as it is. */
     const val WEAVE = 4
 
+    /** The graphics pass's `uMethod` for old-console mode ([OldGame]): the newest field stretched, `uAverage` asks. */
+    const val OLD_CONSOLE = 5
+
         /** The rows rebuilt are those whose number has this parity flipped: 0 rebuilds the odd rows, 1 the even. */
     fun rebuiltParity(second: Boolean, topFieldFirst: Boolean): Int =
         (if (topFieldFirst) 1 else 0) xor (if (second) 0 else 1)
