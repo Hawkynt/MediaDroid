@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -19,6 +20,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,6 +53,20 @@ fun ScreenSettings(store: StateStore) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     ScreenSetupRows("This device's screen", BUILT_IN_SCREEN, store)
+    // The patterns on this screen, through the stage with the default picture and this screen's setup.
+    var patterns by remember { mutableStateOf(false) }
+    OutlinedButton(onClick = { patterns = true }, modifier = Modifier.padding(top = 8.dp)) {
+        Text("Show test patterns", fontSize = 16.sp)
+    }
+    Text(
+        "Black and white levels, grey steps, colour bars, a grid and gamma, to set brightness, contrast and colour " +
+            "in the default picture above — and a projector's keystone — by eye.",
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (patterns) {
+        TestPatternScreen(store.defaultPicture(), store.screenSetup(BUILT_IN_SCREEN)) { patterns = false }
+    }
     external?.let { ScreenSetupRows(it.name, screenKey(it), store) }
 }
 

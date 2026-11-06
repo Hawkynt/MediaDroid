@@ -22,6 +22,10 @@
 | [libebur128](https://github.com/jiixyj/libebur128) v1.2.6 `ebur128/ebur128.c` (`ebur128_init_filter`, the filter, `ebur128_calc_gating_block`, `ebur128_gated_loudness`) — © 2011 Jan Kokemüller | MIT | `LoudnessMeter` — EBU R128 integrated loudness (licence text: `app/THIRD-PARTY-NOTICE.libebur128.txt`) |
 
 The Bessel function J1 in `Ewa` follows Abramowitz & Stegun, *Handbook of Mathematical Functions*, 9.4.4 and 9.4.6.
+`TestPattern`'s levels and layouts follow ITU-R BT.814 (PLUGE), ITU-R BT.471 (EBU 100/0/75/0 colour bars) and SMPTE RP
+219 / ARIB STD-B28 (HD colour bars), given there in percent and drawn here in full-range RGB; which patterns to offer
+follows DScaler's `Help/Calibration.htm` (GPL-2.0, read only for its kinds of pattern — greys, colours — and the order
+they are set in: brightness, contrast, colour).
 `Keystone.squareToQuad` follows Paul Heckbert, *Fundamentals of Texture Mapping and Image Warping* (UC Berkeley, 1989),
 §2.2.3, the projective map of the unit square onto a quadrilateral.
 

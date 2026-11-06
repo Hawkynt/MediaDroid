@@ -624,6 +624,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
+     * The size of the buffers [inputSurface] hands out to a producer that does not set its own — a canvas locked on
+     * it (the test patterns): a SurfaceTexture's are one pixel by one until told otherwise. A decoder sets its own.
+     */
+    fun setInputSize(width: Int, height: Int) = onThread { surfaceTexture.setDefaultBufferSize(width, height) }
+
+    /**
      * Draws into [surface] from now on, or nowhere for null; returns once the old surface is let go,
      * with whether the new one could be taken — a surface another producer still holds cannot.
      */
