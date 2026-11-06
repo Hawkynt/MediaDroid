@@ -175,6 +175,8 @@ internal data class PictureSettings(
     val deband: Float = PictureAdjustment.Neutral.deband,
     val deinterlace: String = PictureAdjustment.Neutral.deinterlace.name,
     val upscaler: String = PictureAdjustment.Neutral.upscaler.name,
+    /** Black bars cropped (AutoCrop): on for the household, see README "Picture". */
+    val cropBlackBars: Boolean = true,
 ) {
     fun toAdjustment(): PictureAdjustment {
         val p = PictureAdjustment.Neutral
@@ -190,6 +192,7 @@ internal data class PictureSettings(
             deinterlace = runCatching { PictureAdjustment.Deinterlace.valueOf(deinterlace) }
                 .getOrDefault(p.deinterlace),
             upscaler = runCatching { PictureAdjustment.Upscaler.valueOf(upscaler) }.getOrDefault(p.upscaler),
+            cropBlackBars = cropBlackBars,
         )
     }
 
@@ -205,6 +208,7 @@ internal data class PictureSettings(
             deband = p.deband,
             deinterlace = p.deinterlace.name,
             upscaler = p.upscaler.name,
+            cropBlackBars = p.cropBlackBars,
         )
     }
 }

@@ -51,6 +51,8 @@ data class PictureOverride(
     val upscalerStrength: Float = 1f,
     /** Debanding, 0 (off) .. 1. */
     val deband: Float = 0f,
+    /** Black bars cropped; pictures saved before it was offered take the household's default, on. */
+    val cropBlackBars: Boolean = true,
 )
 
 /**
@@ -82,6 +84,7 @@ data class Settings(
     var fieldRate: Boolean = false,           // YADIF/BWDIF show every field
     var upscalerStrength: Float = 1f,         // 0..1, how much of the upscaler shows over plain scaling
     var deband: Float = 0f,                   // 0 (off) .. 1, gradients' 8-bit steps smoothed
+    var cropBlackBars: Boolean = true,        // letterbox and pillarbox bars found as it plays and cropped (AutoCrop)
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -273,6 +276,7 @@ class StateStore(context: Context) {
             upscalerOf(upscaler), interpolationOf(interpolation), fieldRate,
             upscalerStrength = upscalerStrength,
             deband = deband,
+            cropBlackBars = cropBlackBars,
         )
     }
 
@@ -303,6 +307,7 @@ class StateStore(context: Context) {
                 runCatching { PictureAdjustment.Stereo.valueOf(it.stereo) }.getOrDefault(PictureAdjustment.Stereo.OFF),
                 it.upscalerStrength,
                 it.deband,
+                it.cropBlackBars,
             )
         }
             ?: defaultPicture()
@@ -328,6 +333,7 @@ class StateStore(context: Context) {
                 picture.stereo.name,
                 picture.upscalerStrength,
                 picture.deband,
+                picture.cropBlackBars,
             )
         }
         save()

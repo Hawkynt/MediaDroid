@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -124,6 +125,11 @@ fun PicturePanel(
                 onValueChange = { onChange(control.set(picture, control.valueAt(it))) },
                 valueRange = -1f..1f,
             )
+        }
+        // Found as the video plays and cut away before every filter (AutoCrop), as on the phone.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("Crop black bars", color = Color.White, modifier = Modifier.weight(1f))
+            Switch(checked = picture.cropBlackBars, onCheckedChange = { onChange(picture.copy(cropBlackBars = it)) })
         }
         listOf(
             Triple("Sharpness", picture.sharpness) { v: Float -> picture.copy(sharpness = v) },

@@ -29,6 +29,7 @@ class DesktopStoreTest {
             libraryFolder = "/home/me/Videos"
             picture = PictureAdjustment(
                 brightness = 0.25f, deband = 0.5f, deinterlace = PictureAdjustment.Deinterlace.YADIF,
+                cropBlackBars = false,
             )
             subtitleLanguage = "de"
             speed = 1.5f
@@ -46,6 +47,7 @@ class DesktopStoreTest {
         assertEquals(0.25f, again.picture.brightness)
         assertEquals(0.5f, again.picture.deband)
         assertEquals(PictureAdjustment.Deinterlace.YADIF, again.picture.deinterlace)
+        assertFalse(again.picture.cropBlackBars)
         assertEquals("de", again.subtitleLanguage)
         assertEquals(1.5f, again.speed)
         assertEquals("10.0,20.0,800.0,600.0,false", again.window)
@@ -59,7 +61,8 @@ class DesktopStoreTest {
     fun `a fresh store has the defaults, and watching a video forgets where it was left`() {
         val store = DesktopStore(folder.newFolder("data"))
         assertNull(store.libraryFolder)
-        assertEquals(PictureAdjustment.Neutral, store.picture)
+        // Black bars are cropped unless the household says otherwise.
+        assertEquals(PictureAdjustment.Neutral.copy(cropBlackBars = true), store.picture)
         assertEquals("", store.subtitleLanguage)
         assertEquals(1f, store.speed)
         assertEquals(emptyList<Source>(), store.sources)
@@ -93,6 +96,7 @@ class DesktopStoreTest {
         assertEquals(0.5f, store.picture.brightness)
         assertEquals(PictureAdjustment.Upscaler.LANCZOS, store.picture.upscaler)
         assertEquals(0.75f, store.picture.deband)
+        assertTrue(store.picture.cropBlackBars)
         assertEquals("en", store.subtitleLanguage)
         assertEquals(2f, store.speed)
         assertEquals("1.0,2.0,3.0,4.0,true", store.window)

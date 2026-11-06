@@ -33,6 +33,9 @@ class PictureAdjustmentTest {
         assertEquals(true, PictureAdjustment(brightness = 0.3f).hasFilters)
         assertEquals(true, PictureAdjustment(gamma = 1.2f).hasFilters)
         assertEquals(false, PictureAdjustment(brightness = 0.3f).isColorNeutral)
+        // The bars are found in the stage's own samples of the picture and cropped in its first pass.
+        assertEquals(true, PictureAdjustment(cropBlackBars = true).hasFilters)
+        assertEquals(false, PictureAdjustment.Neutral.cropBlackBars)
     }
 
     @Test

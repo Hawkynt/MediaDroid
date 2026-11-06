@@ -18,6 +18,16 @@
 
 The Bessel function J1 in `Ewa` follows Abramowitz & Stegun, *Handbook of Mathematical Functions*, 9.4.4 and 9.4.6.
 
+## Behaviour followed, no code taken
+
+These are GPL, which this LGPL project cannot take code from; their behaviour was written down and implemented anew,
+and the first is held to its own output.
+
+| Source | Licence | Used for |
+| --- | --- | --- |
+| [FFmpeg](https://ffmpeg.org) `libavfilter/vf_cropdetect.c`, black mode (after MPlayer's `vf_cropdetect`) — © 2002 A'rpi | GPL-2.0-or-later | `BlackBars`: which lines are bar (mean luma at most `limit`, 24/255 by default), tolerated bright lines, the picture growing over frames, the fresh start every `reset` frames, the crop rounded to even corners and a multiple of `round` |
+| DScaler's AutoAspect, as described in issue #252 | GPL-2.0 | `AutoCrop`'s idea of cropping in steps: few detections to widen the picture, many to narrow it |
+
 ## Test fixtures
 
 `src/test/resources/deinterlace/` — the `input*.gray` files are synthetic, written by `make-input.py` beside
@@ -39,3 +49,5 @@ through `tools/shader-check/placebo.cpp`, made by `make-expected.sh`.
 `minterpolate` output for it, made with the command in that script's header.
 `src/test/resources/loudness/expected.txt` — the integrated loudness of the `LoudnessSignals` test signals, measured by
 `measure.sh` beside it with libebur128 1.2.6 (through `oracle.c`) and FFmpeg's `ebur128` filter.
+`src/test/resources/cropdetect/` — the `.gray.gz` clips synthetic (FFmpeg's lavfi sources), the `.txt` files FFmpeg
+n9.0.2's own `cropdetect` lines for them, run as an oracle over the same bytes; both made by `make-expected.sh`.

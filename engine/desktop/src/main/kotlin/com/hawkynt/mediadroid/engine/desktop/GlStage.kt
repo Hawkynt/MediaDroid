@@ -6,6 +6,7 @@ import com.hawkynt.mediadroid.player.Ewa
 import com.hawkynt.mediadroid.player.Nis
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.ToneMap
 import com.hawkynt.mediadroid.shaders.Shaders
 import org.lwjgl.glfw.GLFW
@@ -20,7 +21,8 @@ import kotlin.math.pow
 /**
  * The picture stage on the desktop: the Android stage's shaders (:stage) on OpenGL 4.3 — which compiles GLSL ES 1.00
  * and 3.00 as they are — in a hidden window's context on a thread of its own. A decoded picture goes in, the picture
- * as the household set it comes out at the size it is shown: an HDR one tone-mapped to SDR as it comes in (ToneMap,
+ * as the household set it comes out at the size it is shown: its black bars cropped as it comes in (AutoCrop finds
+ * them), so every pass after sees the picture alone; an HDR one tone-mapped to SDR as it comes in (ToneMap,
  * its peak measured as it plays: PeakDetect), deinterlaced (Auto, Blend, Bob, YADIF, BWDIF), debanded,
  * denoised, sharpened, enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the neural ones plain for now),
  * colour-corrected. The passes and their
@@ -45,6 +47,7 @@ class GlStage : AutoCloseable {
     private var peakTransfer: ToneMap.Transfer? = null
     private var history = ArrayDeque<Target>()
     private var lastPicture: MediaReader.Picture? = null
+    private var lastPart: PictureCrop? = null
     private var out: ByteBuffer? = null
 
     /** A texture with its framebuffer. */
@@ -95,25 +98,40 @@ class GlStage : AutoCloseable {
     }
 
     /**
-     * [picture] as [adjustment] has it, at [width] × [height]: RGBA rows from the top. A temporal deinterlacer shows
-     * the picture before the newest (it needs the one after), so the result runs one picture behind.
+     * [picture] as [adjustment] has it, at [width] × [height]: RGBA rows from the top — only its part [crop] (the
+     * picture inside its black bars), when one is given. A temporal deinterlacer shows the picture before the newest
+     * (it needs the one after), so the result runs one picture behind.
      */
     fun process(
         picture: MediaReader.Picture,
         adjustment: PictureAdjustment,
         width: Int,
         height: Int,
-    ): MediaReader.Picture =
-        if (!ready) picture else thread.submit<MediaReader.Picture> { run(picture, adjustment, width, height) }.get()
+        crop: PictureCrop? = null,
+    ): MediaReader.Picture = if (!ready) {
+        picture
+    } else {
+        thread.submit<MediaReader.Picture> { run(picture, adjustment, width, height, crop) }.get()
+    }
 
-    private fun run(picture: MediaReader.Picture, a: PictureAdjustment, outW: Int, outH: Int): MediaReader.Picture {
-        val w = picture.width
-        val h = picture.height
-        if (picture !== lastPicture) {
+    private fun run(
+        picture: MediaReader.Picture,
+        a: PictureAdjustment,
+        outW: Int,
+        outH: Int,
+        crop: PictureCrop?,
+    ): MediaReader.Picture {
+        val part = crop ?: PictureCrop.whole(picture.width, picture.height)
+        val w = part.width
+        val h = part.height
+        if (picture !== lastPicture || part != lastPart) {
+            // Another crop makes the pictures before no neighbours of this one.
+            if (part != lastPart) history.clear()
             lastPicture = picture
+            lastPart = part
             val slot = if (history.size >= 3) history.removeFirst() else null
             val target = slot?.takeIf { it.width == w && it.height == h } ?: target("history${history.size}$w", w, h)
-            upload(target, picture)
+            upload(target, picture, part)
             history.addLast(target)
         }
         var source = history.last()
@@ -376,15 +394,18 @@ class GlStage : AutoCloseable {
         glDeleteTextures(t.texture)
     }
 
-    // The stage holds its frames with the picture's top row where v is 1, as on Android: rows uploaded bottom first.
+    // The stage holds its frames with the picture's top row where v is 1, as on Android: rows uploaded bottom first,
+    // only those of [part] — the first pass is the crop, so the peak below is measured on the picture alone too.
     // An HDR picture goes into a 16-bit frame of its own, its peak is measured, and it is tone-mapped into [into].
-    private fun upload(into: Target, picture: MediaReader.Picture) {
-        val w = picture.width
-        val h = picture.height
+    private fun upload(into: Target, picture: MediaReader.Picture, part: PictureCrop) {
+        val w = part.width
+        val h = part.height
         val transfer = picture.hdr
         val bytes = if (transfer == null) 4 else 8
         val buffer = MemoryUtil.memAlloc(w * h * bytes)
-        for (y in 0 until h) buffer.put(picture.rgba, (h - 1 - y) * w * bytes, w * bytes)
+        for (y in 0 until h) {
+            buffer.put(picture.rgba, ((part.top + h - 1 - y) * picture.width + part.left) * bytes, w * bytes)
+        }
         buffer.flip()
         val coded = if (transfer == null) into else target("hdr-coded", w, h, deep = true)
         glBindTexture(GL_TEXTURE_2D, coded.texture)

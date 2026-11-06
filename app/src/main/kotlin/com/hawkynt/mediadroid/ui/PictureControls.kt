@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -26,9 +27,9 @@ import com.hawkynt.mediadroid.player.PictureCheck
 import com.hawkynt.mediadroid.player.PictureControl
 
 /**
- * The four picture sliders, neutral in the middle, then the filters: sharpness, clarity and debanding from off
- * upwards, and noise from removed to added grain. [onChange] fires while dragging so the picture follows live; [onDone]
- * when a slider is let go or a step is picked, the moment to save.
+ * The four picture sliders, neutral in the middle, black bars cropped or not, then the filters: sharpness, clarity and
+ * debanding from off upwards, and noise from removed to added grain. [onChange] fires while dragging so the picture
+ * follows live; [onDone] when a slider is let go or a step is picked, the moment to save.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -63,6 +64,22 @@ fun PictureSliders(
                 onValueChangeFinished = onDone,
             )
         }
+        // Found as the video plays and cut away before every filter (see AutoCrop), so Fill fills with picture.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Text("Crop black bars", fontSize = 16.sp, modifier = Modifier.weight(1f))
+            Switch(
+                checked = picture.cropBlackBars,
+                onCheckedChange = {
+                    onChange(picture.copy(cropBlackBars = it))
+                    onDone()
+                },
+            )
+        }
+        Text(
+            "Black bars above, below or beside the picture are found as it plays and cut away.",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Text(
             "Filters",
             fontSize = 16.sp,
