@@ -99,6 +99,8 @@ fun PictureSliders(
             // The blocks and ripples a starved MPEG encoder leaves, see Deblock and Cdef.
             Triple("Deblocking", picture.deblock) { v: Float -> picture.copy(deblock = v) },
             Triple("Deringing", picture.dering) { v: Float -> picture.copy(dering = v) },
+            // Grain averaged with the frames before and after where nothing moves, see TemporalDenoise.
+            Triple("Noise over time", picture.temporalDenoise) { v: Float -> picture.copy(temporalDenoise = v) },
         ).forEach { (label, value, set) ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(label, fontSize = 16.sp, modifier = Modifier.weight(1f))

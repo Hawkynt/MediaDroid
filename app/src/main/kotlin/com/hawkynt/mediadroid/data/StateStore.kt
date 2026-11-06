@@ -73,6 +73,8 @@ data class PictureOverride(
     val dering: Float = 0f,
     /** An mpv user shader's file name in the shader folder, or null. */
     val shader: String? = null,
+    /** Temporal denoising, 0 (off) .. 1. */
+    val temporalDenoise: Float = 0f,
 )
 
 /** How one output screen is set up (see [com.hawkynt.mediadroid.player.ScreenSetup]); names, as kept. */
@@ -127,6 +129,7 @@ data class Settings(
     var dering: Float = 0f,                   // 0 (off) .. 1, the ripples beside edges smoothed
     var shader: String? = null,               // an mpv user shader's file name in shaderFolder (MpvShaders)
     var shaderFolder: String = "",            // the folder of mpv user shaders, a document tree URI; "" none
+    var temporalDenoise: Float = 0f,          // 0 (off) .. 1, grain averaged with the frames either side
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -328,6 +331,7 @@ class StateStore(context: Context) {
             deblock = deblock,
             dering = dering,
             shader = shader,
+            temporalDenoise = temporalDenoise,
         )
     }
 
@@ -381,6 +385,7 @@ class StateStore(context: Context) {
                 deblock = it.deblock,
                 dering = it.dering,
                 shader = it.shader,
+                temporalDenoise = it.temporalDenoise,
             )
         }
             ?: defaultPicture()
@@ -425,6 +430,7 @@ class StateStore(context: Context) {
                 deblock = picture.deblock,
                 dering = picture.dering,
                 shader = picture.shader,
+                temporalDenoise = picture.temporalDenoise,
             )
         }
         save()

@@ -232,6 +232,7 @@ fun PicturePanel(
             Triple("Debanding", picture.deband) { v: Float -> picture.copy(deband = v) },
             Triple("Deblocking", picture.deblock) { v: Float -> picture.copy(deblock = v) },
             Triple("Deringing", picture.dering) { v: Float -> picture.copy(dering = v) },
+            Triple("Noise over time", picture.temporalDenoise) { v: Float -> picture.copy(temporalDenoise = v) },
         ).forEach { (label, value, set) ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(label, color = Color.White, modifier = Modifier.weight(1f))

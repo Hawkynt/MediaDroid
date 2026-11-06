@@ -18,6 +18,7 @@ import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.ScreenWarp
+import com.hawkynt.mediadroid.player.TemporalDenoise
 import com.hawkynt.mediadroid.player.ToneMap
 import com.hawkynt.mediadroid.shaders.Shaders
 import org.lwjgl.glfw.GLFW
@@ -220,6 +221,7 @@ class GlStage : AutoCloseable {
         val look = listOf(
             a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep, a.chroma, a.colorize,
             a.logo, a.deblock, a.dering,
+            a.temporalDenoise,
         )
         // Another chroma upscaler makes every picture uploaded from its planes stale.
         if (a.chroma != chroma) {
@@ -382,12 +384,23 @@ class GlStage : AutoCloseable {
         val w = raw.width
         val h = raw.height
         var source = raw
-        // 1. Deinterlacing.
-        if (a.deinterlace.isTemporal) {
-            fun neighbour(p: MediaReader.Picture) = uploaded(p, region(p, crop, a.stereo))
+        fun neighbour(p: MediaReader.Picture) = uploaded(p, region(p, crop, a.stereo))
+        // 0. Temporal denoising: the picture against the pictures before and after it, as decoded.
+        val shown = a.temporalDenoiseParams()?.let { params ->
             val prev = neighbour(before ?: picture).takeIf { it.width == w && it.height == h } ?: raw
             val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
-            source = pass("temporal.frag", target("deinterlaced", w, h, half = deep), raw.texture,
+            pass("temporal-denoise.frag", target("temporallyDenoised", w, h, half = deep), raw.texture,
+                listOf(prev.texture to "uPrev", next.texture to "uNext"), nearest = true) { p ->
+                glUniform1f(glGetUniformLocation(p, "uA"), TemporalDenoise.threshold(params.a).toFloat())
+                glUniform1f(glGetUniformLocation(p, "uB"), TemporalDenoise.threshold(params.b).toFloat())
+            }
+        } ?: raw
+        source = shown
+        // 1. Deinterlacing.
+        if (a.deinterlace.isTemporal) {
+            val prev = neighbour(before ?: picture).takeIf { it.width == w && it.height == h } ?: raw
+            val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
+            source = pass("temporal.frag", target("deinterlaced", w, h, half = deep), shown.texture,
                 listOf(prev.texture to "uPrev", next.texture to "uNext"), nearest = true) { p ->
                 glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
                 glUniform1i(glGetUniformLocation(p, "uSecond"), if (second) 1 else 0)
@@ -404,12 +417,12 @@ class GlStage : AutoCloseable {
             }
             if (a.deinterlace == PictureAdjustment.Deinterlace.SMOOTH_MC) {
                 val further = neighbour(beyond ?: after ?: picture).takeIf { it.width == w && it.height == h } ?: next
-                source = smoothAlongMotion(source, prev, raw, next, further, second)
+                source = smoothAlongMotion(source, prev, shown, next, further, second)
             }
         } else if (a.deinterlace != PictureAdjustment.Deinterlace.OFF &&
             a.deinterlace != PictureAdjustment.Deinterlace.FILM
         ) {
-            source = pass("deinterlace.frag", target("deinterlaced", w, h, half = deep), raw.texture) { p ->
+            source = pass("deinterlace.frag", target("deinterlaced", w, h, half = deep), shown.texture) { p ->
                 glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
                 glUniform1i(glGetUniformLocation(p, "uMode"), a.deinterlace.ordinal)
                 glUniform1f(glGetUniformLocation(p, "uHeight"), h.toFloat())
@@ -1390,6 +1403,7 @@ class GlStage : AutoCloseable {
             "cdef-es3.frag" to Shaders.VIDEO_CDEF_ES3,
             "mpv-luma.frag" to Shaders.VIDEO_MPV_LUMA,
             "mpv-recombine.frag" to Shaders.VIDEO_MPV_RECOMBINE,
+            "temporal-denoise.frag" to Shaders.VIDEO_TEMPORAL_DENOISE,
             "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
             "yuv-spline.frag" to Shaders.VIDEO_YUV_SPLINE,
             "chroma-krig-1.frag" to Shaders.VIDEO_CHROMA_KRIG_1,
