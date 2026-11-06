@@ -48,6 +48,11 @@ class MediaReaderTest {
         }
 
     @Test
+    fun `the frame rate comes from the file`() = MediaReader(clip).use { r ->
+        assertEquals(25f, r.frameRate, 0.001f)
+    }
+
+    @Test
     fun `the shape of a picture's pixels comes from the file, square without one`() {
         MediaReader(clip).use { assertEquals(1f, it.pixelAspect, 0.001f) }
         val anamorphic = File(requireNotNull(javaClass.getResource("/anamorphic.mp4")).toURI()).path

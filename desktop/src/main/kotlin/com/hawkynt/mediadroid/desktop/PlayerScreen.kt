@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Pause
@@ -20,12 +23,15 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -70,8 +76,13 @@ import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.engine.Tracks
 import com.hawkynt.mediadroid.engine.desktop.DesktopPlaybackEngine
 import com.hawkynt.mediadroid.engine.desktop.MediaReader
+import com.hawkynt.mediadroid.library.Chapter
+import com.hawkynt.mediadroid.library.Chapters
 import com.hawkynt.mediadroid.library.Sidecars
+import com.hawkynt.mediadroid.player.AbLoop
 import com.hawkynt.mediadroid.player.AutoCrop
+import com.hawkynt.mediadroid.player.ChapterSteps
+import com.hawkynt.mediadroid.player.FrameStep
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.PlaybackMath
@@ -128,6 +139,10 @@ fun PlayerScreen(
     }
     var subtitle by remember { mutableStateOf<String?>(null) }
     var controlsUntil by remember { mutableLongStateOf(System.currentTimeMillis() + CONTROLS_MS) }
+    // The file's own chapters, and the part repeated between two marks — as on the phone.
+    var chapters by remember { mutableStateOf(emptyList<Chapter>()) }
+    var chapterMenu by remember { mutableStateOf(false) }
+    var abLoop by remember { mutableStateOf(AbLoop.OFF) }
     val focus = remember { FocusRequester() }
 
     fun saveProgress() {
@@ -175,6 +190,10 @@ fun PlayerScreen(
         tracks = emptyList()
         frame = null
         shownPicture[0] = null
+        abLoop = AbLoop.OFF
+        chapters = emptyList()
+        chapters = withContext(Dispatchers.IO) { runCatching { Chapters.read(places.file(playing.video)) }.getOrNull() }
+            .orEmpty()
         // Off the window's thread: on a network source, finding the files beside it and opening it take round trips.
         runCatching {
             val startMs = store.resumeMs(playing.video)
@@ -237,6 +256,7 @@ fun PlayerScreen(
             }
             position = engine.positionMs
             duration = engine.durationMs
+            if (engine.isPlaying) abLoop.jumpFrom(position)?.let { engine.seekTo(it) }
             val wereEmpty = tracks.none { it.kind == Track.Kind.TEXT }
             tracks = engine.tracks
             // A video's subtitles start in the household's language, as on the phone.
@@ -307,6 +327,17 @@ fun PlayerScreen(
         }
     }
 
+    // , and . : one picture back or on, paused there; Page Up and Down: the next and the previous chapter (mpv's keys).
+    fun stepFrame(forward: Boolean) {
+        if (engine.isPlaying) engine.pause()
+        engine.seekTo(FrameStep.target(engine.positionMs, engine.frameRate, forward, engine.durationMs))
+    }
+
+    fun jumpChapter(forward: Boolean) {
+        val at = engine.positionMs
+        (if (forward) ChapterSteps.next(chapters, at) else ChapterSteps.previous(chapters, at))?.let(engine::seekTo)
+    }
+
     // S: the next subtitle track, after the last one off again.
     fun nextSubtitles() {
         val text = engine.tracks.filter { it.kind == Track.Kind.TEXT }
@@ -330,6 +361,11 @@ fun PlayerScreen(
                     Key.P -> panel = !panel
                     Key.S -> nextSubtitles()
                     Key.C -> snapshot()
+                    Key.Comma -> stepFrame(false)
+                    Key.Period -> stepFrame(true)
+                    Key.PageUp -> jumpChapter(true)
+                    Key.PageDown -> jumpChapter(false)
+                    Key.L -> abLoop = abLoop.mark(engine.positionMs)
                     Key.LeftBracket -> changeSpeed(speed - SPEED_STEP)
                     Key.RightBracket -> changeSpeed(speed + SPEED_STEP)
                     Key.Escape -> if (fullScreen) onFullScreen() else onExit()
@@ -382,6 +418,9 @@ fun PlayerScreen(
             ) {
                 IconButton(onClick = onExit) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
                 Text(playing.title, color = Color.White, fontSize = 20.sp)
+                ChapterSteps.current(chapters, position)?.let {
+                    Text("  ·  " + ChapterSteps.name(chapters, it), color = Color.White, fontSize = 16.sp)
+                }
             }
             Column(
                 Modifier.fillMaxWidth().align(Alignment.BottomStart)
@@ -403,10 +442,51 @@ fun PlayerScreen(
                     if (index + 1 < queue.size) {
                         IconButton(onClick = { next() }) { Icon(Icons.Default.SkipNext, "Next", tint = Color.White) }
                     }
+                    if (!isPlaying) {
+                        IconButton(onClick = { stepFrame(false) }) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "One frame back", tint = Color.White)
+                        }
+                        IconButton(onClick = { stepFrame(true) }) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "One frame forward", tint = Color.White)
+                        }
+                    }
                     Text("${clock(position)} · ${clock(duration)}", color = Color.White, fontSize = 15.sp)
                     Spacer(Modifier.weight(1f))
                     IconButton(onClick = { snapshot() }) {
                         Icon(Icons.Default.PhotoCamera, "Take a picture", tint = Color.White)
+                    }
+                    // L: one press marks the start, the next the end, the third stops repeating.
+                    TextButton(onClick = { abLoop = abLoop.mark(engine.positionMs) }) {
+                        val a = abLoop.a
+                        val b = abLoop.b
+                        Text(
+                            when {
+                                a != null && b != null -> "Repeating ${clock(a)} – ${clock(b)}"
+                                a != null -> "Repeat from ${clock(a)} — mark the end"
+                                else -> "Repeat a part"
+                            },
+                            color = if (a != null) MaterialTheme.colorScheme.primary else Color.White,
+                            fontSize = 15.sp,
+                        )
+                    }
+                    if (chapters.isNotEmpty()) {
+                        Box {
+                            IconButton(onClick = { chapterMenu = true }) {
+                                Icon(Icons.AutoMirrored.Filled.List, "Chapters", tint = Color.White)
+                            }
+                            DropdownMenu(expanded = chapterMenu, onDismissRequest = { chapterMenu = false }) {
+                                chapters.indices.sortedBy { chapters[it].startMs }.forEach { i ->
+                                    val label = ChapterSteps.name(chapters, i) + "  ·  " + clock(chapters[i].startMs)
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            engine.seekTo(chapters[i].startMs)
+                                            chapterMenu = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
                     }
                     IconButton(onClick = { panel = !panel }) {
                         Icon(Icons.Default.Tune, "Picture", tint = Color.White)

@@ -88,6 +88,9 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     /** How the video is coded where it is HDR (SMPTE ST 2084's PQ, or HLG), else null. */
     val hdr: ToneMap.Transfer?
 
+    /** The picture's frames a second (the stream's average), 0 where the file does not say or has no picture. */
+    val frameRate: Float
+
     /** The file's video, audio and subtitle streams as tracks, id the stream's index. */
     val tracks: List<Track>
 
@@ -121,6 +124,10 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
             avutil.AVCOL_TRC_SMPTE2084 -> ToneMap.Transfer.PQ
             avutil.AVCOL_TRC_ARIB_STD_B67 -> ToneMap.Transfer.HLG
             else -> null
+        }
+        frameRate = if (videoIndex < 0) 0f else {
+            val rate = format.streams(videoIndex).avg_frame_rate()
+            if (rate.num() > 0 && rate.den() > 0) rate.num().toFloat() / rate.den() else 0f
         }
         pixelAspect = if (videoIndex < 0) 1f else {
             val guessed = avformat.av_guess_sample_aspect_ratio(format, format.streams(videoIndex), null)
