@@ -107,6 +107,8 @@ object PlaybackChain {
         /** Positive shows them later, negative earlier. */
         val delayMs: Int,
         val screen: String,
+        /** Whether libass reads and draws them (ASS/SSA where the native library carries it), not Media3. */
+        val libass: Boolean = false,
     )
 
     /** The fact sheet's graph. Media3 parts are named as Media3 calls them; the codecs as people do. */
@@ -293,9 +295,15 @@ object PlaybackChain {
             Lane.SUBTITLES,
             subtitles.input,
             listOf(
-                Node("Parser", listOfNotNull(format, subtitles.language).joinToString(" · ")),
+                Node(
+                    "Parser",
+                    listOfNotNull(format, subtitles.language, "libass".takeIf { subtitles.libass }).joinToString(" · "),
+                ),
                 Node("Timing", timing),
-                Node("Renderer", "Media3 text renderer"),
+                Node(
+                    "Renderer",
+                    if (subtitles.libass) "libass, as authored, at the screen's size" else "Media3 text renderer",
+                ),
             ),
             Node("Screen", "over the picture on ${subtitles.screen}"),
         )

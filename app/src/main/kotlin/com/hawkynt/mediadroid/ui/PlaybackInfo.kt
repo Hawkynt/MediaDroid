@@ -144,7 +144,10 @@ private fun Line(text: String, bold: Boolean = false) {
  */
 internal fun describe(format: Format): String {
     // Subtitles Media3 parses while extracting are cues by then; codecs keeps their format.
-    val subtitleMime = if (format.sampleMimeType == androidx.media3.common.MimeTypes.APPLICATION_MEDIA3_CUES) {
+    // A file beside the video left to libass is unread by Media3 (text/x-unknown), its own type in codecs too.
+    val subtitleMime = if (format.sampleMimeType == androidx.media3.common.MimeTypes.APPLICATION_MEDIA3_CUES ||
+        format.sampleMimeType == com.hawkynt.mediadroid.player.AssEvents.UNKNOWN_MIME_TYPE
+    ) {
         format.codecs
     } else {
         format.sampleMimeType?.takeIf(androidx.media3.common.MimeTypes::isText)
@@ -309,7 +312,9 @@ internal fun playbackFacts(
             PlaybackChain.Subtitles(
                 input = inputOf(textGroup.mediaTrackGroup.id),
                 // Subtitles Media3 parses while extracting reach the renderer as cues; codecs keeps their format.
-                mimeType = if (it.sampleMimeType == androidx.media3.common.MimeTypes.APPLICATION_MEDIA3_CUES) {
+                mimeType = if (it.sampleMimeType == androidx.media3.common.MimeTypes.APPLICATION_MEDIA3_CUES ||
+                    it.sampleMimeType == com.hawkynt.mediadroid.player.AssEvents.UNKNOWN_MIME_TYPE
+                ) {
                     it.codecs
                 } else {
                     it.sampleMimeType
@@ -317,6 +322,9 @@ internal fun playbackFacts(
                 language = it.language?.let(Languages::label),
                 delayMs = subtitleDelayMs,
                 screen = screenName,
+                // SSA reaches Media3's renderers raw only where libass takes it (AssSubtitles).
+                libass = com.hawkynt.mediadroid.player.AssSubtitles.available &&
+                    com.hawkynt.mediadroid.player.AssEvents.isAss(it.sampleMimeType, it.codecs),
             )
         },
         player = "Media3 ExoPlayer ${androidx.media3.common.MediaLibraryInfo.VERSION}",

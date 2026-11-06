@@ -15,8 +15,18 @@ object AssEvents {
     // written as "%01d:%02d:%02d:%02d" — hours, minutes, seconds, hundredths).
     private val matroskaPrefix = Regex("""^Dialogue: 0:00:00:00,(\d+):(\d{2}):(\d{2}):(\d{2}),""")
 
+    /** Media3's MIME type for a subtitle file beside the video that no parser of its own reads (its own in codecs). */
+    const val UNKNOWN_MIME_TYPE = "text/x-unknown"
+
     /** Whether a track of [mimeType] is ASS or SSA. */
     fun isAss(mimeType: String?): Boolean = mimeType == MIME_TYPE
+
+    /**
+     * Whether a Media3 track of [mimeType] and [codecs] is ASS or SSA: a stream as the file holds it, or a file beside
+     * the video Media3 leaves unread (`text/x-unknown`, the file's own type in codecs), which libass reads whole.
+     */
+    fun isAss(mimeType: String?, codecs: String?): Boolean =
+        isAss(mimeType) || (mimeType == UNKNOWN_MIME_TYPE && codecs == MIME_TYPE)
 
     /** Whether FFmpeg's codec [name] is ASS or SSA. */
     fun isAssCodec(name: String?): Boolean = name == "ass" || name == "ssa"

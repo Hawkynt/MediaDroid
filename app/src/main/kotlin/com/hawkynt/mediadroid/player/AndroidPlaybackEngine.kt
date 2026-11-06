@@ -19,7 +19,8 @@ import com.hawkynt.mediadroid.engine.Track
  * The Android playback engine: Media3's ExoPlayer, built as the player has always built it — the bundled FFmpeg
  * preferred for audio and the fallback for video (first with software decoding), FFmpeg's video renderer keeping as
  * many pictures ahead as Settings asks, loudness, night mode and even loudness on the decoded sound, the sound waiting
- * for a filtered picture, sidecar audio merged in, network sources streamed — behind [PlaybackEngine].
+ * for a filtered picture, sidecar audio merged in, network sources streamed, ASS/SSA subtitles drawn by libass where
+ * the native library carries it ([assSubtitles]) — behind [PlaybackEngine].
  *
  * [exo] stays reachable while the player screen moves over to the engine's own commands (#283).
  */
@@ -31,6 +32,44 @@ class AndroidPlaybackEngine(
 
     /** The video's frame rate, for the sound's wait behind a filtered picture; kept current by the player screen. */
     val videoFrameRate = floatArrayOf(-1f)
+
+    private val appContext = context.applicationContext
+
+    /** ASS/SSA subtitles as libass draws them: the renderer feeds them, an [AssOverlayView] puts them up. */
+    val assSubtitles = AssSubtitles({ attachedFonts(openedPath) }, { location -> wholeFile(location) })
+
+    // The fonts of the file read last, kept: switching subtitles on and off reads them once.
+    @Volatile private var fontsRead: Pair<String, List<Pair<String, ByteArray>>>? = null
+
+    /** The fonts the file at [path] carries (MatroskaFonts): read from the device or through its network source. */
+    private fun attachedFonts(path: String?): List<Pair<String, ByteArray>> {
+        if (path == null) return emptyList()
+        fontsRead?.takeIf { it.first == path }?.let { return it.second }
+        val fonts = if (path.startsWith("/")) {
+            java.io.RandomAccessFile(path, "r").use { file ->
+                MatroskaFonts.read(file.length()) { at, count ->
+                    ByteArray(count).also {
+                        file.seek(at)
+                        file.readFully(it)
+                    }
+                }
+            }
+        } else {
+            val file = com.hawkynt.mediadroid.data.SourceAccess.resolve(appContext, path) ?: return emptyList()
+            MatroskaFonts.read(file.length()) { at, count -> file.open(at).use { readUpTo(it, count) } }
+        }
+        fontsRead = path to fonts
+        return fonts
+    }
+
+    /** A subtitle file beside the video, whole: on the device or its network source; null where it cannot be read. */
+    private fun wholeFile(location: String): ByteArray? = if (location.startsWith("/")) {
+        java.io.File(location).readBytes()
+    } else {
+        com.hawkynt.mediadroid.data.SourceAccess.resolve(appContext, location)?.let { file ->
+            file.open(0).use { readUpTo(it, file.length().coerceAtMost(MAX_SUBTITLE_FILE).toInt()) }
+        }
+    }
 
     /** The bundled FFmpeg's video renderer, which hands its pictures to the filters' stage as YUV planes. */
     val ffmpegVideoRenderer = arrayOfNulls<androidx.media3.exoplayer.Renderer>(1)
@@ -59,6 +98,9 @@ class AndroidPlaybackEngine(
                     ) {
                         val built = java.util.ArrayList<androidx.media3.exoplayer.Renderer>()
                         super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, built)
+                        // libass first: the track selector gives a track to the first renderer that handles it, so
+                        // SSA goes to libass and everything else to Media3's.
+                        if (AssSubtitles.available) out += assSubtitles.renderer()
                         built.mapTo(out) {
                             DelayedTextRenderer(it) { tuning.subtitleDelayMs }
                         }
@@ -183,10 +225,11 @@ class AndroidPlaybackEngine(
                     com.hawkynt.mediadroid.data.SourceAccess.resolve(context, it)
                 }.let { files ->
                     SidecarAudioSourceFactory(
+                        // SSA left unparsed where libass draws it (AssSubtitles.parsers), in the file and beside it.
                         androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
                             files,
-                            AviAudioFraming.extractors,
-                        ),
+                            AviAudioFraming.extractors(assSubtitles.parsers),
+                        ).setSubtitleParserFactory(assSubtitles.parsers),
                         files,
                     )
                 },
@@ -236,6 +279,8 @@ class AndroidPlaybackEngine(
                 .setSubtitleConfigurations(
                     request.subtitles.map { file ->
                         MediaItem.SubtitleConfiguration.Builder(playableUri(file.path))
+                            // Its location as the track's id: libass reads an ASS file itself (AssSubtitles).
+                            .setId(file.path)
                             .setMimeType(file.mimeType)
                             .setLanguage(file.language)
                             .setLabel(file.label)
@@ -331,6 +376,21 @@ class AndroidPlaybackEngine(
          * sample, in the app's heap — 12 MB for a raw 4K picture.
          */
         private const val FFMPEG_INPUT_BUFFERS = 4
+
+        /** The most of a subtitle file read: scripts with drawn signs run to a few megabytes, never near this. */
+        private const val MAX_SUBTITLE_FILE = 64L shl 20
+
+        /** Up to [count] bytes from [input], fewer where it ends first. */
+        private fun readUpTo(input: java.io.InputStream, count: Int): ByteArray {
+            val bytes = ByteArray(count)
+            var got = 0
+            while (got < count) {
+                val n = input.read(bytes, got, count - got)
+                if (n < 0) break
+                got += n
+            }
+            return bytes.copyOf(got)
+        }
 
         /** At least half a minute of video buffered, two minutes at most, as memory allows. */
         private const val BUFFER_MIN_MS = 30_000

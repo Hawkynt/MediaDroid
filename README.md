@@ -236,13 +236,15 @@ video brought down to 1080p first; Fit, Fill or Stretch, and a zoom. How the net
 ### 💬 Subtitles
 
 - Every embedded track and the sidecar files beside the video, named [as Kodi reads them](https://kodi.wiki/view/Subtitles)
-  (SubRip, SSA/ASS, WebVTT, TTML); delay, size, position, a dark box.
+  (SubRip, SSA/ASS, WebVTT, TTML); delay, size, position, a dark box. SSA/ASS drawn as authored by
+  [libass](https://github.com/libass/libass): fonts, positions, karaoke, signs.
 
 <details>
 <summary>Subtitles in detail</summary>
 
 - Subtitles on/off with a preferred language, and a picker for every audio and subtitle track a file carries — and for the subtitle and audio files beside it named after it, as Kodi reads them: `Heat (1995).de.srt`, `Heat (1995).en.forced.ass`, `Heat (1995).en.sdh.vtt` (SubRip, SSA / ASS, WebVTT, TTML), `Heat (1995).de.ac3`, `Heat (1995).en.commentary.mka` (AC3 / E-AC3, AAC, MP3, FLAC, Opus, Vorbis, WAV, Matroska audio); the name gives the language and marks forced and hard-of-hearing subtitles. An audio file that cannot follow the film's seeks is dropped rather than stopping it.
 - Subtitles in the gear: a delay of −10 … +10 s in tenths of a second, four sizes, a raised position above burned-in text and an optional dark box behind the text. The household sets the look in the guarded settings; each video can keep its own look and delay.
+- SSA/ASS subtitles — in the file or beside it — are drawn as they were authored, by libass (built into the app's native library with FreeType, FriBidi and HarfBuzz): their styles, fonts, positions, rotations, karaoke, fades and drawn signs, over the picture at the size it is shown on the screen, so the text stays sharp. The fonts a Matroska file carries for them (its attachments) are used first, the device's own sans face for the rest. The delay applies to them too; size, raised position and the dark box do not — they keep the look their author gave them. Where the native library is missing, Media3 draws them as plain styled text, as before.
 
 </details>
 

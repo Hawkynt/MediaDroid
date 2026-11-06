@@ -915,7 +915,15 @@ fun PlayerScreen(
     DisposableEffect(onSecondScreen, externalDisplay?.displayId) {
         val display = externalDisplay
         if (onSecondScreen && display != null) {
-            presentation = VideoPresentation(context, display, player).also { it.show() }
+            presentation = VideoPresentation(context, display, player).also {
+                it.show()
+                com.hawkynt.mediadroid.player.AssOverlayView.attach(
+                    it.playerView,
+                    engine.assSubtitles,
+                    positionMs = { player.currentPosition - engine.tuning.subtitleDelayMs },
+                    videoSize = { player.videoSize.width to player.videoSize.height },
+                )
+            }
             darkPhone.secondScreen(true)
             PlayerWindow.elsewhere = true
             PlayerWindow.displayRefreshHz = display.refreshRate
@@ -1342,6 +1350,12 @@ fun PlayerScreen(
                     findViewById<View>(androidx.media3.ui.R.id.exo_rew)?.onHold({ startHold(false) }, ::endHold)
                     onScrub { scrub = it }
                     playerView = this
+                    com.hawkynt.mediadroid.player.AssOverlayView.attach(
+                        this,
+                        engine.assSubtitles,
+                        positionMs = { player.currentPosition - engine.tuning.subtitleDelayMs },
+                        videoSize = { player.videoSize.width to player.videoSize.height },
+                    )
                 }
             },
             update = { view ->
@@ -1350,6 +1364,7 @@ fun PlayerScreen(
                 // last frame it got; it is hidden so the phone stays black behind the controls.
                 val elsewhere = presentation?.isShowing == true
                 view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
+                com.hawkynt.mediadroid.player.AssOverlayView.show(view, !elsewhere)
                 if (!elsewhere) view.applyVideoLook(fit, zoom, pan)
                 view.applyCropShape(player.videoSize, cropShare)
                 val density = view.resources.displayMetrics.density
