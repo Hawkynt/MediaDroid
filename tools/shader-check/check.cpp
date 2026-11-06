@@ -30,6 +30,8 @@
 //                                                           chroma-krig passes; the planes uploaded with a padded
 //                                                           stride, as a decoder's buffers come (garbage past the
 //                                                           picture's width, which no pass may read)
+//   shader_check logo <in.ppm> <out.ppm> <x> <y> <width> <height> <blur|grey|dim>
+//                                                           glsl/video/logo-mask.frag over that rectangle
 //   shader_check deinterlace <in.ppm> <out.ppm> <mode> <tff 0|1>
 //                                                           glsl/video/deinterlace.frag (1 Auto, 2 Blend, 3 Bob)
 //   shader_check anime4k <in.ppm> <out.ppm>                 glsl/anime4k to twice the size
@@ -405,6 +407,22 @@ Picture chroma(const std::string& path, int w, int h, const std::string& filter)
     glUniform2f(glGetUniformLocation(third, "uLumaSize"), float(w), float(h));
     glUniform2f(glGetUniformLocation(third, "uChromaSize"), float(cw), float(ch));
     draw(third, out, tex[0], flip);
+    return download(out);
+}
+
+// Logo masking as the stages run it, the rectangle in pixels from the top left (LogoMask).
+Picture logo(const Picture& in, int x, int y, int w, int h, int mode) {
+    GLuint prog = appProgram("video/logo-mask.frag");
+    Target source = upload(in);
+    glBindTexture(GL_TEXTURE_2D, source.texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    Target out = target(in.width, in.height);
+    glUseProgram(prog);
+    glUniform2f(glGetUniformLocation(prog, "uSize"), float(in.width), float(in.height));
+    glUniform4f(glGetUniformLocation(prog, "uRect"), float(x), float(y), float(w), float(h));
+    glUniform1i(glGetUniformLocation(prog, "uMode"), mode);
+    draw(prog, out, source.texture);
     return download(out);
 }
 
@@ -970,9 +988,12 @@ int main(int argc, char** argv) {
         const double kr = a[4] == "601" ? 0.299 : a[4] == "709" ? 0.2126 : 0.2627;
         const double kb = a[4] == "601" ? 0.114 : a[4] == "709" ? 0.0722 : 0.0593;
         writePpm(a[5], yuv(a[1], std::stoi(a[2]), std::stoi(a[3]), kr, kb, a.size() == 7));
-    } else if (a.size() == 6 && a[0] == "chroma")
+    } else if (a.size() == 6 && a[0] == "chroma") {
         writePpm(a[5], chroma(a[1], std::stoi(a[2]), std::stoi(a[3]), a[4]));
-    else if (a.size() == 5 && a[0] == "deinterlace")
+    } else if (a.size() == 8 && a[0] == "logo") {
+        const int mode = a[7] == "grey" ? 1 : a[7] == "dim" ? 2 : 0;
+        writePpm(a[2], logo(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4]), std::stoi(a[5]), std::stoi(a[6]), mode));
+    } else if (a.size() == 5 && a[0] == "deinterlace")
         writePpm(a[2], deinterlace(readPpm(a[1]), std::stoi(a[3]), a[4] == "1"));
     else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));
     else if (a.size() == 3 && a[0] == "acnet") writePpm(a[2], acnet(readPpm(a[1])));

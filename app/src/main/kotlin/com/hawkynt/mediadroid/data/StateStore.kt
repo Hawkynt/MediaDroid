@@ -11,6 +11,7 @@ import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.library.WatchMarks
 import com.hawkynt.mediadroid.player.AspectOverride
+import com.hawkynt.mediadroid.player.LogoMask
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.SubtitleLook
@@ -30,6 +31,10 @@ data class SubtitleOverride(
     val raised: Boolean = false,
     val box: Boolean = false,
 )
+
+/** A station logo hidden for every video in a folder (one show): PictureAdjustment's LogoMask by names. */
+@Serializable
+data class LogoOverride(val corner: String, val size: Float, val mode: String)
 
 /** A picture correction stored for one video; see [PictureAdjustment] for the ranges. */
 @Serializable
@@ -174,6 +179,7 @@ data class AppData(
     val unwatched: MutableList<String> = mutableListOf(), // unticked in the app, beats an NFO playcount
     val resume: MutableMap<String, ResumeInfo> = mutableMapOf(),
     val picture: MutableMap<String, PictureOverride> = mutableMapOf(),
+    val logos: MutableMap<String, LogoOverride> = mutableMapOf(), // a station logo hidden, by the videos' folder
     val audioDelays: MutableMap<String, Int> = mutableMapOf(), // lip-sync per audio output, in ms
     val sorts: MutableMap<String, String> = mutableMapOf(), // SortOrder per LibrarySection, by name
     var wallMode: String = "",                 // WallMode by name; "" is posters
@@ -324,7 +330,19 @@ class StateStore(context: Context) {
         runCatching { PictureAdjustment.Deinterlace.valueOf(name) }.getOrDefault(PictureAdjustment.Deinterlace.OFF)
 
     /** The picture for [videoPath]: its own correction if one was set, else the default. */
-    fun pictureFor(videoPath: String): PictureAdjustment =
+    fun pictureFor(videoPath: String): PictureAdjustment = ownPictureFor(videoPath).copy(logo = logoFor(videoPath))
+
+    /** The folder a video's station logo is remembered for: its show's. */
+    private fun showOf(videoPath: String): String = videoPath.substringBeforeLast('/', "")
+
+    /** The station logo hidden for [videoPath]'s show, or null. */
+    fun logoFor(videoPath: String): LogoMask? = data.logos[showOf(videoPath)]?.let {
+        runCatching {
+            LogoMask(LogoMask.Corner.valueOf(it.corner), it.size, LogoMask.Mode.valueOf(it.mode))
+        }.getOrNull()
+    }
+
+    private fun ownPictureFor(videoPath: String): PictureAdjustment =
         data.picture[videoPath]?.let {
             PictureAdjustment(
                 it.brightness,
@@ -352,6 +370,17 @@ class StateStore(context: Context) {
 
     /** Remembers [picture] for [videoPath]; the default (or null) drops the video's own entry. */
     fun savePicture(videoPath: String, picture: PictureAdjustment?) {
+        // The logo is the show's, kept for its folder; the rest is the video's own.
+        val logo = picture?.logo
+        if (logo == null) {
+            data.logos.remove(showOf(videoPath))
+        } else {
+            data.logos[showOf(videoPath)] = LogoOverride(logo.corner.name, logo.size, logo.mode.name)
+        }
+        savePictureOwn(videoPath, picture?.copy(logo = null))
+    }
+
+    private fun savePictureOwn(videoPath: String, picture: PictureAdjustment?) {
         if (picture == null || picture == defaultPicture()) {
             data.picture.remove(videoPath)
         } else {

@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hawkynt.mediadroid.player.LogoMask
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCheck
@@ -41,6 +42,8 @@ fun PictureSliders(
     modifier: Modifier = Modifier,
     /** Offer one eye of a 3D video; a choice for one video, not a household default. */
     stereo: Boolean = false,
+    /** Offer hiding a station logo; a choice for one show, remembered for its folder, not a household default. */
+    logo: Boolean = false,
     /**
      * Tries a choice of deinterlacing, upscaling or smooth motion before it is taken (see pictureCheck); a choice it
      * refuses is not taken, and why shows below its row. Takes everything by default.
@@ -248,6 +251,7 @@ fun PictureSliders(
             }
         }
         motion.Below(picture.interpolation.description)
+        if (logo) LogoRow(picture) { onChange(it); onDone() }
         if (stereo) {
             Text("3D as 2D: one eye", fontSize = 16.sp)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -269,6 +273,63 @@ fun PictureSliders(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/**
+ * A station logo hidden: in which corner (or none), how large, and how — for the whole show, see LogoMask. [take] gets
+ * every change, chosen or let go.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LogoRow(picture: PictureAdjustment, take: (PictureAdjustment) -> Unit) {
+    val logo = picture.logo
+    Text("Station logo", fontSize = 16.sp)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FilterChip(
+            selected = logo == null,
+            onClick = { take(picture.copy(logo = null)) },
+            label = { Text("Off", fontSize = 15.sp) },
+        )
+        LogoMask.Corner.entries.forEach { corner ->
+            FilterChip(
+                selected = logo?.corner == corner,
+                onClick = {
+                    val chosen = logo?.copy(corner = corner) ?: LogoMask(corner, 0.15f, LogoMask.Mode.BLUR)
+                    take(picture.copy(logo = chosen))
+                },
+                label = { Text(corner.label, fontSize = 15.sp) },
+            )
+        }
+    }
+    if (logo == null) {
+        Text(
+            "Pick the corner a station's logo sits in: it is hidden in every video of this show.",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    var size by remember(logo) { mutableStateOf(logo.size) }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text("Logo size", fontSize = 16.sp, modifier = Modifier.weight(1f))
+        Text("%.0f %%".format(size * 100), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    Slider(
+        value = size,
+        onValueChange = { size = it },
+        valueRange = LogoMask.MIN_SIZE..LogoMask.MAX_SIZE,
+        onValueChangeFinished = { take(picture.copy(logo = logo.copy(size = size))) },
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        LogoMask.Mode.entries.forEach { mode ->
+            FilterChip(
+                selected = logo.mode == mode,
+                onClick = { take(picture.copy(logo = logo.copy(mode = mode))) },
+                label = { Text(mode.label, fontSize = 15.sp) },
+            )
+        }
+    }
+    Text(logo.mode.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /**

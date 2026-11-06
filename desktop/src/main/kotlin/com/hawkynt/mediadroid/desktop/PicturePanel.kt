@@ -36,6 +36,7 @@ import com.hawkynt.mediadroid.engine.desktop.DesktopNeural
 import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.player.AspectOverride
 import com.hawkynt.mediadroid.player.Keystone
+import com.hawkynt.mediadroid.player.LogoMask
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCheck
@@ -384,6 +385,47 @@ fun PicturePanel(
                 }
             }
             colouring.Below(picture.colorize.description)
+        }
+        // A station logo hidden for the whole show (LogoMask): its corner, size and how.
+        val logo = picture.logo
+        Text("Station logo", color = Color.White, modifier = Modifier.padding(top = 8.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(
+                selected = logo == null,
+                onClick = { onChange(picture.copy(logo = null)) },
+                label = { Text("Off") },
+            )
+            LogoMask.Corner.entries.forEach { corner ->
+                FilterChip(
+                    selected = logo?.corner == corner,
+                    onClick = {
+                        val chosen = logo?.copy(corner = corner) ?: LogoMask(corner, 0.15f, LogoMask.Mode.BLUR)
+                        onChange(picture.copy(logo = chosen))
+                    },
+                    label = { Text(corner.label) },
+                )
+            }
+        }
+        if (logo != null) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Logo size", color = Color.White, modifier = Modifier.weight(1f))
+                Text("%.0f %%".format(logo.size * 100), color = Color.Gray)
+            }
+            Slider(
+                value = logo.size,
+                onValueChange = { onChange(picture.copy(logo = logo.copy(size = it))) },
+                valueRange = LogoMask.MIN_SIZE..LogoMask.MAX_SIZE,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                LogoMask.Mode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = logo.mode == mode,
+                        onClick = { onChange(picture.copy(logo = logo.copy(mode = mode))) },
+                        label = { Text(mode.label) },
+                    )
+                }
+            }
+            Text(logo.mode.description, color = Color.Gray)
         }
         Text("3D as 2D: one eye", color = Color.White, modifier = Modifier.padding(top = 8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
