@@ -92,6 +92,7 @@ import androidx.media3.ui.PlayerView
 import com.hawkynt.mediadroid.R
 import com.hawkynt.mediadroid.player.PlayerWindow
 import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.data.screenKey
 import com.hawkynt.mediadroid.library.SkipRules
 import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
 import java.io.File
@@ -121,12 +122,22 @@ enum class VideoFit(val label: String, val resizeMode: Int) {
 /**
  * The picture's shape on the view: [video]'s own, as the player view gives it, narrowed or flattened by the black
  * bars the filters' stage crops — [share] the part of the width and height it still shows — so Fit, Fill and Stretch
- * work on the picture alone.
+ * work on the picture alone — or the shape [aspect] gives the whole frame where the file's flag is wrong; drawn
+ * narrower on a screen seen wider than its pixels ([screen], an anamorphic lens), so it is seen as meant.
  */
-private fun PlayerView.applyCropShape(video: androidx.media3.common.VideoSize, share: Pair<Float, Float>) {
+private fun PlayerView.applyCropShape(
+    video: androidx.media3.common.VideoSize,
+    share: Pair<Float, Float>,
+    aspect: com.hawkynt.mediadroid.player.AspectOverride,
+    screen: com.hawkynt.mediadroid.player.ScreenShape,
+) {
     if (video.width == 0 || video.height == 0) return
     val frame = findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame) ?: return
-    frame.setAspectRatio(video.width * video.pixelWidthHeightRatio * share.first / (video.height * share.second))
+    val meant = com.hawkynt.mediadroid.player.PictureShape.aspect(
+        video.width, video.height, video.pixelWidthHeightRatio, aspect, share.first, share.second,
+    )
+    val panel = rootView.takeIf { it.width > 0 && it.height > 0 }?.let { it.width.toFloat() / it.height } ?: 0f
+    frame.setAspectRatio(com.hawkynt.mediadroid.player.PictureShape.drawn(meant, panel, screen))
 }
 
 /**
@@ -413,6 +424,9 @@ fun PlayerScreen(
     var fit by remember { mutableStateOf(VideoFit.FIT) }
     // The part of the picture's width and height left once the stage has cropped its black bars; 1 and 1 without.
     var cropShare by remember { mutableStateOf(1f to 1f) }
+    // The view's frame in the picture's shape: cropped, as this video's shape is set, for the screen it is on.
+    fun PlayerView.showShape(video: androidx.media3.common.VideoSize) =
+        applyCropShape(video, cropShare, picture.aspect, store.screenSetup(screenKey(display)).shape)
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     // Short-lived on-screen confirmation of a gesture: "+15 s", "Volume 40 %".
@@ -508,7 +522,7 @@ fun PlayerScreen(
             override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
                 main.post {
                     listOfNotNull(playerView, presentation?.takeIf { it.isShowing }?.playerView)
-                        .forEach { it.applyCropShape(videoSize, cropShare) }
+                        .forEach { it.showShape(videoSize) }
                 }
             }
         }
@@ -1367,7 +1381,7 @@ fun PlayerScreen(
                 view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
                 com.hawkynt.mediadroid.player.AssOverlayView.show(view, !elsewhere)
                 if (!elsewhere) view.applyVideoLook(fit, zoom, pan)
-                view.applyCropShape(player.videoSize, cropShare)
+                view.showShape(player.videoSize)
                 val density = view.resources.displayMetrics.density
                 val cutout = view.rootWindowInsets
                     ?.takeIf { useCutout && android.os.Build.VERSION.SDK_INT >= 28 }
@@ -1385,7 +1399,7 @@ fun PlayerScreen(
         presentation?.let { shown ->
             if (shown.isShowing) {
                 shown.playerView.applyVideoLook(fit, zoom, pan)
-                shown.playerView.applyCropShape(player.videoSize, cropShare)
+                shown.playerView.showShape(player.videoSize)
             }
         }
         // The bare picture listens for gestures; with the controls up, touches go to the controls.
@@ -2130,6 +2144,26 @@ private fun PlayerPanel(
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
+        )
+        // The frame's shape, for a file whose flag is wrong (PictureShape); remembered with this video's picture.
+        Text("Shape", fontSize = 16.sp, modifier = Modifier.padding(top = 12.dp))
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            com.hawkynt.mediadroid.player.AspectOverride.entries.forEach { option ->
+                FilterChip(
+                    selected = picture.aspect == option,
+                    onClick = {
+                        onPicture(picture.copy(aspect = option))
+                        onPictureDone()
+                    },
+                    label = { Text(option.label, fontSize = 16.sp) },
+                )
+            }
+        }
+        Text(
+            "Only for a picture that looks squeezed or stretched: its file says the wrong shape.",
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         afterPictureSize()
 

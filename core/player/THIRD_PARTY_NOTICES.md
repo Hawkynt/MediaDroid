@@ -29,6 +29,7 @@ and the first is held to its own output.
 | --- | --- | --- |
 | [FFmpeg](https://ffmpeg.org) `libavfilter/vf_cropdetect.c`, black mode (after MPlayer's `vf_cropdetect`) — © 2002 A'rpi | GPL-2.0-or-later | `BlackBars`: which lines are bar (mean luma at most `limit`, 24/255 by default), tolerated bright lines, the picture growing over frames, the fresh start every `reset` frames, the crop rounded to even corners and a multiple of `round` |
 | DScaler's AutoAspect, as described in issue #252 | GPL-2.0 | `AutoCrop`'s idea of cropping in steps: few detections to widen the picture, many to narrow it |
+| [DScaler](https://github.com/JohnAdders/DScaler) `Help/AspectRatio.htm` and `Help/Aspect.htm` (the source formats, "Aspect Ratio of Display Screen", the custom screen aspect for a Panamorph lens) | GPL-2.0 | `PictureShape` and `ScreenShape`: a frame's shape set over its flag, a screen seen wider than its pixels and pictures drawn narrower to match |
 
 ## Test fixtures
 

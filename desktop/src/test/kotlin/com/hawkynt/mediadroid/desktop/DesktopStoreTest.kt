@@ -2,7 +2,10 @@ package com.hawkynt.mediadroid.desktop
 
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
+import com.hawkynt.mediadroid.player.AspectOverride
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.ScreenSetup
+import com.hawkynt.mediadroid.player.ScreenShape
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -162,5 +165,25 @@ class DesktopStoreTest {
         val store = DesktopStore(data)
         assertEquals("/x", store.libraryFolder)
         assertEquals(0.75f, store.speed)
+    }
+
+    @Test
+    fun `a video's shape and each screen's setup are kept, each for its own`() {
+        val data = folder.newFolder("data")
+        DesktopStore(data).apply {
+            setAspect("/v/dvd.mkv", AspectOverride.SIXTEEN_NINE)
+            setScreenSetup("projector", ScreenSetup(ScreenShape.LENS_133))
+        }
+        val again = DesktopStore(data)
+        assertEquals(AspectOverride.SIXTEEN_NINE, again.aspectOf("/v/dvd.mkv"))
+        assertEquals(AspectOverride.AUTO, again.aspectOf("/v/other.mkv"))
+        assertEquals(ScreenShape.LENS_133, again.screenSetup("projector").shape)
+        assertEquals(ScreenSetup.Default, again.screenSetup("monitor"))
+        // Back to the defaults: nothing is kept for them.
+        again.setAspect("/v/dvd.mkv", AspectOverride.AUTO)
+        again.setScreenSetup("projector", ScreenSetup.Default)
+        val text = File(data, "settings.json").readText()
+        assertFalse(text.contains("/v/dvd.mkv"))
+        assertFalse(text.contains("projector"))
     }
 }

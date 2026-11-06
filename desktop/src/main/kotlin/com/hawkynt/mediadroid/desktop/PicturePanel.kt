@@ -33,11 +33,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.Languages
+import com.hawkynt.mediadroid.player.AspectOverride
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCheck
 import com.hawkynt.mediadroid.player.PictureControl
 import com.hawkynt.mediadroid.player.PictureVerdict
 import com.hawkynt.mediadroid.player.PlaybackMath
+import com.hawkynt.mediadroid.player.ScreenSetup
+import com.hawkynt.mediadroid.player.ScreenShape
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -74,6 +77,11 @@ fun PicturePanel(
     onSound: (SoundSettings) -> Unit = {},
     nightMode: Boolean = false,
     onNightMode: (Boolean) -> Unit = {},
+    aspect: AspectOverride = AspectOverride.AUTO,
+    onAspect: (AspectOverride) -> Unit = {},
+    screenName: String = "This screen",
+    screenSetup: ScreenSetup = ScreenSetup.Default,
+    onScreenSetup: (ScreenSetup) -> Unit = {},
 ) {
     Column(
         modifier.width(380.dp).fillMaxHeight().background(Color(0xF01A1A2E)).verticalScroll(rememberScrollState())
@@ -123,6 +131,18 @@ fun PicturePanel(
             }
         }
         Text("Picture", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        // The frame's shape where the file's flag is wrong (PictureShape), kept for this video, as in the phone's gear.
+        Text("Shape of this video", color = Color.White)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            AspectOverride.entries.forEach { option ->
+                FilterChip(selected = aspect == option, onClick = { onAspect(option) }, label = { Text(option.label) })
+            }
+        }
+        Text(
+            "Only for a picture that looks squeezed or stretched: its file says the wrong shape.",
+            color = Color.Gray,
+            fontSize = 13.sp,
+        )
         PictureControl.entries.forEach { control ->
             val value = control.get(picture)
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -258,6 +278,30 @@ fun PicturePanel(
                 )
             }
         }
+        // The screen the window is on, kept for that screen alone (Android's Settings → Screens).
+        Text(screenName, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
+            modifier = Modifier.padding(top = 12.dp))
+        Text(
+            "Only for projectors and special screens; an ordinary monitor needs nothing here.",
+            color = Color.Gray,
+            fontSize = 13.sp,
+        )
+        Text("Shape as seen", color = Color.White)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ScreenShape.entries.forEach { shape ->
+                FilterChip(
+                    selected = screenSetup.shape == shape,
+                    onClick = { onScreenSetup(screenSetup.copy(shape = shape)) },
+                    label = { Text(shape.label) },
+                )
+            }
+        }
+        Text(
+            "For a projector behind an anamorphic lens, or a screen whose pixels are not square: the shape the " +
+                "picture is seen at. Pictures are drawn narrower to match, so circles stay round.",
+            color = Color.Gray,
+            fontSize = 13.sp,
+        )
     }
 }
 

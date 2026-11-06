@@ -10,7 +10,9 @@ import com.hawkynt.mediadroid.library.SortOrder
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.library.WatchMarks
+import com.hawkynt.mediadroid.player.AspectOverride
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.SubtitleLook
 import com.hawkynt.mediadroid.ui.WallMode
 import java.io.File
@@ -53,6 +55,15 @@ data class PictureOverride(
     val deband: Float = 0f,
     /** Black bars cropped; pictures saved before it was offered take the household's default, on. */
     val cropBlackBars: Boolean = true,
+    /** AspectOverride name: the frame's shape where the file's flag is wrong. */
+    val aspect: String = "AUTO",
+)
+
+/** How one output screen is set up (see [com.hawkynt.mediadroid.player.ScreenSetup]); names, as kept. */
+@Serializable
+data class ScreenOverride(
+    /** ScreenShape name: the shape the screen is seen at, an anamorphic lens. */
+    val shape: String = "AUTO",
 )
 
 /**
@@ -112,6 +123,7 @@ data class Settings(
     var downscaler: String = "BILINEAR",     // Downscaler name: how video larger than 1080p is brought down
     var softwareVideoDecoding: Boolean = false, // FFmpeg before the device's decoders: last resort, drains the battery
     var hdrToneMapping: Boolean = true,       // HDR on a screen without HDR tone-mapped by the app's stage, not the device
+    var screens: Map<String, ScreenOverride> = emptyMap(), // per output screen (see screenKey): lens, projector
 ) {
     /** What [network]'s self-test found where it passed; null while it is off. */
     fun neuralMotionPassed(
@@ -308,6 +320,7 @@ class StateStore(context: Context) {
                 it.upscalerStrength,
                 it.deband,
                 it.cropBlackBars,
+                AspectOverride.entries.firstOrNull { a -> a.name == it.aspect } ?: AspectOverride.AUTO,
             )
         }
             ?: defaultPicture()
@@ -334,7 +347,22 @@ class StateStore(context: Context) {
                 picture.upscalerStrength,
                 picture.deband,
                 picture.cropBlackBars,
+                picture.aspect.name,
             )
+        }
+        save()
+    }
+
+    /** How the output screen [key] (see [screenKey]) is set up; the default until it is set. */
+    fun screenSetup(key: String): ScreenSetup =
+        data.settings.screens[key]?.let { ScreenSetup.of(it.shape) } ?: ScreenSetup.Default
+
+    /** Keeps [setup] for the output screen [key]; the default drops its entry. */
+    fun saveScreenSetup(key: String, setup: ScreenSetup) {
+        data.settings.screens = if (setup == ScreenSetup.Default) {
+            data.settings.screens - key
+        } else {
+            data.settings.screens + (key to ScreenOverride(setup.shape.name))
         }
         save()
     }
@@ -366,6 +394,17 @@ class StateStore(context: Context) {
         save()
     }
 }
+
+/**
+ * The key an output screen's setup is kept under: the device's own screen as one, every other by its name — the TV
+ * or projector it is — so each keeps its own lens and projector setup.
+ */
+fun screenKey(display: android.view.Display?): String =
+    if (display == null || display.displayId == android.view.Display.DEFAULT_DISPLAY) BUILT_IN_SCREEN
+    else "display:${display.name}"
+
+/** The key of the device's own screen (see [screenKey]). */
+const val BUILT_IN_SCREEN = "built-in"
 
 /** The id the media folder chosen at the start keeps as a source. */
 const val PRIMARY_SOURCE = "primary"
