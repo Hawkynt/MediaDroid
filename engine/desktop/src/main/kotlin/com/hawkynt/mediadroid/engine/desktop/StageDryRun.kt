@@ -78,6 +78,7 @@ object StageDryRun {
         }
         val start = System.nanoTime()
         var previous: MediaReader.Picture? = null
+        var earlier: MediaReader.Picture? = null
         var measured = 0
         var late = 0
         var workTotal = 0.0
@@ -102,9 +103,10 @@ object StageDryRun {
                 val wait = (due - System.nanoTime()) / 1_000_000L
                 if (wait > 0) Thread.sleep(wait)
                 val began = System.nanoTime()
-                stage.process(Moment(shown, previous, next, after, phase.toFloat()), picture, width, height)
+                stage.process(Moment(shown, previous, next, after, phase.toFloat(), earlier), picture, width, height)
                 work += (System.nanoTime() - began) / 1e6
             }
+            earlier = previous
             previous = shown
             if (k < WARM_FRAMES) continue
             measured++

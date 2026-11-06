@@ -4,30 +4,60 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Dot crawl and rainbows removed from composite captures (VHS, LaserDisc, console rips): a temporal comb filter. A
- * composite signal carries the colour on a subcarrier at 227.5 times the line rate (SMPTE 170M), so its phase turns
- * over from one frame to the next; what a decoder leaves of it — dots crawling along colour edges (the colour read as
- * brightness), rainbows over fine detail (the brightness read as colour) — flips sign every frame. Where the picture
- * stands still, the frames before and after carry the opposite residue to the frame shown, and the mean
- * (before + 2 × shown + after) / 4 cancels it while the picture itself stays; where it moves, the frames differ for
- * reasons of their own and the frame is left as it is. The frames before and after share the shown frame's opposite
- * phase, so the difference between them alone tells motion from residue: up to the threshold the mean is taken in
- * full, past twice it not at all, in between in part.
+ * Dot crawl and rainbows removed from composite captures (VHS, LaserDisc, console rips): a temporal comb filter. What
+ * a decoder leaves of the colour subcarrier — dots crawling along colour edges (the colour read as brightness),
+ * rainbows over fine detail (the brightness read as colour) — follows the subcarrier's phase, which each standard turns
+ * its own way from frame to frame. Where the picture stands still, frames whose residues cancel are averaged and the
+ * picture itself stays; where it moves, the frames differ for reasons of their own and the frame is left as it is.
+ * Motion is told from residue by comparing frames, or sums of frames, that carry the same residue: up to the threshold
+ * the mean is taken in full, past twice it not at all, in between in part.
  *
- * Written from the NTSC standard's subcarrier relation (AGENTS.md rung 3); DScaler's comb filtering (GPL-2.0, its help
- * and plug-ins) described the feature, no code of it is taken. Held to a simulated composite picture by
- * `DotCrawlTest`; the GL pass (glsl/video/dot-crawl.frag) is written from it. PAL's subcarrier turns over every two
- * frames, so this cancels NTSC's residue; PAL's stays.
+ * NTSC ([apply]): the subcarrier runs at 227.5 times the line rate (SMPTE 170M), 525 lines a frame, so its phase turns
+ * over every frame. The frames before and after carry the opposite residue to the frame shown and the same as each
+ * other: their difference is motion, and (before + 2 × shown + after) / 4 cancels the residue.
+ *
+ * PAL ([applyPal]): the subcarrier runs at 283.75 times the line rate plus 25 Hz (ITU-R BT.1700: 4 433 618.75 Hz), 625
+ * lines a frame, so its phase moves on by three quarters of a cycle a frame — the 25 Hz adds whole cycles — and comes
+ * back only after four frames (the eight-field sequence); the V component's sign, switched every line, flips from
+ * frame to frame as well. Two frames apart the residue is opposite, and the frames either side of the shown one carry
+ * residues opposite to each other: the frame two before plus the frame shown, and the frames either side, each sum to
+ * the picture without residue, so half their difference is motion and (two before + shown) / 2 the comb — the largest
+ * share of the frame shown any residue-free mean of these four frames can keep, and it needs no frame later than the
+ * one after.
+ *
+ * Written from the standards' subcarrier relations (AGENTS.md rung 3); DScaler's comb filtering (GPL-2.0, its help and
+ * plug-ins) described the feature, no code of it is taken. Held to simulated composite pictures by `DotCrawlTest`; the
+ * GL passes (glsl/video/dot-crawl.frag, dot-crawl-pal.frag) are written from it.
  */
 object DotCrawl {
+
+    /** The colour standard whose subcarrier a capture carries, which decides the frames the comb reads. */
+    enum class Standard {
+        /** The subcarrier's phase turns over every frame: the frames before and after. */
+        NTSC,
+
+        /** The phase comes back every four frames: the frame two before, and the frames either side. */
+        PAL,
+        ;
+
+        companion object {
+            /**
+             * The standard of a capture showing a frame every [intervalMs]: PAL at 25 frames a second, NTSC at any
+             * other rate (29.97; 24 and 23.976, 41.7 ms apart, are film, no composite capture). PAL-M's 29.97
+             * (Brazil) is taken for NTSC, and a PAL capture at 50 frames a second (its fields bobbed) is not combed
+             * as PAL.
+             */
+            fun forInterval(intervalMs: Float): Standard = if (intervalMs in 38.5f..41f) PAL else NTSC
+        }
+    }
 
     /** The motion threshold for the slider's [strength], 0 to 1, in 8-bit steps, or null at 0 (off): 4 to 20. */
     fun threshold(strength: Float): Float? = if (strength <= 0f) null else 4f + 16f * strength.coerceAtMost(1f)
 
     /**
-     * The frame [current] (8-bit RGB, rows from the top, [width] × [height]) combed with [before] and [after]: each
-     * pixel's motion the largest difference between [before] and [after] over its channels and its neighbours left and
-     * right, the comb's mean taken in full up to [threshold], in part up to twice it.
+     * The NTSC frame [current] (8-bit RGB, rows from the top, [width] × [height]) combed with [before] and [after]:
+     * each pixel's motion the largest difference between [before] and [after] over its channels and its neighbours left
+     * and right, the comb's mean taken in full up to [threshold], in part up to twice it.
      */
     fun apply(
         before: ByteArray,
@@ -38,23 +68,59 @@ object DotCrawl {
         threshold: Float,
     ): ByteArray {
         require(current.size == width * height * 3 && before.size == current.size && after.size == current.size)
-        fun v(frame: ByteArray, i: Int) = frame[i].toInt() and 0xFF
+        val motion = { i: Int -> abs(v(after, i) - v(before, i)).toFloat() }
+        return combed(current, width, height, threshold, motion) { i, shown ->
+            (v(before, i) + 2f * shown + v(after, i)) / 4f
+        }
+    }
+
+    /**
+     * The PAL frame [current] (8-bit RGB, rows from the top, [width] × [height]) combed with [earlier] (two frames
+     * before), [before] and [after]: each pixel's motion the largest of half the difference between [earlier] +
+     * [current] and [before] + [after] over its channels and its neighbours left and right, the comb's mean
+     * ([earlier] + [current]) / 2 taken in full up to [threshold], in part up to twice it.
+     */
+    fun applyPal(
+        earlier: ByteArray,
+        before: ByteArray,
+        current: ByteArray,
+        after: ByteArray,
+        width: Int,
+        height: Int,
+        threshold: Float,
+    ): ByteArray {
+        require(
+            current.size == width * height * 3 && earlier.size == current.size && before.size == current.size &&
+                after.size == current.size,
+        )
+        val motion = { i: Int -> abs(v(earlier, i) + v(current, i) - v(before, i) - v(after, i)) / 2f }
+        return combed(current, width, height, threshold, motion) { i, shown -> (v(earlier, i) + shown) / 2f }
+    }
+
+    private fun v(frame: ByteArray, i: Int) = frame[i].toInt() and 0xFF
+
+    // [current] mixed towards [mean] by the share its [motion] (the largest over the channels and the neighbours left
+    // and right) leaves.
+    private inline fun combed(
+        current: ByteArray,
+        width: Int,
+        height: Int,
+        threshold: Float,
+        motion: (Int) -> Float,
+        mean: (Int, Float) -> Float,
+    ): ByteArray {
         val out = ByteArray(current.size)
         for (y in 0 until height) for (x in 0 until width) {
-            var motion = 0
+            var most = 0f
             for (dx in -1..1) {
                 val nx = (x + dx).coerceIn(0, width - 1)
-                for (c in 0..2) {
-                    val i = (y * width + nx) * 3 + c
-                    motion = maxOf(motion, abs(v(after, i) - v(before, i)))
-                }
+                for (c in 0..2) most = maxOf(most, motion((y * width + nx) * 3 + c))
             }
-            val share = (2f - motion / threshold).coerceIn(0f, 1f)
+            val share = (2f - most / threshold).coerceIn(0f, 1f)
             for (c in 0..2) {
                 val i = (y * width + x) * 3 + c
                 val shown = v(current, i).toFloat()
-                val combed = (v(before, i) + 2f * shown + v(after, i)) / 4f
-                out[i] = (shown + share * (combed - shown)).roundToInt().coerceIn(0, 255).toByte()
+                out[i] = (shown + share * (mean(i, shown) - shown)).roundToInt().coerceIn(0, 255).toByte()
             }
         }
         return out

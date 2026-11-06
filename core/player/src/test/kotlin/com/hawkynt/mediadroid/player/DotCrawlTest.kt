@@ -7,7 +7,9 @@ import org.junit.Test
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.PI
+import kotlin.math.floor
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * The comb filter against a simulated composite capture: a picture with a residue that flips sign every frame, as
@@ -93,5 +95,108 @@ class DotCrawlTest {
         assertNull(DotCrawl.threshold(0f))
         assertEquals(20f, DotCrawl.threshold(1f)!!, 0f)
         assertEquals(12f, DotCrawl.threshold(0.5f)!!, 0f)
+    }
+
+    /**
+     * A PAL composite capture's residue at frame [t]: the subcarrier at 283.75 times the line rate plus 25 Hz (ITU-R
+     * BT.1700: 4 433 618.75 Hz on a 15 625 Hz line) sampled at 13.5 MHz (ITU-R BT.601), a frame's rows taken from
+     * its two fields 312.5 lines apart, the V component's sign switched every line (625 a frame, so the switch flips
+     * from one frame to the next too); a cross-luminance residue of about ±8 levels from a colour with equal U and V.
+     */
+    private fun palResidue(x: Int, y: Int, t: Int): Int {
+        val field = y % 2
+        val lines = field * 312.5 + y / 2
+        val cycles = x * PAL_SUBCARRIER / 13_500_000.0 + lines * PAL_SUBCARRIER / 15_625.0 + t * PAL_SUBCARRIER / 25.0
+        val switched = if (Math.floorMod(625 * t + field * 313 + y / 2, 2) == 0) 1 else -1
+        val phase = 2 * PI * (cycles - floor(cycles))
+        return (5.7 * (sin(phase) + switched * cos(phase))).roundToInt()
+    }
+
+    private fun palCaptured(t: Int, barX: Int) = clean(barX).also { picture ->
+        for (i in picture.indices) {
+            val p = i / 3
+            picture[i] = ((picture[i].toInt() and 0xFF) + palResidue(p % w, p / w, t)).coerceIn(0, 255).toByte()
+        }
+    }
+
+    /** The residue [out] holds against the clean picture [truth] outside the columns [moving], and the values seen. */
+    private fun residueLeft(out: ByteArray, truth: ByteArray, moving: IntRange): Pair<Int, Int> {
+        var sum = 0
+        var counted = 0
+        for (y in 0 until h) for (x in 0 until w) {
+            if (x in moving) continue
+            for (c in 0..2) {
+                val i = (y * w + x) * 3 + c
+                sum += abs((out[i].toInt() and 0xFF) - (truth[i].toInt() and 0xFF))
+                counted++
+            }
+        }
+        return sum to counted
+    }
+
+    @Test
+    fun `PAL's residue comes back in phase only every four frames`() {
+        // Two frames on, the residue is the opposite of the frame's own; one either side, the opposite of each other.
+        for (y in 0 until 8) for (x in 0 until 8) {
+            assertEquals(-palResidue(x, y, 2).toFloat(), palResidue(x, y, 0).toFloat(), 1f)
+            assertEquals(-palResidue(x, y, -1).toFloat(), palResidue(x, y, 1).toFloat(), 1f)
+            assertEquals(palResidue(x, y, 4).toFloat(), palResidue(x, y, 0).toFloat(), 1f)
+        }
+    }
+
+    @Test
+    fun `NTSC's comb leaves PAL's residue`() {
+        val frames = (0..2).map { palCaptured(it, 10) }
+        val out = DotCrawl.apply(frames[0], frames[1], frames[2], w, h, requireNotNull(DotCrawl.threshold(0.5f)))
+        val (before, counted) = residueLeft(frames[1], clean(10), IntRange.EMPTY)
+        val (after, _) = residueLeft(out, clean(10), IntRange.EMPTY)
+        assertTrue("residue $before before, $after after", before >= counted * 3)
+        assertTrue("residue $before before, $after after", after * 3 > before)
+    }
+
+    @Test
+    fun `PAL's comb clears the still parts and leaves the moving bar`() {
+        // Frames t - 2 to t + 1, the bar moving 4 pixels a frame; the frame shown is the third.
+        val frames = (0..3).map { palCaptured(it, 36 + 4 * it) }
+        val out = DotCrawl.applyPal(
+            frames[0], frames[1], frames[2], frames[3], w, h, requireNotNull(DotCrawl.threshold(0.5f)),
+        )
+        // The bar's span in any of the four frames, a pixel either side.
+        val moving = 35..54
+        val (before, counted) = residueLeft(frames[2], clean(44), moving)
+        val (after, _) = residueLeft(out, clean(44), moving)
+        assertTrue("residue $before before, $after after", before >= counted * 3)
+        assertTrue("residue $before before, $after after", after * 10 < before)
+        for (y in 0 until h) for (x in 46..47) for (c in 0..2) {
+            val i = (y * w + x) * 3 + c
+            assertEquals("($x, $y) in the bar", frames[2][i], out[i])
+        }
+    }
+
+    @Test
+    fun `PAL's comb fades out between the threshold and twice it`() {
+        fun px(v: Int) = ByteArray(3) { v.toByte() }
+        // The frame two before and the frame shown against the frames either side: motion is half their difference.
+        val full = DotCrawl.applyPal(px(100), px(120), px(140), px(110), 1, 1, 10f)
+        assertEquals(120, full[0].toInt() and 0xFF)
+        val half = DotCrawl.applyPal(px(100), px(110), px(140), px(100), 1, 1, 10f)
+        assertEquals(140f + 0.5f * (120f - 140f), (half[0].toInt() and 0xFF).toFloat(), 0.5f)
+        val none = DotCrawl.applyPal(px(100), px(100), px(140), px(100), 1, 1, 10f)
+        assertEquals(140, none[0].toInt() and 0xFF)
+    }
+
+    @Test
+    fun `a frame every 40 ms is PAL, any other rate NTSC`() {
+        assertEquals(DotCrawl.Standard.PAL, DotCrawl.Standard.forInterval(40f))
+        assertEquals(DotCrawl.Standard.PAL, DotCrawl.Standard.forInterval(39f))
+        assertEquals(DotCrawl.Standard.NTSC, DotCrawl.Standard.forInterval(1001f / 30f))
+        assertEquals(DotCrawl.Standard.NTSC, DotCrawl.Standard.forInterval(1001f / 24f))
+        assertEquals(DotCrawl.Standard.NTSC, DotCrawl.Standard.forInterval(20f))
+        assertEquals(DotCrawl.Standard.NTSC, DotCrawl.Standard.forInterval(0f))
+    }
+
+    private companion object {
+        /** PAL's colour subcarrier, Hz: 283.75 × 15 625 + 25 (ITU-R BT.1700). */
+        const val PAL_SUBCARRIER = 4_433_618.75
     }
 }

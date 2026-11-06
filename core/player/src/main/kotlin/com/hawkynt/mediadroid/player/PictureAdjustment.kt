@@ -89,9 +89,9 @@ data class PictureAdjustment(
      */
     val temporalDenoise: Float = 0f,
     /**
-     * Dot crawl and rainbows, 0 (off) to 1: a composite capture's residue, which flips sign every frame, cancelled
-     * where the picture stands still (see [DotCrawl]); towards 1 more motion is taken for residue. On Android the
-     * picture then runs one frame behind.
+     * Dot crawl and rainbows, 0 (off) to 1: a composite capture's residue, which flips sign every frame (NTSC) or
+     * every two (PAL, told by its 25 frames a second), cancelled where the picture stands still (see [DotCrawl]);
+     * towards 1 more motion is taken for residue. On Android the picture then runs one frame behind.
      */
     val dotCrawl: Float = 0f,
 ) {
