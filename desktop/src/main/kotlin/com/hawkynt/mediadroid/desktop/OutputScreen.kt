@@ -2,9 +2,9 @@ package com.hawkynt.mediadroid.desktop
 
 /**
  * The monitor a window shows on: [key], what its setup is kept under (DesktopStore.screenSetup), a [name] to show,
- * and the panel's [aspect] — its width over its height.
+ * the panel's [aspect] — its width over its height — and its [height] in pixels.
  */
-data class OutputScreen(val key: String, val name: String, val aspect: Float) {
+data class OutputScreen(val key: String, val name: String, val aspect: Float, val height: Int = 1080) {
     companion object {
         /** A screen when the window's is unknown: no setup of its own, 16:9. */
         val Unknown = OutputScreen("default", "This screen", 16f / 9f)
@@ -17,7 +17,11 @@ data class OutputScreen(val key: String, val name: String, val aspect: Float) {
             val device = configuration.device
             val id = device.iDstring.orEmpty().ifEmpty { Unknown.key }
             // Two monitors of one model differ by id; the size tells the user which is which.
-            return OutputScreen(id, "Screen ${bounds.width} × ${bounds.height}", bounds.width.toFloat() / bounds.height)
+            // The device's own pixels: the bounds are scaled by the system's zoom.
+            val pixels = (bounds.height * configuration.defaultTransform.scaleY).toInt()
+            return OutputScreen(
+                id, "Screen ${bounds.width} × ${bounds.height}", bounds.width.toFloat() / bounds.height, pixels,
+            )
         }
     }
 }

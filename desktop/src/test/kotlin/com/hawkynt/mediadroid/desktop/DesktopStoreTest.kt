@@ -242,14 +242,14 @@ class DesktopStoreTest {
             setAspect("/v/dvd.mkv", AspectOverride.SIXTEEN_NINE)
             setScreenSetup(
                 "projector",
-                ScreenSetup(ScreenShape.LENS_133, mirror = true, flip = true, keystoneVertical = 0.1f),
+                ScreenSetup(ScreenShape.LENS_133, mirror = true, flip = true, keystoneVertical = 0.1f, burnInCare = true),
             )
         }
         val again = DesktopStore(data)
         assertEquals(AspectOverride.SIXTEEN_NINE, again.aspectOf("/v/dvd.mkv"))
         assertEquals(AspectOverride.AUTO, again.aspectOf("/v/other.mkv"))
         assertEquals(
-            ScreenSetup(ScreenShape.LENS_133, mirror = true, flip = true, keystoneVertical = 0.1f),
+            ScreenSetup(ScreenShape.LENS_133, mirror = true, flip = true, keystoneVertical = 0.1f, burnInCare = true),
             again.screenSetup("projector"),
         )
         assertEquals(ScreenSetup.Default, again.screenSetup("monitor"))

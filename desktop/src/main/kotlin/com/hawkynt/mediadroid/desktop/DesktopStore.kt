@@ -263,12 +263,14 @@ internal data class ScreenKept(
     val flip: Boolean = false,
     val keystoneVertical: Float = 0f,
     val keystoneHorizontal: Float = 0f,
+    val burnInCare: Boolean = false,
 ) {
-    fun toSetup(): ScreenSetup = ScreenSetup.of(shape, mirror, flip, keystoneVertical, keystoneHorizontal)
+    fun toSetup(): ScreenSetup = ScreenSetup.of(shape, mirror, flip, keystoneVertical, keystoneHorizontal, burnInCare)
 
     companion object {
         fun of(setup: ScreenSetup) = ScreenKept(
             setup.shape.name, setup.mirror, setup.flip, setup.keystoneVertical, setup.keystoneHorizontal,
+            setup.burnInCare,
         )
     }
 }
