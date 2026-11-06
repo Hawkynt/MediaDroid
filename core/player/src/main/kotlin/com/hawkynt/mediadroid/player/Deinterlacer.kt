@@ -6,11 +6,12 @@ import kotlin.math.abs
  * The temporal deinterlacers: a picture of two interlaced fields with one of them rebuilt from its own
  * lines and from the frames before and after, so still parts keep their full detail and moving parts
  * lose their combing. The reference the player's graphics passes are written from, checked byte for
- * byte against FFmpeg's own filters.
+ * byte against their originals.
  *
- * Converted from FFmpeg's libavfilter (LGPL-2.1-or-later, see `THIRD_PARTY_NOTICES.md`): YADIF
- * (`vf_yadif.c`, Michael Niedermayer) and BWDIF (`vf_bwdif.c`, Thomas Mundt, after the BBC's w3fdif
- * coefficients).
+ * YADIF and BWDIF converted from FFmpeg's libavfilter (LGPL-2.1-or-later, see `THIRD_PARTY_NOTICES.md`): `vf_yadif.c`
+ * (Michael Niedermayer) and `vf_bwdif.c` (Thomas Mundt, after the BBC's w3fdif coefficients). Greedy High Motion
+ * converted from GStreamer's `greedyh.c` (tvtime's, by Tom Barry after DScaler, relicensed LGPL-2.0-or-later for
+ * GStreamer). Greedy 2-Frame written anew from DScaler's (GPL-2.0, behaviour only), held to xine-lib's port of it.
  */
 object Deinterlacer {
 
@@ -26,6 +27,19 @@ object Deinterlacer {
 
         /** Bob Weaver: YADIF's temporal check with the w3fdif filter's cubic and high-frequency taps. */
         BWDIF,
+
+        /**
+         * Greedy High Motion: of the line from the field before and the one from the field after, the one nearer
+         * the average of the lines around it — smoothed along the row, the diagonal jaggie reduction — held within
+         * a few steps of the lines above and below, and blended towards that average the more the two differ.
+         */
+        GREEDY_HM,
+
+        /**
+         * Greedy 2-Frame: the two fields' worth of the line woven (averaged) where neither it nor the lines above or
+         * below moved since the frame before, judged two pixels at a time; otherwise the lines around it averaged.
+         */
+        GREEDY_2FRAME,
     }
 
     /**
@@ -55,13 +69,21 @@ object Deinterlacer {
                 out[y * w + x] = when (method) {
                     Method.YADIF -> yadif(prev, cur, next, prev2, next2, x, y)
                     Method.BWDIF -> bwdif(prev, cur, next, prev2, next2, x, y)
+                    Method.GREEDY_HM -> greedyHm(cur, prev2, next2, x, y)
+                    Method.GREEDY_2FRAME -> greedy2Frame(prev, cur, prev2, next2, x, y)
                 }
             }
         }
         return Plane(w, h, out)
     }
 
-    /** The rows rebuilt are those whose number has this parity flipped: 0 rebuilds the odd rows, 1 the even. */
+    /** The graphics pass's `uMethod` for [method] (`temporal.frag`): YADIF 0, BWDIF 1, Greedy HM 2, Greedy 2F 3. */
+    fun shaderMethod(method: Method): Int = method.ordinal
+
+    /** The graphics pass's `uMethod` that rebuilds nothing: the frame woven as it is. */
+    const val WEAVE = 4
+
+        /** The rows rebuilt are those whose number has this parity flipped: 0 rebuilds the odd rows, 1 the even. */
     fun rebuiltParity(second: Boolean, topFieldFirst: Boolean): Int =
         (if (topFieldFirst) 1 else 0) xor (if (second) 0 else 1)
 
@@ -107,6 +129,56 @@ object Deinterlacer {
         }
 
         return spatialPred.coerceIn(d - diff, d + diff)
+    }
+
+    /** Greedy High Motion's settings, GStreamer's defaults (DScaler's): how far past the lines around a woven pixel
+     * may lie, how much the two fields' lines may differ before blending starts, and how fast it blends then. */
+    const val GREEDY_MAX_COMB = 5
+    const val GREEDY_MOTION_THRESHOLD = 25
+    const val GREEDY_MOTION_SENSE = 30
+
+    /** Greedy 2-Frame's luma threshold, DScaler's: half a difference above this is movement. */
+    const val GREEDY_2FRAME_THRESHOLD = 4
+
+    /**
+     * Greedy High Motion for the row [y] between the kept field's rows: [earlier] and [later] are the pictures of
+     * the fields either side of the kept one (GStreamer's L2 and L2P). At the picture's top the row below is copied;
+     * at its bottom the earlier field's row is woven in, as GStreamer's frame loop does.
+     */
+    private fun greedyHm(cur: Plane, earlier: Plane, later: Plane, x: Int, y: Int): Int {
+        if (y == 0) return cur[x, 1]
+        if (y + 1 == cur.height) return earlier[x, y]
+        fun average(column: Int) = (cur[column, y - 1] + cur[column, y + 1]) / 2
+        val l1 = cur[x, y - 1]
+        val l3 = cur[x, y + 1]
+        val avg = average(x)
+        // The averages one pixel either side, the edge columns standing in for the missing ones.
+        val avgBefore = if (x == 0) avg else average(x - 1)
+        val avgAfter = if (x + 1 == cur.width) avg else average(x + 1)
+        val avgSc = (avg + (avgBefore + avgAfter) / 2) / 2
+        val l2 = earlier[x, y]
+        val lp2 = later[x, y]
+        val best = if (abs(l2 - avgSc) > abs(lp2 - avgSc)) lp2 else l2
+        val max = minOf(maxOf(l1, l3) + GREEDY_MAX_COMB, 255)
+        val min = maxOf(minOf(l1, l3) - GREEDY_MAX_COMB, 0)
+        val clipped = best.coerceIn(min, max)
+        val motion = (maxOf(abs(l2 - lp2) - GREEDY_MOTION_THRESHOLD, 0) * GREEDY_MOTION_SENSE).coerceAtMost(256)
+        return (clipped * (256 - motion) + avgSc * motion) / 256
+    }
+
+    /**
+     * Greedy 2-Frame for the row [y] of the newest field ([later], with [earlier] the same rows a frame before),
+     * between the kept field's rows of [cur] (and of [prev], a frame before). The rows at the picture's edges, lacking
+     * a kept row on one side, take the newest field's own.
+     */
+    private fun greedy2Frame(prev: Plane, cur: Plane, earlier: Plane, later: Plane, x: Int, y: Int): Int {
+        if (y == 0 || y + 1 == cur.height) return later[x, y]
+        val pair = x and 1.inv()
+        fun still(a: Plane, b: Plane, row: Int): Boolean = (pair..minOf(pair + 1, cur.width - 1)).all {
+            abs(a[it, row] - b[it, row]) shr 1 <= GREEDY_2FRAME_THRESHOLD
+        }
+        val weave = still(later, earlier, y) && (still(cur, prev, y - 1) || still(cur, prev, y + 1))
+        return if (weave) (later[x, y] + earlier[x, y] + 1) shr 1 else (cur[x, y - 1] + cur[x, y + 1] + 1) shr 1
     }
 
     private val COEF_LF = intArrayOf(4309, 213)

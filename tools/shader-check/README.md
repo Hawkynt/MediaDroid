@@ -19,6 +19,8 @@ oracle that bilinear scaling would pass as well proves nothing.
 | Lanczos, EWA (`lanczos.frag`, `ewa.frag`) | libplacebo's `lanczos` and `ewa_lanczossharp` | their kernels, antiringing off on both sides (ours pulls into the four nearest pixels' range, libplacebo's weighs a soft minimum and maximum — a different rule, so not compared) |
 | xBRZ (`glsl/xbrz`) | the original's own output: core/imaging's reference pictures, which `Xbrz` is held to as well | the three passes as the stage runs them, every factor 2 to 6; the patterns read from the app's `Xbrz.kt` (`xbrz-table.py`) |
 | YADIF, BWDIF (`temporal.frag`) | FFmpeg's `yadif` and `bwdif` on planar RGB | three interlaced frames (`fields.py`: half still, half moving), both field orders and both fields, PAL and NTSC sizes; once more with every read addressed 1/256 texel off, which nearest sampling has to absorb |
+| Greedy HM (`temporal.frag`) | GStreamer 1.28's own `deinterlace` element, `method=greedyh` (tvtime's, relicensed LGPL; its C path, which planar pictures take) | the same frames, each colour channel fed as the luma of a Y444 picture (`planes.py`), both field orders and both fields, PAL and NTSC sizes |
+| Greedy 2-Frame (`temporal.frag`) | DScaler's, as xine-lib ports it (`greedy2frame_template.c` at `5388979`, GPL-2.0: run as an oracle only, through core/player's `greedy2frame-harness.c`) | the same frames in grey, where its choice on YUY2's luma is ours on all three channels; the port copies the newest field's third row to the first, so where the top rows are rebuilt that row is left out |
 | Debanding (`deband-es3.frag`, `deband.frag`) | libplacebo's own `pl_shader_deband` (7.360) | run by libplacebo itself on the same Mesa's desktop OpenGL (`placebo.cpp`), on a picture of 8-bit steps (core/player's fixture) and the test picture, one to four iterations, with and without grain, frame indices 0 to 255; the frame held both ways up. The GLSL ES 1.00 variant draws other random numbers (no unsigned integers for pcg3d), so it is held only to moving no value further than the threshold lets it |
 | HDR tone mapping (`tonemap.frag`, `hdr.glsl`) | libplacebo's own `pl_shader_color_map_ex` (7.360) with `pl_tone_map_bt2390` and `pl_gamut_map_clip` | run by libplacebo itself on the same Mesa (`placebo.cpp`) on core/player's HDR picture (16 bits: a grey ramp over the whole range, BT.2020's primaries and secondaries, mid colours, near-black, highlights), read as PQ without metadata and mastered at 400, 1000 and 4000 nits, and as HLG; ours from the stage's half-float HDR frame, its uniforms worked out as libplacebo works out its own |
 | HDR peak detection (`peak.frag`) | libplacebo's own `pl_shader_detect_peak` (its defaults) | the same picture, a little darker, a good deal darker and nearly black, each as a scene's first frame (libplacebo's smoothing takes that as it is), PQ and HLG: our blocks read back as `PeakDetect` takes them, the peak and the average in PQ |
@@ -28,7 +30,8 @@ oracle that bilinear scaling would pass as well proves nothing.
 | Chroma upscaling (`yuv-spline.frag`, `chroma-krig-*.frag`) | libplacebo's renderer (7.360): its `spline36` plane scaler, and KrigBilateral (Shiandow, LGPL-3.0-or-later; the revision in `krig-url.txt`) as the mpv user shader it is | run by libplacebo on the same Mesa (`placebo.cpp`) on core/player's 4:2:0 fixture and the test picture, full-range BT.709 with the chroma sited at the centre, as the stage reads FFmpeg's planes; ours from planes with a padded stride, as a decoder's come. Each has to differ from FFmpeg's bilinear chroma |
 
 1. Mesa's EGL, GLES and OpenGL (`pkg-config egl glesv2 opengl`) and libplacebo's development files (`pkg-config
-   libplacebo`); for Anime4K and ACNet, FFmpeg built with libplacebo and a Vulkan driver (FFmpeg's filter makes its own
+   libplacebo`); GStreamer's `gst-launch-1.0` with gst-plugins-good's `deinterlace` and an x86-64 C compiler for the
+   Greedy checks; for Anime4K and ACNet, FFmpeg built with libplacebo and a Vulkan driver (FFmpeg's filter makes its own
    Vulkan device). Without a GPU Mesa can draw on the processor: `LIBGL_ALWAYS_SOFTWARE=1`, and where another vendor's
    EGL comes first, `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json`.
 2. `tools/shader-check/oracle.sh <work folder>` — fetches, builds, compares; fails when a comparison does not hold.
@@ -47,6 +50,7 @@ On an Intel HD Graphics 520 laptop (Mesa 26.2, libplacebo 7.360), per 8-bit valu
 | Lanczos and EWA kernels at 1.5× and 2× | ≤ 2 | ≤ 0.083 |
 | xBRZ, three pictures at 2× to 6× | 0 | 0 |
 | YADIF and BWDIF, every case, and read 1/256 texel off | 0 | 0 |
+| Greedy HM and Greedy 2-Frame, every case (Mesa 26.2's llvmpipe) | 0 | 0 |
 | YUV to RGB, grey / in colour | 0 / 1 | 0 / 0.005 |
 | YUV to RGB from full range, grey / in colour (unsqueezed: 20 / 20) | 1 / 2 | 0.15 / 0.33 |
 

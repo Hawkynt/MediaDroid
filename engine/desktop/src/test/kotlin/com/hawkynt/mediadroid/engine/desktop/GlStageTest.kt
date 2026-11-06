@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.engine.desktop
 
+import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.ChromaUpscaling
 import com.hawkynt.mediadroid.player.Panorama
@@ -232,12 +233,6 @@ class GlStageTest {
     fun `at field rate the second half of a picture's time shows its other field`() {
         val w = 64
         val h = 48
-        // Interlaced: the odd rows a moment later than the even ones.
-        fun combed(pts: Long, shift: Int) = MediaReader.Picture(pts, w, h, ByteArray(w * h * 4) { i ->
-            val y = i / 4 / w
-            val x = i / 4 % w
-            if (i % 4 == 3) -1 else (if ((x + shift + (y % 2) * 5) % 16 < 8) 30 else 220).toByte()
-        })
         val p = (0 until 3).map { combed(it * 40L, it * 7) }
         val fields = PictureAdjustment(deinterlace = PictureAdjustment.Deinterlace.BWDIF, fieldRate = true)
         fun at(phase: Float, a: PictureAdjustment) = stage.process(Moment(p[1], p[0], p[2], phase = phase), a, w, h)
@@ -246,6 +241,62 @@ class GlStageTest {
         assertTrue(first.rgba.indices.any { abs(first.rgba[it] - second.rgba[it]) > 8 })
         val frames = fields.copy(fieldRate = false)
         assertTrue(at(0.2f, frames).rgba.contentEquals(at(0.7f, frames).rgba))
+    }
+
+    // Interlaced grey bars, the odd rows a moment later than the even ones, moved [shift] pixels.
+    private fun combed(pts: Long, shift: Int, w: Int = 64, h: Int = 48) =
+        MediaReader.Picture(pts, w, h, ByteArray(w * h * 4) { i ->
+            val y = i / 4 / w
+            val x = i / 4 % w
+            if (i % 4 == 3) -1 else (if ((x + shift + (y % 2) * 5) % 16 < 8) 30 else 220).toByte()
+        })
+
+    private fun worstDifference(a: ByteArray, b: ByteArray) =
+        a.indices.filter { it % 4 != 3 }.maxOf { abs((a[it].toInt() and 255) - (b[it].toInt() and 255)) }
+
+    @Test
+    fun `Greedy HM and Greedy 2-Frame draw what the core's reference draws`() {
+        val w = 64
+        val h = 48
+        val p = (0 until 3).map { combed(it * 40L, it * 7) }
+        fun luma(picture: MediaReader.Picture) =
+            Deinterlacer.Plane(w, h, IntArray(w * h) { picture.rgba[it * 4].toInt() and 255 })
+        val modes = mapOf(
+            PictureAdjustment.Deinterlace.GREEDY_HM to Deinterlacer.Method.GREEDY_HM,
+            PictureAdjustment.Deinterlace.GREEDY_2FRAME to Deinterlacer.Method.GREEDY_2FRAME,
+        )
+        for ((mode, method) in modes) {
+            val out = stage.process(Moment(p[1], p[0], p[2]), PictureAdjustment(deinterlace = mode), w, h)
+            val reference = Deinterlacer.deinterlace(method, luma(p[0]), luma(p[1]), luma(p[2]), false, true)
+            val expected = ByteArray(w * h * 4) { i -> if (i % 4 == 3) -1 else reference.pixels[i / 4].toByte() }
+            val worst = worstDifference(out.rgba, expected)
+            assertTrue("$mode off by $worst", worst <= 1)
+            assertTrue("$mode rebuilt nothing", worstDifference(out.rgba, p[1].rgba) > 100)
+        }
+    }
+
+    @Test
+    fun `Adaptive weaves a picture that has stood still for 100 fields, and deinterlaces the first that moves`() {
+        val w = 64
+        val h = 48
+        val adaptive = PictureAdjustment(deinterlace = PictureAdjustment.Deinterlace.ADAPTIVE)
+        // One combed picture again and again with a little noise — still to DScaler's measure, which BWDIF does not
+        // leave as it is — two fields to a picture: woven from the hundredth on.
+        val bars = combed(0, 0)
+        val still = (0..52).map { k ->
+            MediaReader.Picture(k * 40L, w, h, ByteArray(w * h * 4) { i ->
+                val noise = (i / 4 * 7 + k * 5) % 7 - 3
+                if (i % 4 == 3) -1 else ((bars.rgba[i].toInt() and 255) + noise).toByte()
+            })
+        }
+        val woven = (1..51).map { k ->
+            val out = stage.process(Moment(still[k], still[k - 1], still[k + 1]), adaptive, w, h)
+            worstDifference(out.rgba, still[k].rgba) <= 1
+        }
+        assertEquals(List(50) { false } + true, woven)
+        val moved = combed(53 * 40L, 7)
+        val out = stage.process(Moment(moved, still.last(), null), adaptive, w, h)
+        assertTrue(worstDifference(out.rgba, moved.rgba) > 100)
     }
 
     @Test

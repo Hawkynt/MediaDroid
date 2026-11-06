@@ -136,6 +136,91 @@ for size in "720 576" "720 480"; do
   differs "YADIF against the woven frame" "$W/temporal.ppm" "$W/field1.ppm"
 done
 
+# Greedy High Motion: against GStreamer's own deinterlace element (method greedyh; its C path, which planar pictures
+# take), each colour channel fed as the luma of a Y444 picture, every field. Its picture 2 keeps the middle frame's first
+# field, 3 its second; a fourth frame (the third again) keeps GStreamer's end of stream away from them.
+# Greedy 2-Frame: against xine-lib's port of DScaler's (GPL-2.0, run here as an oracle only) through core/player's
+# harness on a grey picture, where its choice on YUY2's luma is ours on all three channels; the port copies the newest
+# field's third row to the first, so where the top rows are rebuilt that row is left out.
+if command -v gst-launch-1.0 >/dev/null && command -v cc >/dev/null; then
+  fetch AOSC-Tracking/xine-lib 5388979efeba5a7f1fc955f17c19247c55b5250e \
+    src/post/deinterlace/plugins/greedy2frame_template.c
+  cc -O1 -I"$O" -o "$B/greedy2frame" \
+    "$HERE/../../core/player/src/test/resources/deinterlace/greedy2frame-harness.c" || { echo "build failed"; exit 2; }
+  for size in "720 576" "720 480"; do
+    w=${size% *}
+    h=${size#* }
+    "$C" picture "$W/interlaced-source.ppm" $size
+    python3 -I "$HERE/fields.py" "$W/interlaced-source.ppm" "$W/field"
+    cp "$W/field2.ppm" "$W/field3.ppm"
+    for tff in 1 0; do
+      parity=$([ $tff = 1 ] && echo tff || echo bff)
+      for c in 0 1 2; do
+        python3 -I "$HERE/planes.py" split "$W/channel.yuv" $c "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" \
+          "$W/field3.ppm"
+        gst-launch-1.0 -q filesrc location="$W/channel.yuv" ! \
+          rawvideoparse width=$w height=$h format=y444 framerate=25/1 interlaced=true \
+          top-field-first=$([ $tff = 1 ] && echo true || echo false) ! \
+          deinterlace method=greedyh fields=all mode=interlaced tff=$parity ! filesink location="$W/greedyh-$c.yuv"
+      done
+      for second in 0 1; do
+        python3 -I "$HERE/planes.py" join "$W/greedyh-gstreamer.ppm" $((2 + second)) $w $h \
+          "$W/greedyh-0.yuv" "$W/greedyh-1.yuv" "$W/greedyh-2.yuv"
+        "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/greedyh.ppm" greedyh $tff $second
+        check "Greedy HM ${size/ /×} $parity field $((second + 1)) against GStreamer" "$W/greedyh.ppm" \
+          "$W/greedyh-gstreamer.ppm" 0 0
+      done
+    done
+    differs "Greedy HM against the woven frame" "$W/greedyh.ppm" "$W/field1.ppm"
+
+    "$C" picture "$W/grey-source.ppm" $size gray
+    python3 -I "$HERE/fields.py" "$W/grey-source.ppm" "$W/grey-field"
+    python3 -I - "$W" <<'PY'
+import sys
+w = sys.argv[1]
+with open(f'{w}/grey-fields.gray', 'wb') as out:
+    for k in range(3):
+        d = open(f'{w}/grey-field{k}.ppm', 'rb').read()
+        parts = d.split(maxsplit=4)
+        n = int(parts[1]) * int(parts[2])
+        out.write(parts[4][-3 * n:][::3])
+PY
+    for tff in 1 0; do
+      parity=$([ $tff = 1 ] && echo tff || echo bff)
+      for second in 0 1; do
+        # xine's frames newest first and the parity of its newest field, as make-greedy.sh feeds them.
+        if [ $second = 0 ]; then frames="1 0 0"; bottom=$tff; xs=1; else frames="2 1 0"; bottom=$((1 - tff)); xs=0; fi
+        # shellcheck disable=SC2086
+        "$B/greedy2frame" "$W/grey-fields.gray" $w $h "$W/g2f.gray" $frames $bottom $xs
+        python3 -I - "$W/g2f.gray" "$W/g2f-xine.ppm" $w $h <<'PY'
+import sys
+g = open(sys.argv[1], 'rb').read()
+open(sys.argv[2], 'wb').write(b'P6\n%s %s\n255\n' % (sys.argv[3].encode(), sys.argv[4].encode()) +
+                              bytes(v for v in g for _ in range(3)))
+PY
+        "$C" temporal "$W/grey-field0.ppm" "$W/grey-field1.ppm" "$W/grey-field2.ppm" "$W/g2f.ppm" greedy2frame \
+          $tff $second
+        top=$([ $((tff ^ (1 - second))) = 1 ] && echo 1 || echo 0)
+        python3 -I - "$W/g2f.ppm" "$W/g2f-xine.ppm" $top <<'PY'
+import sys
+# The row xine's port copies from elsewhere: the first, where the top rows are rebuilt — set equal on both sides.
+if sys.argv[3] == '1':
+    pa, pb = (open(p, 'rb').read().split(maxsplit=4) for p in sys.argv[1:3])
+    w, h = int(pa[1]), int(pa[2])
+    ours, theirs = pa[4][-w * h * 3:], bytearray(pb[4][-w * h * 3:])
+    theirs[:3 * w] = ours[:3 * w]
+    open(sys.argv[2], 'wb').write(b'P6\n%d %d\n255\n' % (w, h) + bytes(theirs))
+PY
+        check "Greedy 2-Frame ${size/ /×} $parity field $((second + 1)) against DScaler's (xine-lib's port)" \
+          "$W/g2f.ppm" "$W/g2f-xine.ppm" 0 0
+      done
+    done
+    differs "Greedy 2-Frame against the woven frame" "$W/g2f.ppm" "$W/grey-field1.ppm"
+  done
+else
+  echo "Greedy HM and Greedy 2-Frame need GStreamer (gst-launch-1.0) and a C compiler"; failed=1
+fi
+
 # YUV to RGB (FFmpeg's decoded frames): against FFmpeg's own conversion, BT.601 and BT.709, limited range; grey is
 # exact (no chroma to scale), colour within FFmpeg's bilinear chroma.
 for matrix in 601 709; do
