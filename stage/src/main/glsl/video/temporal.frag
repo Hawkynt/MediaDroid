@@ -3,7 +3,8 @@
 // Mundt), LGPL-2.1-or-later; 2 Greedy High Motion, converted from GStreamer's greedyh.c (tvtime's, Tom Barry after
 // DScaler, LGPL); 3 Greedy 2-Frame, written anew from DScaler's (GPL-2.0, behaviour only); 4 none — the frame woven as
 // it is (Adaptive on a still picture); 5 old-console mode (OldGame, after DScaler's Old Game): every row drawn anew from
-// the kept field alone, averaged with the field before where uAverage. The same arithmetic on each colour channel, in whole steps of 0..255, but for
+// the kept field alone, averaged with the field before where uAverage; 6 TomsMoComp, converted from GStreamer's (Tom
+// Barry's, LGPL), its MMXEXT search at effort 5. The same arithmetic on each colour channel, in whole steps of 0..255, but for
 // Greedy 2-Frame's choice, which all three channels take together. Rows count from the top; uParity picks the field
 // rebuilt (see Deinterlacer.rebuiltParity): with uSecond the earlier one, from the shown frame and the next, otherwise
 // the later one, from the previous frame and the shown one.
@@ -151,6 +152,55 @@ vec3 oldConsole(float x, float y) {
   float far = mod(y, 2.0) < 0.5 ? near - 1.0 : near + 1.0;
   return floor((3.0 * consoleLine(x, near) + consoleLine(x, far) + 2.0) * 0.25);
 }
+// TomsMoComp (Deinterlacer.tomsMoComp): the best-agreeing pair across the fields either side, where it agrees well
+// enough, else the weird bob — the best of four diagonals clipped between the pixels above and below, or those two —
+// clipped too where the picture around moved since the frame before. Averages round up, as pavgb.
+vec3 pavg(vec3 a, vec3 b) { return floor((a + b + 1.0) * 0.5); }
+void better(inout vec3 best, inout vec3 diff, vec3 value, vec3 weight) {
+  vec3 take = vec3(lessThanEqual(weight, diff));
+  best = mix(best, value, take);
+  diff = mix(diff, weight, take);
+}
+vec3 tomsMoComp(float x, float y) {
+  float line = floor(y * 0.5);
+  if (line == 0.0 || line == floor(uSize.y * 0.5) - 1.0) return cur(x, y + (mod(y, 2.0) < 0.5 ? 1.0 : -1.0));
+  vec3 b = cur(x, y - 1.0);
+  vec3 e = cur(x, y + 1.0);
+  if (x < 4.0 || x >= uSize.x - 4.0) return pavg(b, e);
+  vec3 bob = vec3(0.0);
+  vec3 bobDiff = vec3(1000.0);
+  for (int i = 0; i < 4; i++) {
+    float dx = i == 0 ? -1.0 : i == 1 ? 1.0 : i == 2 ? -2.0 : 2.0;
+    vec3 u = cur(x + dx, y - 1.0);
+    vec3 v = cur(x - dx, y + 1.0);
+    better(bob, bobDiff, pavg(u, v), abs(u - v));
+  }
+  vec3 low = min(b, e);
+  vec3 high = max(b, e);
+  bob = clamp(bob, low, high);
+  vec3 moved = max(abs(b - px(uPrev, x, y - 1.0)), abs(e - px(uPrev, x, y + 1.0)));
+  better(bob, bobDiff, pavg(b, e), abs(b - e));
+  vec3 weave = vec3(0.0);
+  vec3 weaveDiff = vec3(255.0);
+  vec3 b0 = before(x, y);
+  vec3 bl = before(x - 1.0, y);
+  vec3 br = before(x + 1.0, y);
+  vec3 a0 = after(x, y);
+  vec3 al = after(x - 1.0, y);
+  vec3 ar = after(x + 1.0, y);
+  better(weave, weaveDiff, pavg(bl, ar), abs(bl - ar));
+  better(weave, weaveDiff, pavg(br, al), abs(br - al));
+  vec3 h1 = pavg(bl, b0);
+  vec3 h2 = pavg(a0, ar);
+  better(weave, weaveDiff, pavg(h1, h2), abs(h1 - h2));
+  h1 = pavg(br, b0);
+  h2 = pavg(a0, al);
+  better(weave, weaveDiff, pavg(h1, h2), abs(h1 - h2));
+  weaveDiff = min(weaveDiff + 1.0, 255.0);
+  better(weave, weaveDiff, pavg(b0, a0), abs(b0 - a0));
+  vec3 result = mix(bob, weave, vec3(lessThanEqual(max(weaveDiff - min(bobDiff, 10.0), 0.0), vec3(4.0))));
+  return mix(clamp(result, low, high), result, vec3(lessThanEqual(moved, vec3(4.0))));
+}
 void main() {
   float x = floor(gl_FragCoord.x);
   float y = uSize.y - 1.0 - floor(gl_FragCoord.y);
@@ -164,6 +214,7 @@ void main() {
     else if (uMethod == 1) v = bwdif(x, y);
     else if (uMethod == 2) v = greedyHm(x, y);
     else if (uMethod == 3) v = greedy2Frame(x, y);
+    else if (uMethod == 6) v = tomsMoComp(x, y);
     else v = cur(x, y);
   }
   gl_FragColor = vec4(v / 255.0, 1.0);

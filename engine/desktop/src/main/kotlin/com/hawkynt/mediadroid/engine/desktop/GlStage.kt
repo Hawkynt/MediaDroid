@@ -32,13 +32,13 @@ import kotlin.math.pow
  * picture on screen, its neighbours, how far the clock is to the next), the picture as the household set it comes out
  * at the size it is shown: its black bars cropped as it comes in (AutoCrop finds them) and the 3D eye cut out of what
  * is left, so every pass after sees the picture alone; an HDR one tone-mapped to SDR as it comes in (ToneMap, its peak
- * measured as it plays: PeakDetect), deinterlaced (Auto, Blend, Bob, YADIF, BWDIF, Greedy HM, Greedy 2-Frame, Adaptive
- * with MotionAdaptive, Old console with OldGame, every field at field rate; Film is the engine's, see Film), debanded,
- * denoised, sharpened, blended into the next picture by the clock (Low, Medium, High) or along the motion between them
- * (Motion, with MotionSearch), enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the neural ones plain for
- * now) at the strength chosen, colour-corrected, and dithered to 8 bits where it holds more (Dither). Each picture is
- * filtered once and kept while it is on screen or next. The passes and their uniforms are the Android stage's
- * (VideoFilterStage), the shaders those tools/shader-check holds to their originals.
+ * measured as it plays: PeakDetect), deinterlaced (Auto, Blend, Bob, YADIF, BWDIF, Greedy HM, Greedy 2-Frame,
+ * TomsMoComp, Adaptive with MotionAdaptive, Old console with OldGame, every field at field rate; Film is the engine's,
+ * see Film), debanded, denoised, sharpened, blended into the next picture by the clock (Low, Medium, High) or along the
+ * motion between them (Motion, with MotionSearch), enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the
+ * neural ones plain for now) at the strength chosen, colour-corrected, and dithered to 8 bits where it holds more
+ * (Dither). Each picture is filtered once and kept while it is on screen or next. The passes and their uniforms are the
+ * Android stage's (VideoFilterStage), the shaders those tools/shader-check holds to their originals.
  */
 class GlStage : AutoCloseable {
 

@@ -7,6 +7,7 @@
 | [FFmpeg](https://ffmpeg.org) `libavfilter/vf_yadif.c` (`filter_line_c`, `filter_edges`, `filter_slice`) — © 2006-2011 Michael Niedermayer, 2010 James Darnley | LGPL-2.1-or-later | `Deinterlacer` YADIF, and the app's GL pass written from it |
 | [FFmpeg](https://ffmpeg.org) `libavfilter/vf_bwdif.c` (`filter_line_c`, `filter_edge`, `filter_slice`) — © 2016 Thomas Mundt; YADIF as above; the Weston 3-field coefficients © 2012 British Broadcasting Corporation (Jim Easterbrook, after Martin Weston, BBC R&D) | LGPL-2.1-or-later | `Deinterlacer` BWDIF, and the app's GL pass written from it |
 | [GStreamer](https://gstreamer.freedesktop.org) gst-plugins-good 1.28 `gst/deinterlace/tvtime/greedyh.c` (`greedyh_scanline_C_planar_y`, `deinterlace_frame_di_greedyh_plane`, the defaults max-comb 5, motion-threshold 25, motion-sense 30) — © 2004 Billy Biggs, 2008, 2010 Sebastian Dröge; tvtime's Greedy High Motion by Tom Barry after DScaler, relicensed LGPL for GStreamer with the authors' permission | LGPL-2.0-or-later | `Deinterlacer` Greedy High Motion, and the app's GL pass written from it |
+| [GStreamer](https://gstreamer.freedesktop.org) gst-plugins-good 1.28 `gst/deinterlace/tvtime/tomsmocomp.c` and `tomsmocomp/*.inc` (`TomsMoCompAll.inc`, `WierdBob.inc`, `SearchLoopTop.inc`, `SearchLoopOddA2.inc`, `SearchLoopOddAH2.inc`, `SearchLoop0A.inc`, `SearchLoopBottom.inc`: the MMXEXT search at effort 5) — © 2002 Tom Barry, relicensed LGPL for GStreamer with his permission | LGPL-2.0-or-later | `Deinterlacer` TomsMoComp, and the app's GL pass written from it |
 | [FFmpeg](https://ffmpeg.org) `libavfilter/vf_idet.c` (`filter`, `ff_idet_filter_line_c`) — © 2012 Michael Niedermayer | LGPL-2.1-or-later | `FieldOrder` — telling the field order from the pictures |
 | [FFmpeg](https://ffmpeg.org) `libavfilter/vf_fieldmatch.c` and `vf_decimate.c` — © 2012 Fredrik Mellbin, 2013 Clément Bœsch, after VapourSynth's VFM and VDecimate | LGPL-2.1-or-later | `Telecine` — 3:2 pulldown removal, and the app's Film mode written from it |
 | [libplacebo](https://code.videolan.org/videolan/libplacebo) `src/filters.c` (`ewa_lanczossharp`, `jinc`, `pl_filter_sample`) — © Niklas Haas and the libplacebo authors; blur after Nicolas Robidoux | LGPL-2.1-or-later | `Ewa` — the EWA Lanczos-sharp weights, and the app's GL pass reading them |
@@ -75,6 +76,9 @@ through `tools/shader-check/placebo.cpp`, made by `make-expected.sh`.
 `minterpolate` output for it, made with the command in that script's header.
 `src/test/resources/loudness/expected.txt` — the integrated loudness of the `LoudnessSignals` test signals, measured by
 `measure.sh` beside it with libebur128 1.2.6 (through `oracle.c`) and FFmpeg's `ebur128` filter.
+`src/test/resources/deinterlace/tomsmocomp*.gray` — GStreamer 1.28.8's TomsMoComp, its MMXEXT search at effort 5 built
+from its sources through `tomsmocomp-harness.c`, for `input.gray` and `input-bff.gray`; made by `make-tomsmocomp.sh`
+there, which fetches the sources.
 `src/test/resources/oldgame/` — `console.gray.gz` written by `make-input.py` there, a woven 240p clip; `top.gray.gz` and
 `bottom.gray.gz` FFmpeg n9.0.2's `field` and bilinear `scale` output for it, made with the commands in that script's
 header.

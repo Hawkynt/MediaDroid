@@ -12,6 +12,8 @@ import kotlin.math.abs
  * (Michael Niedermayer) and `vf_bwdif.c` (Thomas Mundt, after the BBC's w3fdif coefficients). Greedy High Motion
  * converted from GStreamer's `greedyh.c` (tvtime's, by Tom Barry after DScaler, relicensed LGPL-2.0-or-later for
  * GStreamer). Greedy 2-Frame written anew from DScaler's (GPL-2.0, behaviour only), held to xine-lib's port of it.
+ * TomsMoComp converted from GStreamer's `tomsmocomp` (Tom Barry's, relicensed LGPL-2.0-or-later for GStreamer), its
+ * MMXEXT search at the default effort, 5.
  */
 object Deinterlacer {
 
@@ -40,6 +42,13 @@ object Deinterlacer {
          * below moved since the frame before, judged two pixels at a time; otherwise the lines around it averaged.
          */
         GREEDY_2FRAME,
+
+        /**
+         * TomsMoComp, Tom Barry's motion search: each missing pixel woven from the pair of pixels — one from the field
+         * before, one from the field after, straight across, a pixel to either side, or half a pixel — that agree
+         * best, where they agree well enough; otherwise an edge-directed bob along the best of five directions.
+         */
+        TOMSMOCOMP,
     }
 
     /**
@@ -71,20 +80,30 @@ object Deinterlacer {
                     Method.BWDIF -> bwdif(prev, cur, next, prev2, next2, x, y)
                     Method.GREEDY_HM -> greedyHm(cur, prev2, next2, x, y)
                     Method.GREEDY_2FRAME -> greedy2Frame(prev, cur, prev2, next2, x, y)
+                    Method.TOMSMOCOMP -> tomsMoComp(prev, cur, prev2, next2, x, y)
                 }
             }
         }
         return Plane(w, h, out)
     }
 
-    /** The graphics pass's `uMethod` for [method] (`temporal.frag`): YADIF 0, BWDIF 1, Greedy HM 2, Greedy 2F 3. */
-    fun shaderMethod(method: Method): Int = method.ordinal
+    /** The graphics pass's `uMethod` for [method] (`temporal.frag`): YADIF 0, BWDIF 1, Greedy HM 2, Greedy 2F 3, … */
+    fun shaderMethod(method: Method): Int = when (method) {
+        Method.YADIF -> 0
+        Method.BWDIF -> 1
+        Method.GREEDY_HM -> 2
+        Method.GREEDY_2FRAME -> 3
+        Method.TOMSMOCOMP -> TOMSMOCOMP
+    }
 
     /** The graphics pass's `uMethod` that rebuilds nothing: the frame woven as it is. */
     const val WEAVE = 4
 
     /** The graphics pass's `uMethod` for old-console mode ([OldGame]): the newest field stretched, `uAverage` asks. */
     const val OLD_CONSOLE = 5
+
+    /** The graphics pass's `uMethod` for [Method.TOMSMOCOMP]. */
+    const val TOMSMOCOMP = 6
 
         /** The rows rebuilt are those whose number has this parity flipped: 0 rebuilds the odd rows, 1 the even. */
     fun rebuiltParity(second: Boolean, topFieldFirst: Boolean): Int =
@@ -183,6 +202,73 @@ object Deinterlacer {
         val weave = still(later, earlier, y) && (still(cur, prev, y - 1) || still(cur, prev, y + 1))
         return if (weave) (later[x, y] + earlier[x, y] + 1) shr 1 else (cur[x, y - 1] + cur[x, y + 1] + 1) shr 1
     }
+
+    /** Rounded up, as MMX's `pavgb`. */
+    private fun pavg(a: Int, b: Int) = (a + b + 1) shr 1
+
+    /**
+     * TomsMoComp for the row [y] between the kept field's rows of [cur], [earlier] and [later] the pictures of the
+     * fields either side (GStreamer's pWeaveSrcP and pWeaveSrc), [prev] the kept field's frame before (pCopySrcP). The
+     * first and last rebuilt row are the kept field's first and last; four columns at either side a plain bob.
+     */
+    private fun tomsMoComp(prev: Plane, cur: Plane, earlier: Plane, later: Plane, x: Int, y: Int): Int {
+        val w = cur.width
+        val lines = cur.height / 2
+        val line = y / 2
+        if (line == 0 || line == lines - 1) return cur[x, y xor 1]
+        val up = y - 1
+        val down = y + 1
+        val b = cur[x, up]
+        val e = cur[x, down]
+        if (x < 4 || x >= w - 4) return pavg(b, e)
+
+        // The weird bob: of four diagonals, the pair that agrees best (a later one where as good), clipped between the
+        // pixels above and below, and then those two themselves where they agree as well.
+        var bob = 0
+        var bobDiff = Int.MAX_VALUE
+        for (dx in intArrayOf(-1, 1, -2, 2)) {
+            val u = cur[x + dx, up]
+            val v = cur[x - dx, down]
+            if (abs(u - v) <= bobDiff) {
+                bob = pavg(u, v)
+                bobDiff = abs(u - v)
+            }
+        }
+        val low = minOf(b, e)
+        val high = maxOf(b, e)
+        bob = bob.coerceIn(low, high)
+        // Where neither pixel around moved more than 4 since the frame before, the result is not clipped at the end.
+        val still = maxOf(abs(b - prev[x, up]), abs(e - prev[x, down])) <= TOMS_MAX_MOVE
+        if (abs(b - e) <= bobDiff) {
+            bob = pavg(b, e)
+            bobDiff = abs(b - e)
+        }
+
+        // The search: pairs across the fields either side, the one that agrees best (a later one where as good).
+        var weave = 0
+        var weaveDiff = 255
+        fun merge(value: Int, weight: Int) {
+            if (weight <= weaveDiff) {
+                weave = value
+                weaveDiff = weight
+            }
+        }
+        fun pair(u: Int, v: Int) = merge(pavg(u, v), abs(u - v))
+        pair(earlier[x - 1, y], later[x + 1, y])
+        pair(earlier[x + 1, y], later[x - 1, y])
+        pair(pavg(earlier[x - 1, y], earlier[x, y]), pavg(later[x, y], later[x + 1, y]))
+        pair(pavg(earlier[x + 1, y], earlier[x, y]), pavg(later[x, y], later[x - 1, y]))
+        // A slight bias towards no motion: what was found so far rates one worse.
+        weaveDiff = minOf(weaveDiff + 1, 255)
+        pair(earlier[x, y], later[x, y])
+
+        // The weave where it rates no worse than the bob's uncertainty (at most 10) and 4 more.
+        val useWeave = maxOf(weaveDiff - minOf(bobDiff, 10), 0) <= 4
+        val result = if (useWeave) weave else bob
+        return if (still) result else result.coerceIn(low, high)
+    }
+
+    private const val TOMS_MAX_MOVE = 4
 
     private val COEF_LF = intArrayOf(4309, 213)
     private val COEF_HF = intArrayOf(5570, 3801, 1016)

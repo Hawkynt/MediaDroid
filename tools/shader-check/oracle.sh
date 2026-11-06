@@ -221,6 +221,64 @@ else
   echo "Greedy HM and Greedy 2-Frame need GStreamer (gst-launch-1.0) and a C compiler"; failed=1
 fi
 
+# TomsMoComp: against GStreamer's own, its MMXEXT search at effort 5 (which GStreamer's x86-64 builds leave out) built
+# from its sources through core/player's harness, each colour channel fed as the luma of a grey picture — its search
+# works on every byte on its own, so a channel is a picture of its own — both field orders and both fields.
+gst=GStreamer/gstreamer
+tvtime=subprojects/gst-plugins-good/gst/deinterlace/tvtime
+fetch $gst 1.28.8 $tvtime/x86-64_macros.inc
+mkdir -p "$O/tomsmocomp"
+for f in tomsmocompmacros.h TomsMoCompAll2.inc SearchLoopTop.inc SearchLoopBottom.inc WierdBob.inc StrangeBob.inc \
+  SearchLoop0A.inc SearchLoopOddA2.inc SearchLoopOddAH2.inc SearchLoopOddA.inc SearchLoopOddA6.inc SearchLoopOddAH.inc \
+  SearchLoopEdgeA.inc SearchLoopEdgeA8.inc SearchLoopVA.inc SearchLoopVAH.inc; do
+  [ -f "$O/tomsmocomp/$f" ] || curl -fsSL -o "$O/tomsmocomp/$f" \
+    "https://raw.githubusercontent.com/$gst/1.28.8/$tvtime/tomsmocomp/$f" || { echo "cannot fetch $f"; exit 2; }
+done
+cc -O1 -I"$O" -o "$B/tomsmocomp" "$HERE/../../core/player/src/test/resources/deinterlace/tomsmocomp-harness.c" ||
+  { echo "build failed"; exit 2; }
+for size in "720 576" "720 480"; do
+  w=${size% *}
+  h=${size#* }
+  "$C" picture "$W/interlaced-source.ppm" $size
+  python3 -I "$HERE/fields.py" "$W/interlaced-source.ppm" "$W/field"
+  for c in 0 1 2; do
+    python3 -I - "$W" $c <<'PY'
+import sys
+w, c = sys.argv[1], int(sys.argv[2])
+with open(f'{w}/channel{c}.gray', 'wb') as out:
+    for k in range(3):
+        parts = open(f'{w}/field{k}.ppm', 'rb').read().split(maxsplit=4)
+        n = int(parts[1]) * int(parts[2])
+        out.write(parts[4][-3 * n:][c::3])
+PY
+  done
+  for tff in 1 0; do
+    parity=$([ $tff = 1 ] && echo tff || echo bff)
+    later=$tff
+    for second in 0 1; do
+      # GStreamer's fields: after, before, the kept one's frame, the frame before it; and the rows rebuilt.
+      if [ $second = 0 ]; then frames="1 0 1 0"; rows=$later; else frames="2 1 1 0"; rows=$((1 - later)); fi
+      for c in 0 1 2; do
+        # shellcheck disable=SC2086
+        "$B/tomsmocomp" "$W/channel$c.gray" $w $h "$W/toms$c.gray" $frames $rows
+      done
+      python3 -I - "$W" $w $h <<'PY'
+import sys
+d, w, h = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+planes = [open(f'{d}/toms{c}.gray', 'rb').read() for c in range(3)]
+rgb = bytearray(3 * w * h)
+for c in range(3):
+    rgb[c::3] = planes[c]
+open(f'{d}/toms-gstreamer.ppm', 'wb').write(b'P6\n%d %d\n255\n' % (w, h) + bytes(rgb))
+PY
+      "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/toms.ppm" tomsmocomp $tff $second
+      check "TomsMoComp ${size/ /×} $parity field $((second + 1)) against GStreamer's search" "$W/toms.ppm" \
+        "$W/toms-gstreamer.ppm" 0 0
+    done
+  done
+  differs "TomsMoComp against the woven frame" "$W/toms.ppm" "$W/field1.ppm"
+done
+
 # Old console: each field stretched to the full height against FFmpeg's field filter and bilinear scaling, both
 # fields of a frame, either field first; then, the frame's two fields alike (a picture that stands still), averaging has
 # to change nothing, and on the moving frames it has to.
