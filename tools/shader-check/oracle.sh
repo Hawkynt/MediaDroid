@@ -319,6 +319,27 @@ for case in "chroma-fixture 64 48" "chroma-picture 320 240"; do
     differs "Chroma $filter, $1, against bilinear" "$W/$1-$filter.ppm" "$W/$1-bilinear.ppm"
   done
 done
+# Logo masking's Blur: against FFmpeg's own delogo filter (GPL, run as an oracle), on core/player's picture with a
+# logo-like box — its captured output for several rectangles, three planes filtered alike, taken here as R, G and B.
+# Within one step: ours weighs in floats where FFmpeg divides 64-bit integers, so a tie may round the other way.
+L="$HERE/../../core/player/src/test/resources/delogo"
+planes() {  # planes <in.yuv> <out.ppm>: 96 x 64 yuv444p planes as one RGB picture
+  python3 -I - "$1" "$2" <<'PY'
+import sys
+d = open(sys.argv[1], 'rb').read()
+n = 96 * 64
+open(sys.argv[2], 'wb').write(b'P6\n96 64\n255\n' + bytes(d[c * n + i] for i in range(n) for c in range(3)))
+PY
+}
+planes "$L/input.yuv" "$W/logo-input.ppm"
+for rect in "69 5 20 12" "1 1 30 18" "60 40 35 23" "40 20 3 2"; do
+  planes "$L/$(echo $rect | tr ' ' -).yuv" "$W/logo-ffmpeg.ppm"
+  # shellcheck disable=SC2086
+  "$C" logo "$W/logo-input.ppm" "$W/logo.ppm" $rect blur
+  check "Logo masking ($rect) against FFmpeg's delogo" "$W/logo.ppm" "$W/logo-ffmpeg.ppm" 1 0.01
+done
+"$C" logo "$W/logo-input.ppm" "$W/logo.ppm" 69 5 20 12 blur
+differs "Logo masking against the picture it was given" "$W/logo.ppm" "$W/logo-input.ppm"
 
 # Bob and Auto: the first field stays for either field order — a frame whose top field is 200 and bottom field 50
 # has to come out all 200 top field first and all 50 bottom field first.

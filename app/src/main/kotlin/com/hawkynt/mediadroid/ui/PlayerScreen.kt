@@ -2272,7 +2272,7 @@ private fun PlayerPanel(
             TextButton(onClick = onResetPicture) { Text("Reset", fontSize = 16.sp) }
         }
         PictureSliders(
-            picture, onChange = onPicture, onDone = onPictureDone, stereo = true, check = check,
+            picture, onChange = onPicture, onDone = onPictureDone, stereo = true, logo = true, check = check,
         )
 
         PanelTitle("Subtitles & sound")

@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.desktop
 
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.player.AspectOverride
+import com.hawkynt.mediadroid.player.LogoMask
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.PictureAdjustment
@@ -34,6 +35,17 @@ class DesktopStore(private val folder: File) {
     var picture: PictureAdjustment
         get() = settings.picture.toAdjustment()
         set(value) = change { copy(picture = PictureSettings.of(value)) }
+
+    /** The station logo hidden for [video]'s show (its folder), or null. */
+    fun logoFor(video: String): LogoMask? = settings.logos[showOf(video)]?.toMask()
+
+    /** Remembers [logo] (none: null) for [video]'s show. */
+    fun saveLogo(video: String, logo: LogoMask?) = change {
+        val show = showOf(video)
+        copy(logos = if (logo == null) logos - show else logos + (show to LogoSettings.of(logo)))
+    }
+
+    private fun showOf(video: String): String = video.replace('\\', '/').substringBeforeLast('/', "")
 
     /** The household's subtitle language (ISO 639-1), or empty for subtitles off: the last one picked. */
     var subtitleLanguage: String
@@ -193,6 +205,8 @@ internal data class DesktopSettings(
     val neuralColorizer: String? = null,
     /** Subtitle delays in milliseconds, by video location; a video in sync has none. */
     val subtitleDelays: Map<String, Int> = emptyMap(),
+    /** A station logo hidden, by the videos' folder (one show): LogoMask's corner, size and mode. */
+    val logos: Map<String, LogoSettings> = emptyMap(),
 ) {
     companion object {
         private val json = Json {
@@ -270,6 +284,18 @@ data class SoundSettings(
     val evenLoudness: Boolean = false,
     val audioDelayMs: Int = 0,
 )
+
+/** A station logo as kept: LogoMask's choices by name; one this version does not know is dropped. */
+@Serializable
+internal data class LogoSettings(val corner: String, val size: Float, val mode: String) {
+    fun toMask(): LogoMask? = runCatching {
+        LogoMask(LogoMask.Corner.valueOf(corner), size, LogoMask.Mode.valueOf(mode))
+    }.getOrNull()
+
+    companion object {
+        fun of(m: LogoMask) = LogoSettings(m.corner.name, m.size, m.mode.name)
+    }
+}
 
 /**
  * The household's picture as kept: PictureAdjustment's fields the desktop offers — not the 3D eye, a choice for one

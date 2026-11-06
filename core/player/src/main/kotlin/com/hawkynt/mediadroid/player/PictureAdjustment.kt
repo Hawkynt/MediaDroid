@@ -60,6 +60,11 @@ data class PictureAdjustment(
     val upscalerTta: Boolean = false,
     /** Colour given to black-and-white pictures by a network (see [Colorizing]). */
     val colorize: Colorize = Colorize.OFF,
+    /**
+     * A station logo hidden in one of the picture's corners (see [LogoMask]), or null; picked once per show and
+     * remembered for its folder.
+     */
+    val logo: LogoMask? = null,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
@@ -310,7 +315,7 @@ data class PictureAdjustment(
      * picture is drawn into a SurfaceView, which no view effect can colour.
      */
     val hasFilters: Boolean
-        get() = sharpness > 0f || clarity > 0f || noise != 0f || deband > 0f || cropBlackBars ||
+        get() = sharpness > 0f || clarity > 0f || noise != 0f || deband > 0f || cropBlackBars || logo != null ||
             deinterlace != Deinterlace.OFF ||
             upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF || stereo != Stereo.OFF ||
             colorize != Colorize.OFF ||

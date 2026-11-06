@@ -41,6 +41,8 @@ and the first is held to its own output.
 | [DScaler](https://github.com/JohnAdders/DScaler) `Plugins/DI_OldGame` and its help's "Old Game" — © 2001 Lindsey Dubb and the DScaler authors | GPL-2.0 | `OldGame`: each field shown as a half-height progressive picture, averaged with the field before (the newest value's lowest bit dropped, rounded up) while their comb factor stays at most 300; the stretch to full height is this project's bilinear one |
 | [DScaler](https://github.com/JohnAdders/DScaler) `Plugins/DI_Adaptive/DI_Adaptive.c` and its help's "Adaptive" — © 2000 John Adcock and the DScaler authors | GPL-2.0 | `MotionAdaptive`: still fields (a field difference under 15), 100 of them before weaving, the first moving field back to the temporal deinterlacer |
 | [DScaler](https://github.com/JohnAdders/DScaler) `DScaler/FD_50Hz.cpp` (`UpdatePALPulldownMode`) and `FD_Common.cpp` (`CalcCombFactor`, `CalculateTotalCombFactor`, `CalcDiffFactor`), its help's "2:2 Pulldown Settings" and "Shared Pulldown Settings" — © 2000 John Adcock and the DScaler authors | GPL-2.0 | `Pulldown22`: the comb factor (a pixel between the other field's lines sticking out of both beyond their own difference, threshold 73 on halved values; lines counted only beside combed lines), the field difference (squares shifted down by 12), and the detection's thresholds — a drop under 40 %, three in a row on the same field, movement over 100, a comb factor over 150; leaving film on a bad pair is this project's own rule, after the help's 10 % rise |
+| [FFmpeg](https://ffmpeg.org) `libavfilter/vf_delogo.c` — © 2002 Jindrich Makovicka, 2011 Stefano Sabatini, 2013, 2015 Jean Delvare | GPL-2.0-or-later | `LogoMask`'s Blur: the rectangle filled from the ring around it, each side's three nearest ring pixels weighed by nearness — held to FFmpeg's own output, byte for byte |
+| DScaler's logo killer, as described in issue #264 | GPL-2.0 | `LogoMask`'s Grey and Dim: greying the logo, holding its brightness down |
 
 ## Test fixtures
 
@@ -80,3 +82,5 @@ n9.0.2's own `cropdetect` lines for them, run as an oracle over the same bytes; 
 `src/test/resources/chroma/` — `input.yuv` written by `make-input.py` there; `spline36.ppm` and `krig.ppm` libplacebo
 7.360's own renderer on it (its `spline36` plane scaler, and KrigBilateral run as the mpv user shader it is), on Mesa
 26.2's OpenGL (llvmpipe) through `tools/shader-check/placebo.cpp`, made by `make-expected.sh`.
+`src/test/resources/delogo/` — `input.yuv` FFmpeg's testsrc2 with a half-transparent box drawn into a corner, the other
+`.yuv` files FFmpeg n9.0.2's own delogo filter on it (an oracle only), both made by `make-expected.sh`.

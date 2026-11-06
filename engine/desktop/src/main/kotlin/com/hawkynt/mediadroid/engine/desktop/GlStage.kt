@@ -216,6 +216,7 @@ class GlStage : AutoCloseable {
         // A change to the filters, to the part shown, or to the frames' depth makes every kept picture stale.
         val look = listOf(
             a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep, a.chroma, a.colorize,
+            a.logo,
         )
         // Another chroma upscaler makes every picture uploaded from its planes stale.
         if (a.chroma != chroma) {
@@ -348,7 +349,21 @@ class GlStage : AutoCloseable {
         }
         // 1b. Colour for a black-and-white picture, by the network whose test passed (see colored).
         if (a.colorize != PictureAdjustment.Colorize.OFF) source = colored(source)
-        // 2. Deband, denoise and sharpen at the picture's own size.
+        // 2. The station logo hidden, then deband, denoise and sharpen at the picture's own size.
+        a.logo?.let { logo ->
+            val rect = logo.rectangle(w, h)
+            if (rect.left + rect.width < w && rect.top + rect.height < h) {
+                val masked = target("logoMasked", w, h, half = deep)
+                source = pass("logo-mask.frag", masked, source.texture, nearest = true) { p ->
+                    glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
+                    glUniform4f(
+                        glGetUniformLocation(p, "uRect"),
+                        rect.left.toFloat(), rect.top.toFloat(), rect.width.toFloat(), rect.height.toFloat(),
+                    )
+                    glUniform1i(glGetUniformLocation(p, "uMode"), logo.mode.ordinal)
+                }
+            }
+        }
         a.debandParams()?.let { d ->
             debandFrame = (debandFrame + 1) and 0xFF
             source = pass("deband-es3.frag", target("debanded", w, h, half = deep), source.texture) { p ->
@@ -1143,6 +1158,7 @@ class GlStage : AutoCloseable {
             "colorize.frag" to Shaders.VIDEO_COLORIZE,
             "deinterlace.frag" to Shaders.VIDEO_DEINTERLACE,
             "deband-es3.frag" to Shaders.VIDEO_DEBAND_ES3,
+            "logo-mask.frag" to Shaders.VIDEO_LOGO_MASK,
             "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
             "yuv-spline.frag" to Shaders.VIDEO_YUV_SPLINE,
             "chroma-krig-1.frag" to Shaders.VIDEO_CHROMA_KRIG_1,

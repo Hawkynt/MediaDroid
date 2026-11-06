@@ -3,6 +3,7 @@ package com.hawkynt.mediadroid.desktop
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.player.AspectOverride
+import com.hawkynt.mediadroid.player.LogoMask
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.ScreenSetup
@@ -106,6 +107,20 @@ class DesktopStoreTest {
         assertEquals(PictureAdjustment.Colorize.DDCOLOR, again.picture.colorize)
         assertEquals(passed, again.colorizerPassed)
         assertNull(DesktopStore(folder.newFolder("fresh")).colorizerPassed)
+    }
+
+    @Test
+    fun `a station logo is kept for the show's folder, every episode in it, no other`() {
+        val data = folder.newFolder("data")
+        val logo = LogoMask(LogoMask.Corner.TOP_RIGHT, 0.2f, LogoMask.Mode.DIM)
+        DesktopStore(data).saveLogo("/shows/News/Monday.mkv", logo)
+        val again = DesktopStore(data)
+        assertEquals(logo, again.logoFor("/shows/News/Tuesday.mkv"))
+        assertEquals(null, again.logoFor("/shows/Films/Night.mkv"))
+        again.saveLogo("/shows/News/Monday.mkv", null)
+        assertEquals(null, DesktopStore(data).logoFor("/shows/News/Tuesday.mkv"))
+        // The household's own picture keeps no logo.
+        assertEquals(null, DesktopStore(data).picture.logo)
     }
 
     @Test

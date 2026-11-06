@@ -331,6 +331,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var deinterlaceProgram = 0
     private var denoiseProgram = 0
     private var debandProgram = 0
+    private var logoProgram = 0
 
     // Debanding's frame index, which seeds its random numbers with the pixel's position: libplacebo's 8-bit counter.
     private var debandFrame = 0
@@ -368,7 +369,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val peakBufferSizes = IntArray(2)
     private val peakPending = IntArray(2)
     private var peakSlot = 0
-    private val frames = Array(CHROMA_FULL + 1) { Frame() }
+    private val frames = Array(LOGO_MASKED + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -989,6 +990,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(deinterlaceProgram)
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(debandProgram)
+            GLES20.glDeleteProgram(logoProgram)
             GLES20.glDeleteProgram(tonemapProgram)
             GLES20.glDeleteProgram(peakProgram)
             if (ditherProgram != 0) GLES20.glDeleteProgram(ditherProgram)
@@ -1164,6 +1166,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             debandProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_DEBAND_ES3))
         }.isSuccess
         if (!debandEs3) debandProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEBAND)
+        logoProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_LOGO_MASK)
         tonemapProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TONEMAP)
         peakProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PEAK)
         // Dithering reads its texels exactly with GLSL ES 3.00's texelFetch; the GLSL ES 1.00 pass reads their centres.
@@ -1733,6 +1736,25 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      */
     private fun denoised(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
         var source = from
+        // A station logo hidden first, so the filters after it see the picture without it.
+        picture.logo?.let { logo ->
+            val rect = logo.rectangle(width, height)
+            if (rect.left + rect.width < width && rect.top + rect.height < height) {
+                val masked = frames[LOGO_MASKED].ensure(width, height, deepInput(picture))
+                exact(source.texture) {
+                    masked.bind()
+                    run(logoProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                        GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+                        GLES20.glUniform4f(
+                            GLES20.glGetUniformLocation(p, "uRect"),
+                            rect.left.toFloat(), rect.top.toFloat(), rect.width.toFloat(), rect.height.toFloat(),
+                        )
+                        GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMode"), logo.mode.ordinal)
+                    }
+                }
+                source = masked
+            }
+        }
         picture.debandParams()?.let { deband ->
             val debanded = frames[DEBANDED].ensure(width, height, deepInput(picture))
             debanded.bind()
@@ -2869,6 +2891,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         private const val CHROMA_LOW = DITHER_INPUT + 1
         private const val CHROMA_LOWER = CHROMA_LOW + 1
         private const val CHROMA_FULL = CHROMA_LOWER + 1
+
+        /** The picture with its station logo hidden (see LogoMask). */
+        private const val LOGO_MASKED = CHROMA_FULL + 1
 
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()

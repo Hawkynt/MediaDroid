@@ -3,14 +3,15 @@ package com.hawkynt.mediadroid.engine.desktop
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.ChromaUpscaling
+import com.hawkynt.mediadroid.player.LogoMask
 import com.hawkynt.mediadroid.player.OldGame
 import com.hawkynt.mediadroid.player.Panorama
-import com.hawkynt.mediadroid.player.ScreenRect
-import com.hawkynt.mediadroid.player.ScreenSetup
-import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
+import com.hawkynt.mediadroid.player.ScreenRect
+import com.hawkynt.mediadroid.player.ScreenSetup
+import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.player.ToneMap
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
@@ -377,6 +378,22 @@ class GlStageTest {
     @Test
     fun `pictures carry their planes only when asked`() {
         assertEquals(null, picture.planes)
+    }
+
+    @Test
+    fun `a station logo is filled in from around it as the reference fills it, the rest left alone`() {
+        val logo = LogoMask(LogoMask.Corner.TOP_RIGHT, 0.25f, LogoMask.Mode.BLUR)
+        val out = stage.process(picture, PictureAdjustment(logo = logo), picture.width, picture.height)
+        val rect = logo.rectangle(picture.width, picture.height)
+        var worst = 0
+        for (c in 0..2) {
+            val plane = ByteArray(picture.width * picture.height) { picture.rgba[it * 4 + c] }
+            val expected = LogoMask.apply(plane, picture.width, picture.height, rect, LogoMask.Mode.BLUR)
+            for (i in expected.indices) {
+                worst = maxOf(worst, abs((out.rgba[i * 4 + c].toInt() and 255) - (expected[i].toInt() and 255)))
+            }
+        }
+        assertTrue("off by $worst", worst <= 2)
     }
 
     @Test
