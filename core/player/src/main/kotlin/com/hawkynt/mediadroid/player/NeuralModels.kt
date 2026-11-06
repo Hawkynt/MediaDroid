@@ -31,10 +31,22 @@ object NeuralModels {
     }
 
     /**
-     * A network to download: the [folder] it is kept in and its [files], fetched from [source] — its folder in the
-     * app's repository, or the upstream port's own folder at a fixed commit.
+     * An upstream release's zip ([bytes] long) the files come out of, each found under [prefix] (as `models/`): fetched
+     * whole, the files taken out and each checked against its own digest.
      */
-    data class Download(val folder: String, val files: List<File>, val source: String = "$REPOSITORY/$folder") {
+    data class Archive(val bytes: Long, val prefix: String)
+
+    /**
+     * A network to download: the [folder] it is kept in and its [files], fetched from [source] — its folder in the
+     * app's repository, the upstream port's own folder at a fixed commit, or, with [archive], an upstream release's
+     * zip.
+     */
+    data class Download(
+        val folder: String,
+        val files: List<File>,
+        val source: String = "$REPOSITORY/$folder",
+        val archive: Archive? = null,
+    ) {
         /** Where [file] is fetched from. */
         fun url(file: File): String = "$source/${file.name}"
 
@@ -260,6 +272,29 @@ object NeuralModels {
             "$REALCUGAN_SOURCE/models-$set",
         )
     }
+
+    /**
+     * Real-ESRGAN's general model (RealESRGAN_x4plus, RRDBNet, BSD-3-Clause) as Real-ESRGAN-ncnn-vulkan converts and
+     * ships it (MIT): the desktop's second Real-ESRGAN, taken out of that port's release when picked
+     * (realesrgan-ncnn-vulkan-20220424-ubuntu.zip,
+     * sha256 e5aa6eb131234b87c0c51f82b89390f5e3e642b7b70f2b9bbe95b6a285a40c96).
+     */
+    val REALESRGAN_X4PLUS = Download(
+        "realesrgan-x4plus",
+        listOf(
+            File(
+                "realesrgan-x4plus.param", 116_029,
+                "35330ececcea33b6c397a72548e788d5d53becee4734c50b7fada36e89f10a86",
+            ),
+            File(
+                "realesrgan-x4plus.bin", 33_424_520,
+                "713ee713b0353afaa27976f0563a64a5043bd70b9bd8936c2e26e25ebcdbcddf",
+            ),
+        ),
+        "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/" +
+            "realesrgan-ncnn-vulkan-20220424-ubuntu.zip",
+        Archive(46_931_474, "models/"),
+    )
 
     /**
      * The networks the app carries itself, by folder: on Android its assets, on the desktop resources unpacked into

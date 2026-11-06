@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.desktop.DesktopNeural
 import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.player.AspectOverride
 import com.hawkynt.mediadroid.player.Keystone
@@ -256,8 +257,9 @@ fun PicturePanel(
                 )
             }
         }
-        // A network's models — noise levels, strengths, scales — and its eight-way run, each tried like the rest.
-        val choice = NeuralEnlarging.choice(picture)?.takeIf { picture.upscaler.isEnlarger }
+        // A network's models — noise levels, strengths, scales, Real-ESRGAN's video and general models — and its
+        // eight-way run, each tried like the rest.
+        val choice = NeuralEnlarging.choice(picture)?.takeIf { DesktopNeural.onNcnn(picture.upscaler) }
         if (choice != null) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val models = NeuralEnlarging.models(picture.upscaler)

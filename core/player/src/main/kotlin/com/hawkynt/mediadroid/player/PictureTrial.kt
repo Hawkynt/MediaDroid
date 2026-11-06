@@ -16,6 +16,12 @@ object PictureTrial {
         /** The frame time a dry run plays at. */
         val frameMs: Double
 
+        /**
+         * Whether Real-ESRGAN runs on ncnn here, as the other networks do (the desktop): then each of its models is
+         * fetched, tested and kept as theirs are; else it is the one model on TFLite (Android).
+         */
+        val neuralOnNcnn: Boolean get() = false
+
         /** Whether Real-ESRGAN's self-test passed already. */
         val neuralUpscalingPassed: Boolean
 
@@ -61,7 +67,8 @@ object PictureTrial {
             ?: dryRun(picture, device, say)
 
     private fun neuralUpscaling(picture: PictureAdjustment, device: Device, say: (String) -> Unit): PictureVerdict? {
-        if (picture.upscaler != PictureAdjustment.Upscaler.NEURAL || device.neuralUpscalingPassed) return null
+        if (picture.upscaler != PictureAdjustment.Upscaler.NEURAL || device.neuralOnNcnn) return null
+        if (device.neuralUpscalingPassed) return null
         say("Testing Real-ESRGAN on this device…")
         val best = device.testNeuralUpscaling()
         val ms = best?.msByHeight?.values?.firstOrNull()
@@ -81,7 +88,9 @@ object PictureTrial {
     }
 
     private fun enlarging(picture: PictureAdjustment, device: Device, say: (String) -> Unit): PictureVerdict? {
-        if (!picture.upscaler.isEnlarger) return null
+        val onNcnn = picture.upscaler.isEnlarger ||
+            (picture.upscaler == PictureAdjustment.Upscaler.NEURAL && device.neuralOnNcnn)
+        if (!onNcnn) return null
         val choice = NeuralEnlarging.choice(picture) ?: return null
         if (device.enlargerPassed(choice) != null) return null
         fetched(NeuralModels.download(choice), choice.label, device, say)?.let {

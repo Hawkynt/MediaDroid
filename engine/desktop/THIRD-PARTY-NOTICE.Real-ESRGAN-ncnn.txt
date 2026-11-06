@@ -4,8 +4,10 @@ engine/desktop/src/main/resources/models/realesr-animevideov3-x4/ holds realesr-
 realesr-animevideov3 network (SRVGGNetCompact, https://github.com/xinntao/Real-ESRGAN) as Real-ESRGAN-ncnn-vulkan
 (https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) converts and ships it for ncnn — taken unchanged from
 realesrgan-ncnn-vulkan-20220424-ubuntu.zip (https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0, sha256
-e5aa6eb131234b87c0c51f82b89390f5e3e642b7b70f2b9bbe95b6a285a40c96), its models/ folder. native/src/enlarger.cpp runs it
-as that port does: a prepadding of 10, mirrored, the output four times the size.
+e5aa6eb131234b87c0c51f82b89390f5e3e642b7b70f2b9bbe95b6a285a40c96), its models/ folder. The general model
+(RealESRGAN_x4plus, RRDBNet) is fetched when picked as the same release ships it, models/realesrgan-x4plus.param and
+.bin taken out of that zip unchanged and checked against their digests. native/src/enlarger.cpp runs both as that port
+does: a prepadding of 10, mirrored, the output four times the size.
 
 Real-ESRGAN-ncnn-vulkan
 -----------------------
