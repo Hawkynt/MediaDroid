@@ -1,7 +1,9 @@
 // The video's colour correction, the stage's last pass onto the screen: saturation around grey with the Rec. 709
 // luma weights, contrast around mid grey plus brightness, then the true gamma curve — the order and weights of
-// PictureAdjustment.shaderUniforms. Where the picture is shown panoramic (uPanorama above 1), each column of the
-// screen reads the column of the picture Panorama.source gives: the middle kept in shape, the sides stretched.
+// PictureAdjustment.shaderUniforms. Each point of the screen first finds the point of the picture it shows
+// (ScreenWarp.source): where uWarped is set through the projective map uWarp — a projector's mirror and flip, the
+// keystone's trapezoid, the picture's place on the screen — black outside the picture; then, shown panoramic
+// (uPanorama above 1), across it the column Panorama.source gives: the middle kept in shape, the sides stretched.
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
 #else
@@ -13,6 +15,8 @@ uniform float uContrast;
 uniform float uSaturation;
 uniform float uInverseGamma;
 uniform float uPanorama;
+uniform mat3 uWarp;
+uniform float uWarped;
 varying vec2 vTex;
 
 // Panorama.source: s + c·s³/3 = ratio·(2x − 1) solved for s by Newton's method from the even share, which lands
@@ -29,6 +33,16 @@ float panoramaSource(float x) {
 
 void main() {
   vec2 at = vTex;
+  if (uWarped > 0.5) {
+    vec3 mapped = uWarp * vec3(at, 1.0);
+    at = mapped.xy / mapped.z;
+    // ScreenWarp.source's tolerance: a point on the picture's edge stays on it however the division rounds.
+    if (mapped.z <= 0.0 || any(lessThan(at, vec2(-1e-6))) || any(greaterThan(at, vec2(1.0 + 1e-6)))) {
+      gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+      return;
+    }
+    at = clamp(at, 0.0, 1.0);
+  }
   if (uPanorama > 1.0) at.x = panoramaSource(at.x);
   vec3 rgb = texture2D(uTex, at).rgb;
   float luma = dot(rgb, vec3(0.213, 0.715, 0.072));

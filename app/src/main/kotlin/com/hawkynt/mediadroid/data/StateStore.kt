@@ -64,6 +64,12 @@ data class PictureOverride(
 data class ScreenOverride(
     /** ScreenShape name: the shape the screen is seen at, an anamorphic lens. */
     val shape: String = "AUTO",
+    /** A projector's picture mirrored (rear projection) and upside down (ceiling mount). */
+    val mirror: Boolean = false,
+    val flip: Boolean = false,
+    /** Keystone correction, -0.4..0.4 each (see Keystone). */
+    val keystoneVertical: Float = 0f,
+    val keystoneHorizontal: Float = 0f,
 )
 
 /**
@@ -355,14 +361,20 @@ class StateStore(context: Context) {
 
     /** How the output screen [key] (see [screenKey]) is set up; the default until it is set. */
     fun screenSetup(key: String): ScreenSetup =
-        data.settings.screens[key]?.let { ScreenSetup.of(it.shape) } ?: ScreenSetup.Default
+        data.settings.screens[key]?.let {
+            ScreenSetup.of(it.shape, it.mirror, it.flip, it.keystoneVertical, it.keystoneHorizontal)
+        } ?: ScreenSetup.Default
 
     /** Keeps [setup] for the output screen [key]; the default drops its entry. */
     fun saveScreenSetup(key: String, setup: ScreenSetup) {
         data.settings.screens = if (setup == ScreenSetup.Default) {
             data.settings.screens - key
         } else {
-            data.settings.screens + (key to ScreenOverride(setup.shape.name))
+            data.settings.screens + (
+                key to ScreenOverride(
+                    setup.shape.name, setup.mirror, setup.flip, setup.keystoneVertical, setup.keystoneHorizontal,
+                )
+            )
         }
         save()
     }

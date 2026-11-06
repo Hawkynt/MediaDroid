@@ -2,6 +2,9 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.Panorama
+import com.hawkynt.mediadroid.player.ScreenRect
+import com.hawkynt.mediadroid.player.ScreenSetup
+import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
@@ -298,7 +301,8 @@ class GlStageTest {
         val outW = 256
         val outH = 144
         val ratio = 4f / 3f
-        val out = stage.process(ramp, PictureAdjustment.Neutral, outW, outH, panorama = ratio)
+        val warp = ScreenWarp.of(ScreenSetup.Default, panorama = ratio)
+        val out = stage.process(ramp, PictureAdjustment.Neutral, outW, outH, warp = warp)
         var worst = 0.0
         for (x in 0 until outW) {
             val read = (out.rgba[(outH / 2 * outW + x) * 4].toInt() and 255) / 4.0
@@ -311,6 +315,48 @@ class GlStageTest {
         val plain = stage.process(ramp, PictureAdjustment.Neutral, outW, outH)
         val quarter = (outH / 2 * outW + outW / 4) * 4
         assertTrue(abs((out.rgba[quarter].toInt() and 255) - (plain.rgba[quarter].toInt() and 255)) > 8)
+    }
+
+    @Test
+    fun `a projector's mirror, flip and keystone land each pixel where ScreenWarp puts it, black beside`() {
+        // Red is the picture's column, green its row (both in quarter steps), blue full: black is no picture.
+        val w = 64
+        val h = 48
+        val grid = MediaReader.Picture(0, w, h, ByteArray(w * h * 4) { i ->
+            when (i % 4) {
+                0 -> ((i / 4 % w) * 4).toByte()
+                1 -> ((i / 4 / w) * 4).toByte()
+                else -> -1
+            }
+        })
+        val outW = 128
+        val outH = 96
+        val setup = ScreenSetup(mirror = true, flip = true, keystoneVertical = 0.3f, keystoneHorizontal = -0.1f)
+        val warp = ScreenWarp.of(setup, ScreenRect.centred(96, 72, outW, outH))
+        val out = stage.process(grid, PictureAdjustment.Neutral, outW, outH, warp = warp)
+        var checked = 0
+        for (y in 0 until outH step 3) for (x in 0 until outW step 3) {
+            // The picture's rows run from the top; the stage's coordinates from the bottom.
+            val at = (y * outW + x) * 4
+            val blue = out.rgba[at + 2].toInt() and 255
+            val source = warp.source((x + 0.5) / outW, 1.0 - (y + 0.5) / outH)
+            if (source == null) {
+                // Beside the picture, black — but for the one-pixel seam along its edge, which may blend.
+                val near = listOf(-1.5 to 0.0, 1.5 to 0.0, 0.0 to -1.5, 0.0 to 1.5).any { (dx, dy) ->
+                    warp.source((x + 0.5 + dx) / outW, 1.0 - (y + 0.5 + dy) / outH) != null
+                }
+                if (!near) assertEquals("black at $x,$y", 0, blue)
+                continue
+            }
+            val column = (source.first * w - 0.5).coerceIn(0.0, w - 1.0)
+            val row = ((1.0 - source.second) * h - 0.5).coerceIn(0.0, h - 1.0)
+            val red = (out.rgba[at].toInt() and 255) / 4.0
+            val green = (out.rgba[at + 1].toInt() and 255) / 4.0
+            assertTrue("column at $x,$y: $red, not $column", abs(red - column) <= 0.75)
+            assertTrue("row at $x,$y: $green, not $row", abs(green - row) <= 0.75)
+            checked++
+        }
+        assertTrue(checked > 300)
     }
 
     companion object {

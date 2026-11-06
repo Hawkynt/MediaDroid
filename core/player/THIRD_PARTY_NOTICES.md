@@ -19,6 +19,8 @@
 | [libebur128](https://github.com/jiixyj/libebur128) v1.2.6 `ebur128/ebur128.c` (`ebur128_init_filter`, the filter, `ebur128_calc_gating_block`, `ebur128_gated_loudness`) — © 2011 Jan Kokemüller | MIT | `LoudnessMeter` — EBU R128 integrated loudness (licence text: `app/THIRD-PARTY-NOTICE.libebur128.txt`) |
 
 The Bessel function J1 in `Ewa` follows Abramowitz & Stegun, *Handbook of Mathematical Functions*, 9.4.4 and 9.4.6.
+`Keystone.squareToQuad` follows Paul Heckbert, *Fundamentals of Texture Mapping and Image Warping* (UC Berkeley, 1989),
+§2.2.3, the projective map of the unit square onto a quadrilateral.
 
 ## Behaviour followed, no code taken
 
@@ -30,6 +32,7 @@ and the first is held to its own output.
 | [FFmpeg](https://ffmpeg.org) `libavfilter/vf_cropdetect.c`, black mode (after MPlayer's `vf_cropdetect`) — © 2002 A'rpi | GPL-2.0-or-later | `BlackBars`: which lines are bar (mean luma at most `limit`, 24/255 by default), tolerated bright lines, the picture growing over frames, the fresh start every `reset` frames, the crop rounded to even corners and a multiple of `round` |
 | DScaler's AutoAspect, as described in issue #252 | GPL-2.0 | `AutoCrop`'s idea of cropping in steps: few detections to widen the picture, many to narrow it |
 | [DScaler](https://github.com/JohnAdders/DScaler) `Help/AspectRatio.htm` and `Help/Aspect.htm` (the source formats, "Aspect Ratio of Display Screen", the custom screen aspect for a Panamorph lens) | GPL-2.0 | `PictureShape` and `ScreenShape`: a frame's shape set over its flag, a screen seen wider than its pixels and pictures drawn narrower to match |
+| [DScaler](https://github.com/JohnAdders/DScaler) `Help/Mirror.htm` (rear projection, with the vertical flip for a ceiling mount) and `Help/LinearCorrection.htm` (the trapezoid and two-axis keystone modes) | GPL-2.0 | `ScreenSetup`'s mirror, flip and keystones; the map itself is `ScreenWarp`'s own, after Heckbert (below) |
 | [DScaler](https://github.com/JohnAdders/DScaler) `Help/LinearCorrection.htm` and `Plugins/FLT_LinearCorrection` (the "Stretch" mode: 4:3 to 16:9, a non-linear zoom) | GPL-2.0 | `Panorama`: the idea of a 4:3 picture widened to a wide screen with the stretch growing towards the sides; DScaler's own curve was not taken — ours keeps the middle exactly in shape and is solved back by Cardano's formula |
 
 ## Test fixtures

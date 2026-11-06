@@ -222,11 +222,17 @@ internal data class DesktopSettings(
 @Serializable
 internal data class ScreenKept(
     val shape: String = ScreenShape.AUTO.name,
+    val mirror: Boolean = false,
+    val flip: Boolean = false,
+    val keystoneVertical: Float = 0f,
+    val keystoneHorizontal: Float = 0f,
 ) {
-    fun toSetup(): ScreenSetup = ScreenSetup.of(shape)
+    fun toSetup(): ScreenSetup = ScreenSetup.of(shape, mirror, flip, keystoneVertical, keystoneHorizontal)
 
     companion object {
-        fun of(setup: ScreenSetup) = ScreenKept(shape = setup.shape.name)
+        fun of(setup: ScreenSetup) = ScreenKept(
+            setup.shape.name, setup.mirror, setup.flip, setup.keystoneVertical, setup.keystoneHorizontal,
+        )
     }
 }
 

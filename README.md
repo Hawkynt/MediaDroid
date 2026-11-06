@@ -259,7 +259,8 @@ the wrong one (4:3, 16:9, 1.85:1, 2.35:1). How the networks are checked on a des
 
 - The refresh rate matched to the film's frame rate; a second screen showing the video alone while the phone keeps
   the controls and goes dark; mirrored screens kept inside a TV's 16:9; the camera cutout used on request; projectors
-  behind an anamorphic lens, each screen set up on its own.
+  behind an anamorphic lens, for rear projection or a ceiling mount, their keystone corrected — each screen set up on
+  its own.
 
 <details>
 <summary>Screens and TV in detail</summary>
@@ -270,6 +271,7 @@ the wrong one (4:3, 16:9, 1.85:1, 2.35:1). How the networks are checked on a des
 - On phones with a notch or punch hole (Android 9+), a switch under the picture sizes lets the picture reach into the camera cutout — mostly useful with Fill; it is remembered.
 - A video's shape, in the gear under the picture sizes (and in the desktop's picture panel), for a file whose flag is wrong — an anamorphic DVD flagged 4:3, a 4:3 programme stretched into a wide frame: Auto (what the file says), 4:3, 16:9, 1.85:1 or 2.35:1, the whole frame set to that shape and remembered for that video; black bars cropped afterwards keep its pixels' shape.
 - Each output screen keeps a setup of its own — in Settings → Screens the device's own screen and the TV or projector attached now, on the desktop the monitor the window is on: the shape it is seen at, for a projector behind an anamorphic lens or a screen whose pixels are not square (4:3, 16:10, 16:9, 2.22:1 for a 1.25× lens, 2.37:1 for a 1.33× lens on a 16:9 projector). Every picture is then drawn narrower by what the lens widens — a scope film fills the panel's height and is seen at 2.35:1, a 16:9 video is pillarboxed on the panel and seen at 16:9 — as DScaler's "Aspect Ratio of Display Screen" does (its help pages read for the behaviour; GPL, no code taken).
+- Projectors, per screen in the same place: rear projection mirrors the picture, a ceiling mount turns it upside down (both together turn it round), and keystone correction on two axes — the top or bottom edge narrowed, the left or right edge shortened, up to 40 % each — draws the picture into the trapezoid that lands as a rectangle on the wall. One projective map in the stage's last pass takes each point of the screen to the point of the picture it shows (Heckbert's square-to-quadrilateral, 1989), straight lines staying straight, black outside; with a keystone the stage draws the whole screen, the picture placed on it as its size puts it, so a letterboxed film is corrected with the panel, not on its own. On the phone a sketch shows where the picture lands on the panel; on the desktop the picture behind the panel follows the sliders. As DScaler's Mirror filter, vertical flip and Linear Correction's trapezoid and two-axis modes do (read for the behaviour; GPL, no code taken).
 
 </details>
 

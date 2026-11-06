@@ -95,6 +95,8 @@ import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.data.screenKey
 import com.hawkynt.mediadroid.player.PictureFit
 import com.hawkynt.mediadroid.player.PictureLayout
+import com.hawkynt.mediadroid.player.ScreenRect
+import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.library.SkipRules
 import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
 import java.io.File
@@ -129,19 +131,19 @@ private val PictureFit.resizeMode: Int
  * The picture's shape on the view: [video]'s own, as the player view gives it, narrowed or flattened by the black
  * bars the filters' stage crops — [share] the part of the width and height it still shows — so Fit, Fill and Stretch
  * work on the picture alone — or the shape [aspect] gives the whole frame where the file's flag is wrong; drawn
- * narrower on a screen seen wider than its pixels ([screen], an anamorphic lens), so it is seen as meant; [panorama]
- * times wider where the stage shows it panoramic.
+ * narrower on a screen seen wider than its pixels ([screen], an anamorphic lens), so it is seen as meant; as wide
+ * as the stage's [warp] shows it panoramic, or the whole screen where the warp draws all of it (a keystone).
  */
 private fun PlayerView.applyCropShape(
     video: androidx.media3.common.VideoSize,
     share: Pair<Float, Float>,
     aspect: com.hawkynt.mediadroid.player.AspectOverride,
     screen: com.hawkynt.mediadroid.player.ScreenShape,
-    panorama: Float,
+    warp: ScreenWarp,
 ) {
     val drawn = drawnAspect(video, share, aspect, screen) ?: return
     val frame = findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame) ?: return
-    frame.setAspectRatio(drawn * panorama)
+    frame.setAspectRatio(if (warp.wholeScreen && panelAspect() > 0f) panelAspect() else drawn * warp.panorama)
 }
 
 /** The shape the picture is drawn in on this view's screen (see [applyCropShape]); null before its size is known. */
@@ -446,16 +448,22 @@ fun PlayerScreen(
     var fit by remember { mutableStateOf(PictureFit.FIT) }
     // The part of the picture's width and height left once the stage has cropped its black bars; 1 and 1 without.
     var cropShare by remember { mutableStateOf(1f to 1f) }
-    // How much wider the stage shows the picture, panoramic; 1 while it does not draw it.
-    var panoramaShown by remember { mutableFloatStateOf(1f) }
+    // How the stage bends the picture's geometry (panoramic, a projector's); none while it does not draw it.
+    var warpShown by remember { mutableStateOf(ScreenWarp.None) }
     // The view's frame in the picture's shape: cropped, as this video's shape is set, for the screen it is on.
     fun PlayerView.showShape(video: androidx.media3.common.VideoSize) =
-        applyCropShape(video, cropShare, picture.aspect, store.screenSetup(screenKey(display)).shape, panoramaShown)
-    // How much wider than its shape Panoramic shows the picture on this view's screen; 1 for every other size.
-    fun PlayerView.panoramaFor(video: androidx.media3.common.VideoSize): Float {
-        if (fit != PictureFit.PANORAMIC) return 1f
-        val drawn = drawnAspect(video, cropShare, picture.aspect, store.screenSetup(screenKey(display)).shape)
-        return drawn?.let { PictureLayout.panorama(it, panelAspect()) } ?: 1f
+        applyCropShape(video, cropShare, picture.aspect, store.screenSetup(screenKey(display)).shape, warpShown)
+    // What the stage's last pass does to the picture on this view's screen: Panoramic's widening, the screen's
+    // mirror and flip — and with a keystone the whole screen, the picture placed on it as its size puts it.
+    fun PlayerView.warpFor(video: androidx.media3.common.VideoSize): ScreenWarp {
+        val setup = store.screenSetup(screenKey(display))
+        val drawn = drawnAspect(video, cropShare, picture.aspect, setup.shape) ?: return ScreenWarp.None
+        val panorama = if (fit == PictureFit.PANORAMIC) PictureLayout.panorama(drawn, panelAspect()) else 1f
+        val w = rootView.width
+        val h = rootView.height
+        if (!setup.keystoned || w <= 0 || h <= 0) return ScreenWarp.of(setup, panorama = panorama)
+        val (pictureWidth, pictureHeight) = PictureLayout.size(fit, drawn, w, h)
+        return ScreenWarp.of(setup, ScreenRect.centred(pictureWidth, pictureHeight, w, h), panorama)
     }
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
@@ -1125,11 +1133,12 @@ fun PlayerScreen(
         // device; FFmpeg's HDR pictures have no device to leave it to.
         val toneMapped = transfer != null &&
             (ffmpegVideo || settings.hdrToneMapping && target?.display?.isHdr != true)
-        // Panoramic: the stage bends the picture into a frame that much wider.
+        // Panoramic, a projector's mirror, flip or keystone: the stage bends the picture's geometry.
         val bend = (presentation?.takeIf { it.isShowing }?.playerView ?: playerView)
-            ?.panoramaFor(player.videoSize) ?: 1f
-        val wanted = (ffmpegVideo || toneMapped || ((shownPicture.hasFilters || bend > 1f) && transfer == null)) &&
-            target != null && target.holder.surface.isValid
+            ?.warpFor(player.videoSize) ?: ScreenWarp.None
+        val wanted =
+            (ffmpegVideo || toneMapped || ((shownPicture.hasFilters || !bend.isIdentity) && transfer == null)) &&
+                target != null && target.holder.surface.isValid
         val stage = filterStage[0] ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { made ->
             filterStage[0] = made
             // A changed crop reshapes the view at once, not on the next round.
@@ -1157,7 +1166,7 @@ fun PlayerScreen(
                 null
             }
             active.filters = shownPicture
-            active.panorama = bend
+            active.warp = bend
             active.hdr = transfer.takeIf { toneMapped }
             active.sourceBits = player.videoFormat?.colorInfo?.lumaBitdepth?.takeIf { it > 0 } ?: 8
             active.downscaler = runCatching { com.hawkynt.mediadroid.player.Downscaler.valueOf(settings.downscaler) }
@@ -1181,7 +1190,7 @@ fun PlayerScreen(
         }
         // Only a picture drawn by the stage is cropped, or panoramic.
         cropShare = if (routedTo[0] != null) stage.cropShare else 1f to 1f
-        panoramaShown = if (routedTo[0] != null) stage.panorama else 1f
+        warpShown = if (routedTo[0] != null) stage.warp else ScreenWarp.None
     }
     freshSurface[0] = {
         val stage = filterStage[0]
