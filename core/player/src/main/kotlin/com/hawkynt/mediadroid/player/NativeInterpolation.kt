@@ -88,6 +88,7 @@ object NativeInterpolation {
 
     /** The upscaler kinds [openEnlarger] takes, by the choice they make. */
     fun enlargerKind(upscaler: PictureAdjustment.Upscaler): Int = when (upscaler) {
+        PictureAdjustment.Upscaler.NEURAL -> 3
         PictureAdjustment.Upscaler.REALSR -> 2
         PictureAdjustment.Upscaler.REALCUGAN -> 1
         else -> 0

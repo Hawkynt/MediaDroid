@@ -34,7 +34,7 @@ class DesktopNeural(val models: File) {
      * after); one fetched must have been fetched.
      */
     fun ready(download: NeuralModels.Download): Boolean {
-        if (download in NeuralModels.CARRIED && !ModelFolder.ready(folder(download), download)) {
+        if (download in CARRIED && !ModelFolder.ready(folder(download), download)) {
             return ModelFolder.unpack(folder(download), download) { name ->
                 DesktopNeural::class.java.getResourceAsStream("/models/${download.folder}/$name")
             }
@@ -60,14 +60,26 @@ class DesktopNeural(val models: File) {
         return if (handle == 0L) null else Interpolator(handle, network, gpu)
     }
 
-    /** [upscaler] on the GPU or the CPU ([gpu]), or null where it cannot run there or its files are not in place. */
+    /**
+     * [upscaler] — waifu2x, Real-CUGAN, RealSR or Real-ESRGAN — on the GPU or the CPU ([gpu]), or null where it
+     * cannot run there or its files are not in place.
+     */
     fun enlarger(upscaler: PictureAdjustment.Upscaler, gpu: Boolean): Enlarger? {
-        if (!upscaler.isEnlarger || !loaded || (gpu && !hasGpu)) return null
+        if (!onNcnn(upscaler) || !loaded || (gpu && !hasGpu)) return null
         val files = NeuralModels.files(upscaler) ?: return null
         if (!ready(files)) return null
         val kind = NativeInterpolation.enlargerKind(upscaler)
         val handle = NativeInterpolation.openEnlarger(null, folder(files).path, kind, gpu)
         return if (handle == 0L) null else Enlarger(handle, upscaler, gpu)
+    }
+
+    companion object {
+        /** What the desktop carries: the app's own networks, and Real-ESRGAN's compact video model on ncnn. */
+        val CARRIED = NeuralModels.CARRIED + NeuralModels.REALESRGAN
+
+        /** Whether [upscaler] is a network the desktop runs on ncnn: every neural one, Real-ESRGAN included. */
+        fun onNcnn(upscaler: PictureAdjustment.Upscaler): Boolean =
+            upscaler.isEnlarger || upscaler == PictureAdjustment.Upscaler.NEURAL
     }
 
     /** A frame interpolation network: two RGBA frames in, the in-between halfway as RGB bytes out. */

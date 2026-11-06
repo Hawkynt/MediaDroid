@@ -167,7 +167,7 @@ of its own, within two seconds of the tap. All of it runs on the graphics chip b
 | Anime4K | a small network for line art, 2× | [bloc97/Anime4K](https://github.com/bloc97/Anime4K) — within 1/255 of libplacebo ([check](tools/shader-check)) |
 | ACNet | a small network on the luma, for anime, 2× | [TianZerL/ACNetGLSL](https://github.com/TianZerL/ACNetGLSL) (F8B4), from [Anime4KCPP](https://github.com/TianZerL/Anime4KCPP) — within 1/255 of libplacebo ([check](tools/shader-check)) |
 | xBRZ | rules for pixel art and cartoons, 2–6× | [Zenju's xBRZ](https://sourceforge.net/projects/xbrz/) — pixel for pixel, on the GPU too ([check](tools/shader-check)) |
-| Real-ESRGAN | neural, 4×, in tiles (TFLite: NPU, GPU or CPU) | [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), [Qualcomm's export](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) |
+| Real-ESRGAN | neural, 4×, in tiles (TFLite: NPU, GPU or CPU; on the desktop ncnn, the compact video model) | [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), [Qualcomm's export](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) |
 | waifu2x | neural CUnet for drawings, 2× (ncnn) | [nagadomi/waifu2x](https://github.com/nagadomi/waifu2x) via [waifu2x-ncnn-vulkan](https://github.com/nihui/waifu2x-ncnn-vulkan) |
 | Real-CUGAN | neural, for anime, 2× (ncnn) | [bilibili's Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) via [realcugan-ncnn-vulkan](https://github.com/nihui/realcugan-ncnn-vulkan) |
 | RealSR | neural, for photos and film, 4×; fetched, 33 MB | [jixiaozhong/RealSR](https://github.com/jixiaozhong/RealSR) via [realsr-ncnn-vulkan](https://github.com/nihui/realsr-ncnn-vulkan) — [files](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/realsr) |
@@ -360,11 +360,14 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   shows 576p, at that screen's refresh rate.
 - The neural networks run on the same native tree as on the phone (`libmediadroid.so` / `mediadroid.dll`): ncnn on
   Vulkan where the machine has a Vulkan device, else on the CPU. Their files live in the app-data folder's `models/`,
-  a folder per network beside `settings.json`: RIFE, IFRNet, waifu2x and Real-CUGAN come inside the app and are
-  unpacked there on first use, every file checked against its SHA-256 (and put back if it no longer matches);
-  DAIN, XVFI, FLAVR, CAIN and RealSR are fetched there when picked, checked the same way. A self-test runs each unit
+  a folder per network beside `settings.json`: RIFE, IFRNet, waifu2x, Real-CUGAN and Real-ESRGAN come inside the app
+  and are unpacked there on first use, every file checked against its SHA-256 (and put back if it no longer
+  matches); DAIN, XVFI, FLAVR, CAIN and RealSR are fetched there when picked, checked the same way. A self-test runs each unit
   in a Java process of its own, so a network or a graphics driver that takes the process down takes only the test —
-  the same checks as on the phone (`NeuralChecks`), within the same two seconds.
+  the same checks as on the phone (`NeuralChecks`), within the same two seconds. Real-ESRGAN runs on ncnn there too,
+  without TFLite: the compact video model (`realesr-animevideov3-x4`, 1.2 MB) as
+  [Real-ESRGAN-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) ships it — the general model the phone
+  carries has no ncnn conversion upstream.
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
   (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture, sound and
   track panel, N for the next episode, [ and ] for slower and faster, C for a snapshot, `,` and `.` for one frame back
@@ -446,7 +449,9 @@ Each third party's notice sits beside the app as `app/THIRD-PARTY-NOTICE.*.txt`.
 [Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform) (Apache-2.0), [LWJGL](https://www.lwjgl.org/)
 with GLFW (BSD-3-Clause, zlib), FFmpeg's LGPL build through [JavaCPP](https://github.com/bytedeco/javacpp-presets)
 (Apache-2.0) and a Java runtime ([Eclipse Temurin](https://adoptium.net/), GPL-2.0 with the Classpath Exception); every
-desktop package carries `LICENSE` and all of these notices on its top level (`desktop/THIRD-PARTY-NOTICE.desktop.txt`).
+desktop package carries `LICENSE` and all of these notices on its top level (`desktop/THIRD-PARTY-NOTICE.desktop.txt`),
+with those of the networks it carries — ncnn, RIFE, IFRNet, waifu2x, Real-CUGAN and Real-ESRGAN on ncnn
+(`engine/desktop/THIRD-PARTY-NOTICE.Real-ESRGAN-ncnn.txt`).
 
 ## 🛠️ Building
 

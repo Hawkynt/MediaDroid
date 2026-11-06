@@ -156,6 +156,25 @@ object NeuralModels {
     )
 
     /**
+     * Real-ESRGAN's compact video model (realesr-animevideov3-x4, SRVGGNetCompact) as Real-ESRGAN-ncnn-vulkan ships it
+     * (MIT, release 20220424): the desktop's Real-ESRGAN, on ncnn, carried in its resources — Android runs the general
+     * model on TFLite instead (NeuralUpscaler).
+     */
+    val REALESRGAN = Download(
+        "realesr-animevideov3-x4",
+        listOf(
+            File(
+                "realesr-animevideov3-x4.param", 3_077,
+                "850a248e7c14c27e5bd8cf7265113a9441036a7db63963bb8aa5169d788a435e",
+            ),
+            File(
+                "realesr-animevideov3-x4.bin", 1_247_368,
+                "548a36f9c3f4ab8da56cd3b13badf23968bee207b396dad14d04b830e5f2ab2d",
+            ),
+        ),
+    )
+
+    /**
      * The networks the app carries itself, by folder: on Android its assets, on the desktop resources unpacked into
      * the app-data folder on first use, every file checked against its digest there (see ModelFolder.unpack).
      */
@@ -172,6 +191,7 @@ object NeuralModels {
     fun files(upscaler: PictureAdjustment.Upscaler): Download? = when (upscaler) {
         PictureAdjustment.Upscaler.WAIFU2X -> WAIFU2X
         PictureAdjustment.Upscaler.REALCUGAN -> REALCUGAN
+        PictureAdjustment.Upscaler.NEURAL -> REALESRGAN
         else -> download(upscaler)
     }
 

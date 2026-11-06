@@ -23,16 +23,21 @@ typealias PictureTry = suspend (picture: PictureAdjustment, say: (String) -> Uni
  * processes of its own (NeuralTestProcess) with its files in [neural]'s models folder — fetched there when picked,
  * where the app does not carry them — its pass kept in [store]; the dry run on a stage of its own (StageDryRun) with
  * the networks passed so far, drawing at the size the largest screen would show a 576p picture, at that screen's
- * refresh rate. Real-ESRGAN is not offered on the desktop yet.
+ * refresh rate. Real-ESRGAN runs on ncnn here (its compact video model), tested like the other upscalers.
  */
 class DesktopTrial(private val store: DesktopStore, private val neural: DesktopNeural) : PictureTrial.Device {
     override val frameMs: Double get() = StageDryRun.frameMs
 
-    override val neuralUpscalingPassed: Boolean get() = false
+    // Real-ESRGAN runs on ncnn here, as the other upscalers do: tested and kept the same way.
+    override val neuralUpscalingPassed: Boolean
+        get() = store.enlargerPassed(PictureAdjustment.Upscaler.NEURAL) != null
 
-    override fun testNeuralUpscaling(): NeuralSelfTest.Timing? = null
+    override fun testNeuralUpscaling(): NeuralSelfTest.Timing? =
+        (NeuralTestProcess.selfTest(neural.models, PictureAdjustment.Upscaler.NEURAL) as? NeuralSelfTest.Outcome.Ran)
+            ?.timings?.firstOrNull()
 
-    override fun keepNeuralUpscaling(best: NeuralSelfTest.Timing) = Unit
+    override fun keepNeuralUpscaling(best: NeuralSelfTest.Timing) =
+        store.keepEnlarger(PictureAdjustment.Upscaler.NEURAL, NeuralInterpolation.Passed(best.unit, best.msByHeight))
 
     override fun enlargerPassed(upscaler: PictureAdjustment.Upscaler) = store.enlargerPassed(upscaler)
 

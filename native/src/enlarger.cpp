@@ -74,4 +74,11 @@ std::unique_ptr<Enlarger> openRealSr(const Loader& load, bool gpu) {
     return open(load, gpu, "x4", "data", "output", ncnn::BORDER_REFLECT, 4, 10, true);
 }
 
+std::unique_ptr<Enlarger> openRealEsrgan(const Loader& load, bool gpu) {
+    // SRVGGNetCompact, four times the size (Real-ESRGAN-ncnn-vulkan's models/realesr-animevideov3-x4, MIT; see
+    // engine/desktop/THIRD-PARTY-NOTICE.Real-ESRGAN-ncnn.txt): its prepadding of 10, mirrored as its preproc shader
+    // mirrors, kept in its output — as RealSR.
+    return open(load, gpu, "realesr-animevideov3-x4", "data", "output", ncnn::BORDER_REFLECT, 4, 10, true);
+}
+
 }  // namespace mediadroid

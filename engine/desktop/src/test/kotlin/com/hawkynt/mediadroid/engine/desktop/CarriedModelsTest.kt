@@ -15,7 +15,7 @@ class CarriedModelsTest {
     @Test
     fun `every carried network unpacks into the models folder, every file matching its digest`() {
         val neural = DesktopNeural(folder.root)
-        for (download in NeuralModels.CARRIED) {
+        for (download in DesktopNeural.CARRIED) {
             assertTrue(download.folder, neural.ready(download))
             assertTrue(ModelFolder.ready(neural.folder(download), download))
         }

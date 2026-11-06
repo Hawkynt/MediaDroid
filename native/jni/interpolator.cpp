@@ -88,12 +88,13 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_close(JNIEnv*, jobject, j
     delete reinterpret_cast<mediadroid::Interpolator*>(handle);
 }
 
-// [kind]: 0 waifu2x, 1 Real-CUGAN, 2 RealSR.
+// [kind]: 0 waifu2x, 1 Real-CUGAN, 2 RealSR, 3 Real-ESRGAN (the desktop's; Android runs it on TFLite).
 JNIEXPORT jlong JNICALL
 Java_com_hawkynt_mediadroid_player_NativeInterpolation_openEnlarger(
     JNIEnv* env, jobject, jobject assets, jstring dir, jint kind, jboolean gpu) {
     auto load = mediadroid::platform::loader(env, assets, text(env, dir));
-    auto it = kind == 2   ? mediadroid::openRealSr(load, gpu)
+    auto it = kind == 3   ? mediadroid::openRealEsrgan(load, gpu)
+              : kind == 2 ? mediadroid::openRealSr(load, gpu)
               : kind == 1 ? mediadroid::openRealCugan(load, gpu)
                           : mediadroid::openWaifu2x(load, gpu);
     return reinterpret_cast<jlong>(it.release());
