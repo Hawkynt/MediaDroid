@@ -12,7 +12,7 @@ The desktop app's platform services use these libraries, taken as published on M
 
 Beside the native library the packages carry the OpenMP runtime it needs, unmodified: GCC's `libgomp.so.1` in the
 AppImage (GPL-3.0 with the GCC Runtime Library Exception, `THIRD-PARTY-NOTICE.libgomp.txt`) and Visual C++'s
-`vcomp140.dll` in the MSI and the zip (Visual Studio 2022's distributable code, `THIRD-PARTY-NOTICE.vcomp140.txt`).
+`vcomp140.dll` in the MSI and the zip (Visual Studio's distributable code, `THIRD-PARTY-NOTICE.vcomp140.txt`).
 
 The System Media Transport Controls are called by each function's place in its interface table and by the interfaces'
 ids, as the Windows SDK's `windows.media.h` and `windows.media.playback.h` give them (read from the bindings
