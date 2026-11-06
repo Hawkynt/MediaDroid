@@ -1,15 +1,17 @@
-# MediaDroid's native code: neural networks on ncnn (Tencent, BSD-3-Clause, see app/THIRD-PARTY-NOTICE.ncnn.txt) and
-# their JNI surface, one tree for every system the app runs on.
+# MediaDroid's native code: neural networks on ncnn (Tencent, BSD-3-Clause, see app/THIRD-PARTY-NOTICE.ncnn.txt), styled
+# subtitles on libass (ISC, see app/THIRD-PARTY-NOTICE.libass.txt; ass/) and their JNI surface, one tree for every system
+# the app runs on.
 #  - Android (each ABI, through the app's externalNativeBuild): libmediadroid_neural.so against ncnn's prebuilt
 #    Android release, NCNN_ROOT holding a folder per ABI.
 #  - Windows x64 and Linux x64 (native/build.gradle.kts, desktopLibrary): mediadroid.dll / libmediadroid.so against
 #    ncnn's prebuilt Windows or Ubuntu release, NCNN_ROOT holding lib/cmake/ncnn.
 #  - Linux arm64, which ncnn publishes no release for: the same library against ncnn built here from its digest-checked
 #    full source, NCNN_SOURCE.
-# src/ is the networks without any JNI or system (tools/neural-check links it alone, MEDIADROID_JNI off); jni/ the
-# surface the JVM calls, with what differs per system behind jni/platform.h.
+# src/ is the networks without any JNI or system (tools/neural-check links it alone, MEDIADROID_JNI off); ass/ libass and
+# what it needs, built from the releases in ASS_SOURCES (native/build.gradle.kts, assSources); jni/ the surface the JVM
+# calls, with what differs per system behind jni/platform.h.
 cmake_minimum_required(VERSION 3.22)
-project(mediadroid CXX)
+project(mediadroid C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -53,17 +55,23 @@ if(NOT MEDIADROID_JNI)
     return()
 endif()
 
+set(ASS_SOURCES "" CACHE PATH "libass, FreeType, FriBidi and HarfBuzz unpacked, a folder each (native/build.gradle.kts)")
+if(NOT ASS_SOURCES)
+    message(FATAL_ERROR "ASS_SOURCES is not set: the releases :native:assSources unpacks")
+endif()
+add_subdirectory(ass)
+
 if(ANDROID)
     # The name the app loads (NeuralInterpolator.kt).
-    add_library(mediadroid_neural SHARED jni/interpolator.cpp jni/platform_android.cpp)
-    target_link_libraries(mediadroid_neural mediadroid_networks android -fopenmp -static-openmp)
+    add_library(mediadroid_neural SHARED jni/interpolator.cpp jni/platform_android.cpp jni/subtitles.cpp)
+    target_link_libraries(mediadroid_neural mediadroid_networks mediadroid_subtitles android -fopenmp -static-openmp)
     # 16 KB pages, as Android 15 devices may use.
     target_link_options(mediadroid_neural PRIVATE "-Wl,-z,max-page-size=16384")
 else()
     find_package(JNI REQUIRED)
-    add_library(mediadroid SHARED jni/interpolator.cpp jni/platform_desktop.cpp jni/desktop.cpp)
+    add_library(mediadroid SHARED jni/interpolator.cpp jni/platform_desktop.cpp jni/desktop.cpp jni/subtitles.cpp)
     target_include_directories(mediadroid PRIVATE ${JNI_INCLUDE_DIRS})
-    target_link_libraries(mediadroid PRIVATE mediadroid_networks)
+    target_link_libraries(mediadroid PRIVATE mediadroid_networks mediadroid_subtitles)
     # Only the JNI entries (JNIEXPORT) are exported.
     set_target_properties(mediadroid mediadroid_networks PROPERTIES
         CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)

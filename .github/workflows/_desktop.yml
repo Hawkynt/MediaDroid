@@ -61,6 +61,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0
           echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
+      # Fontconfig's headers, so libass in the native library asks Linux for its fonts (native/ass).
+      - name: Fontconfig (Linux)
+        if: matrix.system == 'linux'
+        run: sudo apt-get install -y -qq libfontconfig-dev
       - name: Mesa's OpenGL (Windows)
         if: matrix.system == 'windows'
         run: |
@@ -175,8 +179,10 @@ jobs:
           cache: gradle
       # The Android modules are configured with the rest even when only the desktop is built.
       - uses: android-actions/setup-android@v4
+      - name: Fontconfig (libass's fonts on Linux)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libfontconfig-dev
       - name: Native library and its test
-        run: ./gradlew :engine:desktop:test -PnativeLibrary --tests '*NativeNetworksTest' --no-daemon
+        run: ./gradlew :engine:desktop:test -PnativeLibrary --tests '*NativeNetworksTest' --tests '*LibAssTest' --no-daemon
       - name: Keep the test reports of a failed run
         if: failure()
         uses: actions/upload-artifact@v4

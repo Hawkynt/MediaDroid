@@ -2,7 +2,10 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.FsFile
+import com.hawkynt.mediadroid.player.AssEvents
+import com.hawkynt.mediadroid.player.AssFonts
 import com.hawkynt.mediadroid.player.ReplayGain
+import com.hawkynt.mediadroid.player.SubtitleText
 import com.hawkynt.mediadroid.player.ToneMap
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext
 import org.bytedeco.ffmpeg.avcodec.AVPacket
@@ -51,6 +54,12 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     /** A subtitle line shown from [startMs] to [endMs], as text (SubtitleText). */
     data class Cue(val startMs: Long, val endMs: Long, val text: String)
 
+    /**
+     * An ASS/SSA event as libass takes it ([data]: `ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text`),
+     * shown from [startMs] for [durationMs]: read alongside the [Cue] while the selected stream is ASS (AssEvents).
+     */
+    class AssEvent(val startMs: Long, val durationMs: Long, val data: String)
+
     // A file from a network source is read through FsInput; a local one by FFmpeg itself.
     private val input: FsInput? = from?.let(::FsInput)
     private val format: AVFormatContext = if (input == null) {
@@ -66,6 +75,7 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     private var video: AVCodecContext? = null
     private var audio: AVCodecContext? = null
     private var textIndex = -1
+    private var textIsAss = false
     private var text: AVCodecContext? = null
     private val subtitle = org.bytedeco.ffmpeg.avcodec.AVSubtitle()
     private val gotSubtitle = org.bytedeco.javacpp.IntPointer(1)
@@ -95,6 +105,26 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
 
     /** The file's video, audio and subtitle streams as tracks, id the stream's index. */
     val tracks: List<Track>
+
+    /**
+     * The fonts the file carries for its subtitles (Matroska attachments), by file name: those said to be fonts by
+     * their MIME type or, without one, by their extension.
+     */
+    val fonts: List<Pair<String, ByteArray>> by lazy {
+        (0 until format.nb_streams()).mapNotNull { i ->
+            val stream = format.streams(i)
+            val parameters = stream.codecpar()
+            if (parameters.codec_type() != avutil.AVMEDIA_TYPE_ATTACHMENT || parameters.extradata_size() <= 0) {
+                return@mapNotNull null
+            }
+            val name = avutil.av_dict_get(stream.metadata(), "filename", null, 0)?.value()?.string.orEmpty()
+            val mime = avutil.av_dict_get(stream.metadata(), "mimetype", null, 0)?.value()?.string
+            if (!AssFonts.isFont(mime, name)) return@mapNotNull null
+            val data = ByteArray(parameters.extradata_size())
+            parameters.extradata().get(data)
+            name to data
+        }
+    }
 
     init {
         FfmpegNatives.load()
@@ -188,9 +218,23 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         text?.let { avcodec.avcodec_free_context(it) }
         text = null
         textIndex = -1
+        textIsAss = false
         if (index < 0 || format.streams(index).codecpar().codec_type() != avutil.AVMEDIA_TYPE_SUBTITLE) return
         textIndex = index
         text = openDecoder(index)
+        textIsAss = assHeader(index) != null
+    }
+
+    /** The header of the subtitle stream [index] (its codec private) where it is ASS or SSA, else null. */
+    fun assHeader(index: Int): ByteArray? {
+        if (index !in 0 until format.nb_streams()) return null
+        val parameters = format.streams(index).codecpar()
+        if (parameters.codec_type() != avutil.AVMEDIA_TYPE_SUBTITLE) return null
+        if (!AssEvents.isAssCodec(avcodec.avcodec_get_name(parameters.codec_id()).string)) {
+            return null
+        }
+        if (parameters.extradata_size() <= 0) return null
+        return ByteArray(parameters.extradata_size()).also { parameters.extradata().get(it) }
     }
 
     /**
@@ -204,6 +248,22 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         pending.clear()
         ended = false
         skipBeforeMs = positionMs
+    }
+
+    /**
+     * Every event of the ASS stream [index] from here to the end, handed to [each] as it is read — the rest of the file
+     * demuxed but not decoded — until [cancelled]. What a seek cannot bring back (events before the point it lands on)
+     * comes this way: libass keeps them all and shows each at its time.
+     */
+    fun forEachAssEvent(index: Int, cancelled: () -> Boolean, each: (AssEvent) -> Unit) {
+        selectText(index)
+        if (!textIsAss) return
+        val context = text ?: return
+        while (!cancelled() && avformat.av_read_frame(format, packet) >= 0) {
+            if (packet.stream_index() == textIndex) cue(context, packet)
+            avcodec.av_packet_unref(packet)
+            while (pending.isNotEmpty()) (pending.removeFirst() as? AssEvent)?.let(each)
+        }
     }
 
     /** The next decoded picture or sound, in the file's order; null at the end. */
@@ -257,10 +317,12 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         } else {
             atMs + Math.round(input.duration() * 1000.0 * base.num() / base.den())
         }
-        val lines = (0 until subtitle.num_rects()).mapNotNull { i ->
-            subtitle.rects(i).ass()?.string?.let { com.hawkynt.mediadroid.player.SubtitleText.fromAssEvent(it) }
-        }.filter { it.isNotEmpty() }
-        if (lines.isNotEmpty() && endMs >= skipBeforeMs) pending.addLast(Cue(startMs, endMs, lines.joinToString("\n")))
+        val events = (0 until subtitle.num_rects()).mapNotNull { i -> subtitle.rects(i).ass()?.string }
+        val lines = events.map { SubtitleText.fromAssEvent(it) }.filter { it.isNotEmpty() }
+        if (endMs >= skipBeforeMs) {
+            if (textIsAss) events.forEach { pending.addLast(AssEvent(startMs, endMs - startMs, it)) }
+            if (lines.isNotEmpty()) pending.addLast(Cue(startMs, endMs, lines.joinToString("\n")))
+        }
         avcodec.avsubtitle_free(subtitle)
     }
 

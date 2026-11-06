@@ -8,10 +8,12 @@ plugins {
 }
 
 // ncnn (Tencent, BSD-3-Clause): the prebuilt Android release the native tree (native/) builds against, fetched and
-// checked by :native:ncnnAndroid.
+// checked by :native:ncnnAndroid; libass and what it needs as sources, by :native:assSources.
 evaluationDependsOn(":native")
 @Suppress("UNCHECKED_CAST")
 val ncnnRoot = project(":native").extra["ncnnAndroidRoot"] as Provider<Directory>
+@Suppress("UNCHECKED_CAST")
+val assRoot = project(":native").extra["assRoot"] as Provider<Directory>
 
 android {
     // BouncyCastle's modules (for SMB and SFTP) each carry the same licence file; one copy is kept.
@@ -42,6 +44,7 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += "-DNCNN_ROOT=${ncnnRoot.get().asFile.absolutePath}"
+                arguments += "-DASS_SOURCES=${assRoot.get().asFile.absolutePath}"
                 arguments += "-DANDROID_STL=c++_static"
             }
         }
@@ -69,7 +72,9 @@ android {
 }
 
 tasks.configureEach {
-    if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) dependsOn(":native:ncnnAndroid")
+    if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) {
+        dependsOn(":native:ncnnAndroid", ":native:assSources")
+    }
 }
 
 // The README screenshots are rendered by the real screens on the JVM (Robolectric + Roborazzi) from a

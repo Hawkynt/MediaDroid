@@ -372,7 +372,9 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   Pictures folder (`MediaDroid` inside it; on Linux the one xdg-user-dirs names, on Windows the one Windows knows of,
   wherever it or OneDrive moved it) and shows where it went.
 - Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
-  language last picked is where the next video starts. Sound tracks likewise, the file's own and those beside it
+  language last picked is where the next video starts. ASS/SSA subtitles are drawn as they were authored, by
+  [libass](https://github.com/libass/libass) — their fonts (those the file carries, then the system's), positions,
+  rotations, karaoke, fades and drawn signs — at the size the picture is shown, so the text stays sharp. Sound tracks likewise, the file's own and those beside it
   (`Film.en.ac3`). Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.
 - Sound settings in the same panel, through the very sample code Android runs (`LoudnessChain` in `:core:player`):
   the loudness gain (−12 … +12 dB), even loudness (ReplayGain from the tags FFmpeg reads, else EBU R128 measured as it
@@ -434,6 +436,7 @@ device; shaders live in `stage/src/main/glsl`.
 | [FFmpeg](https://ffmpeg.org/) via the [Media3 FFmpeg extension](https://github.com/androidx/media/tree/1.11.1/libraries/decoder_ffmpeg) | decoders and demuxers Android lacks — built LGPL-only, recipe in [tools/ffmpeg](tools/ffmpeg/README.md) | LGPL-2.1+ |
 | [ncnn](https://github.com/Tencent/ncnn) | RIFE, IFRNet, CAIN, DAIN, XVFI, FLAVR, waifu2x, Real-CUGAN and RealSR on Vulkan or the CPU | BSD-3-Clause |
 | [TensorFlow Lite](https://github.com/tensorflow/tensorflow) | Real-ESRGAN on the NPU, GPU or CPU | Apache-2.0 |
+| [libass](https://github.com/libass/libass) 0.17.5 with [FreeType](https://freetype.org), [FriBidi](https://github.com/fribidi/fribidi) and [HarfBuzz](https://harfbuzz.github.io) | ASS/SSA subtitles drawn as authored, built from source in `native/` | ISC, FTL, LGPL-2.1+, MIT |
 | [RIFE 4.25 lite](https://github.com/TNTwise/rife-ncnn-vulkan), [IFRNet-S](https://github.com/nihui/ifrnet-ncnn-vulkan), [waifu2x CUnet](https://github.com/nihui/waifu2x-ncnn-vulkan), [Real-CUGAN SE](https://github.com/nihui/realcugan-ncnn-vulkan), [Real-ESRGAN x4v3](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) | carried in the app | MIT, BSD-3-Clause |
 | [DAIN](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/dain), [XVFI](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/xvfi), [FLAVR](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/flavr), [CAIN](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/cain), [RealSR](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/realsr) on [Hawkynt/mediadroid-models](https://huggingface.co/Hawkynt/mediadroid-models) | fetched when picked, each file checked against its digest | MIT; research and education only; Apache-2.0 |
 
@@ -466,7 +469,11 @@ The native tree (`native/`) is one CMake project: the app's build compiles it fo
 `:native:desktopLibrary` for the machine it runs on — Linux x64 or arm64, Windows x64 — with CMake (from the path, else
 the Android SDK's) and the system's C++ compiler (GCC or Clang; Visual Studio 2022 on Windows). Both build against
 ncnn's prebuilt releases, fetched once and checked against their digests; Linux arm64, which ncnn publishes none for,
-builds ncnn from its full source (`-PncnnFromSource` does the same anywhere).
+builds ncnn from its full source (`-PncnnFromSource` does the same anywhere). libass, FreeType, FriBidi and HarfBuzz
+are built from their release sources everywhere (`native/ass`, fetched by `:native:assSources` and checked the same
+way); on the desktop libass asks the system for fonts — DirectWrite on Windows, Fontconfig on Linux where its headers
+are installed. Portions of this software are copyright © 2026 The FreeType Project (www.freetype.org). All rights
+reserved.
 
 `build.sh` signs with the release key when `KEYSTORE` (or `KEYSTORE_BASE64`), `KEYSTORE_PASSWORD` and `KEY_ALIAS` are set — in the environment or in a git-ignored `signing.env` — and otherwise with the Android debug key, which installs on your own device but cannot update a release or nightly. The key itself lives only in the repository's secrets. `buildnonlgpl.sh` first builds FFmpeg with every decoder, demuxer and parser (`FULL=1 tools/ffmpeg/build.sh`, once, into `stage/ffmpeg-full`); that build is GPL and cannot be distributed under this licence, so it is for your own device only — see [tools/ffmpeg/README.md](tools/ffmpeg/README.md). The desktop app decodes
 with FFmpeg through [Bytedeco's JavaCPP presets](https://github.com/bytedeco/javacpp-presets): FFmpeg's LGPL build in

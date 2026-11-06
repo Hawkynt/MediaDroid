@@ -5,7 +5,10 @@ import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.FsFile
+import com.hawkynt.mediadroid.player.AssPicture
+import com.hawkynt.mediadroid.player.AssTrack
 import com.hawkynt.mediadroid.player.FileLoudness
+import com.hawkynt.mediadroid.player.LibAss
 import com.hawkynt.mediadroid.player.LoudnessChain
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -18,6 +21,9 @@ import java.util.concurrent.LinkedBlockingDeque
  * started from plus what the sink has played (wall time where the file has no sound). [picture] hands out the latest
  * picture due by that clock, for the window to draw at its next refresh, and [moment] that picture with the ones
  * around it for the stage. With [film] on, the pictures go through Film on their way to the queue.
+ * ASS/SSA subtitles — the file's own streams and files beside it — are drawn by libass where the native library
+ * carries it ([subtitlePicture]: styles, positions, karaoke, signs, the file's attached fonts); everything else, and
+ * ASS without it, as lines of text ([subtitle]).
  */
 class DesktopPlaybackEngine(
     override val tuning: PlaybackTuning,
@@ -55,8 +61,11 @@ class DesktopPlaybackEngine(
     @Volatile private var shownBefore: MediaReader.Picture? = null
     @Volatile private var filmChanged = false
     @Volatile private var pendingText: Int? = null
-    @Volatile private var sidecars: List<Pair<Track, List<MediaReader.Cue>>> = emptyList()
+    @Volatile private var sidecars: List<Sidecar> = emptyList()
     @Volatile private var selectedText: String? = null
+    @Volatile private var fonts: List<Pair<String, ByteArray>> = emptyList()
+    @Volatile private var ass: AssTrack? = null
+    @Volatile private var assShown = false
     private val cues = java.util.concurrent.CopyOnWriteArrayList<MediaReader.Cue>()
 
     override var openedPath: String? = null
@@ -74,13 +83,21 @@ class DesktopPlaybackEngine(
         sidecars = request.subtitles.mapIndexedNotNull { i, file ->
             runCatching {
                 readerOf(file.path).use { r ->
-                    r.selectText(r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt())
-                    val read = generateSequence { r.read() }.filterIsInstance<MediaReader.Cue>().toList()
-                    Track("sidecar:$i", Track.Kind.TEXT, file.language, file.label, source = i + 1) to read
+                    val index = r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt()
+                    r.selectText(index)
+                    val read = generateSequence { r.read() }.toList()
+                    Sidecar(
+                        Track("sidecar:$i", Track.Kind.TEXT, file.language, file.label, source = i + 1),
+                        read.filterIsInstance<MediaReader.Cue>(),
+                        r.assHeader(index),
+                        read.filterIsInstance<MediaReader.AssEvent>(),
+                    )
                 }
             }.getOrNull()
         }
         selectedText = null
+        // The fonts the file carries, for its ASS subtitles and those beside it.
+        fonts = if (libass) opened.fonts else emptyList()
         cues.clear()
         sink = sinkFactory().also { if (hasSound || soundFiles.isNotEmpty()) it.open(MediaReader.SAMPLE_RATE, 2) }
         sink?.volume = volume
@@ -240,6 +257,7 @@ class DesktopPlaybackEngine(
                         }
                     }
                     is MediaReader.Cue -> cues += item
+                    is MediaReader.AssEvent -> ass?.event(item.data.toByteArray(), item.startMs, item.durationMs)
                 }
             }
         } catch (_: InterruptedException) {
@@ -389,7 +407,7 @@ class DesktopPlaybackEngine(
             val files = soundFiles.mapIndexed { i, path ->
                 Track("$SOUND_FILE$i", Track.Kind.AUDIO, null, java.io.File(path).name, source = i + 1)
             }
-            return (own + files + sidecars.map { it.first }).map {
+            return (own + files + sidecars.map { it.track }).map {
                 when (it.kind) {
                     Track.Kind.TEXT -> it.copy(selected = it.id == selectedText)
                     Track.Kind.AUDIO -> it.copy(selected = it.id == selectedSound)
@@ -403,14 +421,23 @@ class DesktopPlaybackEngine(
             Track.Kind.AUDIO -> if (id != null && id != selectedSound) pendingAudio = id
             Track.Kind.TEXT -> {
                 selectedText = id
-                val sidecar = sidecars.firstOrNull { it.first.id == id }
+                ass?.close()
+                ass = null
+                val sidecar = sidecars.firstOrNull { it.track.id == id }
                 if (sidecar != null) {
                     pendingText = -1
                     cues.clear()
-                    cues.addAll(sidecar.second)
+                    cues.addAll(sidecar.cues)
+                    ass = sidecar.assHeader?.let { header ->
+                        assTrack(header)?.apply {
+                            sidecar.assEvents.forEach { event(it.data.toByteArray(), it.startMs, it.durationMs) }
+                        }
+                    }
                 } else {
                     cues.clear()
                     pendingText = id?.toInt() ?: -1
+                    ass = id?.toInt()?.let { reader?.assHeader(it) }?.let(::assTrack)
+                    ass?.let { track -> prefetch(track, id!!.toInt()) }
                 }
                 listeners.forEach { it.onTracksChanged(tracks) }
             }
@@ -418,9 +445,63 @@ class DesktopPlaybackEngine(
         }
     }
 
+    /** A libass track with [header] and the file's fonts, the system's own behind them; null without libass. */
+    private fun assTrack(header: ByteArray): AssTrack? {
+        if (!libass) return null
+        val track = AssTrack()
+        if (!track.open) return null
+        fonts.forEach { (name, data) -> track.addFont(name, data) }
+        track.defaultFont(path = defaultFont.orEmpty(), system = true)
+        track.header(header)
+        return track
+    }
+
+    /**
+     * A local file's ASS stream [index] read through once on a thread of its own, every event into [track]: a seek
+     * lands after events that began before it (and a stream picked midway would miss them), which libass then has
+     * anyway. A network source's file is not read twice over; there the events come as it plays.
+     */
+    private fun prefetch(track: AssTrack, index: Int) {
+        val path = openedPath ?: return
+        if (files(path) != null) return
+        Thread({
+            runCatching {
+                MediaReader(path).use { r ->
+                    r.forEachAssEvent(index, { ass !== track }) {
+                        track.event(it.data.toByteArray(), it.startMs, it.durationMs)
+                    }
+                }
+            }
+        }, "mediadroid-subtitles").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    /** Whether the picked subtitles are drawn by libass ([subtitlePicture]) rather than shown as text. */
+    val drawsSubtitles: Boolean get() = ass != null && subtitlesOn
+
+    /**
+     * The picked ASS subtitles due with the picture (less the subtitle delay) drawn for a picture of [width] ×
+     * [height] — the size it is shown at, for sharp text; null where nothing changed since the last call,
+     * [AssPicture.EMPTY] once they are switched off.
+     */
+    fun subtitlePicture(width: Int, height: Int): AssPicture? {
+        val track = ass
+        if (track == null || !subtitlesOn) {
+            if (!assShown) return null
+            assShown = false
+            return AssPicture.EMPTY
+        }
+        assShown = true
+        val opened = reader
+        val atMs = positionMs + soundDelayMs() - tuning.subtitleDelayMs
+        return track.render(atMs, width, height, opened?.width ?: 0, opened?.height ?: 0)
+    }
+
     /** The subtitle line due with the picture, while subtitles are on and a subtitle track is picked; else null. */
     fun subtitle(): String? {
-        if (!subtitlesOn || selectedText == null) return null
+        if (!subtitlesOn || selectedText == null || ass != null) return null
         val now = positionMs + soundDelayMs()
         return cues.firstOrNull { now >= it.startMs && now < it.endMs }?.text
     }
@@ -444,6 +525,8 @@ class DesktopPlaybackEngine(
         sink = null
         reader?.close()
         reader = null
+        ass?.close()
+        ass = null
         playing = false
         pictures.clear()
         shown = null
@@ -452,7 +535,35 @@ class DesktopPlaybackEngine(
 
     override fun close() = stop()
 
+    /** A subtitle file beside the video, read whole: its lines, and for ASS its header and events for libass. */
+    private class Sidecar(
+        val track: Track,
+        val cues: List<MediaReader.Cue>,
+        val assHeader: ByteArray?,
+        val assEvents: List<MediaReader.AssEvent>,
+    )
+
+    /** Whether libass is there: the native library built for this system, loaded, carrying it. */
+    private val libass: Boolean by lazy { NativeNetworks.loaded && LibAss.available }
+
     private companion object {
+        /**
+         * The font for what neither the file's fonts nor the system's provider draw (a Linux built without Fontconfig):
+         * the first of the usual sans faces this machine has.
+         */
+        val defaultFont: String? by lazy {
+            listOf(
+                "C:\\Windows\\Fonts\\arial.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+                "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+                "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            ).firstOrNull { java.io.File(it).isFile }
+        }
+
         /** Pictures decoded ahead of the clock: a fifth of a second at 25 fps. */
         const val PICTURES_AHEAD = 6
 
