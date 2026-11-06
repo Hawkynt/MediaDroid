@@ -5,6 +5,7 @@ import com.hawkynt.mediadroid.player.Deblock
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.ChromaUpscaling
+import com.hawkynt.mediadroid.player.DotCrawl
 import com.hawkynt.mediadroid.player.LogoMask
 import com.hawkynt.mediadroid.player.MpvShaders
 import com.hawkynt.mediadroid.player.OldGame
@@ -519,6 +520,32 @@ class GlStageTest {
         }
         assertTrue("off by $worst", worst <= 1)
         assertTrue("only $changed changed", changed > w * h / 4)
+    }
+
+    @Test
+    fun `dot crawl is combed out as the reference combs it`() {
+        val w = 48
+        val h = 32
+        // A still picture with a residue flipping sign every frame, as a composite decoder leaves it.
+        fun captured(k: Int) = MediaReader.Picture(k * 40L, w, h, ByteArray(w * h * 4) { i ->
+            val x = i / 4 % w
+            val y = i / 4 / w
+            val sign = if ((x + y + k) % 2 == 0) 1 else -1
+            if (i % 4 == 3) -1 else (120 + x + sign * 6).toByte()
+        })
+        val frames = (0..2).map(::captured)
+        val look = PictureAdjustment(dotCrawl = 0.5f)
+        val out = stage.process(Moment(frames[1], frames[0], frames[2]), look, w, h)
+        fun rgb(p: MediaReader.Picture) = ByteArray(w * h * 3) { p.rgba[it / 3 * 4 + it % 3] }
+        val expected = DotCrawl.apply(
+            rgb(frames[0]), rgb(frames[1]), rgb(frames[2]), w, h, requireNotNull(DotCrawl.threshold(look.dotCrawl)),
+        )
+        var worst = 0
+        for (i in 0 until w * h) for (c in 0..2) {
+            worst = maxOf(worst, abs((out.rgba[i * 4 + c].toInt() and 255) - (expected[i * 3 + c].toInt() and 255)))
+        }
+        assertTrue("off by $worst", worst <= 1)
+        assertTrue(!expected.contentEquals(rgb(frames[1])))
     }
 
     @Test

@@ -4,6 +4,7 @@ import com.hawkynt.mediadroid.imaging.Xbrz
 import com.hawkynt.mediadroid.player.Colorizing
 import com.hawkynt.mediadroid.player.Deblock
 import com.hawkynt.mediadroid.player.Deinterlacer
+import com.hawkynt.mediadroid.player.DotCrawl
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.Ewa
 import com.hawkynt.mediadroid.player.MotionAdaptive
@@ -221,7 +222,7 @@ class GlStage : AutoCloseable {
         val look = listOf(
             a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep, a.chroma, a.colorize,
             a.logo, a.deblock, a.dering,
-            a.temporalDenoise,
+            a.temporalDenoise, a.dotCrawl,
         )
         // Another chroma upscaler makes every picture uploaded from its planes stale.
         if (a.chroma != chroma) {
@@ -385,16 +386,26 @@ class GlStage : AutoCloseable {
         val h = raw.height
         var source = raw
         fun neighbour(p: MediaReader.Picture) = uploaded(p, region(p, crop, a.stereo))
-        // 0. Temporal denoising: the picture against the pictures before and after it, as decoded.
+        // 0. Dot crawl and rainbows combed out, then temporal denoising: the picture against the pictures before and
+        // after it, as decoded.
+        val combed = DotCrawl.threshold(a.dotCrawl)?.let { threshold ->
+            val prev = neighbour(before ?: picture).takeIf { it.width == w && it.height == h } ?: raw
+            val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
+            pass("dot-crawl.frag", target("combed", w, h, half = deep), raw.texture,
+                listOf(prev.texture to "uPrev", next.texture to "uNext"), nearest = true) { p ->
+                glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
+                glUniform1f(glGetUniformLocation(p, "uThreshold"), threshold)
+            }
+        } ?: raw
         val shown = a.temporalDenoiseParams()?.let { params ->
             val prev = neighbour(before ?: picture).takeIf { it.width == w && it.height == h } ?: raw
             val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
-            pass("temporal-denoise.frag", target("temporallyDenoised", w, h, half = deep), raw.texture,
+            pass("temporal-denoise.frag", target("temporallyDenoised", w, h, half = deep), combed.texture,
                 listOf(prev.texture to "uPrev", next.texture to "uNext"), nearest = true) { p ->
                 glUniform1f(glGetUniformLocation(p, "uA"), TemporalDenoise.threshold(params.a).toFloat())
                 glUniform1f(glGetUniformLocation(p, "uB"), TemporalDenoise.threshold(params.b).toFloat())
             }
-        } ?: raw
+        } ?: combed
         source = shown
         // 1. Deinterlacing.
         if (a.deinterlace.isTemporal) {
@@ -1404,6 +1415,7 @@ class GlStage : AutoCloseable {
             "mpv-luma.frag" to Shaders.VIDEO_MPV_LUMA,
             "mpv-recombine.frag" to Shaders.VIDEO_MPV_RECOMBINE,
             "temporal-denoise.frag" to Shaders.VIDEO_TEMPORAL_DENOISE,
+            "dot-crawl.frag" to Shaders.VIDEO_DOT_CRAWL,
             "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
             "yuv-spline.frag" to Shaders.VIDEO_YUV_SPLINE,
             "chroma-krig-1.frag" to Shaders.VIDEO_CHROMA_KRIG_1,
