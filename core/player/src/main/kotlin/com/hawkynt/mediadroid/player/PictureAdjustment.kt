@@ -65,6 +65,17 @@ data class PictureAdjustment(
      * remembered for its folder.
      */
     val logo: LogoMask? = null,
+    /**
+     * Deblocking, 0 (off) to 1: the 8 × 8 block edges of a low-bitrate MPEG picture smoothed away (see [Deblock]),
+     * FFmpeg's weak filter below the middle, its strong one with its own thresholds in the middle, reaching twice as
+     * far at 1.
+     */
+    val deblock: Float = 0f,
+    /**
+     * Deringing, 0 (off) to 1: the ripples beside edges and text smoothed along the edge (AV1's CDEF, see [Cdef]),
+     * stronger towards 1.
+     */
+    val dering: Float = 0f,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
@@ -306,6 +317,12 @@ data class PictureAdjustment(
         return Denoise(if (strength <= 1f / 3f) 1f else 2f, 0.04f + 0.12f * strength)
     }
 
+    /** The deblocking [deblock] asks for, or null when it is off. */
+    fun deblockParams(): Deblock.Params? = Deblock.params(deblock)
+
+    /** The deringing [dering] asks for, or null when it is off. */
+    fun deringParams(): Cdef.Params? = Cdef.params(dering)
+
     /** The debanding [deband] asks for, or null when it is off. */
     fun debandParams(): Deband.Params? = Deband.params(deband)
 
@@ -322,6 +339,7 @@ data class PictureAdjustment(
      */
     val hasFilters: Boolean
         get() = sharpness > 0f || clarity > 0f || noise != 0f || deband > 0f || cropBlackBars || logo != null ||
+            deblock > 0f || dering > 0f ||
             deinterlace != Deinterlace.OFF ||
             upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF || stereo != Stereo.OFF ||
             colorize != Colorize.OFF ||

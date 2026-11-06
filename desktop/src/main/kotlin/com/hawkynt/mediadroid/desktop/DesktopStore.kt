@@ -325,6 +325,8 @@ internal data class PictureSettings(
     val upscalerTta: Boolean = PictureAdjustment.Neutral.upscalerTta,
     /** PictureAdjustment.Colorize name: colour for black-and-white pictures. */
     val colorize: String = PictureAdjustment.Neutral.colorize.name,
+    val deblock: Float = PictureAdjustment.Neutral.deblock,
+    val dering: Float = PictureAdjustment.Neutral.dering,
 ) {
     fun toAdjustment(): PictureAdjustment {
         val p = PictureAdjustment.Neutral
@@ -349,6 +351,8 @@ internal data class PictureSettings(
             upscalerModel = upscalerModel,
             upscalerTta = upscalerTta,
             colorize = runCatching { PictureAdjustment.Colorize.valueOf(colorize) }.getOrDefault(p.colorize),
+            deblock = deblock,
+            dering = dering,
         )
     }
 
@@ -372,6 +376,8 @@ internal data class PictureSettings(
             upscalerModel = p.upscalerModel,
             upscalerTta = p.upscalerTta,
             colorize = p.colorize.name,
+            deblock = p.deblock,
+            dering = p.dering,
         )
     }
 }

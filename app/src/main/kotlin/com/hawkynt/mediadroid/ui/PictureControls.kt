@@ -95,6 +95,9 @@ fun PictureSliders(
             Triple("Clarity", picture.clarity) { v: Float -> picture.copy(clarity = v) },
             // Smooths the steps an 8-bit gradient shows (a sky, a fade to black), see Deband.
             Triple("Debanding", picture.deband) { v: Float -> picture.copy(deband = v) },
+            // The blocks and ripples a starved MPEG encoder leaves, see Deblock and Cdef.
+            Triple("Deblocking", picture.deblock) { v: Float -> picture.copy(deblock = v) },
+            Triple("Deringing", picture.dering) { v: Float -> picture.copy(dering = v) },
         ).forEach { (label, value, set) ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(label, fontSize = 16.sp, modifier = Modifier.weight(1f))

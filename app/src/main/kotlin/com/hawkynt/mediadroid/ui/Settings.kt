@@ -373,6 +373,8 @@ fun SettingsScreen(
                     it.chroma = defaultPicture.chroma.name
                     it.upscalerModel = defaultPicture.upscalerModel
                     it.upscalerTta = defaultPicture.upscalerTta
+                    it.deblock = defaultPicture.deblock
+                    it.dering = defaultPicture.dering
                 }
             },
             check = pictureCheck(androidx.compose.ui.platform.LocalContext.current, store),
