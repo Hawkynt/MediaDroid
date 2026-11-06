@@ -35,6 +35,7 @@ import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.player.AspectOverride
 import com.hawkynt.mediadroid.player.Keystone
+import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCheck
 import com.hawkynt.mediadroid.player.PictureFit
@@ -248,14 +249,47 @@ fun PicturePanel(
                     selected = picture.upscaler == upscaler,
                     enabled = upscaling.trying == null,
                     onClick = {
-                        val candidate = picture.copy(upscaler = upscaler)
+                        val candidate = picture.copy(upscaler = upscaler, upscalerModel = "", upscalerTta = false)
                         upscaling.pick(scope, picture, candidate, upscaler.label, check, onChange)
                     },
                     label = { Text(upscaler.label) },
                 )
             }
         }
-        upscaling.Below(picture.upscaler.description)
+        // A network's models — noise levels, strengths, scales — and its eight-way run, each tried like the rest.
+        val choice = NeuralEnlarging.choice(picture)?.takeIf { picture.upscaler.isEnlarger }
+        if (choice != null) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val models = NeuralEnlarging.models(picture.upscaler)
+                if (models.size > 1) {
+                    models.forEach { model ->
+                        FilterChip(
+                            selected = choice.model == model,
+                            enabled = upscaling.trying == null,
+                            onClick = {
+                                val candidate = choice.copy(model = model)
+                                val label = candidate.label
+                                upscaling.pick(scope, picture, candidate.applied(picture), label, check, onChange)
+                            },
+                            label = { Text(model.label) },
+                        )
+                    }
+                }
+                FilterChip(
+                    selected = choice.tta,
+                    enabled = upscaling.trying == null,
+                    onClick = {
+                        val candidate = choice.copy(tta = !choice.tta)
+                        upscaling.pick(scope, picture, candidate.applied(picture), candidate.label, check, onChange)
+                    },
+                    label = { Text(NeuralEnlarging.TTA_LABEL) },
+                )
+            }
+        }
+        upscaling.Below(
+            if (choice?.tta == true) "${picture.upscaler.description} ${NeuralEnlarging.TTA_DESCRIPTION}"
+            else picture.upscaler.description,
+        )
         // How much of the upscaler shows: 0 % plain scaling, 100 % the upscaler alone.
         if (picture.upscaler != PictureAdjustment.Upscaler.STANDARD) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {

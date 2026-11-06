@@ -4,29 +4,33 @@ import android.content.Context
 import java.nio.ByteBuffer
 
 /**
- * waifu2x, Real-CUGAN or RealSR (see app/THIRD-PARTY-NOTICE.*.txt) on ncnn, on the device's GPU (Vulkan) or its CPU:
- * an RGBA picture in, twice its size (RealSR four times) as RGB bytes out (see NeuralEnlarging). A network belongs
- * to the thread that opened it.
+ * A model of waifu2x, Real-CUGAN or RealSR (see app/THIRD-PARTY-NOTICE.*.txt) on ncnn, on the device's GPU (Vulkan) or
+ * its CPU, once or eight ways: an RGBA picture in, two, three or four times its size as RGB bytes out (see
+ * NeuralEnlarging) — whole, or in tiles where the GPU's memory asks for them. A network belongs to the thread that
+ * opened it.
  */
 class NeuralEnlarger private constructor(
     private var handle: Long,
-    /** Which upscaler it is. */
-    val upscaler: PictureAdjustment.Upscaler,
+    /** Which model it is, and whether it runs eight ways. */
+    val choice: NeuralEnlarging.Choice,
     /** Where it runs. */
     val unit: NeuralUpscaler.Unit,
+    // What ncnn lets the GPU's networks take, in MB; 0 on the CPU.
+    private val budgetMb: Int,
 ) : AutoCloseable {
 
     private var out: ByteBuffer = ByteBuffer.allocateDirect(0)
 
     /**
-     * The RGBA [picture] ([width] × [height], rows as stored) at twice its size as RGB bytes in the same row order —
+     * The RGBA [picture] ([width] × [height], rows as stored) at the model's scale as RGB bytes in the same row order —
      * valid until the next call; null where the network failed.
      */
     fun run(picture: ByteBuffer, width: Int, height: Int): ByteBuffer? {
-        val scale = NeuralEnlarging.scale(upscaler)
+        val scale = choice.scale
         val bytes = width * height * scale * scale * 3
         if (out.capacity() < bytes) out = ByteBuffer.allocateDirect(bytes)
-        val ran = NativeInterpolation.enlarge(handle, picture, width, height, out)
+        val tile = NeuralEnlarging.tile(choice, budgetMb, width, height)
+        val ran = NativeInterpolation.enlarge(handle, picture, width, height, out, tile)
         return if (ran == 0) out.also { it.rewind() } else null
     }
 
@@ -36,43 +40,43 @@ class NeuralEnlarger private constructor(
     }
 
     companion object {
-        private const val REALSR_KIND = 2
-
-        /** [upscaler] (waifu2x or Real-CUGAN) on [unit] (the GPU or the CPU), or null where that unit cannot run it. */
-        fun open(context: Context, upscaler: PictureAdjustment.Upscaler, unit: NeuralUpscaler.Unit): NeuralEnlarger? {
-            if (!upscaler.isEnlarger || unit == NeuralUpscaler.Unit.NPU || !AndroidNeural.loaded) return null
+        /**
+         * [choice] on [unit] (the GPU or the CPU), its model from the app's assets where carried, else from its fetched
+         * files; null where that unit cannot run it or its files are not there.
+         */
+        fun open(context: Context, choice: NeuralEnlarging.Choice, unit: NeuralUpscaler.Unit): NeuralEnlarger? {
+            if (!choice.upscaler.isEnlarger || unit == NeuralUpscaler.Unit.NPU || !AndroidNeural.loaded) return null
             val gpu = unit == NeuralUpscaler.Unit.GPU
             if (gpu && !NativeInterpolation.hasGpu()) return null
-            val download = NeuralModels.download(upscaler)
-            val handle = if (download != null) {
-                if (!com.hawkynt.mediadroid.data.ModelStore.ready(context, download)) return null
-                val dir = com.hawkynt.mediadroid.data.ModelStore.folder(context, download).absolutePath
-                NativeInterpolation.openEnlarger(null, dir, REALSR_KIND, gpu)
+            val files = choice.model.files
+            val handle = if (files in NeuralModels.CARRIED) {
+                NativeInterpolation.openEnlarger(context.assets, "models/${files.folder}", choice, gpu)
             } else {
-                val cugan = upscaler == PictureAdjustment.Upscaler.REALCUGAN
-                val dir = if (cugan) "models/realcugan-se" else "models/waifu2x-cunet"
-                NativeInterpolation.openEnlarger(context.assets, dir, if (cugan) 1 else 0, gpu)
+                if (!com.hawkynt.mediadroid.data.ModelStore.ready(context, files)) return null
+                val dir = com.hawkynt.mediadroid.data.ModelStore.folder(context, files).absolutePath
+                NativeInterpolation.openEnlarger(null, dir, choice, gpu)
             }
-            return if (handle == 0L) null else NeuralEnlarger(handle, upscaler, unit)
+            val budget = if (gpu) NativeInterpolation.gpuHeapBudget() else 0
+            return if (handle == 0L) null else NeuralEnlarger(handle, choice, unit, budget)
         }
 
         /**
-         * The self-test of [upscaler] on [unit] (NeuralChecks.enlarger): whether the unit runs it right and what one
+         * The self-test of [choice] on [unit] (NeuralChecks.enlarger): whether the unit runs it right and what one
          * 576p picture takes there. Null where the unit cannot run it, or runs it wrong. Each run is told to
          * [progress].
          */
         fun selfTest(
             context: Context,
-            upscaler: PictureAdjustment.Upscaler,
+            choice: NeuralEnlarging.Choice,
             unit: NeuralUpscaler.Unit,
             progress: NeuralChecks.Progress,
-        ): NeuralSelfTest.Timing? = open(context, upscaler, unit)?.use { net ->
+        ): NeuralSelfTest.Timing? = open(context, choice, unit)?.use { net ->
             NeuralChecks.enlarger(
                 { picture, w, h -> net.run(picture, w, h) },
-                NeuralEnlarging.scale(upscaler),
+                choice.scale,
                 unit.name,
                 progress,
-            ) { android.util.Log.i("NeuralEnlarger", "$upscaler $it") }
+            ) { android.util.Log.i("NeuralEnlarger", "${choice.key} $it") }
         }
     }
 }

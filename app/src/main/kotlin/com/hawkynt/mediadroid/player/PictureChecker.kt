@@ -37,7 +37,7 @@ object PictureChecker {
         picture: PictureAdjustment,
         neuralUnit: NeuralUpscaler.Unit?,
         neuralMotion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed>,
-        neuralEnlargers: Map<PictureAdjustment.Upscaler, NeuralInterpolation.Passed> = emptyMap(),
+        neuralEnlargers: Map<NeuralEnlarging.Choice, NeuralInterpolation.Passed> = emptyMap(),
     ): PictureCheck.DryRun? {
         val key = PictureCheck.key(picture)
         known[key]?.let { return it }

@@ -69,10 +69,22 @@ object NativeInterpolation {
     external fun close(handle: Long)
 
     /**
-     * An upscaler — [kind] 0 waifu2x, 1 Real-CUGAN, 2 RealSR — from the folder [dir], in [assets] where given, else
-     * of files; on the GPU or the CPU; 0 where not loaded.
+     * An upscaler — [kind] 0 waifu2x, 1 Real-CUGAN, 2 RealSR, 3 Real-ESRGAN — its [model] (the structure and weights'
+     * name) from the folder [dir], in [assets] where given, else of files; [scale] times the size, once or eight ways
+     * ([tta]), on the GPU or the CPU; 0 where not loaded.
      */
-    external fun openEnlarger(assets: Any?, dir: String, kind: Int, gpu: Boolean): Long
+    external fun openEnlarger(
+        assets: Any?,
+        dir: String,
+        kind: Int,
+        model: String,
+        scale: Int,
+        tta: Boolean,
+        gpu: Boolean,
+    ): Long
+
+    /** What ncnn lets the GPU's networks take, in MB (its heap budget); 0 where there is no GPU. */
+    external fun gpuHeapBudget(): Int
 
     /** CAIN from the folder [dir] of downloaded files, on the GPU or the CPU; 0 where it does not load. */
     external fun openCain(dir: String, gpu: Boolean): Long
@@ -80,11 +92,18 @@ object NativeInterpolation {
     /** IFRNet from the folder [dir] (in [assets] where given), on the GPU or the CPU; 0 where it does not load. */
     external fun openIfrnet(assets: Any?, dir: String, gpu: Boolean): Long
 
-    /** The RGBA [picture] ([width] × [height]) at the upscaler's scale into [out] as RGB; 0 when it ran. */
-    external fun enlarge(handle: Long, picture: ByteBuffer, width: Int, height: Int, out: ByteBuffer): Int
+    /**
+     * The RGBA [picture] ([width] × [height]) at the upscaler's scale into [out] as RGB, whole ([tile] 0) or in tiles
+     * of that size (see NeuralEnlarging.tile); 0 when it ran.
+     */
+    external fun enlarge(handle: Long, picture: ByteBuffer, width: Int, height: Int, out: ByteBuffer, tile: Int): Int
 
     /** Frees the upscaler. */
     external fun closeEnlarger(handle: Long)
+
+    /** [choice] opened: its model from [dir] (in [assets] where given), on the GPU or the CPU; 0 where not loaded. */
+    fun openEnlarger(assets: Any?, dir: String, choice: NeuralEnlarging.Choice, gpu: Boolean): Long =
+        openEnlarger(assets, dir, enlargerKind(choice.upscaler), choice.model.file, choice.scale, choice.tta, gpu)
 
     /** The upscaler kinds [openEnlarger] takes, by the choice they make. */
     fun enlargerKind(upscaler: PictureAdjustment.Upscaler): Int = when (upscaler) {

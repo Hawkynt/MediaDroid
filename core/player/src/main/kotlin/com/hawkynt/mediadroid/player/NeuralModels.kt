@@ -30,10 +30,13 @@ object NeuralModels {
         }
     }
 
-    /** A network to download: its [folder] in the repository and its [files]. */
-    data class Download(val folder: String, val files: List<File>) {
+    /**
+     * A network to download: the [folder] it is kept in and its [files], fetched from [source] — its folder in the
+     * app's repository, or the upstream port's own folder at a fixed commit.
+     */
+    data class Download(val folder: String, val files: List<File>, val source: String = "$REPOSITORY/$folder") {
         /** Where [file] is fetched from. */
-        fun url(file: File): String = "$REPOSITORY/$folder/${file.name}"
+        fun url(file: File): String = "$source/${file.name}"
 
         /** All of it, in bytes. */
         val bytes: Long get() = files.sumOf { it.bytes }
@@ -174,6 +177,90 @@ object NeuralModels {
         ),
     )
 
+    /** waifu2x-ncnn-vulkan's CUnet models, as its repository holds them at a fixed commit (MIT). */
+    const val WAIFU2X_SOURCE = "https://raw.githubusercontent.com/nihui/waifu2x-ncnn-vulkan/" +
+        "64914665c45893135c9e50c1c296170a121b9f77/models/models-cunet"
+
+    /** realcugan-ncnn-vulkan's models, as its repository holds them at a fixed commit (MIT). */
+    const val REALCUGAN_SOURCE = "https://raw.githubusercontent.com/nihui/realcugan-ncnn-vulkan/" +
+        "395302c5c70f1bff604c974e92e0a87e45c9f9ee/models"
+
+    // The CUnet weights by noise level (-1: none), twice the size; every level shares one structure file.
+    private const val WAIFU2X_PARAM = "ccc3b2f1c9fad829ecdda40cac8dc853fcddf14917170efba888b256fbf9074a"
+    private val WAIFU2X_WEIGHTS = mapOf(
+        -1 to "d82ed30207fd07e1c16726a9ca838ce44e6e25a105b0278c7ca681516ee0e18e",
+        0 to "5329a9375c9cfb64a60a2903fd8ae6e2851d9b069556bf025dbab9d0216fb27c",
+        2 to "5c836e6ae022636cdd5590fbb66dbca2a5fc20bbf8e628884c3612ef72d51858",
+        3 to "f42c18610fecb14a40f75cca9b9276a6889689d5937a4f75f0c2b21bde7e49ed",
+    )
+
+    /** The name waifu2x-ncnn-vulkan gives the CUnet model of noise level [noise] (-1: none), twice the size. */
+    fun waifu2xFile(noise: Int): String = if (noise < 0) "scale2.0x_model" else "noise${noise}_scale2.0x_model"
+
+    /**
+     * waifu2x's CUnet at noise level [noise] (-1 none, 0..3), twice the size: level 1 carried ([WAIFU2X]), the others
+     * fetched from the port's own repository.
+     */
+    fun waifu2x(noise: Int): Download {
+        if (noise == 1) return WAIFU2X
+        val weights = WAIFU2X_WEIGHTS.getValue(noise)
+        val name = waifu2xFile(noise)
+        return Download(
+            "waifu2x-cunet-${if (noise < 0) "nonoise" else "noise$noise"}",
+            listOf(File("$name.param", 7_249, WAIFU2X_PARAM), File("$name.bin", 2_776_400, weights)),
+            WAIFU2X_SOURCE,
+        )
+    }
+
+    // Real-CUGAN's structure files by set and scale, and its weights by set and name, as realcugan-ncnn-vulkan holds
+    // them: (bytes, SHA-256).
+    private val REALCUGAN_PARAMS = mapOf(
+        "se2" to (4_761L to "4b3b5c5710ad1d00503c8243417aa75f13fe497723e8b4952e8b1abfc08f9b84"),
+        "se3" to (4_761L to "4e8b144dd34e558f530231026d229bedb0eb8877233bf5d9b457bf1bfa4558c1"),
+        "se4" to (5_018L to "ffbcdc7ef979e13f4d0b61542d32e88ec6316e4962535f851a9ddfccc4cad4c1"),
+        "pro2" to (4_765L to "0ce323af8f840a68f7d43df195cb413184583f8ee3c43a3c1fdcb1c7b7f56821"),
+        "pro3" to (4_765L to "d3a47068767671865080961892d6c0803ee00e3fd777de74781262144d1970fd"),
+    )
+    private val REALCUGAN_WEIGHTS = mapOf(
+        "se/up2x-no-denoise" to "7f135a712830b16678cb8247b9517308c5f3858fca9b10e1c3ad5ef6e261de0c",
+        "se/up2x-denoise1x" to "09373c4fddfd2a57fb4af5e516eba1b4c9caa132fd52ffd01bcaefee543bf7f6",
+        "se/up2x-denoise2x" to "47427a52badebfbd7bb6db97196a2844c553f7f2bb93c9527b26347bea0430e7",
+        "se/up2x-denoise3x" to "610ebae63f388fe6f39615cc5f4eaeb038d5aa6ba8b299ba3b989f7f7a1a280a",
+        "se/up3x-conservative" to "8321c450efedcd94192196b03ddec19c2a023a5637df7208d49e9e0461560dff",
+        "se/up3x-no-denoise" to "e22e8e647b20eb0067cc46b9cf83bcb0893b2e77e83beaee0bedecf4c735f716",
+        "se/up3x-denoise3x" to "fdb269034f7d6bf59be8fe1c03c43a75671af464e045a13870b24b649d64f1f6",
+        "se/up4x-conservative" to "1ffde324bf3444adade3e70ff4ff4eac7a4bfbf4c01b5aab4563a89e5cec16da",
+        "se/up4x-no-denoise" to "aa3d9bda3f46bb48f709d874ccaf67877e94a2fd6cedca7dac5ccb3bf714e066",
+        "se/up4x-denoise3x" to "1fe05d6066901d354bbbc0cb53fba6588ef7637e1ec9c3bce7546900484d0b35",
+        "pro/up2x-conservative" to "087b4f1836a084f432752503c9e12246a4f8446cfa2c5c919fcf490961b5b4f1",
+        "pro/up2x-no-denoise" to "d99abb3266d08b04aadd6008b8855eee06b78055f202c7b93fbf34ab8365cbc9",
+        "pro/up2x-denoise3x" to "815fe3bf3f14f010f4f7a26ab6d2c47330d80c789720639088ccfaf013cec651",
+        "pro/up3x-conservative" to "bda924012738fd82b13e5ef23feb051976be2803a0aba5651b7c4f99b5713436",
+        "pro/up3x-no-denoise" to "2f767e54d25fe4a9a8927783ecff36151504299c833cde85445b1986bbb44800",
+        "pro/up3x-denoise3x" to "01a32b0fbba96a60e7e83fbe351a1231f40a43fa9247f9695d7e0633d2f3a938",
+    )
+
+    /**
+     * Real-CUGAN's model [name] (as `up2x-conservative`) of the set [set], `se` or `pro`: the SE model's 2x
+     * conservative one carried ([REALCUGAN]), the others fetched from the port's own repository.
+     */
+    fun realCugan(set: String, name: String): Download {
+        if (set == "se" && name == "up2x-conservative") return REALCUGAN
+        val weights = REALCUGAN_WEIGHTS.getValue("$set/$name")
+        val scale = name.substring(2, 3)
+        val (paramBytes, param) = REALCUGAN_PARAMS.getValue(set + scale)
+        val weightBytes = when (scale) {
+            "2" -> 2_573_648L
+            "3" -> 2_577_104L
+            else -> 2_818_348L
+        }
+        return Download(
+            "realcugan-$set-$name",
+            listOf(File("$name.param", paramBytes, param), File("$name.bin", weightBytes, weights)),
+            "$REALCUGAN_SOURCE/models-$set",
+        )
+    }
+
     /**
      * The networks the app carries itself, by folder: on Android its assets, on the desktop resources unpacked into
      * the app-data folder on first use, every file checked against its digest there (see ModelFolder.unpack).
@@ -194,6 +281,9 @@ object NeuralModels {
         PictureAdjustment.Upscaler.NEURAL -> REALESRGAN
         else -> download(upscaler)
     }
+
+    /** What [choice] needs downloaded: its model's files, null where the app carries them. */
+    fun download(choice: NeuralEnlarging.Choice): Download? = choice.model.files.takeIf { it !in CARRIED }
 
     /** What [upscaler] needs downloaded; null for one the app carries itself. */
     fun download(upscaler: PictureAdjustment.Upscaler): Download? =

@@ -25,8 +25,8 @@ object PictureTrial {
         /** Keeps Real-ESRGAN as passed on [best]'s unit. */
         fun keepNeuralUpscaling(best: NeuralSelfTest.Timing)
 
-        /** What [upscaler]'s self-test found once it passed; null before. */
-        fun enlargerPassed(upscaler: PictureAdjustment.Upscaler): NeuralInterpolation.Passed?
+        /** What [choice]'s self-test found once it passed — its very model, run once or eight ways; null before. */
+        fun enlargerPassed(choice: NeuralEnlarging.Choice): NeuralInterpolation.Passed?
 
         /** What [network]'s self-test found once it passed; null before. */
         fun motionPassed(network: PictureAdjustment.Interpolation): NeuralInterpolation.Passed?
@@ -37,14 +37,14 @@ object PictureTrial {
         /** Fetches [download], telling [progress] how far (0..1); false where it could not. */
         fun fetch(download: NeuralModels.Download, progress: (Float) -> Unit): Boolean
 
-        /** [upscaler]'s self-test (see NeuralSelfTest). */
-        fun selfTest(upscaler: PictureAdjustment.Upscaler): NeuralSelfTest.Outcome
+        /** [choice]'s self-test (see NeuralSelfTest). */
+        fun selfTest(choice: NeuralEnlarging.Choice): NeuralSelfTest.Outcome
 
         /** [network]'s self-test (see NeuralSelfTest). */
         fun selfTest(network: PictureAdjustment.Interpolation): NeuralSelfTest.Outcome
 
-        /** Keeps [upscaler] as passed. */
-        fun keepEnlarger(upscaler: PictureAdjustment.Upscaler, passed: NeuralInterpolation.Passed)
+        /** Keeps [choice] as passed. */
+        fun keepEnlarger(choice: NeuralEnlarging.Choice, passed: NeuralInterpolation.Passed)
 
         /** Keeps [network] as passed. */
         fun keepMotion(network: PictureAdjustment.Interpolation, passed: NeuralInterpolation.Passed)
@@ -81,16 +81,17 @@ object PictureTrial {
     }
 
     private fun enlarging(picture: PictureAdjustment, device: Device, say: (String) -> Unit): PictureVerdict? {
-        val upscaler = picture.upscaler
-        if (!upscaler.isEnlarger || device.enlargerPassed(upscaler) != null) return null
-        fetched(NeuralModels.download(upscaler), upscaler.label, device, say)?.let {
+        if (!picture.upscaler.isEnlarger) return null
+        val choice = NeuralEnlarging.choice(picture) ?: return null
+        if (device.enlargerPassed(choice) != null) return null
+        fetched(NeuralModels.download(choice), choice.label, device, say)?.let {
             return PictureVerdict(false, "$it The upscaler stays as it was.")
         }
-        say("Testing ${upscaler.label} on this device…")
-        val timings = when (val outcome = device.selfTest(upscaler)) {
+        say("Testing ${choice.label} on this device…")
+        val timings = when (val outcome = device.selfTest(choice)) {
             NeuralSelfTest.Outcome.Ended -> return PictureVerdict(
                 false,
-                "${upscaler.label} needed more than this device can give — memory or graphics — and the test was " +
+                "${choice.label} needed more than this device can give — memory or graphics — and the test was " +
                     "ended. The upscaler stays as it was.",
             )
             is NeuralSelfTest.Outcome.Ran -> outcome.timings
@@ -100,18 +101,18 @@ object PictureTrial {
         if (best == null || ms == null) {
             return PictureVerdict(
                 false,
-                "This device cannot run ${upscaler.label} right. The upscaler stays as it was.",
+                "This device cannot run ${choice.label} right. The upscaler stays as it was.",
             )
         }
         if (!NeuralEnlarging.fastEnough(ms)) {
             return PictureVerdict(
                 false,
-                "This device is too slow for ${upscaler.label}: a 576p picture takes ${duration(ms)} on its fastest " +
+                "This device is too slow for ${choice.label}: a 576p picture takes ${duration(ms)} on its fastest " +
                     "unit (${best.unit}), and a frame allows ${NeuralEnlarging.BUDGET_MS.toInt()} ms. The upscaler " +
                     "stays as it was.",
             )
         }
-        device.keepEnlarger(upscaler, NeuralInterpolation.Passed(best.unit, best.msByHeight))
+        device.keepEnlarger(choice, NeuralInterpolation.Passed(best.unit, best.msByHeight))
         return null
     }
 

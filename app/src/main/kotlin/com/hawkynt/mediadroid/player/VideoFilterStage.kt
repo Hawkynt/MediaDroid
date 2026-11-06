@@ -128,11 +128,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var rifeSize = NeuralInterpolation.Size(0, 0)
 
     /**
-     * The upscalers on ncnn (waifu2x, Real-CUGAN) the household's self-test passed, with the unit each runs on; one
-     * not in it plays as Standard scaling.
+     * The upscalers' models on ncnn (waifu2x, Real-CUGAN, RealSR) the household's self-test passed, with the unit each
+     * runs on; one not in it plays as Standard scaling.
      */
     @Volatile
-    var neuralEnlargers: Map<PictureAdjustment.Upscaler, NeuralInterpolation.Passed> = emptyMap()
+    var neuralEnlargers: Map<NeuralEnlarging.Choice, NeuralInterpolation.Passed> = emptyMap()
 
     // The picture's upscaler on ncnn (see NeuralEnlarger): opened on this thread, the picture read back for it, and
     // the RGB texture at twice the size its output goes into.
@@ -2169,13 +2169,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
                 }
-            } else if (picture.upscaler.isEnlarger && enlargerNet(picture.upscaler) != null) {
-                // waifu2x, Real-CUGAN or RealSR: two or four times the picture's size (see enlargerPass), the
+            } else if (picture.upscaler.isEnlarger && enlargerNet(picture) != null) {
+                // waifu2x, Real-CUGAN or RealSR: two, three or four times the picture's size (see enlargerPass), the
                 // screen's own scaling for whatever is left.
                 val enlarged = enlargerPass(source, width, height)
                 toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged, identity) { p ->
-                    val scale = NeuralEnlarging.scale(picture.upscaler)
+                    val scale = enlarger!!.choice.scale
                     GLES20.glUniform2f(
                         GLES20.glGetUniformLocation(p, "uTexel"), 1f / (width * scale), 1f / (height * scale),
                     )
@@ -2401,19 +2401,21 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
-     * [upscaler] (waifu2x, Real-CUGAN) on the unit its self-test chose, opened here on first use or when either
-     * changes; null where the device has not passed it.
+     * [picture]'s upscaler model (waifu2x, Real-CUGAN, RealSR) on the unit its self-test chose, opened here on first
+     * use or when either changes; null where the device has not passed it.
      */
-    private fun enlargerNet(upscaler: PictureAdjustment.Upscaler): NeuralEnlarger? {
-        val unit = neuralEnlargers[upscaler]?.let { runCatching { NeuralUpscaler.Unit.valueOf(it.unit) }.getOrNull() }
-        if (unit == null) {
+    private fun enlargerNet(picture: PictureAdjustment): NeuralEnlarger? {
+        val choice = NeuralEnlarging.choice(picture)
+        val unit = choice?.let { neuralEnlargers[it] }
+            ?.let { runCatching { NeuralUpscaler.Unit.valueOf(it.unit) }.getOrNull() }
+        if (choice == null || unit == null) {
             enlarger?.close()
             enlarger = null
             return null
         }
-        if (enlarger?.unit != unit || enlarger?.upscaler != upscaler) {
+        if (enlarger?.unit != unit || enlarger?.choice != choice) {
             enlarger?.close()
-            enlarger = appContext?.let { NeuralEnlarger.open(it, upscaler, unit) }
+            enlarger = appContext?.let { NeuralEnlarger.open(it, choice, unit) }
         }
         return enlarger
     }
@@ -2424,7 +2426,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      */
     private fun enlargerPass(source: Frame, width: Int, height: Int): Int {
         val net = enlarger!!
-        val scale = NeuralEnlarging.scale(net.upscaler)
+        val scale = net.choice.scale
         source.bind()
         val bytes = width * height * 4
         val read = enlargerRead?.takeIf { it.capacity() == bytes }

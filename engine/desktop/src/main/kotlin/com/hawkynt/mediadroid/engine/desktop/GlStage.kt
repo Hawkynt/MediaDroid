@@ -5,6 +5,7 @@ import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.Ewa
 import com.hawkynt.mediadroid.player.MotionInterpolation
+import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.Nis
 import com.hawkynt.mediadroid.player.PeakDetect
@@ -229,7 +230,7 @@ class GlStage : AutoCloseable {
         // strength chosen: below full strength the plain picture laid over it by that share.
         if (a.upscales && (outW > source.width || outH > source.height)) {
             val plain = source
-            source = upscale(a.upscaler, source, outW, outH)
+            source = upscale(a, source, outW, outH)
             if (a.plainShare > 0f) {
                 val upscaled = source
                 source = pass("blend.frag", target("strength", outW, outH, half = deep), plain.texture,
@@ -440,7 +441,8 @@ class GlStage : AutoCloseable {
         }
     }
 
-    private fun upscale(upscaler: PictureAdjustment.Upscaler, from: Target, outW: Int, outH: Int): Target {
+    private fun upscale(picture: PictureAdjustment, from: Target, outW: Int, outH: Int): Target {
+        val upscaler = picture.upscaler
         val w = from.width
         val h = from.height
         val inSize: (Int) -> Unit = { p -> glUniform2f(glGetUniformLocation(p, "uInSize"), w.toFloat(), h.toFloat()) }
@@ -487,7 +489,8 @@ class GlStage : AutoCloseable {
             PictureAdjustment.Upscaler.ANIME4K -> anime4k(from)
             PictureAdjustment.Upscaler.ACNET -> acnet(from)
             PictureAdjustment.Upscaler.XBRZ -> xbrz(from, outW, outH)
-            else -> if (DesktopNeural.onNcnn(upscaler)) enlarged(upscaler, from) ?: from else from
+            else -> NeuralEnlarging.choice(picture)?.takeIf { DesktopNeural.onNcnn(upscaler) }
+                ?.let { enlarged(it, from) } ?: from
         }
     }
 
@@ -498,7 +501,7 @@ class GlStage : AutoCloseable {
     class Neural(
         val networks: DesktopNeural,
         val motion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed> = emptyMap(),
-        val enlargers: Map<PictureAdjustment.Upscaler, NeuralInterpolation.Passed> = emptyMap(),
+        val enlargers: Map<NeuralEnlarging.Choice, NeuralInterpolation.Passed> = emptyMap(),
     )
 
     /** The neural networks the stage may run; set by the player, read on the stage's thread. */
@@ -526,14 +529,14 @@ class GlStage : AutoCloseable {
         return interpolatorOpen
     }
 
-    private fun enlarger(upscaler: PictureAdjustment.Upscaler): DesktopNeural.Enlarger? {
+    private fun enlarger(choice: NeuralEnlarging.Choice): DesktopNeural.Enlarger? {
         val n = neural ?: return null
-        val gpu = n.enlargers[upscaler]?.unit?.let { it == "GPU" } ?: return null
-        enlargerOpen?.takeIf { it.upscaler == upscaler && it.gpu == gpu }?.let { return it }
+        val gpu = n.enlargers[choice]?.unit?.let { it == "GPU" } ?: return null
+        enlargerOpen?.takeIf { it.choice == choice && it.gpu == gpu }?.let { return it }
         enlargerOpen?.close()
         enlargerOpen = null
-        if (!tried.add(Triple(n, upscaler, gpu))) return null
-        enlargerOpen = n.networks.enlarger(upscaler, gpu)
+        if (!tried.add(Triple(n, choice, gpu))) return null
+        enlargerOpen = n.networks.enlarger(choice, gpu)
         return enlargerOpen
     }
 
@@ -564,9 +567,9 @@ class GlStage : AutoCloseable {
         return into
     }
 
-    /** [from] enlarged by [upscaler]'s network, two or four times its size; null where it does not run. */
-    private fun enlarged(upscaler: PictureAdjustment.Upscaler, from: Target): Target? {
-        val net = enlarger(upscaler) ?: return null
+    /** [from] enlarged by [choice]'s network, two, three or four times its size; null where it does not run. */
+    private fun enlarged(choice: NeuralEnlarging.Choice, from: Target): Target? {
+        val net = enlarger(choice) ?: return null
         val picture = read(from)
         val rgb = net.run(picture, from.width, from.height)
         MemoryUtil.memFree(picture)

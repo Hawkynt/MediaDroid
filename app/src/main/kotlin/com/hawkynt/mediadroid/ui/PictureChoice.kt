@@ -3,6 +3,7 @@ package com.hawkynt.mediadroid.ui
 import android.content.Context
 import com.hawkynt.mediadroid.data.ModelStore
 import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.NeuralModels
 import com.hawkynt.mediadroid.player.NeuralSelfTest
@@ -57,7 +58,7 @@ private class AndroidTrial(private val context: Context, private val store: Stat
         settings.neuralMs = best.msByHeight.values.first().toFloat()
     }
 
-    override fun enlargerPassed(upscaler: PictureAdjustment.Upscaler) = settings.neuralEnlargerPassed(upscaler)
+    override fun enlargerPassed(choice: NeuralEnlarging.Choice) = settings.neuralEnlargerPassed(choice)
 
     override fun motionPassed(network: PictureAdjustment.Interpolation) = settings.neuralMotionPassed(network)
 
@@ -66,12 +67,12 @@ private class AndroidTrial(private val context: Context, private val store: Stat
     override fun fetch(download: NeuralModels.Download, progress: (Float) -> Unit) =
         ModelStore.fetch(context, download, progress)
 
-    override fun selfTest(upscaler: PictureAdjustment.Upscaler) = NeuralTestService.selfTest(context, upscaler)
+    override fun selfTest(choice: NeuralEnlarging.Choice) = NeuralTestService.selfTest(context, choice)
 
     override fun selfTest(network: PictureAdjustment.Interpolation) = NeuralTestService.selfTest(context, network)
 
-    override fun keepEnlarger(upscaler: PictureAdjustment.Upscaler, passed: NeuralInterpolation.Passed) = save {
-        settings.neuralEnlargers = settings.neuralEnlargers + (upscaler.name to passed.encode())
+    override fun keepEnlarger(choice: NeuralEnlarging.Choice, passed: NeuralInterpolation.Passed) = save {
+        settings.neuralEnlargers = settings.neuralEnlargers + (choice.key to passed.encode())
     }
 
     override fun keepMotion(network: PictureAdjustment.Interpolation, passed: NeuralInterpolation.Passed) = save {

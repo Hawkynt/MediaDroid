@@ -37,7 +37,8 @@ object PictureCheck {
     fun key(picture: PictureAdjustment): String = listOf(
         picture.deinterlace.name,
         if (picture.fieldRate) "fields" else "frames",
-        picture.upscaler.name,
+        // A network's model and whether it runs eight ways are part of what it costs.
+        NeuralEnlarging.choice(picture)?.key ?: picture.upscaler.name,
         picture.interpolation.name,
         picture.chroma.name,
     ).joinToString("/")

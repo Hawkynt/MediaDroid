@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.desktop
 
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.player.AspectOverride
+import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.ScreenSetup
@@ -62,25 +63,28 @@ class DesktopStore(private val folder: File) {
     fun motionPassed(network: PictureAdjustment.Interpolation): NeuralInterpolation.Passed? =
         settings.neuralMotion[network.name]?.let(NeuralInterpolation.Passed::decode)
 
-    /** What [upscaler]'s self-test found on this computer once it passed; null before. */
-    fun enlargerPassed(upscaler: PictureAdjustment.Upscaler): NeuralInterpolation.Passed? =
-        settings.neuralEnlargers[upscaler.name]?.let(NeuralInterpolation.Passed::decode)
+    /** What [choice]'s self-test found on this computer once it passed; null before. */
+    fun enlargerPassed(choice: NeuralEnlarging.Choice): NeuralInterpolation.Passed? =
+        settings.neuralEnlargers[choice.key]?.let(NeuralInterpolation.Passed::decode)
 
     /** Keeps [network]'s passed self-test. */
     fun keepMotion(network: PictureAdjustment.Interpolation, passed: NeuralInterpolation.Passed) =
         change { copy(neuralMotion = neuralMotion + (network.name to passed.encode())) }
 
-    /** Keeps [upscaler]'s passed self-test. */
-    fun keepEnlarger(upscaler: PictureAdjustment.Upscaler, passed: NeuralInterpolation.Passed) =
-        change { copy(neuralEnlargers = neuralEnlargers + (upscaler.name to passed.encode())) }
+    /** Keeps [choice]'s passed self-test. */
+    fun keepEnlarger(choice: NeuralEnlarging.Choice, passed: NeuralInterpolation.Passed) =
+        change { copy(neuralEnlargers = neuralEnlargers + (choice.key to passed.encode())) }
 
     /** Every neural smooth-motion network whose self-test passed, with what it found. */
     val neuralMotion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed>
         get() = PictureAdjustment.Interpolation.entries.mapNotNull { n -> motionPassed(n)?.let { n to it } }.toMap()
 
-    /** Every neural upscaler whose self-test passed, with what it found. */
-    val neuralEnlargers: Map<PictureAdjustment.Upscaler, NeuralInterpolation.Passed>
-        get() = PictureAdjustment.Upscaler.entries.mapNotNull { u -> enlargerPassed(u)?.let { u to it } }.toMap()
+    /** Every neural upscaler's model whose self-test passed, with what it found. */
+    val neuralEnlargers: Map<NeuralEnlarging.Choice, NeuralInterpolation.Passed>
+        get() = settings.neuralEnlargers.entries.mapNotNull { (key, value) ->
+            val passed = NeuralInterpolation.Passed.decode(value)
+            NeuralEnlarging.choice(key)?.let { choice -> passed?.let { choice to it } }
+        }.toMap()
 
     /** The shape [video]'s frame is shown at where its file's flag is wrong; [AspectOverride.AUTO] until set. */
     fun aspectOf(video: String): AspectOverride =
@@ -270,6 +274,10 @@ internal data class PictureSettings(
     val upscalerStrength: Float = PictureAdjustment.Neutral.upscalerStrength,
     val interpolation: String = PictureAdjustment.Neutral.interpolation.name,
     val chroma: String = PictureAdjustment.Neutral.chroma.name,
+    /** The upscaler's model by its id (NeuralEnlarging.models), empty for its default. */
+    val upscalerModel: String = PictureAdjustment.Neutral.upscalerModel,
+    /** The upscaler's network run eight ways. */
+    val upscalerTta: Boolean = PictureAdjustment.Neutral.upscalerTta,
 ) {
     fun toAdjustment(): PictureAdjustment {
         val p = PictureAdjustment.Neutral
@@ -291,6 +299,8 @@ internal data class PictureSettings(
             interpolation = runCatching { PictureAdjustment.Interpolation.valueOf(interpolation) }
                 .getOrDefault(p.interpolation),
             chroma = runCatching { PictureAdjustment.Chroma.valueOf(chroma) }.getOrDefault(p.chroma),
+            upscalerModel = upscalerModel,
+            upscalerTta = upscalerTta,
         )
     }
 
@@ -311,6 +321,8 @@ internal data class PictureSettings(
             upscalerStrength = p.upscalerStrength,
             interpolation = p.interpolation.name,
             chroma = p.chroma.name,
+            upscalerModel = p.upscalerModel,
+            upscalerTta = p.upscalerTta,
         )
     }
 }
