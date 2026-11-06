@@ -367,6 +367,7 @@ object PlaybackChain {
         "application/pgs" to "PGS (pictures)",
         "application/vobsub" to "VobSub (pictures)",
         "application/dvbsubs" to "DVB (pictures)",
+        Teletext.MIME_TYPE to "DVB teletext",
         "application/cea-608" to "CEA-608 captions",
         "application/cea-708" to "CEA-708 captions",
     )

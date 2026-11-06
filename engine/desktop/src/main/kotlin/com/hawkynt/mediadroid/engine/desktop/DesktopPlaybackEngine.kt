@@ -62,7 +62,8 @@ class DesktopPlaybackEngine(
     @Volatile private var shown: MediaReader.Picture? = null
     @Volatile private var shownBefore: MediaReader.Picture? = null
     @Volatile private var filmChanged = false
-    @Volatile private var pendingText: Int? = null
+    // The subtitle track to read from the file next: a track id, "" for none of the file's own.
+    @Volatile private var pendingText: String? = null
     @Volatile private var sidecars: List<Sidecar> = emptyList()
     @Volatile private var selectedText: String? = null
     @Volatile private var fonts: List<Pair<String, ByteArray>> = emptyList()
@@ -174,12 +175,12 @@ class DesktopPlaybackEngine(
                     shownBefore = null
                     ended = false
                 }
-                pendingText?.let { index ->
+                pendingText?.let { id ->
                     pendingText = null
-                    source.selectText(index)
+                    source.selectText(id.takeIf { it.isNotEmpty() })
                     // A stream of the file itself: read again from here so its lines arrive; a file beside it
                     // brought all of its lines along when it was picked.
-                    if (index >= 0) {
+                    if (id.isNotEmpty()) {
                         cues.clear()
                         pendingSeekMs = positionMs
                     }
@@ -438,7 +439,7 @@ class DesktopPlaybackEngine(
                 ass = null
                 val sidecar = sidecars.firstOrNull { it.track.id == id }
                 if (sidecar != null) {
-                    pendingText = -1
+                    pendingText = ""
                     cues.clear()
                     cues.addAll(sidecar.cues)
                     ass = sidecar.assHeader?.let { header ->
@@ -448,8 +449,8 @@ class DesktopPlaybackEngine(
                     }
                 } else {
                     cues.clear()
-                    pendingText = id?.toInt() ?: -1
-                    ass = id?.toInt()?.let { reader?.assHeader(it) }?.let(::assTrack)
+                    pendingText = id.orEmpty()
+                    ass = id?.toIntOrNull()?.let { reader?.assHeader(it) }?.let(::assTrack)
                     ass?.let { track -> prefetch(track, id!!.toInt()) }
                 }
                 listeners.forEach { it.onTracksChanged(tracks) }
@@ -536,7 +537,10 @@ class DesktopPlaybackEngine(
     fun subtitle(): String? {
         if (!subtitlesOn || selectedText == null || ass != null) return null
         val now = positionMs + soundDelayMs()
-        return cues.firstOrNull { now >= it.startMs && now < it.endMs }?.text
+        // The latest begun: a teletext page shows until the next replaces it (MediaReader.UNTIL_REPLACED), and a
+        // cleared page is an empty one.
+        return cues.filter { now >= it.startMs && now < it.endMs }.maxByOrNull { it.startMs }?.text
+            ?.takeIf { it.isNotEmpty() }
     }
 
     override var subtitlesOn: Boolean = true

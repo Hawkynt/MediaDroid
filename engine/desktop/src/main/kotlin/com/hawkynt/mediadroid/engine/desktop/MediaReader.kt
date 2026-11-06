@@ -6,6 +6,7 @@ import com.hawkynt.mediadroid.player.AssEvents
 import com.hawkynt.mediadroid.player.AssFonts
 import com.hawkynt.mediadroid.player.ReplayGain
 import com.hawkynt.mediadroid.player.SubtitleText
+import com.hawkynt.mediadroid.player.Teletext
 import com.hawkynt.mediadroid.player.ToneMap
 import com.hawkynt.mediadroid.player.YuvMatrix
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext
@@ -67,7 +68,10 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     /** Decoded sound: [pcm] is interleaved 16-bit little-endian stereo at [SAMPLE_RATE]. */
     class Sound(val ptsMs: Long, val pcm: ByteArray)
 
-    /** A subtitle line shown from [startMs] to [endMs], as text (SubtitleText). */
+    /**
+     * A subtitle line shown from [startMs] to [endMs], as text (SubtitleText). A teletext page's ([UNTIL_REPLACED])
+     * shows until the next one of its track: empty [text] where the page was cleared.
+     */
     data class Cue(val startMs: Long, val endMs: Long, val text: String)
 
     /**
@@ -92,6 +96,7 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     private var audio: AVCodecContext? = null
     private var textIndex = -1
     private var textIsAss = false
+    private var teletext: Teletext.Decoder? = null
     private var text: AVCodecContext? = null
     private val subtitle = org.bytedeco.ffmpeg.avcodec.AVSubtitle()
     private val gotSubtitle = org.bytedeco.javacpp.IntPointer(1)
@@ -162,8 +167,11 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
             }
             val language = avutil.av_dict_get(stream.metadata(), "language", null, 0)?.value()?.string
             val title = avutil.av_dict_get(stream.metadata(), "title", null, 0)?.value()?.string
-            Track("$i", kind, language?.takeIf { it != "und" }, title, i == videoIndex || i == audioIndex)
-        }
+            // A teletext stream: a track for each subtitle page its descriptor lists, none for the rest.
+            teletextPages(i)?.map { page ->
+                Track(Teletext.trackId(i, page), kind, page.language.trim(), "Teletext ${page.label}")
+            } ?: listOf(Track("$i", kind, language?.takeIf { it != "und" }, title, i == videoIndex || i == audioIndex))
+        }.flatten()
         if (videoIndex >= 0) video = openDecoder(videoIndex)
         if (audioIndex >= 0) audio = openDecoder(audioIndex)
         width = video?.width() ?: 0
@@ -181,6 +189,15 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
             val guessed = avformat.av_guess_sample_aspect_ratio(format, format.streams(videoIndex), null)
             if (guessed.num() > 0 && guessed.den() > 0) guessed.num().toFloat() / guessed.den() else 1f
         }
+    }
+
+    /** The subtitle pages of stream [index] where it is DVB teletext, else null. */
+    private fun teletextPages(index: Int): List<Teletext.Page>? {
+        val parameters = format.streams(index).codecpar()
+        if (avcodec.avcodec_get_name(parameters.codec_id()).string != Teletext.FFMPEG_CODEC) return null
+        val extradata = ByteArray(maxOf(parameters.extradata_size(), 0)).also { parameters.extradata()?.get(it) }
+        val languages = avutil.av_dict_get(format.streams(index).metadata(), "language", null, 0)?.value()?.string
+        return Teletext.ffmpegPages(extradata, languages).filter { it.isSubtitles }.distinct()
     }
 
     private fun best(type: Int): Int = avformat.av_find_best_stream(format, type, -1, -1, null as PointerPointer<*>?, 0)
@@ -228,11 +245,28 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         if (index >= 0) audio = openDecoder(index)
     }
 
+    /**
+     * Decodes the subtitle track [id] from the next read on, as [Cue]s: a stream's index, or a teletext page's
+     * ([Teletext.trackId]); null for none.
+     */
+    fun selectText(id: String?) {
+        val page = id?.let(Teletext::ofTrackId)
+        if (page == null) {
+            selectText(id?.toIntOrNull() ?: -1)
+            return
+        }
+        selectText(-1)
+        if (page.first !in 0 until format.nb_streams()) return
+        textIndex = page.first
+        teletext = Teletext.Decoder(page.second)
+    }
+
     /** Decodes the text subtitle stream [index] (a track id) from the next read on, as [Cue]s; -1 for none. */
     fun selectText(index: Int) {
-        if (index == textIndex) return
+        if (index == textIndex && teletext == null) return
         text?.let { avcodec.avcodec_free_context(it) }
         text = null
+        teletext = null
         textIndex = -1
         textIsAss = false
         if (index < 0 || format.streams(index).codecpar().codec_type() != avutil.AVMEDIA_TYPE_SUBTITLE) return
@@ -261,6 +295,7 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         avformat.av_seek_frame(format, -1, positionMs * 1000, avformat.AVSEEK_FLAG_BACKWARD)
         video?.let { avcodec.avcodec_flush_buffers(it) }
         audio?.let { avcodec.avcodec_flush_buffers(it) }
+        teletext?.reset()
         pending.clear()
         ended = false
         skipBeforeMs = positionMs
@@ -296,7 +331,7 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
             when (index) {
                 videoIndex -> video?.let { drain(it, packet) }
                 audioIndex -> audio?.let { drain(it, packet) }
-                textIndex -> text?.let { cue(it, packet) }
+                textIndex -> teletext?.let { page(it, packet) } ?: text?.let { cue(it, packet) }
             }
             avcodec.av_packet_unref(packet)
         }
@@ -340,6 +375,31 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
             if (lines.isNotEmpty()) pending.addLast(Cue(startMs, endMs, lines.joinToString("\n")))
         }
         avcodec.avsubtitle_free(subtitle)
+    }
+
+    /** A teletext packet into [decoder]: where its page shows something new, that as a [Cue] until replaced. */
+    private fun page(decoder: Teletext.Decoder, input: AVPacket) {
+        val size = input.size()
+        if (size <= 0) return
+        val data = ByteArray(size).also { input.data().get(it) }
+        val shown = decoder.feed(data) ?: return
+        val stream = format.streams(textIndex)
+        val base = stream.time_base()
+        val pts = if (input.pts() != avutil.AV_NOPTS_VALUE) input.pts() else input.dts()
+        if (pts == avutil.AV_NOPTS_VALUE) return
+        // On the pictures' clock: from the video's start, as they are.
+        val origin = if (videoIndex >= 0) {
+            val video = format.streams(videoIndex)
+            if (video.start_time() != avutil.AV_NOPTS_VALUE) {
+                avutil.av_rescale_q(video.start_time(), video.time_base(), base)
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+        val atMs = Math.round((pts - origin) * 1000.0 * base.num() / base.den())
+        pending.addLast(Cue(atMs, UNTIL_REPLACED, shown.text))
     }
 
     private fun picture(ptsMs: Long): Picture {
@@ -432,6 +492,9 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     companion object {
         /** The rate all sound is resampled to for the output. */
         const val SAMPLE_RATE = 48_000
+
+        /** A [Cue]'s end where it shows until the next of its track replaces it (a teletext page). */
+        const val UNTIL_REPLACED = Long.MAX_VALUE
 
         /** The source range [context] was set up with: 1 for full (MJPEG's yuvj formats), 0 for limited. */
         private fun sourceRange(context: SwsContext?): Int {
