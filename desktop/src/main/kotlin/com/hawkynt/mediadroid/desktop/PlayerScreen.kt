@@ -80,6 +80,7 @@ import com.hawkynt.mediadroid.library.Chapter
 import com.hawkynt.mediadroid.library.Chapters
 import com.hawkynt.mediadroid.library.Sidecars
 import com.hawkynt.mediadroid.player.AbLoop
+import com.hawkynt.mediadroid.player.AssPicture
 import com.hawkynt.mediadroid.player.AutoCrop
 import com.hawkynt.mediadroid.player.ChapterSteps
 import com.hawkynt.mediadroid.player.FrameStep
@@ -223,8 +224,9 @@ fun PlayerScreen(
             neural, store.neuralMotion, store.neuralEnlargers,
         )
     }
-    // Every window frame: the picture due now — through the stage when the household set filters, or the video is HDR,
-    // which the stage tone-maps — the clock, the end. Smooth motion draws anew at every refresh, field rate at the
+    // Every window frame: the picture due now — through the stage when the household set filters, the video is HDR,
+    // which the stage tone-maps, or libass draws its subtitles, which want the size it is shown at — the subtitles
+    // libass draws laid over it, the clock, the end. Smooth motion draws anew at every refresh, field rate at the
     // middle of each picture's time.
     LaunchedEffect(Unit) {
         var lastShown: Any? = null
@@ -235,8 +237,13 @@ fun PlayerScreen(
         var cropVideo: String? = null
         var lastSampleMs = 0L
         var crop: PictureCrop? = null
+        var staged: MediaReader.Picture? = null
+        var drawn = AssPicture.EMPTY
         while (true) {
             withFrameNanos { }
+            // Another video opened (its frame cleared): nothing of the last one is drawn again.
+            if (frame == null) staged = null
+            var changed = false
             engine.moment()?.let { moment ->
                 val raw = moment.shown
                 val nowMs = System.currentTimeMillis()
@@ -273,11 +280,28 @@ fun PlayerScreen(
                         part?.height ?: raw.height,
                         canvas,
                     )
-                    val staged = picture.hasFilters || engine.pixelAspect != 1f || raw.hdr != null
-                    val shown = if (staged && stage.ready && w > 0 && h > 0) {
+                    val throughStage = picture.hasFilters || engine.pixelAspect != 1f || raw.hdr != null ||
+                        engine.drawsSubtitles
+                    staged = if (throughStage && stage.ready && w > 0 && h > 0) {
                         withContext(Dispatchers.Default) { stage.process(moment, picture, w, h, part) }
                     } else {
                         raw.eightBit()
+                    }
+                    changed = true
+                }
+            }
+            staged?.let { base ->
+                // Off the window's thread: libass's first font lookup, or a heavy sign, takes its time.
+                withContext(Dispatchers.Default) { engine.subtitlePicture(base.width, base.height) }?.let {
+                    drawn = it
+                    changed = true
+                }
+                if (changed) {
+                    val shown = if (drawn.isEmpty) {
+                        base
+                    } else {
+                        MediaReader.Picture(base.ptsMs, base.width, base.height, base.rgba.copyOf())
+                            .also { drawn.blendInto(it.rgba, it.width, it.height) }
                     }
                     shownPicture[0] = shown
                     frame = bitmap.of(shown)

@@ -125,6 +125,43 @@ class MediaReaderTest {
         MediaReader(mkv).use { r -> assertEquals("deu", r.tracks.first { it.kind == Track.Kind.TEXT }.language) }
     }
 
+    @Test
+    fun `an ASS stream hands its header, its events as libass takes them and the fonts the file carries`() {
+        // ass/styled.mkv: ass/styled.ass as the file's subtitle stream, with its font attached (see ass/oracle.sh).
+        val mkv = File(requireNotNull(javaClass.getResource("/ass/styled.mkv")).toURI()).path
+        MediaReader(mkv).use { r ->
+            val index = r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt()
+            assertTrue(String(r.assHeader(index)!!).contains("Style: Karaoke,Noto Sans,30"))
+            assertEquals(listOf("NotoSans-Basic.ttf"), r.fonts.map { it.first })
+            assertEquals(37816, r.fonts.single().second.size)
+            r.selectText(index)
+            val read = generateSequence { r.read() }.toList()
+            val events = read.filterIsInstance<MediaReader.AssEvent>()
+            assertEquals(5, events.size)
+            assertTrue(events.all { it.startMs == 0L && it.durationMs == 3000L })
+            assertEquals("1,1,Sign,,0,0,0,,{\\pos(40,60)\\frz-8}EXIT", events[1].data)
+            // The plain text still comes along, for a player without libass.
+            assertTrue(read.filterIsInstance<MediaReader.Cue>().any { it.text == "EXIT" })
+        }
+        MediaReader(clip).use { assertNull(it.assHeader(0)) }
+    }
+
+    @Test
+    fun `an ASS stream's events are read through on their own, without decoding the rest`() {
+        val mkv = File(requireNotNull(javaClass.getResource("/ass/styled.mkv")).toURI()).path
+        MediaReader(mkv).use { r ->
+            val events = mutableListOf<MediaReader.AssEvent>()
+            r.forEachAssEvent(r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt(), { false }) { events += it }
+            assertEquals(5, events.size)
+        }
+        // A stream that is not ASS hands nothing.
+        MediaReader(File(requireNotNull(javaClass.getResource("/subtitled.mkv")).toURI()).path).use { r ->
+            var count = 0
+            r.forEachAssEvent(r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt(), { false }) { count++ }
+            assertEquals(0, count)
+        }
+    }
+
     /** A file the way a network source offers one: a length, and a stream from any offset; no path to open. */
     private class StreamOnly(private val file: File) : FsFile {
         var opened = 0

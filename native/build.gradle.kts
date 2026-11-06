@@ -3,8 +3,19 @@ import java.security.MessageDigest
 import java.util.Properties
 import javax.inject.Inject
 
-// The native tree (CMakeLists.txt): ncnn's releases fetched and checked against their digests, and the desktop library
-// built for the building machine. The Android ABIs are built by the app's externalNativeBuild, against ncnnAndroid.
+// The native tree (CMakeLists.txt): ncnn's releases and libass's sources fetched and checked against their digests, and
+// the desktop library built for the building machine. The Android ABIs are built by the app's externalNativeBuild,
+// against ncnnAndroid and assSources.
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        // XZ for Java (0BSD): the source releases come as .tar.xz, which Gradle's tarTree does not read.
+        classpath("org.tukaani:xz:1.10")
+    }
+}
+
 plugins {
     base
     `java-base`
@@ -69,6 +80,87 @@ tasks.register<NcnnArchive>("ncnnAndroid") {
     outputDir.set(ncnnAndroidRoot)
 }
 
+/**
+ * A source release (.tar.xz), downloaded once into the build directory and checked against its digest before it is
+ * unpacked into [outputDir] without its top folder.
+ */
+abstract class SourceRelease : DefaultTask() {
+    @get:Input
+    abstract val url: Property<String>
+
+    @get:Input
+    abstract val sha256: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @get:Inject
+    abstract val archives: ArchiveOperations
+
+    @get:Inject
+    abstract val files: FileSystemOperations
+
+    @TaskAction
+    fun fetch() {
+        val packed = File(temporaryDir, "source.tar.xz")
+        URI(url.get()).toURL().openStream().use { input -> packed.outputStream().use { input.copyTo(it) } }
+        val digest = MessageDigest.getInstance("SHA-256").digest(packed.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        check(digest == sha256.get()) { "${url.get()} has the digest $digest, not ${sha256.get()}" }
+        val tar = File(temporaryDir, "source.tar")
+        org.tukaani.xz.XZInputStream(packed.inputStream().buffered()).use { input ->
+            tar.outputStream().use { input.copyTo(it) }
+        }
+        val target = outputDir.get().asFile
+        files.delete { delete(target) }
+        files.copy {
+            from(archives.tarTree(tar))
+            into(target)
+            eachFile { path = path.substringAfter('/') }
+            includeEmptyDirs = false
+        }
+        packed.delete()
+        tar.delete()
+    }
+}
+
+// libass (ISC) and what it draws text with — FreeType (FTL), FriBidi (LGPL-2.1-or-later), HarfBuzz (MIT): their
+// releases' sources, unpacked a folder each into assRoot, the native tree's ASS_SOURCES on every system.
+data class AssSource(val name: String, val url: String, val sha256: String)
+
+val assSources = listOf(
+    AssSource(
+        "libass", "https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz",
+        "2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc",
+    ),
+    AssSource(
+        "freetype", "https://download.savannah.gnu.org/releases/freetype/freetype-2.15.0.tar.xz",
+        "93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5",
+    ),
+    AssSource(
+        "fribidi", "https://github.com/fribidi/fribidi/releases/download/v1.0.17/fribidi-1.0.17.tar.xz",
+        "6949dcde27d41cebad1fd741fcafc36d55a1020d2d872d4a6eb3914caabbada2",
+    ),
+    AssSource(
+        "harfbuzz", "https://github.com/harfbuzz/harfbuzz/releases/download/14.6.0/harfbuzz-14.6.0.tar.xz",
+        "d07a007327277708a2a73ae437887cdbaf282937f6d03ca5467723e9099af586",
+    ),
+)
+val assRoot = layout.buildDirectory.dir("ass")
+extra["assRoot"] = assRoot
+val assFetches = assSources.map { source ->
+    tasks.register<SourceRelease>("assSource${source.name.replaceFirstChar { it.uppercase() }}") {
+        url.set(source.url)
+        sha256.set(source.sha256)
+        outputDir.set(assRoot.map { it.dir(source.name) })
+    }
+}
+tasks.register("assSources") {
+    group = "build"
+    description = "Fetches libass, FreeType, FriBidi and HarfBuzz for the native tree"
+    dependsOn(assFetches)
+}
+
 // The desktop this build runs on, as the library is named for it: linux-x64, linux-arm64 or windows-x64.
 val hostSystem = if (System.getProperty("os.name").startsWith("Windows")) "windows" else "linux"
 val hostArch = when (System.getProperty("os.arch")) {
@@ -127,9 +219,9 @@ fun cmake(): String {
 tasks.register("desktopLibrary") {
     group = "build"
     description = "Builds the native library (native/) for this desktop"
-    dependsOn(ncnnDesktop)
+    dependsOn(ncnnDesktop, "assSources")
     val sources = layout.projectDirectory
-    inputs.files(sources.file("CMakeLists.txt"), sources.dir("src"), sources.dir("jni"))
+    inputs.files(sources.file("CMakeLists.txt"), sources.dir("src"), sources.dir("jni"), sources.dir("ass"))
     inputs.property("host", host)
     inputs.property("ncnn", ncnnForHost?.archive.orEmpty())
     outputs.dir(desktopLibraryDir)
@@ -138,14 +230,19 @@ tasks.register("desktopLibrary") {
     val work = layout.buildDirectory.dir("desktop/cmake-${ncnnForHost?.archive}")
     val javaHome = jdk
     val wantedForHost = ncnnForHost
+    val ass = assRoot
     doLast {
         val wanted = checkNotNull(wantedForHost) { "ncnn has no release for $host" }
         val ncnn = ncnnDir.get().asFile.let { if (wanted.root.isEmpty()) it else File(it, wanted.root) }
         val cmake = cmake()
+        // CMake's own output passed on line by line: inherited, it reaches no log where Gradle runs as a daemon.
         fun run(vararg args: String) {
-            val process = ProcessBuilder(cmake, *args).inheritIO()
+            val process = ProcessBuilder(cmake, *args).redirectErrorStream(true)
             process.environment()["JAVA_HOME"] = javaHome.get()
-            check(process.start().waitFor() == 0) { "cmake ${args.joinToString(" ")} failed" }
+            val started = process.start()
+            started.outputStream.close()
+            started.inputStream.bufferedReader().forEachLine { println(it) }
+            check(started.waitFor() == 0) { "cmake ${args.joinToString(" ")} failed" }
         }
         val build = work.get().asFile.path
         // As many compilers as processors: a bare --parallel lets make start one per file, which ran a CI runner out
@@ -156,6 +253,7 @@ tasks.register("desktopLibrary") {
             "-DCMAKE_BUILD_TYPE=Release",
             if (wanted.fromSource) "-DNCNN_SOURCE=${ncnn.path}" else "-DNCNN_ROOT=${ncnn.path}",
             "-DMEDIADROID_OUTPUT=${desktopLibraryDir.get().asFile.path}",
+            "-DASS_SOURCES=${ass.get().asFile.path}",
         )
         run("--build", build, "--config", "Release", "--parallel", jobs)
     }
