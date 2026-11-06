@@ -5,9 +5,12 @@ import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.FsFile
+import com.hawkynt.mediadroid.player.FileLoudness
+import com.hawkynt.mediadroid.player.LoudnessChain
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingDeque
-import java.util.concurrent.TimeUnit
 
 /**
  * The desktop playback engine: a [MediaReader] on a thread of its own decodes ahead — the sound into the
@@ -26,7 +29,8 @@ class DesktopPlaybackEngine(
     private fun readerOf(location: String) = MediaReader(location, files(location))
 
     private val listeners = CopyOnWriteArrayList<PlaybackEngine.Listener>()
-    private val pictures = LinkedBlockingDeque<MediaReader.Picture>(PICTURES_AHEAD)
+    // As many as picturesAhead allows: a few, more while the sound is set sooner than the picture.
+    private val pictures = LinkedBlockingDeque<MediaReader.Picture>()
     private val lock = Object()
 
     @Volatile private var reader: MediaReader? = null
@@ -43,6 +47,8 @@ class DesktopPlaybackEngine(
     @Volatile private var pendingSpeed: Float? = null
     @Volatile private var clockSpeed = 1f
     @Volatile private var hasSound = false
+    @Volatile private var pictureGapMs = 40L
+    @Volatile private var pictureBytes = 1
     @Volatile private var wallStartNs = 0L
     @Volatile private var wallPausedMs = 0L
     @Volatile private var shown: MediaReader.Picture? = null
@@ -112,6 +118,10 @@ class DesktopPlaybackEngine(
         var soundMs = Long.MIN_VALUE
         val tempo = Tempo()
         val pulldown = Film()
+        // The household's sound settings, on the sound as it goes to the output (after Tempo).
+        val chain = LoudnessChain(MediaReader.SAMPLE_RATE, 2)
+        var loudness = fileLoudness(source, null)
+        var samples = ShortArray(0)
         try {
             while (running) {
                 if (filmChanged) {
@@ -168,10 +178,11 @@ class DesktopPlaybackEngine(
                     }
                     hasSound = soundSource != null || file == null
                     selectedSound = id
+                    loudness = fileLoudness(source, soundSource)
                     listeners.forEach { it.onTracksChanged(tracks) }
                     pendingSeekMs = at
                 }
-                if (!playing && pictures.remainingCapacity() == 0) {
+                if (!playing && pictures.size >= picturesAhead(pictureBytes)) {
                     Thread.sleep(5)
                     continue
                 }
@@ -188,21 +199,45 @@ class DesktopPlaybackEngine(
                     null -> {
                         if (!ended) {
                             ended = true
+                            // With the sound set sooner than the picture, the last pictures are due after the
+                            // sound's end: silence keeps its clock going until then.
+                            val sooner = -soundDelayMs()
+                            if (sooner > 0) sink?.write(ByteArray(sooner * MediaReader.SAMPLE_RATE / 1000 * 4))
                             waitForEnd()
                         }
                         Thread.sleep(10)
                     }
                     is MediaReader.Picture -> {
+                        if (item.ptsMs > pictureMs && pictureMs != Long.MIN_VALUE) pictureGapMs = item.ptsMs - pictureMs
                         pictureMs = item.ptsMs
+                        pictureBytes = item.rgba.size
                         for (picture in if (film) pulldown.add(item) else listOf(item)) {
                             while (running && pendingSeekMs == null) {
-                                if (pictures.offer(picture, 10, TimeUnit.MILLISECONDS)) break
+                                if (pictures.size < picturesAhead(picture.rgba.size)) {
+                                    pictures.offerLast(picture)
+                                    break
+                                }
+                                Thread.sleep(5)
                             }
                         }
                     }
                     is MediaReader.Sound -> {
                         val pcm = tempo.process(item.pcm)
-                        if (pcm.isNotEmpty()) sink?.write(pcm)
+                        if (pcm.isNotEmpty()) {
+                            val t = tuning
+                            if (t.loudnessDb != 0f || t.nightMode || t.normalizeLoudness) {
+                                val count = pcm.size / 2
+                                if (samples.size < count) samples = ShortArray(count)
+                                val view = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                                view.get(samples, 0, count)
+                                chain.process(
+                                    samples, 0, count / 2, t.loudnessDb, t.nightMode, t.normalizeLoudness, loudness,
+                                )
+                                view.clear()
+                                view.put(samples, 0, count)
+                            }
+                            sink?.write(pcm)
+                        }
                     }
                     is MediaReader.Cue -> cues += item
                 }
@@ -212,6 +247,25 @@ class DesktopPlaybackEngine(
             soundSource?.close()
             tempo.close()
         }
+    }
+
+    /** Which file and sound track play, and its ReplayGain, for even loudness. */
+    private fun fileLoudness(source: MediaReader, soundFile: MediaReader?): FileLoudness =
+        FileLoudness("$openedPath#$selectedSound", runCatching { (soundFile ?: source).replayGain?.gainDb }.getOrNull())
+
+    /** The lip-sync delay (positive: the sound later), where there is sound to delay. */
+    private fun soundDelayMs(): Int = if (hasSound) tuning.audioDelayMs else 0
+
+    /**
+     * How many pictures may wait to be shown: a few, and while the sound is set sooner than the picture as many more
+     * as that delay covers — within [PICTURE_BYTES_AHEAD], so a large picture cannot fill the memory.
+     */
+    private fun picturesAhead(bytes: Int): Int {
+        val sooner = (-soundDelayMs()).coerceAtLeast(0)
+        if (sooner == 0) return PICTURES_AHEAD
+        val more = (sooner + pictureGapMs - 1) / pictureGapMs
+        val fit = PICTURE_BYTES_AHEAD / bytes.coerceAtLeast(1)
+        return maxOf(PICTURES_AHEAD.toLong(), minOf(PICTURES_AHEAD + more, fit)).toInt()
     }
 
     // Once the file is read to its end, the end is heard when the last picture is due.
@@ -233,6 +287,7 @@ class DesktopPlaybackEngine(
     /**
      * The picture due now by the clock (the latest one not later than it), or null before the first. Paused after a
      * seek, the first picture from there shows at once though the clock stands just short of it — a frame step's.
+     * The audio delay moves the clock the pictures follow against the sound.
      */
     fun picture(): MediaReader.Picture? = moment()?.shown
 
@@ -243,7 +298,7 @@ class DesktopPlaybackEngine(
      */
     @Synchronized
     fun moment(): Moment? {
-        val now = positionMs
+        val now = positionMs + soundDelayMs()
         while (true) {
             val next = pictures.peekFirst() ?: break
             if (next.ptsMs > now) break
@@ -363,10 +418,10 @@ class DesktopPlaybackEngine(
         }
     }
 
-    /** The subtitle line due by the clock, while subtitles are on and a subtitle track is picked; else null. */
+    /** The subtitle line due with the picture, while subtitles are on and a subtitle track is picked; else null. */
     fun subtitle(): String? {
         if (!subtitlesOn || selectedText == null) return null
-        val now = positionMs
+        val now = positionMs + soundDelayMs()
         return cues.firstOrNull { now >= it.startMs && now < it.endMs }?.text
     }
 
@@ -400,6 +455,9 @@ class DesktopPlaybackEngine(
     private companion object {
         /** Pictures decoded ahead of the clock: a fifth of a second at 25 fps. */
         const val PICTURES_AHEAD = 6
+
+        /** How much memory the pictures held back for a sound set sooner may take. */
+        const val PICTURE_BYTES_AHEAD = 512L * 1024 * 1024
 
         /** The id prefix of a sound file beside the video: `sound:0` the first of [MediaRequest.audio]. */
         const val SOUND_FILE = "sound:"

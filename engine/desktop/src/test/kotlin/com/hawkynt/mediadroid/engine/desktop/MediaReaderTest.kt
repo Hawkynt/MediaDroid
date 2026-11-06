@@ -40,6 +40,13 @@ class MediaReaderTest {
     }
 
     @Test
+    fun `the ReplayGain of the sound playing is read from the file's tags`() {
+        val tagged = File(requireNotNull(javaClass.getResource("/replaygain.flac")).toURI()).path
+        MediaReader(tagged).use { assertEquals(-7.5f, it.replayGain?.trackGainDb) }
+        MediaReader(clip).use { assertNull(it.replayGain) }
+    }
+
+    @Test
     fun `after a seek the next picture is the one at that time, not the key frame before`() =
         MediaReader(clip).use { r ->
             r.seek(1000)

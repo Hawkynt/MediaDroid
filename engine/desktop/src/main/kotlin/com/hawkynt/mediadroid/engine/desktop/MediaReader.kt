@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.FsFile
+import com.hawkynt.mediadroid.player.ReplayGain
 import com.hawkynt.mediadroid.player.ToneMap
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext
 import org.bytedeco.ffmpeg.avcodec.AVPacket
@@ -145,6 +146,27 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         context.thread_count(0)
         check(avcodec.avcodec_open2(context, codec, null as AVDictionary?) >= 0) { "cannot open the decoder" }
         return context
+    }
+
+    /**
+     * The ReplayGain of the sound playing, from its tags as FFmpeg reads them — the file's (FLAC, MP3, MP4) and then
+     * its audio stream's own (Ogg, Opus, Matroska), so the stream's wins — or null without one.
+     */
+    val replayGain: ReplayGain?
+        get() {
+            if (audioIndex < 0) return null
+            return ReplayGain.parse(tagsOf(format.metadata()) + tagsOf(format.streams(audioIndex).metadata()))
+        }
+
+    private fun tagsOf(dictionary: AVDictionary?): List<Pair<String, String>> = buildList {
+        if (dictionary == null) return@buildList
+        var entry = avutil.av_dict_iterate(dictionary, null)
+        while (entry != null) {
+            val key = entry.key()?.string
+            val value = entry.value()?.string
+            if (key != null && value != null) add(key to value)
+            entry = avutil.av_dict_iterate(dictionary, entry)
+        }
     }
 
     /** Plays the audio stream [index] (a track id) from the next read on; -1 for no sound from this file. */
