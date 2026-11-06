@@ -135,7 +135,8 @@ class ScreenWarp private constructor(
                 0.0, 0.0, 1.0,
             )
             // Out of the keystone's quadrilateral into the square the picture's rectangle fills.
-            val square = invert(Keystone.squareToQuad(Keystone.corners(setup.keystoneVertical, setup.keystoneHorizontal)))
+            val quad = Keystone.corners(setup.keystoneVertical, setup.keystoneHorizontal)
+            val square = invert(Keystone.squareToQuad(quad))
             val place = if (setup.keystoned) picture else ScreenRect.Whole
             val rect = doubleArrayOf(
                 1.0 / place.width, 0.0, -place.x.toDouble() / place.width,

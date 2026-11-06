@@ -47,6 +47,7 @@ import com.hawkynt.mediadroid.player.PlaybackMath
 import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.ScreenShape
 import com.hawkynt.mediadroid.player.SubtitleLook
+import com.hawkynt.mediadroid.player.TestPattern
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -88,6 +89,8 @@ fun PicturePanel(
     onNightMode: (Boolean) -> Unit = {},
     fit: PictureFit = PictureFit.FIT,
     onFit: (PictureFit) -> Unit = {},
+    pattern: TestPattern? = null,
+    onPattern: (TestPattern?) -> Unit = {},
     aspect: AspectOverride = AspectOverride.AUTO,
     onAspect: (AspectOverride) -> Unit = {},
     screenName: String = "This screen",
@@ -465,9 +468,11 @@ fun PicturePanel(
         SwitchRow("Rear projection", "The picture mirrored, for a screen lit from behind.", screenSetup.mirror) {
             onScreenSetup(screenSetup.copy(mirror = it))
         }
-        SwitchRow("Ceiling mount", "The picture upside down, for a projector hung from the ceiling.", screenSetup.flip) {
-            onScreenSetup(screenSetup.copy(flip = it))
-        }
+        SwitchRow(
+            "Ceiling mount",
+            "The picture upside down, for a projector hung from the ceiling.",
+            screenSetup.flip,
+        ) { onScreenSetup(screenSetup.copy(flip = it)) }
         listOf(
             Triple("Keystone, top and bottom", screenSetup.keystoneVertical) { v: Float ->
                 screenSetup.copy(keystoneVertical = v)
@@ -499,6 +504,20 @@ fun PicturePanel(
         }
         Text(
             "A projector aimed up throws the picture wider at the top: narrow the top until it is square again.",
+            color = Color.Gray,
+            fontSize = 13.sp,
+        )
+        // Test patterns through the stage, with the picture above and this screen's setup; the video paused.
+        Text("Test patterns", color = Color.White, modifier = Modifier.padding(top = 8.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = pattern == null, onClick = { onPattern(null) }, label = { Text("Off") })
+            TestPattern.entries.forEach { p ->
+                FilterChip(selected = pattern == p, onClick = { onPattern(p) }, label = { Text(p.label) })
+            }
+        }
+        Text(
+            pattern?.hint ?: "Black and white levels, grey steps, colour bars, a grid and gamma, to set the picture " +
+                "above — and a projector's keystone — by eye.",
             color = Color.Gray,
             fontSize = 13.sp,
         )

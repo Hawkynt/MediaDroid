@@ -91,6 +91,7 @@ import com.hawkynt.mediadroid.player.PictureLayout
 import com.hawkynt.mediadroid.player.PictureShape
 import com.hawkynt.mediadroid.player.ScreenRect
 import com.hawkynt.mediadroid.player.ScreenWarp
+import com.hawkynt.mediadroid.player.TestPattern
 import com.hawkynt.mediadroid.player.PictureTrial
 import com.hawkynt.mediadroid.player.PlaybackMath
 import kotlinx.coroutines.Dispatchers
@@ -163,6 +164,9 @@ fun PlayerScreen(
     var canvas by remember { mutableStateOf(IntSize.Zero) }
     // How the picture fills the window, for this player only, as the phone's gear; and the size it is drawn at.
     var fit by remember { mutableStateOf(PictureFit.FIT) }
+    // A test pattern shown instead of the video, the video paused meanwhile; null for the video.
+    var pattern by remember { mutableStateOf<TestPattern?>(null) }
+    LaunchedEffect(pattern) { if (pattern != null) engine.pause() }
     var shownSize by remember { mutableStateOf(IntSize.Zero) }
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     // The picture on screen as the stage drew it (or as decoded, without a filter), for a snapshot.
@@ -278,12 +282,39 @@ fun PlayerScreen(
         var shownPart: PictureCrop? = null
         var shownPlace: IntArray? = null
         var shownVisible: IntArray? = null
+        // A test pattern drawn at the window's size, kept while the pattern and the size stay.
+        var still: MediaReader.Picture? = null
+        var stillOf: TestPattern? = null
         while (true) {
             withFrameNanos { }
             // Another video opened (its frame cleared): nothing of the last one is drawn again.
             if (frame == null) staged = null
             var changed = false
-            engine.moment()?.let { moment ->
+            // A test pattern instead of the video: through the stage with the household's picture and the screen's
+            // setup, as the films get them (TestPattern.pictureFor).
+            val showing = pattern
+            if (showing != null && canvas.width > 0 && canvas.height > 0 && stage.ready) {
+                val setup = store.screenSetup(screen().key)
+                val look = listOf(showing, canvas, picture, setup)
+                if (look != lastLook) {
+                    lastLook = look
+                    lastShown = null
+                    val pictureNow = picture
+                    val w = canvas.width
+                    val h = canvas.height
+                    val shownPattern = still?.takeIf { it.width == w && it.height == h && stillOf == showing }
+                        ?: withContext(Dispatchers.Default) { MediaReader.Picture(0, w, h, showing.render(w, h)) }
+                    still = shownPattern
+                    stillOf = showing
+                    staged = withContext(Dispatchers.Default) {
+                        val shownWith = TestPattern.pictureFor(pictureNow)
+                        stage.process(shownPattern, shownWith, w, h, warp = ScreenWarp.of(setup))
+                    }
+                    shownSize = canvas
+                    drawn = AssPicture.EMPTY
+                    changed = true
+                }
+            } else engine.moment()?.let { moment ->
                 val raw = moment.shown
                 val nowMs = System.currentTimeMillis()
                 if (engine.openedPath != cropVideo || !picture.cropBlackBars || !stage.ready) {
@@ -373,16 +404,18 @@ fun PlayerScreen(
             staged?.let { base ->
                 // Off the window's thread: libass's first font lookup, or a heavy sign, takes its time.
                 // The place and the part shown are for what the stage drew; a picture straight from the decoder
-                // fills itself.
+                // fills itself. No subtitles over a test pattern.
                 val asStaged = base.width == shownSize.width && base.height == shownSize.height
-                withContext(Dispatchers.Default) {
-                    engine.subtitlePicture(
-                        base.width, base.height, shownPart,
-                        shownPlace.takeIf { asStaged }, shownVisible.takeIf { asStaged },
-                    )
-                }?.let {
-                    drawn = it
-                    changed = true
+                if (showing == null) {
+                    withContext(Dispatchers.Default) {
+                        engine.subtitlePicture(
+                            base.width, base.height, shownPart,
+                            shownPlace.takeIf { asStaged }, shownVisible.takeIf { asStaged },
+                        )
+                    }?.let {
+                        drawn = it
+                        changed = true
+                    }
                 }
                 withContext(Dispatchers.Default) {
                     engine.secondSubtitlePicture(
@@ -569,6 +602,8 @@ fun PlayerScreen(
                 onNightMode = { nightMode = it },
                 fit = fit,
                 onFit = { fit = it },
+                pattern = pattern,
+                onPattern = { pattern = it },
                 aspect = aspect,
                 onAspect = {
                     aspect = it

@@ -12,6 +12,7 @@ import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.ScreenRect
 import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.ScreenWarp
+import com.hawkynt.mediadroid.player.TestPattern
 import com.hawkynt.mediadroid.player.ToneMap
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
@@ -493,6 +494,24 @@ class GlStageTest {
             checked++
         }
         assertTrue(checked > 300)
+    }
+
+    @Test
+    fun `a test pattern goes through the stage pixel for pixel, and the household's brightness shows on it`() {
+        val w = 320
+        val h = 180
+        for (pattern in TestPattern.entries) {
+            val still = MediaReader.Picture(0, w, h, pattern.render(w, h))
+            val out = stage.process(still, TestPattern.pictureFor(PictureAdjustment.Neutral), w, h)
+            val worst = still.rgba.indices.filter { it % 4 != 3 }
+                .maxOf { abs((still.rgba[it].toInt() and 255) - (out.rgba[it].toInt() and 255)) }
+            assertTrue("$pattern off by $worst", worst <= 1)
+        }
+        // The levels pattern's black, lifted by the household's brightness.
+        val levels = MediaReader.Picture(0, w, h, TestPattern.LEVELS.render(w, h))
+        val brighter = TestPattern.pictureFor(PictureAdjustment(brightness = 0.1f))
+        val lifted = stage.process(levels, brighter, w, h)
+        assertTrue((lifted.rgba[0].toInt() and 255) > 8)
     }
 
     companion object {
