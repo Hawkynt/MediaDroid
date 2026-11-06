@@ -1,6 +1,8 @@
 package com.hawkynt.mediadroid.desktop
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 
@@ -32,6 +34,36 @@ class PicturesFolderTest {
             File(File("C:\\Users\\u", "Pictures"), "MediaDroid"),
             PicturesFolder.of("Windows 11", mapOf("USERPROFILE" to "C:\\Users\\u"), "C:\\x", null),
         )
+    }
+
+    @Test
+    fun `on Windows a Pictures folder moved elsewhere is followed, the profile's only without one`() {
+        val env = mapOf("USERPROFILE" to "C:\\Users\\u")
+        assertEquals(
+            File("D:\\OneDrive\\Bilder", "MediaDroid"),
+            PicturesFolder.of("Windows 11", env, "C:\\x", null, "D:\\OneDrive\\Bilder"),
+        )
+        assertEquals(
+            File(File("C:\\Users\\u", "Pictures"), "MediaDroid"),
+            PicturesFolder.of("Windows 11", env, "C:\\x", null, ""),
+        )
+        // Known folders are Windows' alone.
+        assertEquals(File("/home/u/Pictures/MediaDroid"), PicturesFolder.of("Linux", emptyMap(), "/home/u", null, "/x"))
+    }
+
+    @Test
+    fun `FOLDERID_Pictures reaches Windows in its own byte order`() {
+        assertEquals(
+            "3081e2331e4e7646835a98395c3bc3bb",
+            Smtc.guidBytes(PicturesFolder.FOLDERID_PICTURES).joinToString("") { "%02x".format(it) },
+        )
+    }
+
+    @Test
+    fun `on Windows the known Pictures folder is a folder that exists`() {
+        assumeTrue(System.getProperty("os.name").startsWith("Windows"))
+        val known = requireNotNull(PicturesFolder.knownPictures()) { "SHGetKnownFolderPath gave nothing" }
+        assertTrue(known, File(known).isDirectory)
     }
 
     @Test
