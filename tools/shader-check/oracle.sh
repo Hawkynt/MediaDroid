@@ -174,6 +174,30 @@ for matrix in 601 709; do
   done
 done
 
+# Chroma upscaling: spline36 and KrigBilateral against libplacebo's renderer on the same Mesa (placebo.cpp) — spline36
+# as its plane scaler, KrigBilateral as Shiandow's own mpv shader at a fixed revision — on core/player's 4:2:0 fixture
+# and the test picture brought to full-range BT.709 yuv420p by FFmpeg; ours from planes with a padded stride, as a
+# decoder's come. Each has to differ from FFmpeg's bilinear chroma, or the match proves nothing.
+[ -f "$O/KrigBilateral.glsl" ] || curl -fsSL -o "$O/KrigBilateral.glsl" "$(cat "$HERE/krig-url.txt")" ||
+  { echo "cannot fetch KrigBilateral"; exit 2; }
+python3 -I "$HERE/../../core/player/src/test/resources/chroma/make-input.py" "$W/chroma-fixture.yuv"
+ffmpeg -loglevel error -y -i "$W/picture.ppm" -f rawvideo \
+  -vf "scale=out_color_matrix=bt709:out_range=pc:flags=accurate_rnd+full_chroma_int,format=yuv420p" \
+  "$W/chroma-picture.yuv"
+for case in "chroma-fixture 64 48" "chroma-picture 320 240"; do
+  set -- $case
+  ffmpeg -loglevel error -y -f rawvideo -pix_fmt yuv420p -s "$2x$3" -i "$W/$1.yuv" \
+    -vf "scale=in_color_matrix=bt709:in_range=pc:flags=accurate_rnd+full_chroma_int+bilinear,format=rgb24" \
+    "$W/$1-bilinear.ppm"
+  for filter in spline36 krig; do
+    shader=$([ $filter = krig ] && echo "$O/KrigBilateral.glsl" || echo spline36)
+    "$B/placebo_oracle" chroma "$W/$1.yuv" "$2" "$3" "$shader" "$W/$1-$filter-libplacebo.ppm" rgb 2>/dev/null
+    "$C" chroma "$W/$1.yuv" "$2" "$3" $filter "$W/$1-$filter.ppm"
+    check "Chroma $filter, $1, against libplacebo" "$W/$1-$filter.ppm" "$W/$1-$filter-libplacebo.ppm" 2 0.2
+    differs "Chroma $filter, $1, against bilinear" "$W/$1-$filter.ppm" "$W/$1-bilinear.ppm"
+  done
+done
+
 # Bob and Auto: the first field stays for either field order — a frame whose top field is 200 and bottom field 50
 # has to come out all 200 top field first and all 50 bottom field first.
 python3 -I - "$W" <<'PY'

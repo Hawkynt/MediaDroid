@@ -231,6 +231,8 @@ fun PlayerScreen(
     }
     // Film is undone in the engine, before the pictures queue up (see Film).
     LaunchedEffect(picture.deinterlace) { engine.film = picture.deinterlace == PictureAdjustment.Deinterlace.FILM }
+    // A chroma upscaler works on the decoded planes, which the engine then keeps beside each picture.
+    LaunchedEffect(picture.chroma) { engine.keepPlanes = picture.chroma != PictureAdjustment.Chroma.BILINEAR }
     // The networks the stage may run: those whose self-tests passed, as of the picture taken last.
     LaunchedEffect(picture) {
         stage.neural = com.hawkynt.mediadroid.engine.desktop.GlStage.Neural(
@@ -319,7 +321,7 @@ fun PlayerScreen(
                     val (outW, outH) = if (warp.wholeScreen) canvas.width to canvas.height else w to h
                     shownSize = IntSize(outW, outH)
                     val throughStage = picture.hasFilters || pixelAspect != 1f || widening != 1f ||
-                        !warp.isIdentity || raw.hdr != null || engine.drawsSubtitles
+                        !warp.isIdentity || raw.hdr != null || engine.drawsSubtitles || raw.planes != null
                     staged = if (throughStage && stage.ready && outW > 0 && outH > 0) {
                         withContext(Dispatchers.Default) { stage.process(moment, picture, outW, outH, part, warp) }
                     } else {

@@ -269,6 +269,7 @@ internal data class PictureSettings(
     val fieldRate: Boolean = PictureAdjustment.Neutral.fieldRate,
     val upscalerStrength: Float = PictureAdjustment.Neutral.upscalerStrength,
     val interpolation: String = PictureAdjustment.Neutral.interpolation.name,
+    val chroma: String = PictureAdjustment.Neutral.chroma.name,
 ) {
     fun toAdjustment(): PictureAdjustment {
         val p = PictureAdjustment.Neutral
@@ -289,6 +290,7 @@ internal data class PictureSettings(
             upscalerStrength = upscalerStrength,
             interpolation = runCatching { PictureAdjustment.Interpolation.valueOf(interpolation) }
                 .getOrDefault(p.interpolation),
+            chroma = runCatching { PictureAdjustment.Chroma.valueOf(chroma) }.getOrDefault(p.chroma),
         )
     }
 
@@ -308,6 +310,7 @@ internal data class PictureSettings(
             fieldRate = p.fieldRate,
             upscalerStrength = p.upscalerStrength,
             interpolation = p.interpolation.name,
+            chroma = p.chroma.name,
         )
     }
 }

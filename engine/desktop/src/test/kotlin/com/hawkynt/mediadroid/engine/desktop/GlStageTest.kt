@@ -1,6 +1,7 @@
 package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.player.Dither
+import com.hawkynt.mediadroid.player.ChromaUpscaling
 import com.hawkynt.mediadroid.player.Panorama
 import com.hawkynt.mediadroid.player.ScreenRect
 import com.hawkynt.mediadroid.player.ScreenSetup
@@ -258,6 +259,44 @@ class GlStageTest {
             abs((half.rgba[i].toInt() and 255) - expected)
         }
         assertTrue("off by $worst", worst <= 1.5)
+    }
+
+    @Test
+    fun `chroma enlarged from the planes agrees with the reference, spline36 and KrigBilateral alike`() {
+        val clip = File(requireNotNull(javaClass.getResource("/clip.mp4")).toURI()).path
+        val decoded = MediaReader(clip).use { r ->
+            r.keepPlanes = true
+            generateSequence { r.read() }.filterIsInstance<MediaReader.Picture>().drop(10).first()
+        }
+        val planes = requireNotNull(decoded.planes) { "the clip's 4:2:0 planes" }
+        val w = decoded.width
+        val h = decoded.height
+        val reference = ChromaUpscaling.Planes(w, h, planes.y, planes.u, planes.v)
+        val m = if (planes.fullRange) planes.matrix.toRgbFull() else planes.matrix.toRgb()
+        val foot = if (planes.fullRange) 0f else 16f / 255f
+        val bilinear = stage.process(decoded, PictureAdjustment.Neutral, w, h)
+        for (filter in listOf(PictureAdjustment.Chroma.SPLINE36, PictureAdjustment.Chroma.KRIG)) {
+            val out = stage.process(decoded, PictureAdjustment(chroma = filter), w, h)
+            val chroma = ChromaUpscaling.upscale(reference, filter)
+            var worst = 0f
+            for (i in 0 until w * h) {
+                val y = (planes.y[i].toInt() and 255) / 255f - foot
+                val cb = chroma.cb[i] - 128f / 255f
+                val cr = chroma.cr[i] - 128f / 255f
+                for (c in 0..2) {
+                    val expected = ((m[c] * y + m[3 + c] * cb + m[6 + c] * cr) * 255f).coerceIn(0f, 255f)
+                    worst = maxOf(worst, abs((out.rgba[i * 4 + c].toInt() and 255) - expected))
+                }
+            }
+            // Within two steps: the 8-bit rounding, and the GPU solving KrigBilateral's near-singular corners.
+            assertTrue("$filter: off by $worst", worst <= 2f)
+            assertTrue("$filter: same as bilinear", out.rgba.indices.any { abs(out.rgba[it] - bilinear.rgba[it]) > 2 })
+        }
+    }
+
+    @Test
+    fun `pictures carry their planes only when asked`() {
+        assertEquals(null, picture.planes)
     }
 
     @Test

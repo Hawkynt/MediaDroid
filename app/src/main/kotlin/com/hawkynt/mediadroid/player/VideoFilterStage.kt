@@ -149,6 +149,19 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val yuvColor = FloatArray(9)
     private var yuvChroma = 1f
 
+    // The FFmpeg decoder's planes as uploaded: the picture's size, its strides, and the chroma upscaling the frame last
+    // taken has been drawn with (see chromaUpscaled), null until it is.
+    private var yuvWidth = 0
+    private var yuvHeight = 0
+    private val yuvStrides = IntArray(2)
+    private var chromaDrawn: PictureAdjustment.Chroma? = null
+
+    // Chroma upscaling's passes: spline36 (GLSL ES 1.00) and KrigBilateral's three (GLSL ES 3.00, half floats between
+    // them; where the chip has neither, spline36 takes its place).
+    private var yuvSplineProgram = 0
+    private val krigPrograms = IntArray(3)
+    private var krigReady = false
+
     /** When the frame being drawn arrived, on the clock eglPresentationTimeANDROID and the history use. */
     private var frameTimestamp = 0L
     private val croppedMatrix = FloatArray(16)
@@ -158,14 +171,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * The frame's own transform, after the crop to one eye of a 3D frame when one is chosen, and then — unless [bars]
      * is false, for the samples the black bars are found in — the crop of those bars.
      */
-    private fun frameMatrix(bars: Boolean = true): FloatArray {
+    private fun frameMatrix(bars: Boolean = true, base: FloatArray = texMatrix): FloatArray {
         val stereo = filters.stereo
         val crop = if (bars) activeCrop() else null
-        if (stereo == PictureAdjustment.Stereo.OFF && crop == null) return texMatrix
+        if (stereo == PictureAdjustment.Stereo.OFF && crop == null) return base
         val eye = if (stereo == PictureAdjustment.Stereo.OFF) {
-            texMatrix
+            base
         } else {
-            android.opengl.Matrix.multiplyMM(eyeMatrix, 0, texMatrix, 0, stereo.cropMatrix(), 0)
+            android.opengl.Matrix.multiplyMM(eyeMatrix, 0, base, 0, stereo.cropMatrix(), 0)
             eyeMatrix
         }
         if (crop == null) return eye
@@ -254,7 +267,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val size = AutoCrop.sampleSize(eye.width, eye.height)
         val sample = frames[CROP_SAMPLE].ensure(size.width, size.height)
         sample.bind()
-        copyCoded(tenBit = false, matrix = frameMatrix(bars = false))
+        copyCoded(tenBit = false, bars = false)
         if (!es3) {
             judgeCrop(packedLuma(sample, size.width, size.height, 1, 1), eye)
             return
@@ -346,7 +359,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val peakBufferSizes = IntArray(2)
     private val peakPending = IntArray(2)
     private var peakSlot = 0
-    private val frames = Array(DITHER_INPUT + 1) { Frame() }
+    private val frames = Array(CHROMA_FULL + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -701,6 +714,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             // right of the picture is cut off.
             val lumaPart = buffer.width.toFloat() / strides[0]
             yuvChroma = ((buffer.width + 1) / 2).toFloat() / strides[1] / lumaPart
+            yuvWidth = buffer.width
+            yuvHeight = buffer.height
+            yuvStrides[0] = strides[0]
+            yuvStrides[1] = strides[1]
+            chromaDrawn = null
             texMatrix.fill(0f)
             texMatrix[0] = lumaPart
             texMatrix[5] = -1f
@@ -806,7 +824,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * The frame just arrived, as it is coded, into the bound framebuffer. [tenBit]: an HDR frame, which the decoder's
      * surface hands over as its YUV itself where the chip can (GL_EXT_YUV_target), read nearest at the frame's size.
      */
-    private fun copyCoded(tenBit: Boolean, matrix: FloatArray = frameMatrix()) {
+    private fun copyCoded(tenBit: Boolean, bars: Boolean = true) {
+        val matrix = frameMatrix(bars)
         if (!yuvInput && tenBit && y2yProgram != 0) {
             val oes = GLES11Ext.GL_TEXTURE_EXTERNAL_OES
             GLES20.glBindTexture(oes, oesTexture)
@@ -824,6 +843,16 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             run(copyProgram, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture, matrix) {}
             return
         }
+        if (filters.chroma != PictureAdjustment.Chroma.BILINEAR) {
+            val upscaled = chromaUpscaled(filters.chroma)
+            // The planes' own transform is behind the upscaled frame already: only the eye and the bars are left.
+            run(blendProgram, GLES20.GL_TEXTURE_2D, upscaled.texture, frameMatrix(bars, identity)) { p ->
+                // A copy: the blend's other input is the same frame (the program may still point it elsewhere).
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrevious"), 0)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWeight"), 1f)
+            }
+            return
+        }
         run(yuvProgram, GLES20.GL_TEXTURE_2D, yuvTextures[0], matrix) { p ->
             GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, yuvTextures[1])
@@ -837,6 +866,80 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }
     }
 
+    /**
+     * The FFmpeg decoder's frame last taken as RGB at its own size, its chroma enlarged by [chroma] (see
+     * ChromaUpscaling): spline36 in one pass, KrigBilateral in three — the luma brought down to the chroma's size as
+     * mean and variance, then each pixel's chroma kriged. Drawn once a frame, into a frame of its own; the bound
+     * framebuffer and viewport are given back.
+     */
+    private fun chromaUpscaled(chroma: PictureAdjustment.Chroma): Frame {
+        val full = frames[CHROMA_FULL].ensure(yuvWidth, yuvHeight)
+        if (chromaDrawn == chroma) return full
+        chromaDrawn = chroma
+        val bound = IntArray(1)
+        val viewport = IntArray(4)
+        GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING, bound, 0)
+        GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, viewport, 0)
+        val chromaWidth = (yuvWidth + 1) / 2
+        val chromaHeight = (yuvHeight + 1) / 2
+        fun planes(p: Int) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, yuvTextures[1])
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uU"), 1)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, yuvTextures[2])
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uV"), 2)
+            GLES20.glUniformMatrix3fv(GLES20.glGetUniformLocation(p, "uColor"), 1, false, yuvColor, 0)
+            // The FFmpeg decoder hands over limited range (a full-range source squeezed into it).
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFoot"), 16f / 255f)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        }
+        if (chroma == PictureAdjustment.Chroma.KRIG && krigReady) {
+            val first = frames[CHROMA_LOW].ensure(yuvWidth, chromaHeight, half = true)
+            first.bind()
+            run(krigPrograms[0], GLES20.GL_TEXTURE_2D, yuvTextures[0], texMatrix) { p ->
+                GLES20.glUniform2f(
+                    GLES20.glGetUniformLocation(p, "uLumaSize"), yuvStrides[0].toFloat(), yuvHeight.toFloat(),
+                )
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uChromaHeight"), chromaHeight.toFloat())
+            }
+            val second = frames[CHROMA_LOWER].ensure(chromaWidth, chromaHeight, half = true)
+            second.bind()
+            run(krigPrograms[1], GLES20.GL_TEXTURE_2D, first.texture, identity) { p ->
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uLumaWidth"), yuvWidth.toFloat())
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uChromaWidth"), chromaWidth.toFloat())
+            }
+            full.bind()
+            run(krigPrograms[2], GLES20.GL_TEXTURE_2D, yuvTextures[0], texMatrix) { p ->
+                planes(p)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, second.texture)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uLow"), 3)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uLumaStride"), yuvStrides[0].toFloat())
+                GLES20.glUniform2f(
+                    GLES20.glGetUniformLocation(p, "uLumaSize"), yuvWidth.toFloat(), yuvHeight.toFloat(),
+                )
+                GLES20.glUniform2f(
+                    GLES20.glGetUniformLocation(p, "uChromaSize"), chromaWidth.toFloat(), chromaHeight.toFloat(),
+                )
+            }
+        } else {
+            full.bind()
+            run(yuvSplineProgram, GLES20.GL_TEXTURE_2D, yuvTextures[0], texMatrix) { p ->
+                planes(p)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uChroma"), yuvChroma)
+                GLES20.glUniform2f(
+                    GLES20.glGetUniformLocation(p, "uChromaSize"), yuvStrides[1].toFloat(), chromaHeight.toFloat(),
+                )
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uChromaWidth"), chromaWidth.toFloat())
+            }
+        }
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, bound[0])
+        GLES20.glViewport(viewport[0], viewport[1], viewport[2], viewport[3])
+        return full
+    }
+
     fun release() {
         handler.removeCallbacks(pumpYuv)
         handler.post(snapshotTimeout)
@@ -845,6 +948,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             // On this thread, the vsync's own: a caller's may have no looper to make one on.
             vsync.removeFrameCallback(onYuvVsync)
             GLES20.glDeleteProgram(yuvProgram)
+            GLES20.glDeleteProgram(yuvSplineProgram)
+            krigPrograms.forEach { GLES20.glDeleteProgram(it) }
             anime4kPrograms.forEach { GLES20.glDeleteProgram(it) }
             GLES20.glDeleteProgram(anime4kDepthToSpace)
             acnetPrograms.forEach { GLES20.glDeleteProgram(it) }
@@ -1000,6 +1105,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             listOf(Shaders.ANIME4K_CONV_1, Shaders.ANIME4K_CONV_2, Shaders.ANIME4K_CONV_3, Shaders.ANIME4K_CONV_4)
                 .forEachIndexed { i, fragment -> anime4kPrograms[i] = program(Shaders.VIDEO_VERTEX, fragment) }
             anime4kDepthToSpace = program(Shaders.VIDEO_VERTEX, Shaders.ANIME4K_DEPTH_TO_SPACE)
+        }.isSuccess
+        yuvSplineProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_YUV_SPLINE)
+        // KrigBilateral keeps the luma's mean and variance in half floats between its passes; spline36 stands in
+        // where the chip draws none or cannot build them.
+        krigReady = halfTargets && runCatching {
+            listOf(Shaders.VIDEO_CHROMA_KRIG_1, Shaders.VIDEO_CHROMA_KRIG_2, Shaders.VIDEO_CHROMA_KRIG_3)
+                .forEachIndexed { i, fragment ->
+                    krigPrograms[i] = linked(program(Shaders.VIDEO_VERTEX_ES3, fragment))
+                }
         }.isSuccess
         xbrzReady = runCatching {
             listOf(Shaders.XBRZ_CORNERS, Shaders.XBRZ_DECISIONS, Shaders.XBRZ_SCALE)
@@ -2700,6 +2814,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** What an HDR picture tone-mapped in the stage holds: HDR10's and HLG's 10 bits, mapped in floats. */
         private const val HDR_BITS = 10
+
+        /**
+         * Chroma upscaling's frames: the luma at the chroma's height, then at its size (KrigBilateral's mean and
+         * variance, half floats), and the FFmpeg decoder's frame as RGB with its chroma enlarged.
+         */
+        private const val CHROMA_LOW = DITHER_INPUT + 1
+        private const val CHROMA_LOWER = CHROMA_LOW + 1
+        private const val CHROMA_FULL = CHROMA_LOWER + 1
 
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()

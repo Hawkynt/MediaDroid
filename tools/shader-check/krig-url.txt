@@ -1,0 +1,1 @@
+https://gist.githubusercontent.com/igv/a015fc885d5c22e6891820ad89555637/raw/d7f39734d6aff4c0989f32a4530b1b010e64bda3/KrigBilateral.glsl

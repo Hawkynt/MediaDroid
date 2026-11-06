@@ -74,6 +74,7 @@ class DesktopPlaybackEngine(
     override fun open(request: MediaRequest, autoPlay: Boolean) {
         stop()
         val opened = readerOf(request.path)
+        opened.keepPlanes = keepPlanes
         reader = opened
         openedPath = request.path
         hasSound = opened.tracks.any { it.kind == Track.Kind.AUDIO }
@@ -341,6 +342,16 @@ class DesktopPlaybackEngine(
             if (value == field) return
             field = value
             filmChanged = true
+        }
+
+    /**
+     * Whether the pictures decoded from now on carry their 4:2:0 planes (MediaReader.keepPlanes), for the stage's
+     * chroma upscaling.
+     */
+    @Volatile var keepPlanes: Boolean = false
+        set(value) {
+            field = value
+            reader?.keepPlanes = value
         }
 
     override fun play() {

@@ -57,6 +57,8 @@ data class PictureOverride(
     val cropBlackBars: Boolean = true,
     /** AspectOverride name: the frame's shape where the file's flag is wrong. */
     val aspect: String = "AUTO",
+    /** PictureAdjustment.Chroma name: how the colour of a 4:2:0 picture is enlarged. */
+    val chroma: String = "BILINEAR",
 )
 
 /** How one output screen is set up (see [com.hawkynt.mediadroid.player.ScreenSetup]); names, as kept. */
@@ -102,6 +104,7 @@ data class Settings(
     var upscalerStrength: Float = 1f,         // 0..1, how much of the upscaler shows over plain scaling
     var deband: Float = 0f,                   // 0 (off) .. 1, gradients' 8-bit steps smoothed
     var cropBlackBars: Boolean = true,        // letterbox and pillarbox bars found as it plays and cropped (AutoCrop)
+    var chroma: String = "BILINEAR",          // PictureAdjustment.Chroma name, the colour's upscaling
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -295,8 +298,12 @@ class StateStore(context: Context) {
             upscalerStrength = upscalerStrength,
             deband = deband,
             cropBlackBars = cropBlackBars,
+            chroma = chromaOf(chroma),
         )
     }
+
+    private fun chromaOf(name: String) =
+        runCatching { PictureAdjustment.Chroma.valueOf(name) }.getOrDefault(PictureAdjustment.Chroma.BILINEAR)
 
     private fun interpolationOf(name: String) = runCatching { PictureAdjustment.Interpolation.valueOf(name) }
         .getOrDefault(PictureAdjustment.Interpolation.OFF)
@@ -327,6 +334,7 @@ class StateStore(context: Context) {
                 it.deband,
                 it.cropBlackBars,
                 AspectOverride.entries.firstOrNull { a -> a.name == it.aspect } ?: AspectOverride.AUTO,
+                chroma = chromaOf(it.chroma),
             )
         }
             ?: defaultPicture()
@@ -354,6 +362,7 @@ class StateStore(context: Context) {
                 picture.deband,
                 picture.cropBlackBars,
                 picture.aspect.name,
+                chroma = picture.chroma.name,
             )
         }
         save()

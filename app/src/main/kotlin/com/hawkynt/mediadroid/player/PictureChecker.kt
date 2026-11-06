@@ -6,6 +6,7 @@ import android.graphics.PixelFormat
 import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
+import androidx.media3.decoder.VideoDecoderOutputBuffer
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -49,6 +50,8 @@ object PictureChecker {
         val stage = VideoFilterStage()
         val statistics = PlaybackStatistics(capacity = MEASURED_FRAMES)
         val frames = testFrames()
+        // A chroma upscaler works on the FFmpeg decoder's planes alone: those it is checked on.
+        val planes = if (picture.chroma != PictureAdjustment.Chroma.BILINEAR) frames.map(::yuvFrame) else null
         return try {
             stage.appContext = context.applicationContext
             stage.waitForGpu = true
@@ -64,9 +67,13 @@ object PictureChecker {
             var lateBefore = 0
             for (k in 0 until WARM_FRAMES + MEASURED_FRAMES) {
                 if (k == WARM_FRAMES) lateBefore = statistics.snapshot().late
-                val canvas = stage.inputSurface.lockHardwareCanvas()
-                canvas.drawBitmap(frames[k % frames.size], 0f, 0f, null)
-                stage.inputSurface.unlockCanvasAndPost(canvas)
+                if (planes != null) {
+                    stage.setOutputBuffer(yuvBuffer(planes[k % planes.size], k * intervalNs / 1000L))
+                } else {
+                    val canvas = stage.inputSurface.lockHardwareCanvas()
+                    canvas.drawBitmap(frames[k % frames.size], 0f, 0f, null)
+                    stage.inputSurface.unlockCanvasAndPost(canvas)
+                }
                 val next = start + (k + 1) * intervalNs
                 val wait = (next - System.nanoTime()) / 1_000_000L
                 if (wait > 0) Thread.sleep(wait)
@@ -113,6 +120,43 @@ object PictureChecker {
             }
             Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888)
         }
+    }
+
+    /** [frame] as limited-range BT.601 yuv420p, the planes one after the other, as the FFmpeg decoder gives them. */
+    private fun yuvFrame(frame: Bitmap): ByteArray {
+        val w = frame.width
+        val h = frame.height
+        val cw = (w + 1) / 2
+        val ch = (h + 1) / 2
+        val pixels = IntArray(w * h).also { frame.getPixels(it, 0, w, 0, 0, w, h) }
+        val out = ByteArray(w * h + 2 * cw * ch)
+        fun channel(x: Int, y: Int, shift: Int) =
+            (pixels[y.coerceAtMost(h - 1) * w + x.coerceAtMost(w - 1)] shr shift) and 0xFF
+        for (y in 0 until h) for (x in 0 until w) {
+            val luma = 0.299 * channel(x, y, 16) + 0.587 * channel(x, y, 8) + 0.114 * channel(x, y, 0)
+            out[y * w + x] = (16 + luma * 219 / 255 + 0.5).toInt().toByte()
+        }
+        for (y in 0 until ch) for (x in 0 until cw) {
+            val r = channel(2 * x, 2 * y, 16)
+            val g = channel(2 * x, 2 * y, 8)
+            val b = channel(2 * x, 2 * y, 0)
+            val luma = 0.299 * r + 0.587 * g + 0.114 * b
+            out[w * h + y * cw + x] = (128 + (b - luma) / 1.772 * 224 / 255 + 0.5).toInt().toByte()
+            out[w * h + cw * ch + y * cw + x] = (128 + (r - luma) / 1.402 * 224 / 255 + 0.5).toInt().toByte()
+        }
+        return out
+    }
+
+    /** [planes] (see [yuvFrame]) in a decoder's output buffer, as Media3's FFmpeg decoder fills one. */
+    private fun yuvBuffer(planes: ByteArray, timeUs: Long): VideoDecoderOutputBuffer {
+        val w = PictureCheck.WIDTH
+        val h = PictureCheck.HEIGHT
+        val buffer = VideoDecoderOutputBuffer { }
+        buffer.init(timeUs, androidx.media3.common.C.VIDEO_OUTPUT_MODE_YUV, null)
+        check(buffer.initForYuvFrame(w, h, w, (w + 1) / 2, VideoDecoderOutputBuffer.COLORSPACE_BT601))
+        requireNotNull(buffer.data).position(0)
+        buffer.data!!.put(planes)
+        return buffer
     }
 
     private fun blotch(x: Int, y: Int, channel: Int): Int {

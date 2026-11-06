@@ -47,6 +47,16 @@ class YuvMatrixTest {
     }
 
     @Test
+    fun `the full-range matrix is the limited one without its scaling, as JPEG codes it`() {
+        val full = YuvMatrix.BT601.toRgbFull()
+        assertEquals(1f, full[0], 1e-6f)
+        assertEquals(1.402f, full[6], 1e-6f)
+        assertEquals(1.772f, full[5], 1e-6f)
+        val limited = YuvMatrix.BT601.toRgb()
+        assertEquals(limited[6] * 224f / 255f, full[6], 1e-6f)
+    }
+
+    @Test
     fun `the 10-bit BT2020 matrix is Media3's for HDR frames`() {
         // DefaultShaderProgram's BT2020_LIMITED_RANGE_YUV_TO_RGB_COLOR_TRANSFORM_MATRIX (Media3, Apache-2.0), to the
         // four decimals it gives.
