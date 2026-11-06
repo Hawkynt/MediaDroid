@@ -54,12 +54,19 @@ class GlStage : AutoCloseable {
     @Volatile var ready = false
         private set
 
+    /** The OpenGL driver's own name for what draws (GL_RENDERER): "llvmpipe (…)" for Mesa in software. */
+    @Volatile var renderer = ""
+        private set
+
     init {
         thread.submit { start() }.get()
     }
 
     private fun start() {
-        GLFW.glfwInitHint(GLFW.GLFW_PLATFORM, GLFW.GLFW_PLATFORM_X11)
+        // X11 on Linux (XWayland under Wayland); asked for on Windows, it makes glfwInit fail — GLFW picks Win32 there.
+        if (!System.getProperty("os.name").startsWith("Windows")) {
+            GLFW.glfwInitHint(GLFW.GLFW_PLATFORM, GLFW.GLFW_PLATFORM_X11)
+        }
         if (!GLFW.glfwInit()) return
         GLFW.glfwDefaultWindowHints()
         GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE)
@@ -70,6 +77,7 @@ class GlStage : AutoCloseable {
         if (window == 0L) return
         GLFW.glfwMakeContextCurrent(window)
         GL.createCapabilities()
+        renderer = org.lwjgl.opengl.GL11C.glGetString(org.lwjgl.opengl.GL11C.GL_RENDERER).orEmpty()
         vao = glGenVertexArrays()
         glBindVertexArray(vao)
         val quad = glGenBuffers()

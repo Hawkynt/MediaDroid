@@ -1,7 +1,10 @@
 #!/bin/bash
 # Builds the release APK and signs it: dist/MediaDroid.apk.
 #
-#   ./build.sh
+#   ./build.sh [--desktop]
+#
+# --desktop also packs the desktop app for the system it runs on, into dist/ as the nightlies name it: on Linux
+# MediaDroid-linux-x64.AppImage, on Windows (Git Bash) MediaDroid-windows-x64.msi and MediaDroid-windows-x64.zip.
 #
 # The release key is held in the repository's GitHub secrets, never in the repository. To sign with it,
 # hand it over through the same variables those secrets use, from the environment or from a signing.env
@@ -17,11 +20,21 @@
 # runs on your own device, but cannot update an installed nightly or release, which carry the release key.
 #
 # ANDROID_HOME defaults to local.properties' sdk.dir, JAVA_HOME to a JDK 21 Gradle provisioned.
-# FFMPEG_AAR and APK_NAME are for buildnonlgpl.sh; leave them unset.
+# FFMPEG_AAR, APK_NAME and FULL_FFMPEG are for buildnonlgpl.sh; leave them unset.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+
+die() { echo "error: $*" >&2; exit 1; }
+
+DESKTOP=0
+for arg in "$@"; do
+  case "$arg" in
+    --desktop) DESKTOP=1 ;;
+    *) die "unknown argument $arg (usage: $0 [--desktop])" ;;
+  esac
+done
 
 if [ -f signing.env ]; then
   set -a
@@ -31,8 +44,6 @@ if [ -f signing.env ]; then
 fi
 
 APK_NAME="${APK_NAME:-MediaDroid.apk}"
-
-die() { echo "error: $*" >&2; exit 1; }
 
 if [ -z "${ANDROID_HOME:-}" ] && [ -f local.properties ]; then
   ANDROID_HOME="$(sed -n 's/^sdk\.dir=//p' local.properties)"
@@ -94,3 +105,27 @@ out="dist/$APK_NAME"
   --out "$out" app/build/outputs/apk/release/app-release-unsigned.apk
 "$apksigner" verify --verbose "$out"
 echo "signed: $ROOT/$out"
+
+if [ "$DESKTOP" = 1 ]; then
+  # The GPL FFmpeg build goes with the GPL APK (buildnonlgpl.sh): for your own machine only, never published.
+  desktop_args=(--no-daemon)
+  suffix=""
+  if [ -n "${FULL_FFMPEG:-}" ]; then
+    desktop_args+=(-PfullFfmpeg)
+    suffix="-nonlgpl"
+  fi
+  case "$(uname -s)" in
+    Linux)
+      ./gradlew :desktop:appImage "${desktop_args[@]}"
+      cp desktop/build/dist/MediaDroid-linux-x64.AppImage "dist/MediaDroid$suffix-linux-x64.AppImage"
+      echo "packed: $ROOT/dist/MediaDroid$suffix-linux-x64.AppImage"
+      ;;
+    MINGW* | MSYS* | CYGWIN*)
+      ./gradlew :desktop:packageMsi :desktop:windowsZip "${desktop_args[@]}"
+      cp desktop/build/compose/binaries/main/msi/*.msi "dist/MediaDroid$suffix-windows-x64.msi"
+      cp desktop/build/dist/MediaDroid-windows-x64.zip "dist/MediaDroid$suffix-windows-x64.zip"
+      echo "packed: $ROOT/dist/MediaDroid$suffix-windows-x64.msi, $ROOT/dist/MediaDroid$suffix-windows-x64.zip"
+      ;;
+    *) die "no desktop package for $(uname -s)" ;;
+  esac
+fi

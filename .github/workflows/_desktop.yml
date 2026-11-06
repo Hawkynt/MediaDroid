@@ -3,7 +3,8 @@ name: Desktop packages
 # The desktop apps (README "Platform support"), built and tested on the system each is for, then packed:
 # Linux — the AppImage; Windows — the MSI and the portable zip. Called by ci.yml (the pull-request gate: the packages
 # must still come together), nightly.yml and release.yml (which publish what this uploads). Published packages carry
-# the LGPL FFmpeg only; the GPL build (-PfullFfmpeg) is for one's own machine and never built here.
+# the LGPL FFmpeg only; the GPL build (-PfullFfmpeg) is for one's own machine and never built here. Versions come from
+# the build date, as the Android app's (desktop/build.gradle.kts).
 on:
   workflow_call:
     inputs:
@@ -18,6 +19,8 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  # The GL stage tests run on Mesa's software OpenGL (llvmpipe) and must not skip themselves there.
+  MEDIADROID_GL: required
 
 jobs:
   package:
@@ -48,14 +51,34 @@ jobs:
           cache: gradle
       # The Android modules are configured with the rest even when only the desktop is built.
       - uses: android-actions/setup-android@v4
-      - name: Install squashfs-tools (the AppImage's file system)
+
+      # Mesa for the GL stage tests, headless: on Linux an X server in memory over llvmpipe; on Windows Mesa's
+      # opengl32.dll (pal1000/mesa-dist-win, MIT; a tagged release checked against its digest) beside the java.exe
+      # the tests run on, where Windows looks first — removed again before packing, so no package carries it.
+      - name: Mesa and a virtual display (Linux)
         if: matrix.system == 'linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq squashfs-tools
-      # The desktop tests on the system they are for: FFmpeg's and LWJGL's natives, the sound path, the store — and the
-      # native tree (native/) built for it with the system's compiler and loaded (-PnativeLibrary).
-      # The GL stage tests skip themselves where no display is.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0
+          echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
+      - name: Mesa's OpenGL (Windows)
+        if: matrix.system == 'windows'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/mesa.7z" \
+            https://github.com/pal1000/mesa-dist-win/releases/download/26.2.3/mesa3d-26.2.3-release-msvc.7z
+          echo "3f3613adb43cfd0f2e665ce2400b130c275f0b3317cb3a05566320a3a67589ed  $RUNNER_TEMP/mesa.7z" | sha256sum -c -
+          7z e -y "$RUNNER_TEMP/mesa.7z" -o"$(cygpath -w "$JAVA_HOME/bin")" x64/opengl32.dll x64/libgallium_wgl.dll
+          echo "GALLIUM_DRIVER=llvmpipe" >> "$GITHUB_ENV"
+
+      # The desktop tests on the system they are for: FFmpeg's and LWJGL's natives, the sound path, the store, the
+      # GL stage — and the native tree (native/) built for it with the system's compiler and loaded (-PnativeLibrary).
       - name: Desktop tests
-        run: ./gradlew :engine:desktop:test :desktop:test -PnativeLibrary --no-daemon
+        run: |
+          if [ "${{ matrix.system }}" = linux ]; then
+            xvfb-run -a -s "-screen 0 1280x1024x24" ./gradlew :engine:desktop:test :desktop:test -PnativeLibrary --no-daemon
+          else
+            ./gradlew :engine:desktop:test :desktop:test -PnativeLibrary --no-daemon
+          fi
       - name: Keep the test reports of a failed run
         if: failure()
         uses: actions/upload-artifact@v4
@@ -71,6 +94,12 @@ jobs:
           name: libmediadroid-${{ matrix.system }}-x64
           path: native/build/desktop/lib/*
           if-no-files-found: error
+      - name: Take Mesa away again (Windows)
+        if: matrix.system == 'windows'
+        run: |
+          bin="$(cygpath -u "$JAVA_HOME")/bin"
+          rm -f "$bin/opengl32.dll" "$bin/libgallium_wgl.dll"
+
       - name: Packages
         run: ./gradlew ${{ matrix.tasks }} --no-daemon
       - name: Stage the packages under their published names
@@ -83,6 +112,46 @@ jobs:
             cp desktop/build/dist/MediaDroid-windows-x64.zip dist/
           fi
           ls -la dist
+
+      # Each package as a user gets it: unpacked, its licence and notices on top, and started once — the window drawn
+      # and its picture written (MEDIADROID_SNAPSHOT) within the minute.
+      - name: Check the AppImage
+        if: matrix.system == 'linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          check="$RUNNER_TEMP/appimage"
+          mkdir -p "$check/data" && cd "$check"
+          "$GITHUB_WORKSPACE/dist/MediaDroid-linux-x64.AppImage" --appimage-extract > /dev/null
+          for f in LICENSE THIRD-PARTY-NOTICE.desktop.txt THIRD-PARTY-NOTICE.ffmpeg.txt; do
+            test -s "squashfs-root/usr/$f" || { echo "the AppImage lacks $f"; exit 1; }
+          done
+          XDG_DATA_HOME="$check/data" MEDIADROID_SNAPSHOT="$check/start.png" xvfb-run -a -s "-screen 0 1920x1080x24" \
+            timeout -k 5 60 "$GITHUB_WORKSPACE/dist/MediaDroid-linux-x64.AppImage" || true
+          pkill -f '/usr/bin/MediaDroid' || true
+          test -s start.png || { echo "the AppImage did not draw its window"; exit 1; }
+      - name: Check the MSI and the zip
+        if: matrix.system == 'windows'
+        shell: pwsh
+        run: |
+          $check = Join-Path $env:RUNNER_TEMP 'windows'
+          $msi = (Resolve-Path dist/MediaDroid-windows-x64.msi).Path
+          $installed = Join-Path $check 'msi'
+          $p = Start-Process msiexec -ArgumentList "/a `"$msi`" /qn TARGETDIR=`"$installed`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /a failed: $($p.ExitCode)" }
+          Expand-Archive dist/MediaDroid-windows-x64.zip -DestinationPath (Join-Path $check 'zip')
+          foreach ($root in @($installed, (Join-Path $check 'zip'))) {
+            foreach ($f in @('LICENSE', 'THIRD-PARTY-NOTICE.desktop.txt', 'THIRD-PARTY-NOTICE.ffmpeg.txt')) {
+              if (-not (Get-ChildItem -Recurse -File -Path $root -Filter $f)) { throw "$root lacks $f" }
+            }
+          }
+          $png = Join-Path $check 'start.png'
+          $env:MEDIADROID_SNAPSHOT = $png
+          $app = Start-Process (Join-Path $check 'zip/MediaDroid/MediaDroid.exe') -PassThru
+          for ($i = 0; $i -lt 60 -and -not (Test-Path $png); $i++) { Start-Sleep -Seconds 1 }
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          if (-not (Test-Path $png)) { throw 'the portable app did not draw its window' }
+
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.system }}-artifacts

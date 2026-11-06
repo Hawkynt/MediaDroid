@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds and signs the release APK with the GPL + nonfree FFmpeg: dist/MediaDroid-nonlgpl.apk.
 #
-#   ./buildnonlgpl.sh [workspace]
+#   ./buildnonlgpl.sh [--desktop] [workspace]
 #
 # FOR YOUR OWN DEVICE ONLY. FFmpeg configured with --enable-gpl --enable-nonfree cannot be distributed
 # under this repository's LGPL-3.0-or-later (tools/ffmpeg/README.md, "the non-LGPL switch"): never
@@ -11,13 +11,23 @@
 # The full AAR is built once with `FULL=1 tools/ffmpeg/build.sh` in the workspace (default
 # stage/ffmpeg-full, ignored by git; needs NDK 28.2.13676358 and CMake 3.22.1) and reused afterwards; delete
 # <workspace>/lib-decoder-ffmpeg-full.aar to rebuild it. Signing is build.sh's: same variables, same
-# signing.env.
+# signing.env. --desktop also packs the desktop app for this system with Bytedeco's GPL FFmpeg build (-PfullFfmpeg),
+# as dist/MediaDroid-nonlgpl-<system>-x64.* — the same rule: never distribute it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-WORKSPACE="$(realpath -m "${1:-${FFMPEG_WORKSPACE:-$ROOT/stage/ffmpeg-full}}")"
+build_args=()
+workspace_arg=""
+for arg in "$@"; do
+  case "$arg" in
+    --desktop) build_args+=(--desktop) ;;
+    *) workspace_arg="$arg" ;;
+  esac
+done
+
+WORKSPACE="$(realpath -m "${workspace_arg:-${FFMPEG_WORKSPACE:-$ROOT/stage/ffmpeg-full}}")"
 AAR="$WORKSPACE/lib-decoder-ffmpeg-full.aar"
 
 if [ -z "${ANDROID_HOME:-}" ] && [ -f local.properties ]; then
@@ -40,4 +50,4 @@ if [ ! -f "$AAR" ]; then
 fi
 
 echo "NOTE: GPL + nonfree build: for your own device only, never distribute it"
-FFMPEG_AAR="$AAR" APK_NAME="MediaDroid-nonlgpl.apk" "$ROOT/build.sh"
+FFMPEG_AAR="$AAR" APK_NAME="MediaDroid-nonlgpl.apk" FULL_FFMPEG=1 "$ROOT/build.sh" "${build_args[@]}"

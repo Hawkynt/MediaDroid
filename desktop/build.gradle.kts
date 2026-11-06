@@ -1,6 +1,7 @@
 import java.net.URI
 import java.security.MessageDigest
 import java.time.LocalDate
+import javax.inject.Inject
 
 // The desktop app for Windows and Linux: a Compose Desktop window over the shared cores and the desktop engine
 // (README "Platform support"). `./gradlew :desktop:run` starts it; `-PfullFfmpeg` plays with the GPL FFmpeg build on
@@ -11,6 +12,10 @@ plugins {
     alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.kotlin.serialization)
 }
+
+// The build's date: the packages' version, as the Android app's versionName (app/build.gradle.kts).
+val buildDay: LocalDate = LocalDate.now()
+val buildVersion = "%04d.%02d.%02d".format(buildDay.year, buildDay.monthValue, buildDay.dayOfMonth)
 
 kotlin {
     jvmToolchain(21)
@@ -57,10 +62,8 @@ compose.desktop {
         if (providers.gradleProperty("fullFfmpeg").isPresent) jvmArgs += "-Dmediadroid.fullFfmpeg=true"
         nativeDistributions {
             packageName = "MediaDroid"
-            // The build's date, as the Android app's versionName: YYYY.MM.DD (MSI wants each part below 256: the
-            // year as its last two digits there).
-            val today = LocalDate.now()
-            packageVersion = "%d.%d.%d".format(today.year % 100, today.monthValue, today.dayOfMonth)
+            // The build's date (MSI wants each part below 256: the year as its last two digits there).
+            packageVersion = "%d.%d.%d".format(buildDay.year % 100, buildDay.monthValue, buildDay.dayOfMonth)
             description = "Plays the movies and shows already organised in your folders"
             vendor = "Hawkynt"
             licenseFile.set(rootProject.file("LICENSE"))
@@ -94,28 +97,78 @@ tasks.register<JavaExec>("icons") {
     dependsOn("testClasses")
 }
 
+
+// Copies at execution time, without reaching for the project there.
+interface FileOps {
+    @get:Inject val fs: FileSystemOperations
+}
+val fileOps = objects.newInstance<FileOps>().fs
+
+// A file fetched once into build/download and checked against its SHA-256; fetched again whenever it does not match.
+fun fetch(name: String, file: String, url: String, sha256: String) = tasks.register(name) {
+    val out = layout.buildDirectory.file("download/$file")
+    inputs.property("sha256", sha256)
+    outputs.file(out)
+    doLast {
+        val target = out.get().asFile
+        target.parentFile.mkdirs()
+        fun sha(f: File) = MessageDigest.getInstance("SHA-256").digest(f.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        if (!target.exists() || sha(target) != sha256) {
+            URI(url).toURL().openStream().use { input -> target.outputStream().use { input.copyTo(it) } }
+        }
+        check(sha(target) == sha256) { "$file does not match its digest" }
+    }
+}
+
+// What every package owes: MediaDroid's licence and the notices of everything inside it — the desktop's libraries and
+// runtimes, FFmpeg, the picture stage's shaders, the code converted into the cores — side by side at its top.
+val notices = tasks.register<Sync>("notices") {
+    from(rootProject.file("LICENSE"))
+    from("THIRD-PARTY-NOTICE.desktop.txt")
+    from(rootProject.file("engine/desktop/THIRD-PARTY-NOTICE.ffmpeg.txt"))
+    from(rootProject.file("app")) {
+        listOf("ACNet", "Anime4K", "FidelityFX-FSR", "NVIDIA-Image-Scaling", "Snapdragon-GSR", "hash-without-sine")
+            .forEach { include("THIRD-PARTY-NOTICE.$it.txt") }
+    }
+    listOf("imaging", "library", "player", "sources").forEach { core ->
+        from(rootProject.file("core/$core/THIRD_PARTY_NOTICES.md")) { rename { "THIRD-PARTY-NOTICE.core-$core.md" } }
+    }
+    into(layout.buildDirectory.dir("notices"))
+}
+
+// createDistributable's folder is what the MSI, the Windows-built zip and the AppImage are made from: the notices go
+// in there (the task comes once the Compose plugin has read the configuration, hence matching rather than named).
+val distributable = layout.buildDirectory.dir("compose/binaries/main/app/MediaDroid")
+tasks.matching { it.name == "createDistributable" }.configureEach {
+    inputs.files(notices)
+    doLast {
+        fileOps.copy {
+            from(notices)
+            into(distributable)
+        }
+    }
+}
+// The MSI is jpackage'd from that same folder (--app-image) rather than from the jars again, which the plugin does
+// unless told: otherwise the installed app would lack the notices.
+tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>()
+    .matching { it.name == "packageMsi" }
+    .configureEach {
+        dependsOn("createDistributable")
+        appImage.set(distributable)
+    }
+
 // The portable Windows zip (unpack anywhere and run it; settings stay beside it): the app built for Windows
 // (-PdesktopTarget=windows), a Java runtime, a launcher and the `portable` marker.
 // ./gradlew :desktop:windowsZip -PdesktopTarget=windows → desktop/build/dist/.
 // The MSI is built by jpackage on Windows itself (packageMsi); this zip is made on any system.
 val windowsJre = "OpenJDK21U-jre_x64_windows_hotspot_21.0.13_9.zip"
-val windowsJreUrl = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/$windowsJre"
-val windowsJreSha256 = "2332c0b4cff6bed722da3567c91d5e47568bcba863fa4945d0a8d6fc76158628"
-
-val windowsJreFetch = tasks.register("windowsJreFetch") {
-    val out = layout.buildDirectory.file("download/$windowsJre")
-    outputs.file(out)
-    doLast {
-        val file = out.get().asFile
-        file.parentFile.mkdirs()
-        fun sha(f: File) = MessageDigest.getInstance("SHA-256").digest(f.readBytes())
-            .joinToString("") { "%02x".format(it) }
-        if (!file.exists() || sha(file) != windowsJreSha256) {
-            URI(windowsJreUrl).toURL().openStream().use { input -> file.outputStream().use { input.copyTo(it) } }
-        }
-        check(sha(file) == windowsJreSha256) { "$windowsJre does not match its digest" }
-    }
-}
+val windowsJreFetch = fetch(
+    "windowsJreFetch",
+    windowsJre,
+    "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/$windowsJre",
+    "2332c0b4cff6bed722da3567c91d5e47568bcba863fa4945d0a8d6fc76158628",
+)
 
 // The JRE unpacked once, its top folder (jdk-…-jre) dropped.
 val windowsJreUnpack = tasks.register<Sync>("windowsJreUnpack") {
@@ -139,7 +192,7 @@ tasks.register<Zip>("windowsZip") {
     into("MediaDroid") {
         if (onWindows) {
             dependsOn("createDistributable")
-            from(layout.buildDirectory.dir("compose/binaries/main/app/MediaDroid"))
+            from(distributable)
             from(rootProject.file("desktop/windows/portable"))
         } else {
             dependsOn(windowsJreUnpack, tasks.named("jar"))
@@ -150,53 +203,66 @@ tasks.register<Zip>("windowsZip") {
             }
             from(rootProject.file("desktop/windows"))
         }
-        from(rootProject.file("LICENSE"))
-        from(rootProject.file("engine/desktop/THIRD-PARTY-NOTICE.ffmpeg.txt"))
+        from(notices)
     }
 }
 
-// The Linux AppImage: createDistributable's folder as an AppDir (AppRun, .desktop, icon), squashed (mksquashfs, from
-// squashfs-tools) behind the AppImage project's type-2 runtime (fetched once, checked against its digest).
+// The Linux AppImage: createDistributable's folder as an AppDir (AppRun, .desktop, icon), packed by appimagetool
+// (https://github.com/AppImage/appimagetool, MIT) behind the AppImage project's type-2 runtime (MIT) — both from
+// tagged releases, fetched once and checked against their digests, so a new upstream build cannot slip in. The
+// AppImage carries the build's date as its version (X-AppImage-Version), as the Android app's versionName.
 // ./gradlew :desktop:appImage → desktop/build/dist/MediaDroid-linux-x64.AppImage.
-val appImageRuntimeUrl = "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
-val appImageRuntimeSha256 = "617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46"
+val appImageTool = fetch(
+    "appImageToolFetch",
+    "appimagetool-1.9.1-x86_64.AppImage",
+    "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage",
+    "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0",
+)
+val appImageRuntime = fetch(
+    "appImageRuntimeFetch",
+    "appimage-runtime-20251108-x86_64",
+    "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64",
+    "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d",
+)
 
 tasks.register("appImage") {
     group = "distribution"
     description = "The Linux AppImage"
-    dependsOn("createDistributable")
-    val app = layout.buildDirectory.dir("compose/binaries/main/app/MediaDroid")
+    dependsOn("createDistributable", appImageTool, appImageRuntime)
+    val tool = appImageTool.map { it.outputs.files.singleFile }
+    val runtime = appImageRuntime.map { it.outputs.files.singleFile }
+    inputs.files(tool, runtime, rootProject.file("desktop/linux"), rootProject.file("desktop/icons/mediadroid.png"))
+    inputs.dir(distributable)
+    inputs.property("version", buildVersion)
     val work = layout.buildDirectory.dir("appimage")
     val out = layout.buildDirectory.file("dist/MediaDroid-linux-x64.AppImage")
     outputs.file(out)
+    val version = buildVersion
     doLast {
-        val dir = work.get().asFile.apply { deleteRecursively(); mkdirs() }
-        val appDir = File(dir, "AppDir")
-        copy {
-            from(app)
+        val appDir = File(work.get().asFile.apply { deleteRecursively() }, "AppDir")
+        fileOps.copy {
+            from(distributable)
             into(File(appDir, "usr"))
         }
-        copy {
+        fileOps.copy {
             from(rootProject.file("desktop/linux"))
             from(rootProject.file("desktop/icons/mediadroid.png"))
             into(appDir)
         }
         File(appDir, "AppRun").setExecutable(true)
         File(appDir, "usr/bin/MediaDroid").setExecutable(true)
-        val runtime = File(dir, "runtime")
-        URI(appImageRuntimeUrl).toURL().openStream().use { input -> runtime.outputStream().use { input.copyTo(it) } }
-        val digest = MessageDigest.getInstance("SHA-256").digest(runtime.readBytes())
-            .joinToString("") { "%02x".format(it) }
-        check(digest == appImageRuntimeSha256) { "the AppImage runtime does not match its digest" }
-        val squash = File(dir, "app.squashfs")
-        val made = ProcessBuilder("mksquashfs", appDir.path, squash.path, "-root-owned", "-noappend", "-comp", "zstd")
-            .inheritIO().start().waitFor()
-        check(made == 0) { "mksquashfs failed (squashfs-tools installed?)" }
-        val image = out.get().asFile.apply { parentFile.mkdirs() }
-        image.outputStream().use { o ->
-            runtime.inputStream().use { it.copyTo(o) }
-            squash.inputStream().use { it.copyTo(o) }
-        }
-        image.setExecutable(true)
+        val image = out.get().asFile.apply { parentFile.mkdirs(); delete() }
+        val toolFile = tool.get().apply { setExecutable(true) }
+        // Unpacked and run in place (no FUSE needed, as on CI runners); no AppStream file to check; no update
+        // information guessed from the CI's environment.
+        val made = ProcessBuilder(
+            toolFile.path, "--no-appstream", "--runtime-file", runtime.get().path, appDir.path, image.path,
+        ).apply {
+            environment()["APPIMAGE_EXTRACT_AND_RUN"] = "1"
+            environment()["ARCH"] = "x86_64"
+            environment()["VERSION"] = version
+            listOf("GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITLAB_CI", "TRAVIS").forEach { environment().remove(it) }
+        }.inheritIO().start().waitFor()
+        check(made == 0) { "appimagetool failed" }
     }
 }

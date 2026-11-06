@@ -75,10 +75,17 @@ class GlStageTest {
         val out = stage.process(hdr, PictureAdjustment.Neutral, w, h)
         val detect = PeakDetect().apply { update(PeakDetect.blocks(rgb16, w, h, ToneMap.Transfer.PQ)) }
         val expected = ToneMap.apply(rgb16, w, h, ToneMap.pass(ToneMap.Transfer.PQ, detect.peak))
-        val worst = (0 until w * h * 3).maxOf { i ->
+        val off = (0 until w * h * 3).map { i ->
             abs((out.rgba[i / 3 * 4 + i % 3].toInt() and 255) - (expected[i].toInt() and 255))
         }
-        assertTrue("off by $worst", worst <= 1)
+        if (stage.renderer.startsWith("llvmpipe")) {
+            // Mesa's software rasteriser (CI) computes pow() less exactly, and PQ raises to the 78.84th power: there
+            // a few values land up to 3 off (6 of 6144 measured, 240 by 1), never more, and almost all within 1.
+            assertTrue("off by ${off.max()}", off.max() <= 3)
+            assertTrue("${off.count { it > 1 }} off by more than 1", off.count { it > 1 } <= off.size / 100)
+        } else {
+            assertTrue("off by ${off.max()}", off.max() <= 1)
+        }
     }
 
     @Test
@@ -91,10 +98,19 @@ class GlStageTest {
     companion object {
         private lateinit var stage: GlStage
 
+        // MEDIADROID_GL=required (CI, on Mesa's software OpenGL) turns a missing context into a failure: there the
+        // tests must run, not skip themselves and pass on nothing.
+        private val required = System.getenv("MEDIADROID_GL") == "required"
+
+        private fun expect(message: String, condition: Boolean) =
+            if (required) assertTrue(message, condition) else assumeTrue(message, condition)
+
         @BeforeClass @JvmStatic fun open() {
-            assumeTrue("no display", System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null)
+            val windows = System.getProperty("os.name").startsWith("Windows")
+            val display = System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null
+            expect("no display", windows || display)
             stage = GlStage()
-            assumeTrue("no OpenGL 4.3 context", stage.ready)
+            expect("no OpenGL 4.3 context", stage.ready)
         }
 
         @AfterClass @JvmStatic fun close() {
