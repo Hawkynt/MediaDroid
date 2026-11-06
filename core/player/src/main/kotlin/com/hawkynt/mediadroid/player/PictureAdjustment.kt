@@ -259,7 +259,8 @@ data class PictureAdjustment(
      * [BWDIF] are temporal (see [Deinterlacer]): they look at the frames before and after too, so still
      * parts keep their full detail, and the picture runs one frame behind, the sound waiting as long. So are
      * DScaler's [GREEDY_HM] and [GREEDY_2FRAME], [TOMSMOCOMP] — motion-compensated, a search along the motion between
-     * the fields either side — and [ADAPTIVE] (see [MotionAdaptive]), which weaves the frame whole
+     * the fields either side — [SMOOTH_MC] (see [TemporalSmoothing]), BWDIF averaged with the fields either side along
+     * the motion, after QTGMC — and [ADAPTIVE] (see [MotionAdaptive]), which weaves the frame whole
      * while the picture stands still and is BWDIF while it moves. [OLD_CONSOLE] (see [OldGame]) is for 240p game
      * consoles: each field a picture of its own, stretched smoothly, never deinterlaced.
      * [FILM] undoes pulldown (see [FilmCadence]) — 3:2 for film on NTSC video, 24 frames a second spread
@@ -279,6 +280,10 @@ data class PictureAdjustment(
             "TomsMoComp",
             "Tom Barry's motion search: each missing pixel from the fields either side, along the motion.",
         ),
+        SMOOTH_MC(
+            "MC Smooth",
+            "After QTGMC: BWDIF, then each picture averaged with its neighbours along the motion; the heaviest.",
+        ),
         ADAPTIVE("Adaptive", "Woven whole while the picture stands still, BWDIF as soon as it moves."),
         OLD_CONSOLE(
             "Old console",
@@ -294,7 +299,7 @@ data class PictureAdjustment(
         val method: Deinterlacer.Method?
             get() = when (this) {
                 YADIF -> Deinterlacer.Method.YADIF
-                BWDIF, ADAPTIVE -> Deinterlacer.Method.BWDIF
+                BWDIF, ADAPTIVE, SMOOTH_MC -> Deinterlacer.Method.BWDIF
                 GREEDY_HM -> Deinterlacer.Method.GREEDY_HM
                 GREEDY_2FRAME -> Deinterlacer.Method.GREEDY_2FRAME
                 TOMSMOCOMP -> Deinterlacer.Method.TOMSMOCOMP
