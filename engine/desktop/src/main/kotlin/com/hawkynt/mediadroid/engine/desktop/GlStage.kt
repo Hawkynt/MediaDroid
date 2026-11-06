@@ -235,7 +235,7 @@ class GlStage : AutoCloseable {
             (!a.interpolation.isNeural || interpolator(a.interpolation) != null)
         // At field rate the second half of a picture's time shows its other field.
         val second = a.isFieldRate && !blending && next != null && m.phase >= 0.5f
-        var source = filtered(m.shown, m.previous, next, a, second)
+        var source = filtered(m.shown, m.previous, next, a, second, m.after)
         if (blending && next != null) {
             val later = filtered(next, m.shown, m.after, a, false)
             source = mixed(m, next, source, later, a)
@@ -292,6 +292,51 @@ class GlStage : AutoCloseable {
     }
 
     /**
+     * MC Smooth (see TemporalSmoothing): [base], the shown field's BWDIF picture of [cur], averaged along the motion
+     * with the BWDIF pictures of the fields before and after — from [prev], [next] and [further], the frame two before
+     * stood in for by [prev] — contra-sharpened and repaired, and the camera's rows of [cur] put back.
+     */
+    private fun smoothAlongMotion(
+        base: Target,
+        prev: Target,
+        cur: Target,
+        next: Target,
+        further: Target,
+        second: Boolean,
+    ): Target {
+        val w = base.width
+        val h = base.height
+        val half = deep
+        fun bwdif(into: String, a: Target, b: Target, c: Target, s: Boolean) =
+            pass("temporal.frag", target(into, w, h, half = half), b.texture,
+                listOf(a.texture to "uPrev", c.texture to "uNext"), nearest = true) { p ->
+                glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
+                glUniform1i(glGetUniformLocation(p, "uSecond"), if (s) 1 else 0)
+                glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(s, true).toFloat())
+                glUniform1i(glGetUniformLocation(p, "uMethod"), Deinterlacer.shaderMethod(Deinterlacer.Method.BWDIF))
+            }
+        val earlier = if (second) {
+            bwdif("mc-earlier", prev, cur, next, false)
+        } else {
+            bwdif("mc-earlier", prev, prev, cur, true)
+        }
+        val later = if (second) {
+            bwdif("mc-later", cur, next, further, false)
+        } else {
+            bwdif("mc-later", prev, cur, next, true)
+        }
+        val smoothed = pass("mc-smooth.frag", target("mc-smoothed", w, h, half = half), base.texture,
+            listOf(earlier.texture to "uEarlier", later.texture to "uLater"), nearest = true) { p ->
+            glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
+        }
+        return pass("mc-sharpen.frag", target("mc-sharpened", w, h, half = half), smoothed.texture,
+            listOf(base.texture to "uBase", cur.texture to "uSource"), nearest = true) { p ->
+            glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
+            glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(second, true).toFloat())
+        }
+    }
+
+    /**
      * Old console: whether [picture]'s field shown ([second] or its first) is averaged with the field before (see
      * OldGame), from the pictures' luma every fourth column; never for HDR pictures.
      */
@@ -304,7 +349,8 @@ class GlStage : AutoCloseable {
 
     /**
      * [picture] (its 3D eye) deinterlaced — a temporal deinterlacer reading [before] and [after] where known, its
-     * [second] field rebuilt at field rate — debanded, denoised and sharpened at its own size; kept while it is used.
+     * [second] field rebuilt at field rate (MC Smooth reads [beyond], the picture after [after], too) — debanded,
+     * denoised and sharpened at its own size; kept while it is used.
      */
     private fun filtered(
         picture: MediaReader.Picture,
@@ -312,6 +358,7 @@ class GlStage : AutoCloseable {
         after: MediaReader.Picture?,
         a: PictureAdjustment,
         second: Boolean,
+        beyond: MediaReader.Picture? = null,
     ): Target {
         kept.firstOrNull { it.picture === picture && it.second == second }?.let { return slotTarget(it) }
         val raw = uploaded(picture, region(picture, crop, a.stereo))
@@ -337,6 +384,10 @@ class GlStage : AutoCloseable {
                 glUniform1i(glGetUniformLocation(p, "uMethod"), method)
                 val average = method == Deinterlacer.OLD_CONSOLE && consoleAverages(picture, before, second)
                 glUniform1i(glGetUniformLocation(p, "uAverage"), if (average) 1 else 0)
+            }
+            if (a.deinterlace == PictureAdjustment.Deinterlace.SMOOTH_MC) {
+                val further = neighbour(beyond ?: after ?: picture).takeIf { it.width == w && it.height == h } ?: next
+                source = smoothAlongMotion(source, prev, raw, next, further, second)
             }
         } else if (a.deinterlace != PictureAdjustment.Deinterlace.OFF &&
             a.deinterlace != PictureAdjustment.Deinterlace.FILM
@@ -1193,6 +1244,8 @@ class GlStage : AutoCloseable {
         val ACNET = (1..11).map { "acnet/conv-$it.frag" }
         val SHADERS = mapOf(
             "temporal.frag" to Shaders.VIDEO_TEMPORAL,
+            "mc-smooth.frag" to Shaders.VIDEO_MC_SMOOTH,
+            "mc-sharpen.frag" to Shaders.VIDEO_MC_SHARPEN,
             "colorize.frag" to Shaders.VIDEO_COLORIZE,
             "deinterlace.frag" to Shaders.VIDEO_DEINTERLACE,
             "deband-es3.frag" to Shaders.VIDEO_DEBAND_ES3,

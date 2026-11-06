@@ -8,6 +8,7 @@ import com.hawkynt.mediadroid.player.ChromaUpscaling
 import com.hawkynt.mediadroid.player.LogoMask
 import com.hawkynt.mediadroid.player.OldGame
 import com.hawkynt.mediadroid.player.Panorama
+import com.hawkynt.mediadroid.player.TemporalSmoothing
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
@@ -306,6 +307,34 @@ class GlStageTest {
                 val worst = worstDifference(out.rgba, expected)
                 assertTrue("averaged $averaged, second $second: off by $worst", worst <= 1)
             }
+        }
+    }
+
+    @Test
+    fun `MC Smooth draws what the core's reference draws, either field`() {
+        val w = 96
+        val h = 64
+        // Grey waves moving 3 across and 2 down a field, with a little fixed noise; R, G and B alike.
+        fun picture(k: Int) = MediaReader.Picture(k * 40L, w, h, ByteArray(w * h * 4) { i ->
+            val x = i / 4 % w
+            val y = i / 4 / w
+            val t = 2 * k + y % 2
+            val v = 120 + 50 * kotlin.math.sin((x + 3 * t) / 5.0) * kotlin.math.cos((y + 2 * t) / 7.0) +
+                ((x * 31 + y * 17 + k * 7) % 9 - 4)
+            if (i % 4 == 3) -1 else v.toInt().coerceIn(0, 255).toByte()
+        })
+        val p = (0 until 5).map(::picture)
+        fun luma(picture: MediaReader.Picture) =
+            Deinterlacer.Plane(w, h, IntArray(w * h) { picture.rgba[it * 4].toInt() and 255 })
+        val smooth = PictureAdjustment(deinterlace = PictureAdjustment.Deinterlace.SMOOTH_MC, fieldRate = true)
+        for (second in listOf(false, true)) {
+            val out = stage.process(Moment(p[2], p[1], p[3], p[4], if (second) 0.7f else 0.2f), smooth, w, h)
+            val reference = TemporalSmoothing.deinterlace(
+                luma(p[1]), luma(p[1]), luma(p[2]), luma(p[3]), luma(p[4]), second, true,
+            )
+            val expected = ByteArray(w * h * 4) { i -> if (i % 4 == 3) -1 else reference.pixels[i / 4].toByte() }
+            val worst = worstDifference(out.rgba, expected)
+            assertTrue("second $second: off by $worst", worst <= 1)
         }
     }
 

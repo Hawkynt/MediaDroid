@@ -358,6 +358,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var rcasProgram = 0
     private var blendProgram = 0
     private var temporalProgram = 0
+
+    // MC Smooth (see TemporalSmoothing): the averaging along the motion, and the contra-sharpening and repair after it.
+    private var mcSmoothProgram = 0
+    private var mcSharpenProgram = 0
     private var weaveProgram = 0
     private var packProgram = 0
 
@@ -374,7 +378,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val peakBufferSizes = IntArray(2)
     private val peakPending = IntArray(2)
     private var peakSlot = 0
-    private val frames = Array(SCREEN_SAMPLE + 1) { Frame() }
+    private val frames = Array(MC_SHARPENED + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -1083,6 +1087,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             motionSearch.shutdownNow()
             GLES20.glDeleteProgram(temporalProgram)
             GLES20.glDeleteProgram(weaveProgram)
+            GLES20.glDeleteProgram(mcSmoothProgram)
+            GLES20.glDeleteProgram(mcSharpenProgram)
             filmWorker.shutdownNow()
             handler.removeCallbacksAndMessages(filmToken)
             handler.removeCallbacks(secondField)
@@ -1272,6 +1278,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         )
         temporalProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TEMPORAL)
         weaveProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_WEAVE)
+        mcSmoothProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MC_SMOOTH)
+        mcSharpenProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MC_SHARPEN)
     }
 
     private fun releaseWindow() {
@@ -1425,7 +1433,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             OldGame.averages(consoleLumas[0], shown, secondField, fieldOrder.topFieldFirst, JUDGED_COLUMN_STEP)
         } == true
         rebuildField(woven, prev, cur, next, secondField, method, average)
-        val shrunk = reduced(woven)
+        val shown = if (picture.deinterlace == PictureAdjustment.Deinterlace.SMOOTH_MC) {
+            smoothAlongMotion(woven, prev, cur, next, secondField, deepInput(picture))
+        } else {
+            woven
+        }
+        val shrunk = reduced(shown)
         return denoised(picture, shrunk, shrunk.width, shrunk.height)
     }
 
@@ -1448,6 +1461,68 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         consoleLumas[0] = consoleLumas[1]
         consoleLumas[1] = consoleLumas[2]
         consoleLumas[2] = packedLuma(frames[history[2]], width, height, JUDGED_COLUMN_STEP, 1)
+    }
+
+    /**
+     * MC Smooth (see TemporalSmoothing): [base], the shown field's BWDIF picture, averaged along the motion with the
+     * BWDIF pictures of the fields before and after, contra-sharpened and repaired, the camera's rows of [cur] put
+     * back.
+     * The stage keeps three frames, so the frame two before and the one after the next are stood in for by their
+     * nearest — the neighbours' BWDIF reads them only in its temporal check.
+     */
+    private fun smoothAlongMotion(
+        base: Frame,
+        prev: Frame,
+        cur: Frame,
+        next: Frame,
+        second: Boolean,
+        half: Boolean,
+    ): Frame {
+        val w = base.width
+        val h = base.height
+        val bwdif = Deinterlacer.shaderMethod(Deinterlacer.Method.BWDIF)
+        val earlier = frames[MC_EARLIER].ensure(w, h, half)
+        val later = frames[MC_LATER].ensure(w, h, half)
+        if (second) {
+            rebuildField(earlier, prev, cur, next, false, bwdif)
+            rebuildField(later, cur, next, next, false, bwdif)
+        } else {
+            rebuildField(earlier, prev, prev, cur, true, bwdif)
+            rebuildField(later, prev, cur, next, true, bwdif)
+        }
+        val smoothed = frames[MC_SMOOTHED].ensure(w, h, half)
+        exact(base.texture, earlier.texture, later.texture) {
+            smoothed.bind()
+            GLES20.glUseProgram(mcSmoothProgram)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, earlier.texture)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(mcSmoothProgram, "uEarlier"), 1)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, later.texture)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(mcSmoothProgram, "uLater"), 2)
+            run(mcSmoothProgram, GLES20.GL_TEXTURE_2D, base.texture, identity) { p ->
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
+            }
+        }
+        val out = frames[MC_SHARPENED].ensure(w, h, half)
+        exact(smoothed.texture, base.texture, cur.texture) {
+            out.bind()
+            GLES20.glUseProgram(mcSharpenProgram)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, base.texture)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(mcSharpenProgram, "uBase"), 1)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, cur.texture)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(mcSharpenProgram, "uSource"), 2)
+            run(mcSharpenProgram, GLES20.GL_TEXTURE_2D, smoothed.texture, identity) { p ->
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
+                GLES20.glUniform1f(
+                    GLES20.glGetUniformLocation(p, "uParity"),
+                    Deinterlacer.rebuiltParity(second, fieldOrder.topFieldFirst).toFloat(),
+                )
+            }
+        }
+        return out
     }
 
     /**
@@ -3052,6 +3127,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         // The picture on screen taken small for the histogram (see onScreenSample).
         private const val SCREEN_SAMPLE = CDEF_BLOCKS + 1
+
+        /** MC Smooth's neighbouring fields' BWDIF pictures, the averaged picture and the finished one. */
+        private const val MC_EARLIER = SCREEN_SAMPLE + 1
+        private const val MC_LATER = MC_EARLIER + 1
+        private const val MC_SMOOTHED = MC_LATER + 1
+        private const val MC_SHARPENED = MC_SMOOTHED + 1
 
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()
