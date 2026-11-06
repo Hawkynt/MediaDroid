@@ -9,9 +9,11 @@ import com.hawkynt.mediadroid.player.SubtitleText
 import com.hawkynt.mediadroid.player.Teletext
 import com.hawkynt.mediadroid.player.ToneMap
 import com.hawkynt.mediadroid.player.YuvMatrix
+import org.bytedeco.ffmpeg.avcodec.AVCodec
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext
 import org.bytedeco.ffmpeg.avcodec.AVPacket
 import org.bytedeco.ffmpeg.avformat.AVFormatContext
+import org.bytedeco.ffmpeg.avutil.AVBufferRef
 import org.bytedeco.ffmpeg.avutil.AVChannelLayout
 import org.bytedeco.ffmpeg.avutil.AVDictionary
 import org.bytedeco.ffmpeg.avutil.AVFrame
@@ -30,9 +32,15 @@ import org.bytedeco.javacpp.PointerPointer
 /**
  * A media file read and decoded by FFmpeg, one item at a time — the one at [path], or [from] a network source with
  * [path] its location there: the pictures as RGBA bytes at the file's own size, the sound as 16-bit stereo PCM at
- * [SAMPLE_RATE], each with its time in milliseconds. Not thread-safe: one reader, one thread.
+ * [SAMPLE_RATE], each with its time in milliseconds. The picture is decoded on the first of the [decoders]
+ * (HardwareDecoding) that opens for its codec and copied back from the graphics chip, else in software — and in
+ * software from there on should the chip fail midway. Not thread-safe: one reader, one thread.
  */
-class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
+class MediaReader(
+    path: String,
+    from: FsFile? = null,
+    private val decoders: List<HardwareDecoding.Device> = HardwareDecoding.candidates(softwareFirst = false),
+) : AutoCloseable {
 
     /**
      * A decoded picture: [rgba] is [width] × [height] × 4 bytes, rows from the top — or, for an HDR video ([hdr] its
@@ -90,6 +98,16 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     }
     private val packet: AVPacket = avcodec.av_packet_alloc()
     private val frame: AVFrame = avutil.av_frame_alloc()
+    // A hardware decoder's picture copied back to the processor, the device it is decoded on and the pixel format of
+    // the pictures it hands over; the devices after it, tried where its driver refuses the stream before it ever
+    // decoded a picture ([proven]); and those to reopen the decoder on, where it failed.
+    private val copied: AVFrame = avutil.av_frame_alloc()
+    private var device: AVBufferRef? = null
+    private var deviceFormat = avutil.AV_PIX_FMT_NONE
+    private var opened: HardwareDecoding.Device? = null
+    private var untried: List<HardwareDecoding.Device> = emptyList()
+    private var proven = false
+    private var retry: List<HardwareDecoding.Device> = emptyList()
     private val videoIndex: Int
     private var audioIndex: Int
     private var video: AVCodecContext? = null
@@ -141,6 +159,7 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     private val subtitle = org.bytedeco.ffmpeg.avcodec.AVSubtitle()
     private val gotSubtitle = org.bytedeco.javacpp.IntPointer(1)
     private var sws: SwsContext? = null
+    private var swsFormat = avutil.AV_PIX_FMT_NONE
     private var swr: SwrContext? = null
     private val rgbaFrame: AVFrame = avutil.av_frame_alloc()
     private val soundFrame: AVFrame = avutil.av_frame_alloc()
@@ -166,6 +185,13 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
 
     /** The file's video, audio and subtitle streams as tracks, id the stream's index. */
     val tracks: List<Track>
+
+    /**
+     * The hardware decoder the picture is decoded on, null for software: from the first picture on, what actually
+     * decodes it — a driver that opens but refuses the stream's profile leaves it to software.
+     */
+    @Volatile var hardware: HardwareDecoding.Device? = null
+        private set
 
     /**
      * The fonts the file carries for its subtitles (Matroska attachments), by file name: those said to be fonts by
@@ -212,7 +238,7 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
                 Track(Teletext.trackId(i, page), kind, page.language.trim(), "Teletext ${page.label}")
             } ?: listOf(Track("$i", kind, language?.takeIf { it != "und" }, title, i == videoIndex || i == audioIndex))
         }.flatten()
-        if (videoIndex >= 0) video = openDecoder(videoIndex)
+        if (videoIndex >= 0) video = openVideoDecoder(decoders)
         if (audioIndex >= 0) audio = openDecoder(audioIndex)
         width = video?.width() ?: 0
         height = video?.height() ?: 0
@@ -241,6 +267,81 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     }
 
     private fun best(type: Int): Int = avformat.av_find_best_stream(format, type, -1, -1, null as PointerPointer<*>?, 0)
+
+    /**
+     * The picture's decoder: on the first of [devices] its codec can be decoded on and that opens (FFmpeg's own
+     * get_format then takes the device's pictures, or the software ones where the driver refuses the stream), else in
+     * software. Converted from FFmpeg's doc/examples/hw_decode.c (MIT).
+     */
+    private fun openVideoDecoder(devices: List<HardwareDecoding.Device>): AVCodecContext {
+        val parameters = format.streams(videoIndex).codecpar()
+        val codec = checkNotNull(avcodec.avcodec_find_decoder(parameters.codec_id())) { "no decoder for the picture" }
+        val picked = HardwareDecoding.pick(
+            devices,
+            supports = { deviceFormatOf(codec, it) != avutil.AV_PIX_FMT_NONE },
+            open = ::openDevice,
+        )
+        val context = avcodec.avcodec_alloc_context3(codec)
+        avcodec.avcodec_parameters_to_context(context, parameters)
+        if (picked != null) {
+            context.hw_device_ctx(avutil.av_buffer_ref(picked.second))
+            // One thread on a chip: frame threads would only hold more of its pictures back.
+            context.thread_count(1)
+        } else {
+            context.thread_count(0)
+        }
+        if (avcodec.avcodec_open2(context, codec, null as AVDictionary?) >= 0) {
+            device = picked?.second
+            deviceFormat = picked?.let { deviceFormatOf(codec, it.first) } ?: avutil.AV_PIX_FMT_NONE
+            opened = picked?.first
+            hardware = picked?.first
+            untried = picked?.let { devices.drop(devices.indexOf(it.first) + 1) }.orEmpty()
+            proven = false
+            return context
+        }
+        avcodec.avcodec_free_context(context)
+        check(picked != null) { "cannot open the decoder" }
+        unref(picked.second)
+        return openVideoDecoder(emptyList())
+    }
+
+    /** The pixel format [codec] hands its pictures over in on [device], NONE where it cannot decode there. */
+    private fun deviceFormatOf(codec: AVCodec, device: HardwareDecoding.Device): Int {
+        val type = avutil.av_hwdevice_find_type_by_name(device.ffmpegName)
+        if (type == avutil.AV_HWDEVICE_TYPE_NONE) return avutil.AV_PIX_FMT_NONE
+        var i = 0
+        while (true) {
+            val config = avcodec.avcodec_get_hw_config(codec, i++) ?: return avutil.AV_PIX_FMT_NONE
+            if ((config.methods() and avcodec.AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0 &&
+                config.device_type() == type
+            ) {
+                return config.pix_fmt()
+            }
+        }
+    }
+
+    /** [device] opened on the system's default chip for it; null where there is none or its driver will not open. */
+    private fun openDevice(device: HardwareDecoding.Device): AVBufferRef? {
+        val type = avutil.av_hwdevice_find_type_by_name(device.ffmpegName)
+        if (type == avutil.AV_HWDEVICE_TYPE_NONE) return null
+        val opened = PointerPointer<AVBufferRef>(1L)
+        if (avutil.av_hwdevice_ctx_create(opened, type, null as BytePointer?, null, 0) < 0) return null
+        return opened.get(AVBufferRef::class.java, 0L)
+    }
+
+    private fun unref(buffer: AVBufferRef) = avutil.av_buffer_unref(PointerPointer<AVBufferRef>(1L).put(buffer))
+
+    /**
+     * The picture decoded on [devices] from here (software where none opens), the reader back at [atMs] — the picture
+     * the device before could not decode or copy back the first to come.
+     */
+    private fun reopenVideo(devices: List<HardwareDecoding.Device>, atMs: Long) {
+        video?.let { avcodec.avcodec_free_context(it) }
+        device?.let(::unref)
+        device = null
+        video = openVideoDecoder(devices)
+        seek(atMs)
+    }
 
     private fun openDecoder(index: Int): AVCodecContext {
         val parameters = format.streams(index).codecpar()
@@ -375,7 +476,14 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
             val start = if (stream.start_time() != avutil.AV_NOPTS_VALUE) stream.start_time() else 0
             val ms = Math.round((pts - start) * 1000.0 * base.num() / base.den())
             if (context == video) {
-                if (ms >= skipBeforeMs) pending.addLast(picture(ms))
+                if (ms >= skipBeforeMs) {
+                    val decoded = decodedPicture() ?: run {
+                        avutil.av_frame_unref(frame)
+                        reopenVideo(retry, ms)
+                        return
+                    }
+                    pending.addLast(picture(ms, decoded))
+                }
             } else {
                 sound(ms)?.let { if (it.ptsMs + it.pcm.size / 4 * 1000L / SAMPLE_RATE >= skipBeforeMs) pending += it }
             }
@@ -430,13 +538,42 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         pending.addLast(Cue(atMs, UNTIL_REPLACED, shown.text, slot.second))
     }
 
-    private fun picture(ptsMs: Long): Picture {
+    /**
+     * The frame decoded, in the processor's memory: a hardware decoder's copied back (as NV12, or P010 for more than 8
+     * bits). Null where the decoder is to be opened again on [retry]: the next device where the driver refused the
+     * stream before decoding any of it, software where the copy failed.
+     */
+    private fun decodedPicture(): AVFrame? {
+        if (deviceFormat == avutil.AV_PIX_FMT_NONE) return frame
+        if (frame.format() != deviceFormat) {
+            // The device opened but its driver refused the stream (a codec or profile its chip lacks, no chip behind
+            // it): FFmpeg decodes it in software. Before any picture of the chip's, the next device is tried.
+            if (!proven && untried.isNotEmpty()) {
+                retry = untried
+                return null
+            }
+            hardware = null
+            return frame
+        }
+        avutil.av_frame_unref(copied)
+        if (avutil.av_hwframe_transfer_data(copied, frame, 0) < 0) {
+            retry = emptyList()
+            return null
+        }
+        avutil.av_frame_copy_props(copied, frame)
+        proven = true
+        hardware = opened
+        return copied
+    }
+
+    private fun picture(ptsMs: Long, frame: AVFrame): Picture {
         val w = frame.width()
         val h = frame.height()
         // HDR keeps its coded values at 16 bits, through BT.2020's matrix to full-range R'G'B'.
         val deep = hdr != null
         val bytes = if (deep) 8 else 4
-        if (sws == null || rgbaFrame.width() != w || rgbaFrame.height() != h) {
+        if (sws == null || rgbaFrame.width() != w || rgbaFrame.height() != h || swsFormat != frame.format()) {
+            swsFormat = frame.format()
             sws?.let { swscale.sws_freeContext(it) }
             val target = if (deep) avutil.AV_PIX_FMT_RGBA64LE else avutil.AV_PIX_FMT_RGBA
             sws = swscale.sws_getContext(
@@ -460,13 +597,17 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         val data: BytePointer = rgbaFrame.data(0)
         for (y in 0 until h) data.position((y * stride).toLong()).get(out, y * w * bytes, w * bytes)
         data.position(0)
-        return Picture(ptsMs, w, h, out, hdr, if (keepPlanes && !deep) planes(w, h) else null)
+        return Picture(ptsMs, w, h, out, hdr, if (keepPlanes && !deep) planes(frame, w, h) else null)
     }
 
-    /** The decoded frame's planes, where it is 8-bit 4:2:0 (yuv420p, or MJPEG's yuvj420p); else null. */
-    private fun planes(w: Int, h: Int): Planes? {
+    /**
+     * The decoded [frame]'s planes, where it is 8-bit 4:2:0 (yuv420p, MJPEG's yuvj420p, or a hardware decoder's NV12,
+     * its interleaved chroma taken apart); else null.
+     */
+    private fun planes(frame: AVFrame, w: Int, h: Int): Planes? {
         val format = frame.format()
-        if (format != avutil.AV_PIX_FMT_YUV420P && format != avutil.AV_PIX_FMT_YUVJ420P) return null
+        val nv12 = format == avutil.AV_PIX_FMT_NV12
+        if (format != avutil.AV_PIX_FMT_YUV420P && format != avutil.AV_PIX_FMT_YUVJ420P && !nv12) return null
         fun plane(i: Int, pw: Int, ph: Int): ByteArray {
             val out = ByteArray(pw * ph)
             val data = frame.data(i)
@@ -484,7 +625,8 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
             else -> null
         }
         val full = format == avutil.AV_PIX_FMT_YUVJ420P || frame.color_range() == avutil.AVCOL_RANGE_JPEG
-        return Planes(plane(0, w, h), plane(1, cw, ch), plane(2, cw, ch), YuvMatrix.of(signalled, h), full)
+        val (u, v) = if (nv12) deinterleave(plane(1, cw * 2, ch)) else plane(1, cw, ch) to plane(2, cw, ch)
+        return Planes(plane(0, w, h), u, v, YuvMatrix.of(signalled, h), full)
     }
 
     private fun sound(ptsMs: Long): Sound? {
@@ -513,6 +655,8 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         avutil.av_frame_free(rgbaFrame)
         avutil.av_frame_free(soundFrame)
         avutil.av_frame_free(frame)
+        avutil.av_frame_free(copied)
+        device?.let(::unref)
         avcodec.av_packet_free(packet)
         avformat.avformat_close_input(format)
         input?.close()
@@ -521,6 +665,17 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     companion object {
         /** The rate all sound is resampled to for the output. */
         const val SAMPLE_RATE = 48_000
+
+        /** NV12's chroma, U and V by turns, as its two planes. */
+        internal fun deinterleave(uv: ByteArray): Pair<ByteArray, ByteArray> {
+            val u = ByteArray(uv.size / 2)
+            val v = ByteArray(uv.size / 2)
+            for (i in u.indices) {
+                u[i] = uv[2 * i]
+                v[i] = uv[2 * i + 1]
+            }
+            return u to v
+        }
 
         /** A [Cue]'s end where it shows until the next of its track replaces it (a teletext page). */
         const val UNTIL_REPLACED = Long.MAX_VALUE

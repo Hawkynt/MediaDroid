@@ -126,6 +126,7 @@ fun PlayerScreen(
     // player only, as on Android.
     var sound by remember { mutableStateOf(store.sound) }
     var nightMode by remember { mutableStateOf(false) }
+    var softwareDecoding by remember { mutableStateOf(store.softwareDecoding) }
     val tuning = remember { PlaybackTuning.Mutable() }
     tuning.loudnessDb = sound.loudnessDb
     tuning.normalizeLoudness = sound.evenLoudness
@@ -139,6 +140,7 @@ fun PlayerScreen(
             // MEDIADROID_MUTE=1: checks and documentation runs play silently.
             if (System.getenv("MEDIADROID_MUTE") == "1") volume = 0f
             speed = store.speed
+            softwareDecoding = store.softwareDecoding
         }
     }
     val bitmap = remember { PictureBitmap() }
@@ -736,6 +738,13 @@ fun PlayerScreen(
                     store.setScreenSetup(screen().key, it)
                 },
                 colorizers = colorizers,
+                softwareDecoding = softwareDecoding,
+                onSoftwareDecoding = {
+                    softwareDecoding = it
+                    store.softwareDecoding = it
+                    engine.softwareDecoding = it
+                },
+                hardwareDecoder = engine.hardwareDecoder?.label,
                 subtitleDelayMs = subtitleDelayMs,
                 onSubtitleDelay = {
                     subtitleDelayMs = it
