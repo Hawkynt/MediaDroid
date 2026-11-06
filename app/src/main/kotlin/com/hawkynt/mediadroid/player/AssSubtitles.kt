@@ -11,6 +11,8 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.text.SubtitleParser
 import java.io.File
+import java.util.Locale
+import java.util.concurrent.Executors
 
 /**
  * ASS/SSA subtitles drawn as authored by libass (the native library's, [LibAss]) instead of Media3's SSA parser, which
@@ -18,7 +20,9 @@ import java.io.File
  * holds them — a Matroska stream's header and events — and it feeds them to the [track] the screen draws
  * ([AssOverlayView]). A file beside the video Media3 leaves unread; it is read whole through [file], by its location
  * (the track's id). The file's attached fonts come from [fonts] (MatroskaFonts); both are read off the player's
- * thread. Where the native library is missing, [available] is false and Media3 draws SSA as before.
+ * thread. Chinese, Japanese or Korean text no font of the file's draws falls back to the device's own face for its
+ * script ([ScriptFallback]), loaded once the first such line arrives. Where the native library is missing,
+ * [available] is false and Media3 draws SSA as before.
  */
 @OptIn(UnstableApi::class)
 class AssSubtitles(
@@ -46,10 +50,20 @@ class AssSubtitles(
         val made = AssTrack()
         if (!made.open) return
         defaultFont?.let { made.defaultFont(path = it) }
-        header?.let(made::header)
+        val fallback = ScriptFallback.Track(Locale.getDefault().toLanguageTag())
         track = made
+        scripts = fallback
+        header?.let {
+            made.header(it)
+            notice(made, fallback, it)
+        }
         Thread({
-            script?.let { location -> runCatching { file(location) }.getOrNull()?.let(made::script) }
+            script?.let { location ->
+                runCatching { file(location) }.getOrNull()?.let {
+                    made.script(it)
+                    notice(made, fallback, it)
+                }
+            }
             runCatching { fonts() }.getOrDefault(emptyList()).forEach { (name, data) ->
                 if (track === made) made.addFont(name, data)
             }
@@ -62,6 +76,20 @@ class AssSubtitles(
     private fun stop() {
         track?.close()
         track = null
+        scripts = null
+    }
+
+    /** The scripts seen in the track being drawn, for its fallback face. */
+    @Volatile
+    private var scripts: ScriptFallback.Track? = null
+
+    /** [text] fed to [made]: where it calls for another fallback face than before, that face is loaded. */
+    private fun notice(made: AssTrack, fallback: ScriptFallback.Track, text: ByteArray) {
+        val language = synchronized(fallback) { fallback.see(String(text, Charsets.UTF_8)) } ?: return
+        fallbackLoader.execute {
+            val face = systemFace(language) ?: return@execute
+            if (track === made) made.fallbackFont(face.first, face.second)
+        }
     }
 
     /** Media3's samples of an SSA track into [track]: the stream's events with their times, or a whole file. */
@@ -110,13 +138,16 @@ class AssSubtitles(
             data.flip()
             val sample = ByteArray(data.remaining()).also(data::get)
             val current = track ?: return
+            val fallback = scripts
             if (AssEvents.isScript(sample)) {
                 current.script(sample)
+                fallback?.let { notice(current, it, sample) }
                 return
             }
             val event = AssEvents.fromMatroskaSample(sample) ?: return
             val startMs = (buffer.timeUs - streamOffsetUs) / 1000
             current.event(event.data, startMs, event.durationMs)
+            fallback?.let { notice(current, it, event.data) }
         }
 
         override fun isReady() = true
@@ -154,6 +185,34 @@ class AssSubtitles(
                 "/system/fonts/NotoSans-Regular.ttf",
                 "/system/fonts/DroidSans.ttf",
             ).firstOrNull { File(it).isFile }
+        }
+
+        /** The one thread the fallback faces load on: a system's CJK font is large. */
+        private val fallbackLoader = Executors.newSingleThreadExecutor {
+            Thread(it, "mediadroid-ass-fallback").apply { isDaemon = true }
+        }
+
+        /** The folders a device's fonts lie in, the system's first. */
+        private val fontFolders = listOf("/system/fonts", "/product/fonts")
+
+        /**
+         * The device's fallback families as its font configuration lists them: Android 15's font_fallback.xml, else
+         * fonts.xml.
+         */
+        private val systemFamilies: List<ScriptFallback.Family> by lazy {
+            listOf("/system/etc/font_fallback.xml", "/system/etc/fonts.xml").asSequence()
+                .mapNotNull { runCatching { File(it).readText() }.getOrNull() }
+                .map(ScriptFallback::families)
+                .firstOrNull { it.isNotEmpty() }
+                .orEmpty()
+        }
+
+        private fun fontFile(name: String) = fontFolders.map { File(it, name) }.firstOrNull { it.isFile }
+
+        /** The device's face for [language] (ScriptFallback's tags): its file's path and its index, or null. */
+        private fun systemFace(language: String): Pair<String, Int>? {
+            val face = ScriptFallback.face(language, systemFamilies) { fontFile(it) != null } ?: return null
+            return fontFile(face.file)?.let { it.path to face.index }
         }
     }
 }

@@ -64,6 +64,13 @@ JNIEXPORT void JNICALL Java_com_hawkynt_mediadroid_player_LibAss_defaultFont(
     track(handle)->setDefaultFont(text(env, path), text(env, family), system == JNI_TRUE);
 }
 
+// The face [index] of the font file at [path] as the family libass falls back to; its family name, empty where the file
+// does not read.
+JNIEXPORT jstring JNICALL Java_com_hawkynt_mediadroid_player_LibAss_fallbackFont(
+    JNIEnv* env, jobject, jlong handle, jstring path, jint index) {
+    return env->NewStringUTF(track(handle)->fallbackFont(text(env, path), index).c_str());
+}
+
 JNIEXPORT void JNICALL Java_com_hawkynt_mediadroid_player_LibAss_header(
     JNIEnv* env, jobject, jlong handle, jbyteArray data) {
     const auto header = bytes(env, data);

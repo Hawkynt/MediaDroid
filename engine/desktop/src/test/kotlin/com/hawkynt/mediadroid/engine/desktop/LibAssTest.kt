@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.engine.desktop
 
+import com.hawkynt.mediadroid.player.AssPicture
 import com.hawkynt.mediadroid.player.AssTrack
 import com.hawkynt.mediadroid.player.LibAss
 import org.junit.Assert.assertEquals
@@ -9,6 +10,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.Timeout
+import java.io.File
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 
@@ -86,6 +88,52 @@ class LibAssTest {
         }
     }
 
+    @Test
+    fun `Chinese, Japanese and Korean text falls back to the face given for it`() {
+        val collection = File(checkNotNull(javaClass.getResource("/ass/NotoSansCJK-Subset.ttc")).toURI()).path
+        // As the file meant it: the face named by its family, an attachment.
+        fun asNamed(family: String, text: String) = AssTrack().use { track ->
+            track.addFont("NotoSansCJK-Subset.ttc", resource("NotoSansCJK-Subset.ttc"))
+            track.script(script(family, text))
+            checkNotNull(track.render(1000, WIDTH, HEIGHT))
+        }
+        // A style naming a font nobody has, as Android sees it without one in the file: only the fallback draws it.
+        fun fallenBack(index: Int?, text: String, family: String = "") = AssTrack().use { track ->
+            if (index != null) assertEquals(family, track.fallbackFont(collection, index))
+            track.script(script("Arial", text))
+            checkNotNull(track.render(1000, WIDTH, HEIGHT))
+        }
+        val japanese = asNamed("Noto Sans JP", "日本語の字幕")
+        assertTrue(!japanese.isEmpty)
+        assertSamePicture(japanese, fallenBack(0, "日本語の字幕", "Noto Sans JP"))
+        assertTrue(fallenBack(null, "日本語の字幕").let { it.isEmpty || !it.pixels.contentEquals(japanese.pixels) })
+        assertSamePicture(asNamed("Noto Sans KR", "한국어 자막"), fallenBack(1, "한국어 자막", "Noto Sans KR"))
+        AssTrack().use { assertEquals("", it.fallbackFont("$collection.missing", 0)) }
+    }
+
+    private fun script(family: String, text: String) = """
+        [Script Info]
+        ScriptType: v4.00+
+        PlayResX: 640
+        PlayResY: 360
+
+        [V4+ Styles]
+        Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, $STYLE_REST
+        Style: Default,$family,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,20,1
+
+        [Events]
+        Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+        Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,$text
+    """.trimIndent().toByteArray()
+
+    private fun assertSamePicture(expected: AssPicture, actual: AssPicture) {
+        assertEquals(
+            listOf(expected.x, expected.y, expected.width, expected.height),
+            listOf(actual.x, actual.y, actual.width, actual.height),
+        )
+        assertTrue("the pictures differ", expected.pixels.contentEquals(actual.pixels))
+    }
+
     /** The largest difference of two ARGB pixels' alpha or premultiplied colours. */
     private fun difference(a: Int, b: Int): Int {
         val alphaA = a ushr 24
@@ -103,5 +151,7 @@ class LibAssTest {
         const val WIDTH = 640
         const val HEIGHT = 360
         const val TOLERANCE = 2
+        const val STYLE_REST = "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, " +
+            "Alignment, MarginL, MarginR, MarginV, Encoding"
     }
 }
