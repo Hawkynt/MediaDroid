@@ -85,6 +85,13 @@ class GlStage : AutoCloseable {
     private var vectorTexture = 0
     private var vectorsShown: MotionSearch.Vectors? = null
 
+    // Temporal denoising's own search between each picture and its neighbours (as decoded, the whole region), the
+    // vectors' textures by the search's answer, and the noise level the searches read.
+    internal val denoiseMotion = MotionSearch()
+    private val denoiseVectors = LinkedHashMap<MotionSearch.Vectors, Int>()
+    internal val noiseLevel = TemporalDenoise.NoiseLevel()
+    private var noiseCounted: MotionSearch.Vectors? = null
+
     /** A texture with its framebuffer; [format] its internal format (GL_RGBA8, GL_RGBA16F, GL_RGBA16). */
     private class Target(val texture: Int, val framebuffer: Int, val width: Int, val height: Int, val format: Int)
 
@@ -98,6 +105,9 @@ class GlStage : AutoCloseable {
         var second = false
         var half = false
         var used = 0L
+
+        // Filtered before the vectors temporal denoising waits for were in: filtered again once they are.
+        var unsettled = false
     }
 
     /** Pairs of pictures Motion showed before their vectors were in, since the stage started. */
@@ -235,6 +245,15 @@ class GlStage : AutoCloseable {
         }
         val next = m.next?.takeIf { it.width == m.shown.width && it.height == m.shown.height }
         if (a.deinterlace == PictureAdjustment.Deinterlace.ADAPTIVE) adapt(m)
+        // Temporal denoising's searches start as soon as the pictures are decoded, ahead of their being shown.
+        if (a.temporalDenoise > 0f) {
+            val pictures = listOfNotNull(m.previous, m.shown, next, m.after)
+            pictures.zipWithNext { earlier, later ->
+                if (earlier.width == later.width && earlier.height == later.height) {
+                    denoiseMotion.request(earlier, later, region(later, crop, a.stereo))
+                }
+            }
+        }
         // A neural network only where its self-test passed and it opens on the unit it passed on.
         val blending = a.interpolation != PictureAdjustment.Interpolation.OFF && next != null &&
             (!a.interpolation.isNeural || interpolator(a.interpolation) != null)
@@ -380,7 +399,11 @@ class GlStage : AutoCloseable {
         second: Boolean,
         beyond: MediaReader.Picture? = null,
     ): Target {
-        kept.firstOrNull { it.picture === picture && it.second == second }?.let { return slotTarget(it) }
+        kept.firstOrNull { it.picture === picture && it.second == second }?.let {
+            if (!it.unsettled) return slotTarget(it)
+            it.picture = null
+        }
+        var unsettled = false
         val raw = uploaded(picture, region(picture, crop, a.stereo))
         val w = raw.width
         val h = raw.height
@@ -397,15 +420,30 @@ class GlStage : AutoCloseable {
                 glUniform1f(glGetUniformLocation(p, "uThreshold"), threshold)
             }
         } ?: raw
-        val shown = a.temporalDenoiseParams()?.let { params ->
-            val prev = neighbour(before ?: picture).takeIf { it.width == w && it.height == h } ?: raw
-            val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
-            pass("temporal-denoise.frag", target("temporallyDenoised", w, h, half = deep), combed.texture,
-                listOf(prev.texture to "uPrev", next.texture to "uNext"), nearest = true) { p ->
-                glUniform1f(glGetUniformLocation(p, "uA"), TemporalDenoise.threshold(params.a).toFloat())
-                glUniform1f(glGetUniformLocation(p, "uB"), TemporalDenoise.threshold(params.b).toFloat())
+        // The pictures either side moved onto it along the motion between them once the search has it — until then
+        // read as they are, and filtered again.
+        val shown = if (a.temporalDenoise > 0f) {
+            val region = region(picture, crop, a.stereo)
+            fun side(other: MediaReader.Picture?, earlier: Boolean): Pair<Target, MotionSearch.Vectors?>? {
+                other ?: return null
+                val target = neighbour(other).takeIf { it.width == w && it.height == h } ?: return null
+                val (from, to) = if (earlier) other to picture else picture to other
+                denoiseMotion.request(from, to, region)
+                val vectors = denoiseMotion.vectors(from, to)
+                if (vectors == null && !denoiseMotion.ended(from, to)) unsettled = true
+                return target to vectors
             }
-        } ?: combed
+            val prev = side(before, true)
+            val next = side(after, false)
+            listOfNotNull(prev?.second, next?.second).firstOrNull()?.takeIf { it !== noiseCounted }?.let {
+                noiseLevel.add(it.noise)
+                noiseCounted = it
+            }
+            val params = requireNotNull(TemporalDenoise.params(a.temporalDenoise, noiseLevel.sigma))
+            denoised(combed, prev, next, params)
+        } else {
+            combed
+        }
         source = shown
         // 1. Deinterlacing.
         if (a.deinterlace.isTemporal) {
@@ -516,6 +554,7 @@ class GlStage : AutoCloseable {
             }
         }
         val slot = claim(kept, picture, region(picture, crop, a.stereo), second)
+        slot.unsettled = unsettled
         val into = target(slot.name, w, h, half = deep)
         if (a.sharpness > 0f || a.clarity > 0f) {
             pass("sharpen.frag", into, source.texture) { p ->
@@ -527,6 +566,66 @@ class GlStage : AutoCloseable {
             copy(source, into)
         }
         return into
+    }
+
+    /**
+     * [raw] temporally denoised (TemporalDenoise) against [prev] and [next] — each a picture with the vectors between
+     * it and [raw] where the search has them: moved along them, or read as it is; a side behind a cut is not taken, a
+     * missing one is [raw] itself.
+     */
+    private fun denoised(
+        raw: Target,
+        prev: Pair<Target, MotionSearch.Vectors?>?,
+        next: Pair<Target, MotionSearch.Vectors?>?,
+        params: TemporalDenoise.Params,
+    ): Target {
+        val w = raw.width
+        val h = raw.height
+        fun mode(side: Pair<Target, MotionSearch.Vectors?>?) = when {
+            side?.second == null -> 0f
+            side.second!!.cut -> 2f
+            else -> 1f
+        }
+        val prevVectors = prev?.second?.let(::vectorTexture) ?: obmcTable
+        val nextVectors = next?.second?.let(::vectorTexture) ?: obmcTable
+        val textures = listOf(
+            (prev?.first ?: raw).texture to "uPrev",
+            (next?.first ?: raw).texture to "uNext",
+            prevVectors to "uPrevVectors",
+            nextVectors to "uNextVectors",
+            obmcTable to "uObmc",
+        )
+        val into = pass("temporal-denoise.frag", target("temporallyDenoised", w, h, half = deep), raw.texture,
+            textures, nearest = true) { p ->
+            glUniform1f(glGetUniformLocation(p, "uA"), TemporalDenoise.threshold(params.a).toFloat())
+            glUniform1f(glGetUniformLocation(p, "uB"), TemporalDenoise.threshold(params.b).toFloat())
+            glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
+            glUniform1f(glGetUniformLocation(p, "uPrevMode"), mode(prev))
+            glUniform1f(glGetUniformLocation(p, "uNextMode"), mode(next))
+            for ((side, name) in listOf(prev to "Prev", next to "Next")) {
+                val v = side?.second ?: continue
+                glUniform2f(glGetUniformLocation(p, "u${name}Grid"), v.gridWidth.toFloat(), v.gridHeight.toFloat())
+                glUniform1f(glGetUniformLocation(p, "u${name}Scale"), v.scale.toFloat())
+            }
+        }
+        // The pass leaves what it read nearest at linear; the tables are read texel by texel.
+        for (table in listOf(prevVectors, nextVectors, obmcTable)) {
+            glBindTexture(GL_TEXTURE_2D, table)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+        }
+        return into
+    }
+
+    // [vectors] as a texture, kept for the few pictures around the one shown.
+    private fun vectorTexture(vectors: MotionSearch.Vectors): Int = denoiseVectors.getOrPut(vectors) {
+        val bytes = MemoryUtil.memAlloc(vectors.bytes.size).put(vectors.bytes).flip()
+        table(vectors.gridWidth, vectors.gridHeight, bytes)
+    }.also {
+        while (denoiseVectors.size > DENOISE_VECTORS) {
+            val oldest = denoiseVectors.keys.first()
+            glDeleteTextures(denoiseVectors.remove(oldest)!!)
+        }
     }
 
     /**
@@ -1381,6 +1480,7 @@ class GlStage : AutoCloseable {
         thread.shutdown()
         colorThread.shutdown()
         motion.close()
+        denoiseMotion.close()
     }
 
     private companion object {
@@ -1391,6 +1491,8 @@ class GlStage : AutoCloseable {
 
         /** Every how many columns Adaptive and Old console weigh a picture's luma, as on Android. */
         const val ADAPTIVE_COLUMN_STEP = 4
+        // Temporal denoising's vector textures kept: the pairs either side of the shown picture and of the next.
+        const val DENOISE_VECTORS = 6
 
         // What the stage hands on: 8-bit RGBA, read back for the screen.
         const val SCREEN_BITS = 8

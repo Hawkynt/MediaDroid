@@ -82,9 +82,10 @@ data class PictureAdjustment(
      */
     val shader: String? = null,
     /**
-     * Temporal denoising, 0 (off) to 1: each pixel averaged with the frames before and after it where it barely
-     * changed (see [TemporalDenoise]) — grain removed from still parts without softening them, motion left alone;
-     * FFmpeg's thresholds at a quarter, four times as tolerant at 1. On Android the picture then runs one frame behind.
+     * Temporal denoising, 0 (off) to 1: each pixel averaged with the frames before and after it, moved onto it along
+     * the motion, where it barely changed (see [TemporalDenoise]) — grain removed without softening the picture, what
+     * really changed left alone; how much counts as grain follows the noise the source shows, three times its
+     * standard deviation in the middle, six at 1. On Android the picture then runs one frame behind.
      */
     val temporalDenoise: Float = 0f,
     /**
@@ -344,8 +345,13 @@ data class PictureAdjustment(
 
     /** The deringing [dering] asks for, or null when it is off. */
     fun deringParams(): Cdef.Params? = Cdef.params(dering)
-    /** The temporal denoising [temporalDenoise] asks for, or null when it is off. */
-    fun temporalDenoiseParams(): TemporalDenoise.Params? = TemporalDenoise.params(temporalDenoise)
+
+    /**
+     * The temporal denoising [temporalDenoise] asks for, or null when it is off; its thresholds following the noise's
+     * standard deviation [sigma] in 8-bit steps where it is known (see TemporalDenoise.params).
+     */
+    fun temporalDenoiseParams(sigma: Double? = null): TemporalDenoise.Params? =
+        TemporalDenoise.params(temporalDenoise, sigma)
 
     /** The debanding [deband] asks for, or null when it is off. */
     fun debandParams(): Deband.Params? = Deband.params(deband)

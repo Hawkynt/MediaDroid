@@ -49,12 +49,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // Whether the context is OpenGL ES 3, which reads pictures back into a buffer without waiting.
     private var es3 = false
 
-    // Motion's read-back on ES 3: two pixel buffers taking turns; each holds one frame's packed luma until the
-    // next frame comes and collects it, long finished on the graphics chip by then.
-    private val lumaBuffers = IntArray(2)
-    private val lumaBufferSizes = IntArray(2)
-    private val lumaPending = arrayOfNulls<PendingLuma>(2)
-    private var lumaSlot = 0
+    // The motion searches' read-backs on ES 3 (see LumaReader): Motion's, and temporal denoising's.
+    private val motionLuma = LumaReader()
+    private val denoiseLuma = LumaReader()
 
     /** A packed-luma read-back on its way: the frame's arrival, and the layout to unpack it with. */
     private class PendingLuma(val id: Long, val columns: Int, val rows: Int, val texels: Int)
@@ -462,6 +459,22 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var searchScale: SearchScale? = null
     private var motionProgram = 0
     private var obmcTexture = 0
+
+    // Temporal denoising's own search, on the decoded frames as they join the history: the last frame's luma, the
+    // search's state and scale, and the newest vectors as a texture — the pair whose later frame arrived at
+    // denoiseVectorsFor (0 for none), its grid, the scale it ran at, the size of the frames it ran on and whether a
+    // cut lies between them — and the noise level the searched frames show.
+    private var denoisePrevious: Pair<Long, Deinterlacer.Plane>? = null
+    private var denoiseEstimator: MotionInterpolation.Estimator? = null
+    private val denoiseCut = MotionInterpolation.SceneChange()
+    private var denoiseScale: SearchScale? = null
+    private var denoiseVectorTexture = 0
+    private var denoiseVectorsFor = 0L
+    private val denoiseGrid = IntArray(2)
+    private var denoiseGridScale = 1
+    private val denoiseFrame = IntArray(2)
+    private var denoiseVectorsCut = false
+    private val noiseLevel = TemporalDenoise.NoiseLevel()
     private val onVsync = android.view.Choreographer.FrameCallback { busy { blend(it) } }
 
     /**
@@ -1090,7 +1103,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(blendProgram)
             GLES20.glDeleteProgram(motionProgram)
             GLES20.glDeleteProgram(packProgram)
-            if (lumaBuffers[0] != 0) GLES20.glDeleteBuffers(2, lumaBuffers, 0)
+            motionLuma.release()
+            denoiseLuma.release()
+            GLES20.glDeleteTextures(1, intArrayOf(denoiseVectorTexture), 0)
             if (cropBuffers[0] != 0) GLES20.glDeleteBuffers(2, cropBuffers, 0)
             cropWorker.shutdownNow()
             GLES20.glDeleteTextures(3, intArrayOf(vectorTextures[0], vectorTextures[1], obmcTexture), 0)
@@ -1287,6 +1302,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         motionProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MOTION)
         packProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PACK_LUMA)
         for (k in 0 until 2) vectorTextures[k] = byteTexture(1, 1, ByteArray(4))
+        denoiseVectorTexture = byteTexture(1, 1, ByteArray(4))
         obmcTexture = byteTexture(
             32, 32, ByteArray(32 * 32 * 4) { if (it % 4 == 0) MotionInterpolation.obmcWeight(it / 4).toByte() else 0 },
         )
@@ -1431,6 +1447,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             } else {
                 consoleLumas.fill(null)
             }
+            if (picture.temporalDenoise > 0f) {
+                searchDenoise(width, height, afresh)
+            } else if (denoisePrevious != null) {
+                // Off for a while: the frames read back so far are no neighbours of the next.
+                denoisePrevious = null
+                denoiseVectorsFor = 0L
+                denoiseLuma.drop()
+            }
         }
         val next = frames[history[2]]
         val cur = if (historyCount >= 2) frames[history[1]] else next
@@ -1459,9 +1483,28 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             }
             into
         } ?: cur
-        // Temporal denoising on the frame shown, against its neighbours as decoded, before any deinterlacing.
-        val shown = picture.temporalDenoiseParams()?.let { params ->
+        // Temporal denoising on the frame shown, against its neighbours as decoded, before any deinterlacing: each
+        // moved onto it along the newest vectors its search has — the frame before along them, the one after against
+        // them, as if the motion went on — or read as it is while there are none; a side behind a cut is not taken.
+        val shown = picture.temporalDenoiseParams(noiseLevel.sigma)?.let { params ->
             val into = frames[TEMPORAL_DENOISED].ensure(width, height, deepInput(picture))
+            val along = denoiseVectorsFor != 0L && denoiseVectorsFor in historyAt &&
+                denoiseFrame[0] == width && denoiseFrame[1] == height
+            // A cut is only a reason to leave a side out where it lies between that side and the frame shown: the
+            // vectors of the pair before (ES 3's read-back runs a frame later) say nothing about either side then.
+            val cut = along && denoiseVectorsCut
+            val prevMode = when {
+                !along -> 0f
+                cut && denoiseVectorsFor == historyAt[1] -> 2f
+                cut -> 0f
+                else -> 1f
+            }
+            val nextMode = when {
+                !along -> 0f
+                cut && denoiseVectorsFor == historyAt[2] -> 2f
+                cut -> 0f
+                else -> 1f
+            }
             exact(prev.texture, combed.texture, next.texture) {
                 into.bind()
                 run(temporalDenoiseProgram, GLES20.GL_TEXTURE_2D, combed.texture, identity) { p ->
@@ -1471,6 +1514,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, next.texture)
                     GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uNext"), 2)
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, denoiseVectorTexture)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrevVectors"), 3)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uNextVectors"), 3)
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE4)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, obmcTexture)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uObmc"), 4)
                     GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
                     GLES20.glUniform1f(
                         GLES20.glGetUniformLocation(p, "uA"), TemporalDenoise.threshold(params.a).toFloat(),
@@ -1478,6 +1528,18 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(
                         GLES20.glGetUniformLocation(p, "uB"), TemporalDenoise.threshold(params.b).toFloat(),
                     )
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uPrevMode"), prevMode)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uNextMode"), nextMode)
+                    for (side in listOf("Prev", "Next")) {
+                        GLES20.glUniform2f(
+                            GLES20.glGetUniformLocation(p, "u${side}Grid"),
+                            denoiseGrid[0].toFloat(), denoiseGrid[1].toFloat(),
+                        )
+                        GLES20.glUniform1f(
+                            GLES20.glGetUniformLocation(p, "u${side}Scale"), denoiseGridScale.toFloat(),
+                        )
+                    }
                 }
             }
             into
@@ -1888,41 +1950,61 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
-     * On ES 3: starts reading [from]'s packed luma into a pixel buffer without waiting, and returns the one
-     * started for the frame before — with that frame's [id] — or null while there is none.
+     * A packed-luma read-back on ES 3: two pixel buffers taking turns; each holds one frame's packed luma until the
+     * next frame comes and collects it, long finished on the graphics chip by then.
      */
-    private fun lumaLater(from: Frame, width: Int, height: Int, step: Int, id: Long): Pair<Long, Deinterlacer.Plane>? {
-        val earlier = collectLuma(1 - lumaSlot)
-        if (lumaBuffers[0] == 0) GLES20.glGenBuffers(2, lumaBuffers, 0)
-        val (columns, rows, texels) = packLuma(from, width, height, step, step)
-        val size = texels * rows * 4
-        val slot = lumaSlot
-        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, lumaBuffers[slot])
-        if (lumaBufferSizes[slot] != size) {
-            GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, size, null, GLES30.GL_STREAM_READ)
-            lumaBufferSizes[slot] = size
-        }
-        GLES30.glReadPixels(0, 0, texels, rows, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, 0)
-        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
-        lumaPending[slot] = PendingLuma(id, columns, rows, texels)
-        lumaSlot = 1 - slot
-        return earlier
-    }
+    private inner class LumaReader {
+        private val buffers = IntArray(2)
+        private val sizes = IntArray(2)
+        private val pending = arrayOfNulls<PendingLuma>(2)
+        private var slot = 0
 
-    /** The read-back waiting in [slot], unpacked, with its frame's id; null when none waits. */
-    private fun collectLuma(slot: Int): Pair<Long, Deinterlacer.Plane>? {
-        val pending = lumaPending[slot] ?: return null
-        lumaPending[slot] = null
-        val size = pending.texels * pending.rows * 4
-        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, lumaBuffers[slot])
-        val mapped = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, size, GLES30.GL_MAP_READ_BIT)
-            as? ByteBuffer
-        val plane = mapped?.let {
-            unpackLuma(it.order(ByteOrder.nativeOrder()), pending.columns, pending.rows, pending.texels)
+        /**
+         * Starts reading [from]'s packed luma into a pixel buffer without waiting, and returns the one started for
+         * the frame before — with that frame's [id] — or null while there is none.
+         */
+        fun later(from: Frame, width: Int, height: Int, step: Int, id: Long): Pair<Long, Deinterlacer.Plane>? {
+            val earlier = collect(1 - slot)
+            if (buffers[0] == 0) GLES20.glGenBuffers(2, buffers, 0)
+            val (columns, rows, texels) = packLuma(from, width, height, step, step)
+            val size = texels * rows * 4
+            val mine = slot
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, buffers[mine])
+            if (sizes[mine] != size) {
+                GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, size, null, GLES30.GL_STREAM_READ)
+                sizes[mine] = size
+            }
+            GLES30.glReadPixels(0, 0, texels, rows, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, 0)
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+            pending[mine] = PendingLuma(id, columns, rows, texels)
+            slot = 1 - mine
+            return earlier
         }
-        if (mapped != null) GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
-        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
-        return plane?.let { pending.id to it }
+
+        /** Forgets the read-back waiting: the frame it holds is no neighbour of the next any more. */
+        fun drop() {
+            pending.fill(null)
+        }
+
+        fun release() {
+            if (buffers[0] != 0) GLES20.glDeleteBuffers(2, buffers, 0)
+        }
+
+        // The read-back waiting in [at], unpacked, with its frame's id; null when none waits.
+        private fun collect(at: Int): Pair<Long, Deinterlacer.Plane>? {
+            val waiting = pending[at] ?: return null
+            pending[at] = null
+            val size = waiting.texels * waiting.rows * 4
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, buffers[at])
+            val mapped = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, size, GLES30.GL_MAP_READ_BIT)
+                as? ByteBuffer
+            val plane = mapped?.let {
+                unpackLuma(it.order(ByteOrder.nativeOrder()), waiting.columns, waiting.rows, waiting.texels)
+            }
+            if (mapped != null) GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+            return plane?.let { waiting.id to it }
+        }
     }
 
     /**
@@ -2150,7 +2232,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         // On ES 3 the read-back is collected a frame later — the search then runs while its pair is on screen;
         // on ES 2 it waits for the graphics chip and the search gets the pair before.
         val (pair, luma) = if (es3) {
-            lumaLater(frames[keptRing[2]], width, height, pace.scale, keptAt[2]) ?: return
+            motionLuma.later(frames[keptRing[2]], width, height, pace.scale, keptAt[2]) ?: return
         } else {
             keptAt[2] to packedLuma(frames[keptRing[2]], width, height, pace.scale, pace.scale)
         }
@@ -2195,6 +2277,72 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     gridHeight[slot] = high
                     vectorsFor[slot] = pair
                     vectorsCut[slot] = cut
+                }
+            }
+        }
+    }
+
+    /**
+     * Temporal denoising's motion search: the newest decoded frame's luma read back at the search's scale (on ES 3
+     * collected a frame later, as Motion's), searched against the frame before it on the search's thread, as Motion's
+     * search (MotionInterpolation.Estimator); its vectors, and the noise level the later frame's luma shows
+     * (TemporalDenoise.noiseSigma), come in for the frames denoised after. After a seek or a stall ([afresh]) the
+     * frames before are no neighbours.
+     */
+    private fun searchDenoise(width: Int, height: Int, afresh: Boolean) {
+        if (afresh) {
+            denoisePrevious = null
+            denoiseVectorsFor = 0L
+            denoiseLuma.drop()
+        }
+        val pace = denoiseScale?.takeIf { it.width == width && it.height == height }
+            ?: SearchScale(width, height).also { denoiseScale = it }
+        val newest = frames[history[2]]
+        val read = if (es3) {
+            denoiseLuma.later(newest, width, height, pace.scale, historyAt[2]) ?: return
+        } else {
+            historyAt[2] to packedLuma(newest, width, height, pace.scale, pace.scale)
+        }
+        val (pair, luma) = read
+        val previous = denoisePrevious
+        denoisePrevious = read
+        val prev = previous?.second ?: return
+        if (prev.width != luma.width || prev.height != luma.height) return
+        if (luma.width < 2 * MotionInterpolation.BLOCK || luma.height < 2 * MotionInterpolation.BLOCK) return
+        val scale = width / luma.width
+        motionSearch.execute {
+            val started = System.nanoTime()
+            val search = denoiseEstimator?.takeIf { it.width == luma.width && it.height == luma.height }
+                ?: MotionInterpolation.Estimator(luma.width, luma.height).also { denoiseEstimator = it }
+            search.advance()
+            search.estimate(prev, luma)
+            val took = System.nanoTime() - started
+            val cut = denoiseCut.check(prev, luma)
+            val noise = TemporalDenoise.noiseSigma(luma)
+            val bytes = ByteArray(search.blocksWide * search.blocksHigh * 4)
+            for (b in 0 until search.blocksWide * search.blocksHigh) {
+                bytes[b * 4] = (search.vectors[b * 2] + VECTOR_ZERO).toByte()
+                bytes[b * 4 + 1] = (search.vectors[b * 2 + 1] + VECTOR_ZERO).toByte()
+            }
+            val wide = search.blocksWide
+            val high = search.blocksHigh
+            handler.post {
+                busy {
+                    // Vectors for a pair no longer beside the frame shown are past, and the search too slow.
+                    val late = pair !in historyAt
+                    if (pace === denoiseScale && frameIntervalNs > 0) pace.report(took, frameIntervalNs, late)
+                    if (late) return@post
+                    EGL14.eglMakeCurrent(display, idle, idle, context)
+                    GLES20.glDeleteTextures(1, intArrayOf(denoiseVectorTexture), 0)
+                    denoiseVectorTexture = byteTexture(wide, high, bytes)
+                    denoiseGrid[0] = wide
+                    denoiseGrid[1] = high
+                    denoiseGridScale = scale
+                    denoiseFrame[0] = width
+                    denoiseFrame[1] = height
+                    denoiseVectorsCut = cut
+                    denoiseVectorsFor = pair
+                    noiseLevel.add(noise)
                 }
             }
         }
