@@ -317,8 +317,11 @@ video brought down to 1080p first; Fit, Fill or Stretch, and a zoom. How the net
 **Windows** 10/11 (x64) and **Linux** (x64; arm64 to follow) — in progress ([#291](https://github.com/Hawkynt/MediaDroid/issues/291)), in the nightlies:
 from the same Releases, `MediaDroid-windows-x64.msi` (installs, updates in place) or `MediaDroid-windows-x64.zip`
 (portable: unpack anywhere and run `MediaDroid.exe`, settings beside it), and `MediaDroid-linux-x64.AppImage` /
-`MediaDroid-linux-arm64.AppImage` (mark it executable and run it). Java comes inside; a Vulkan driver for the neural
-networks on the graphics card comes from the system.
+`MediaDroid-linux-arm64.AppImage` (mark it executable and run it). Java comes inside, and so does the native library
+the neural networks and ASS subtitles run on, with the OpenMP runtime it needs (Visual C++'s `vcomp140.dll`, GCC's
+`libgomp.so.1`); a Vulkan driver for the networks on the graphics card and, on Linux, Fontconfig come from the system.
+The AppImage runs on Linux with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later); the graphics card
+needs OpenGL 4.3.
 
 ## 🚀 Quick start
 
@@ -358,7 +361,10 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   self-test and dry run deciding what is offered — on a desktop graphics card DAIN, FLAVR, RealSR and Real-CUGAN keep
   up where a phone refuses them.
 - The picture stage is the Android one: the same GLSL ES shaders, compiled as they are by desktop OpenGL 4.3 (which
-  takes GLSL ES 1.00 and 3.00), held to the same oracles (`tools/shader-check`). The desktop decodes ahead of the
+  takes GLSL ES 1.00 and 3.00), held to the same oracles (`tools/shader-check`). On Windows too, rather than OpenGL ES
+  through ANGLE: the stage draws off screen and hands its pictures to the window, so ANGLE's translation to Direct3D
+  would add a layer and some 10 MB without changing what is seen, and the Windows drivers of a decade of graphics
+  chips bring OpenGL 4.3 (Intel's since Haswell, NVIDIA's and AMD's since 2012). ANGLE comes back into question with Windows on ARM, whose drivers offer no such OpenGL. The desktop decodes ahead of the
   clock, so the stage sees the pictures to come: YADIF and BWDIF, every field, blending and Motion — whose search runs
   on the pair after the one on screen — need no delay, and neither does the sound; Film is undone before the pictures
   queue up, its four pictures of five spread over the cycle's own time. A choice is tried as on the phone: the same
@@ -475,6 +481,7 @@ Requires JDK 21 and an Android SDK with platform 37; `local.properties` must poi
 ./gradlew :desktop:appImage                      # Linux: desktop/build/dist/MediaDroid-linux-x64.AppImage
 ./gradlew :desktop:windowsZip -PdesktopTarget=windows   # Windows, portable: desktop/build/dist/MediaDroid-windows-x64.zip
 ./gradlew :native:desktopLibrary                 # the native tree for this desktop: native/build/desktop/lib
+./gradlew :native:desktopRuntime                 # the same with its OpenMP runtime, as the packages carry it
 ./gradlew :engine:desktop:test -PnativeLibrary   # the desktop tests with the native library's, built first
 ```
 
@@ -487,6 +494,13 @@ are built from their release sources everywhere (`native/ass`, fetched by `:nati
 way); on the desktop libass asks the system for fonts — DirectWrite on Windows, Fontconfig on Linux where its headers
 are installed. Portions of this software are copyright © 2026 The FreeType Project (www.freetype.org). All rights
 reserved.
+
+The desktop packages carry the library beside the app's jars with the OpenMP runtime ncnn's releases need
+(`:native:desktopRuntime`): on Linux the `libgomp.so.1` the library resolves to (GCC's, GPL-3.0 with the Runtime Library
+Exception; `THIRD-PARTY-NOTICE.libgomp.txt`), on Windows `vcomp140.dll` from Visual Studio's redistributable folder
+(`THIRD-PARTY-NOTICE.vcomp140.txt`); their Java runtime keeps its `java` launcher for the neural self-test's processes.
+The machine that builds the AppImage sets the oldest glibc it runs on: the published one is built on Ubuntu 22.04, and
+CI refuses a package whose library or OpenMP runtime needs a newer glibc than 2.35, lacks either, or lacks the launcher.
 
 `build.sh` signs with the release key when `KEYSTORE` (or `KEYSTORE_BASE64`), `KEYSTORE_PASSWORD` and `KEY_ALIAS` are set — in the environment or in a git-ignored `signing.env` — and otherwise with the Android debug key, which installs on your own device but cannot update a release or nightly. The key itself lives only in the repository's secrets. `buildnonlgpl.sh` first builds FFmpeg with every decoder, demuxer and parser (`FULL=1 tools/ffmpeg/build.sh`, once, into `stage/ffmpeg-full`); that build is GPL and cannot be distributed under this licence, so it is for your own device only — see [tools/ffmpeg/README.md](tools/ffmpeg/README.md). The desktop app decodes
 with FFmpeg through [Bytedeco's JavaCPP presets](https://github.com/bytedeco/javacpp-presets): FFmpeg's LGPL build in
