@@ -89,6 +89,8 @@ import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.PictureFit
 import com.hawkynt.mediadroid.player.PictureLayout
 import com.hawkynt.mediadroid.player.PictureShape
+import com.hawkynt.mediadroid.player.ScreenRect
+import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.player.PictureTrial
 import com.hawkynt.mediadroid.player.PlaybackMath
 import kotlinx.coroutines.Dispatchers
@@ -307,11 +309,19 @@ fun PlayerScreen(
                     } else {
                         drawnWidth.toInt().coerceAtLeast(1) to drawnHeight.toInt().coerceAtLeast(1)
                     }
-                    shownSize = IntSize(w, h)
-                    val throughStage = picture.hasFilters || pixelAspect != 1f || widening != 1f || panorama > 1f ||
-                        raw.hdr != null || engine.drawsSubtitles
-                    staged = if (throughStage && stage.ready && w > 0 && h > 0) {
-                        withContext(Dispatchers.Default) { stage.process(moment, picture, w, h, part, panorama) }
+                    // A projector's mirror, flip and keystone (ScreenWarp); with a keystone the stage draws the
+                    // whole window, the picture placed in it as its size puts it.
+                    val warp = if (screenSetup.keystoned && laidOut) {
+                        ScreenWarp.of(screenSetup, ScreenRect.centred(w, h, canvas.width, canvas.height), panorama)
+                    } else {
+                        ScreenWarp.of(screenSetup, panorama = panorama)
+                    }
+                    val (outW, outH) = if (warp.wholeScreen) canvas.width to canvas.height else w to h
+                    shownSize = IntSize(outW, outH)
+                    val throughStage = picture.hasFilters || pixelAspect != 1f || widening != 1f ||
+                        !warp.isIdentity || raw.hdr != null || engine.drawsSubtitles
+                    staged = if (throughStage && stage.ready && outW > 0 && outH > 0) {
+                        withContext(Dispatchers.Default) { stage.process(moment, picture, outW, outH, part, warp) }
                     } else {
                         raw.eightBit()
                     }

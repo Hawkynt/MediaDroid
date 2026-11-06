@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.player.AspectOverride
+import com.hawkynt.mediadroid.player.Keystone
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCheck
 import com.hawkynt.mediadroid.player.PictureFit
@@ -44,6 +45,7 @@ import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.ScreenShape
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * The choices the desktop stage runs (GlStage, Film in the engine, the networks on ncnn through DesktopNeural); every
@@ -316,6 +318,47 @@ fun PicturePanel(
         Text(
             "For a projector behind an anamorphic lens, or a screen whose pixels are not square: the shape the " +
                 "picture is seen at. Pictures are drawn narrower to match, so circles stay round.",
+            color = Color.Gray,
+            fontSize = 13.sp,
+        )
+        // A projector's setup, live on the picture behind the panel.
+        SwitchRow("Rear projection", "The picture mirrored, for a screen lit from behind.", screenSetup.mirror) {
+            onScreenSetup(screenSetup.copy(mirror = it))
+        }
+        SwitchRow("Ceiling mount", "The picture upside down, for a projector hung from the ceiling.", screenSetup.flip) {
+            onScreenSetup(screenSetup.copy(flip = it))
+        }
+        listOf(
+            Triple("Keystone, top and bottom", screenSetup.keystoneVertical) { v: Float ->
+                screenSetup.copy(keystoneVertical = v)
+            } to ("top narrower" to "bottom narrower"),
+            Triple("Keystone, left and right", screenSetup.keystoneHorizontal) { v: Float ->
+                screenSetup.copy(keystoneHorizontal = v)
+            } to ("right shorter" to "left shorter"),
+        ).forEach { (row, sides) ->
+            val (label, value, set) = row
+            val percent = kotlin.math.abs(value * 100).roundToInt()
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(label, color = Color.White, modifier = Modifier.weight(1f))
+                Text(
+                    when {
+                        percent == 0 -> "off"
+                        value > 0f -> "${sides.first} $percent %"
+                        else -> "${sides.second} $percent %"
+                    },
+                    color = Color.Gray,
+                )
+            }
+            Slider(
+                value = value,
+                onValueChange = {
+                    onScreenSetup(set(if (kotlin.math.abs(it) < 0.01f) 0f else (it * 200).roundToInt() / 200f))
+                },
+                valueRange = -Keystone.LIMIT..Keystone.LIMIT,
+            )
+        }
+        Text(
+            "A projector aimed up throws the picture wider at the top: narrow the top until it is square again.",
             color = Color.Gray,
             fontSize = 13.sp,
         )

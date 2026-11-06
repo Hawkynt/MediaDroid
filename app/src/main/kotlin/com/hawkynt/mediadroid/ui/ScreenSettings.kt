@@ -1,20 +1,38 @@
 package com.hawkynt.mediadroid.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.data.BUILT_IN_SCREEN
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.data.screenKey
+import kotlin.math.roundToInt
+import com.hawkynt.mediadroid.player.Keystone
 import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.ScreenShape
 
@@ -59,4 +77,110 @@ private fun ScreenSetupRows(name: String, key: String, store: StateStore) {
         fontSize = 14.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    ProjectorRows(setup, ::save)
+}
+
+/**
+ * A projector's setup: the picture mirrored for rear projection, upside down for a ceiling mount, and its keystone
+ * corrected on two axes — with a sketch of where the picture lands on the panel, since the video is not playing here.
+ */
+@Composable
+private fun ProjectorRows(setup: ScreenSetup, save: (ScreenSetup) -> Unit) {
+    Text("Projector", fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
+    SwitchLine("Rear projection", "The picture mirrored, for a screen lit from behind.", setup.mirror) {
+        save(setup.copy(mirror = it))
+    }
+    SwitchLine("Ceiling mount", "The picture upside down, for a projector hung from the ceiling.", setup.flip) {
+        save(setup.copy(flip = it))
+    }
+    var vertical by remember(setup.keystoneVertical) { mutableFloatStateOf(setup.keystoneVertical) }
+    var horizontal by remember(setup.keystoneHorizontal) { mutableFloatStateOf(setup.keystoneHorizontal) }
+    KeystoneSlider("Keystone, top and bottom", "top narrower", "bottom narrower", vertical, { vertical = it }) {
+        save(setup.copy(keystoneVertical = vertical))
+    }
+    KeystoneSlider("Keystone, left and right", "right shorter", "left shorter", horizontal, { horizontal = it }) {
+        save(setup.copy(keystoneHorizontal = horizontal))
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        KeystoneSketch(vertical, horizontal, Modifier.width(160.dp).height(90.dp))
+        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+            Text(
+                "Where the picture lands on the panel: a projector aimed up throws it wider at the top — narrow " +
+                    "the top until the picture on the wall is square again.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (vertical != 0f || horizontal != 0f) {
+                TextButton(
+                    onClick = {
+                        vertical = 0f
+                        horizontal = 0f
+                        save(setup.copy(keystoneVertical = 0f, keystoneHorizontal = 0f))
+                    },
+                ) { Text("No keystone", fontSize = 16.sp) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwitchLine(label: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text(label, fontSize = 16.sp)
+            Text(detail, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+/** One keystone, -[Keystone.LIMIT]..[Keystone.LIMIT], saved when let go; what either side does said beside it. */
+@Composable
+private fun KeystoneSlider(
+    label: String,
+    above: String,
+    below: String,
+    value: Float,
+    onValue: (Float) -> Unit,
+    onDone: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(label, fontSize = 16.sp, modifier = Modifier.weight(1f))
+        val percent = kotlin.math.abs(value * 100).roundToInt()
+        Text(
+            when {
+                percent == 0 -> "off"
+                value > 0f -> "$above $percent %"
+                else -> "$below $percent %"
+            },
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    Slider(
+        value = value,
+        // In steps of half a percent, and back to none near the middle.
+        onValueChange = { onValue(if (kotlin.math.abs(it) < 0.01f) 0f else (it * 200).roundToInt() / 200f) },
+        onValueChangeFinished = onDone,
+        valueRange = -Keystone.LIMIT..Keystone.LIMIT,
+    )
+}
+
+/** The panel, and the quadrilateral the keystone draws the picture into (Keystone.corners), as seen. */
+@Composable
+private fun KeystoneSketch(vertical: Float, horizontal: Float, modifier: Modifier) {
+    val panel = MaterialTheme.colorScheme.outline
+    val picture = MaterialTheme.colorScheme.primary
+    Canvas(modifier) {
+        drawRect(panel, style = Stroke(width = 2f))
+        val c = Keystone.corners(vertical, horizontal)
+        val path = Path().apply {
+            // From the bottom left, as the stage counts; the sketch's y grows downwards.
+            moveTo((c[0] * size.width).toFloat(), ((1 - c[1]) * size.height).toFloat())
+            for (i in 1..3) lineTo((c[2 * i] * size.width).toFloat(), ((1 - c[2 * i + 1]) * size.height).toFloat())
+            close()
+        }
+        drawPath(path, picture.copy(alpha = 0.5f))
+        drawPath(path, picture, style = Stroke(width = 2f))
+    }
 }

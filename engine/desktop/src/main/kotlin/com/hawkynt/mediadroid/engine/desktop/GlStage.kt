@@ -10,6 +10,7 @@ import com.hawkynt.mediadroid.player.Nis
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
+import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.player.ToneMap
 import com.hawkynt.mediadroid.shaders.Shaders
 import org.lwjgl.glfw.GLFW
@@ -135,8 +136,8 @@ class GlStage : AutoCloseable {
 
     /**
      * [picture] alone as [adjustment] has it, at [width] × [height]: RGBA rows from the top — only its part [crop]
-     * (the picture inside its black bars), when one is given; [panorama] times wider than its shape, its middle
-     * kept in shape (Panorama), where above 1.
+     * (the picture inside its black bars), when one is given; its geometry bent by [warp] (ScreenWarp: a projector's
+     * mirror, flip and keystone, the panorama).
      */
     fun process(
         picture: MediaReader.Picture,
@@ -144,14 +145,14 @@ class GlStage : AutoCloseable {
         width: Int,
         height: Int,
         crop: PictureCrop? = null,
-        panorama: Float = 1f,
-    ): MediaReader.Picture = process(Moment(picture), adjustment, width, height, crop, panorama)
+        warp: ScreenWarp = ScreenWarp.None,
+    ): MediaReader.Picture = process(Moment(picture), adjustment, width, height, crop, warp)
 
     /**
      * The picture [moment] shows as [adjustment] has it, at [width] × [height]: RGBA rows from the top. A temporal
      * deinterlacer reads the pictures either side of it; smooth motion mixes it into the next by the moment's phase.
-     * Only the part [crop] of each picture (inside its black bars) is shown, when one is given; [panorama] times wider
-     * than its shape, its middle kept in shape (Panorama), where above 1.
+     * Only the part [crop] of each picture (inside its black bars) is shown, when one is given; its geometry bent by
+     * [warp] (ScreenWarp: a projector's mirror, flip and keystone, the panorama).
      */
     fun process(
         moment: Moment,
@@ -159,11 +160,11 @@ class GlStage : AutoCloseable {
         width: Int,
         height: Int,
         crop: PictureCrop? = null,
-        panorama: Float = 1f,
+        warp: ScreenWarp = ScreenWarp.None,
     ): MediaReader.Picture = if (!ready) {
         moment.shown
     } else {
-        thread.submit<MediaReader.Picture> { run(moment, adjustment, width, height, crop, panorama) }.get()
+        thread.submit<MediaReader.Picture> { run(moment, adjustment, width, height, crop, warp) }.get()
     }
 
     // The part of [picture] the stage works on: inside the [crop] where it fits the picture, of that the [stereo] eye.
@@ -190,7 +191,7 @@ class GlStage : AutoCloseable {
         outW: Int,
         outH: Int,
         crop: PictureCrop?,
-        panorama: Float,
+        warp: ScreenWarp,
     ): MediaReader.Picture {
         this.crop = crop
         // Where the picture holds more than the 8 bits it is read back in — HDR's tone-mapped floats, the colour
@@ -227,7 +228,7 @@ class GlStage : AutoCloseable {
                 }
             }
         }
-        // To the shown size, colour-corrected, bent panoramic.
+        // To the shown size, colour-corrected, its geometry bent (ScreenWarp).
         val shown = target("shown", outW, outH, half = deep)
         val u = a.shaderUniforms()
         pass("adjust.frag", shown, source.texture) { p ->
@@ -235,7 +236,9 @@ class GlStage : AutoCloseable {
             glUniform1f(glGetUniformLocation(p, "uContrast"), u.contrast)
             glUniform1f(glGetUniformLocation(p, "uSaturation"), u.saturation)
             glUniform1f(glGetUniformLocation(p, "uInverseGamma"), u.inverseGamma)
-            glUniform1f(glGetUniformLocation(p, "uPanorama"), panorama)
+            glUniform1f(glGetUniformLocation(p, "uPanorama"), warp.panorama)
+            glUniformMatrix3fv(glGetUniformLocation(p, "uWarp"), false, warp.matrix)
+            glUniform1f(glGetUniformLocation(p, "uWarped"), 1f)
         }
         if (!deep) return download(shown, m.shown.ptsMs)
         // Dithered to 8 bits, the last pass before the picture is read back: libplacebo's blue noise

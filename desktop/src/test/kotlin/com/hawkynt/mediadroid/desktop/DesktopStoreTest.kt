@@ -172,12 +172,18 @@ class DesktopStoreTest {
         val data = folder.newFolder("data")
         DesktopStore(data).apply {
             setAspect("/v/dvd.mkv", AspectOverride.SIXTEEN_NINE)
-            setScreenSetup("projector", ScreenSetup(ScreenShape.LENS_133))
+            setScreenSetup(
+                "projector",
+                ScreenSetup(ScreenShape.LENS_133, mirror = true, flip = true, keystoneVertical = 0.1f),
+            )
         }
         val again = DesktopStore(data)
         assertEquals(AspectOverride.SIXTEEN_NINE, again.aspectOf("/v/dvd.mkv"))
         assertEquals(AspectOverride.AUTO, again.aspectOf("/v/other.mkv"))
-        assertEquals(ScreenShape.LENS_133, again.screenSetup("projector").shape)
+        assertEquals(
+            ScreenSetup(ScreenShape.LENS_133, mirror = true, flip = true, keystoneVertical = 0.1f),
+            again.screenSetup("projector"),
+        )
         assertEquals(ScreenSetup.Default, again.screenSetup("monitor"))
         // Back to the defaults: nothing is kept for them.
         again.setAspect("/v/dvd.mkv", AspectOverride.AUTO)
