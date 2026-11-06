@@ -93,6 +93,8 @@ import com.hawkynt.mediadroid.R
 import com.hawkynt.mediadroid.player.PlayerWindow
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.data.screenKey
+import com.hawkynt.mediadroid.player.PictureFit
+import com.hawkynt.mediadroid.player.PictureLayout
 import com.hawkynt.mediadroid.library.SkipRules
 import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
 import java.io.File
@@ -112,39 +114,59 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 /** How long the controls stay up after the last touch, like the streaming apps' players. */
 private const val ControlsTimeoutMs = 3_000
 
-/** How the video fills the screen; maps onto Media3's resize modes. */
-enum class VideoFit(val label: String, val resizeMode: Int) {
-    FIT("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT),
-    FILL("Fill", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
-    STRETCH("Stretch", AspectRatioFrameLayout.RESIZE_MODE_FILL),
-}
+/**
+ * How the video fills the screen, as Media3's resize modes: panoramic is fitted, its frame as wide as the panorama
+ * makes the picture (see [applyCropShape]).
+ */
+private val PictureFit.resizeMode: Int
+    get() = when (this) {
+        PictureFit.FIT, PictureFit.PANORAMIC -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+        PictureFit.FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        PictureFit.STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+    }
 
 /**
  * The picture's shape on the view: [video]'s own, as the player view gives it, narrowed or flattened by the black
  * bars the filters' stage crops — [share] the part of the width and height it still shows — so Fit, Fill and Stretch
  * work on the picture alone — or the shape [aspect] gives the whole frame where the file's flag is wrong; drawn
- * narrower on a screen seen wider than its pixels ([screen], an anamorphic lens), so it is seen as meant.
+ * narrower on a screen seen wider than its pixels ([screen], an anamorphic lens), so it is seen as meant; [panorama]
+ * times wider where the stage shows it panoramic.
  */
 private fun PlayerView.applyCropShape(
     video: androidx.media3.common.VideoSize,
     share: Pair<Float, Float>,
     aspect: com.hawkynt.mediadroid.player.AspectOverride,
     screen: com.hawkynt.mediadroid.player.ScreenShape,
+    panorama: Float,
 ) {
-    if (video.width == 0 || video.height == 0) return
+    val drawn = drawnAspect(video, share, aspect, screen) ?: return
     val frame = findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame) ?: return
+    frame.setAspectRatio(drawn * panorama)
+}
+
+/** The shape the picture is drawn in on this view's screen (see [applyCropShape]); null before its size is known. */
+private fun PlayerView.drawnAspect(
+    video: androidx.media3.common.VideoSize,
+    share: Pair<Float, Float>,
+    aspect: com.hawkynt.mediadroid.player.AspectOverride,
+    screen: com.hawkynt.mediadroid.player.ScreenShape,
+): Float? {
+    if (video.width == 0 || video.height == 0) return null
     val meant = com.hawkynt.mediadroid.player.PictureShape.aspect(
         video.width, video.height, video.pixelWidthHeightRatio, aspect, share.first, share.second,
     )
-    val panel = rootView.takeIf { it.width > 0 && it.height > 0 }?.let { it.width.toFloat() / it.height } ?: 0f
-    frame.setAspectRatio(com.hawkynt.mediadroid.player.PictureShape.drawn(meant, panel, screen))
+    return com.hawkynt.mediadroid.player.PictureShape.drawn(meant, panelAspect(), screen)
 }
+
+/** The shape of the screen this view fills: its width over its height; 0 before it is laid out. */
+private fun PlayerView.panelAspect(): Float =
+    rootView.takeIf { it.width > 0 && it.height > 0 }?.let { it.width.toFloat() / it.height } ?: 0f
 
 /**
  * Fit, zoom and picture correction on the video frame inside a player view only — the controls
  * and subtitles drawn above it are neither scaled nor tinted.
  */
-private fun PlayerView.applyVideoLook(fit: VideoFit, zoom: Float, pan: Offset) {
+private fun PlayerView.applyVideoLook(fit: PictureFit, zoom: Float, pan: Offset) {
     resizeMode = fit.resizeMode
     val frame = findViewById<View>(androidx.media3.ui.R.id.exo_content_frame) ?: return
     frame.scaleX = zoom
@@ -421,12 +443,20 @@ fun PlayerScreen(
         }
         playerView?.useController = !inPip
     }
-    var fit by remember { mutableStateOf(VideoFit.FIT) }
+    var fit by remember { mutableStateOf(PictureFit.FIT) }
     // The part of the picture's width and height left once the stage has cropped its black bars; 1 and 1 without.
     var cropShare by remember { mutableStateOf(1f to 1f) }
+    // How much wider the stage shows the picture, panoramic; 1 while it does not draw it.
+    var panoramaShown by remember { mutableFloatStateOf(1f) }
     // The view's frame in the picture's shape: cropped, as this video's shape is set, for the screen it is on.
     fun PlayerView.showShape(video: androidx.media3.common.VideoSize) =
-        applyCropShape(video, cropShare, picture.aspect, store.screenSetup(screenKey(display)).shape)
+        applyCropShape(video, cropShare, picture.aspect, store.screenSetup(screenKey(display)).shape, panoramaShown)
+    // How much wider than its shape Panoramic shows the picture on this view's screen; 1 for every other size.
+    fun PlayerView.panoramaFor(video: androidx.media3.common.VideoSize): Float {
+        if (fit != PictureFit.PANORAMIC) return 1f
+        val drawn = drawnAspect(video, cropShare, picture.aspect, store.screenSetup(screenKey(display)).shape)
+        return drawn?.let { PictureLayout.panorama(it, panelAspect()) } ?: 1f
+    }
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     // Short-lived on-screen confirmation of a gesture: "+15 s", "Volume 40 %".
@@ -1095,8 +1125,11 @@ fun PlayerScreen(
         // device; FFmpeg's HDR pictures have no device to leave it to.
         val toneMapped = transfer != null &&
             (ffmpegVideo || settings.hdrToneMapping && target?.display?.isHdr != true)
-        val wanted = (ffmpegVideo || toneMapped || (shownPicture.hasFilters && transfer == null)) && target != null &&
-            target.holder.surface.isValid
+        // Panoramic: the stage bends the picture into a frame that much wider.
+        val bend = (presentation?.takeIf { it.isShowing }?.playerView ?: playerView)
+            ?.panoramaFor(player.videoSize) ?: 1f
+        val wanted = (ffmpegVideo || toneMapped || ((shownPicture.hasFilters || bend > 1f) && transfer == null)) &&
+            target != null && target.holder.surface.isValid
         val stage = filterStage[0] ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { made ->
             filterStage[0] = made
             // A changed crop reshapes the view at once, not on the next round.
@@ -1124,6 +1157,7 @@ fun PlayerScreen(
                 null
             }
             active.filters = shownPicture
+            active.panorama = bend
             active.hdr = transfer.takeIf { toneMapped }
             active.sourceBits = player.videoFormat?.colorInfo?.lumaBitdepth?.takeIf { it > 0 } ?: 8
             active.downscaler = runCatching { com.hawkynt.mediadroid.player.Downscaler.valueOf(settings.downscaler) }
@@ -1145,8 +1179,9 @@ fun PlayerScreen(
             routedTo[0] = null
             target?.let { player.setVideoSurfaceView(it) }
         }
-        // Only a picture drawn by the stage is cropped.
+        // Only a picture drawn by the stage is cropped, or panoramic.
         cropShare = if (routedTo[0] != null) stage.cropShare else 1f to 1f
+        panoramaShown = if (routedTo[0] != null) stage.panorama else 1f
     }
     freshSurface[0] = {
         val stage = filterStage[0]
@@ -2092,8 +2127,8 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 private fun PlayerPanel(
     speed: Float,
     onSpeed: (Float) -> Unit,
-    fit: VideoFit,
-    onFit: (VideoFit) -> Unit,
+    fit: PictureFit,
+    onFit: (PictureFit) -> Unit,
     subtitlesOn: Boolean,
     onSubtitles: (Boolean) -> Unit,
     picture: PictureAdjustment,
@@ -2130,8 +2165,9 @@ private fun PlayerPanel(
         sections()
 
         PanelTitle("Picture size")
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            VideoFit.entries.forEach { option ->
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PictureFit.entries.forEach { option ->
                 FilterChip(
                     selected = fit == option,
                     onClick = { onFit(option) },
@@ -2140,7 +2176,8 @@ private fun PlayerPanel(
             }
         }
         Text(
-            "Pinch with two fingers to zoom; choosing a size resets the zoom.",
+            (if (fit == PictureFit.PANORAMIC) "A narrow picture fills a wide screen: the middle as it is, the sides " +
+                "stretched. " else "") + "Pinch with two fingers to zoom; choosing a size resets the zoom.",
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),

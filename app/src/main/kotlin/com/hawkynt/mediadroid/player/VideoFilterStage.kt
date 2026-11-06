@@ -548,6 +548,18 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     var downscaler: Downscaler = Downscaler.DEFAULT
 
     /**
+     * How many times wider than its shape the screen shows the picture, panoramic ([Panorama]): its middle kept in
+     * shape, the sides stretched; 1 for none. The view is that much wider; the last pass bends the picture into it.
+     */
+    @Volatile
+    var panorama: Float = 1f
+        set(value) {
+            if (value == field) return
+            field = value
+            handler.post { busy { if (hasFrame && window != EGL14.EGL_NO_SURFACE) draw(redraw = true) } }
+        }
+
+    /**
      * The size the stage takes the decoder's frame at: the 3D eye's half, pixel for pixel, or the whole frame — less
      * the black bars cropped.
      */
@@ -1827,10 +1839,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         grainToShow = filters.grain
         val outWidth = query(EGL14.EGL_WIDTH)
         val outHeight = query(EGL14.EGL_HEIGHT)
-        // The colour correction and the dithering are the last passes: the rest is drawn at the screen's size into a
-        // frame of its own — in half floats where the picture is dithered.
+        // The colour correction, the panorama and the dithering are the last passes: the rest is drawn at the
+        // screen's size into a frame of its own — in half floats where the picture is dithered.
         ditherNow = dithers(picture)
-        val adjusting = !picture.isColorNeutral || ditherNow
+        val bend = panorama
+        val adjusting = !picture.isColorNeutral || ditherNow || bend > 1f
         val upscaling = picture.upscales && outWidth > width
         val sharpen: (Int) -> Unit = { p ->
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
@@ -2095,8 +2108,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }
         if (!adjusting) return
         var last = frames[ADJUSTED]
-        if (!picture.isColorNeutral) {
-            // The colour correction: onto the screen, or into a half-float frame of its own for the dithering.
+        if (!picture.isColorNeutral || bend > 1f) {
+            // The colour correction and the panorama: onto the screen, or into a half-float frame of its own for the
+            // dithering.
             if (ditherNow) {
                 last = frames[DITHER_INPUT].ensure(outWidth, outHeight, half = true)
                 last.bind()
@@ -2110,6 +2124,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uContrast"), u.contrast)
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSaturation"), u.saturation)
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uInverseGamma"), u.inverseGamma)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uPanorama"), bend)
             }
         }
         if (ditherNow) dither(last, outWidth, outHeight)

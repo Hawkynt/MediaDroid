@@ -86,6 +86,8 @@ import com.hawkynt.mediadroid.player.ChapterSteps
 import com.hawkynt.mediadroid.player.FrameStep
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
+import com.hawkynt.mediadroid.player.PictureFit
+import com.hawkynt.mediadroid.player.PictureLayout
 import com.hawkynt.mediadroid.player.PictureShape
 import com.hawkynt.mediadroid.player.PictureTrial
 import com.hawkynt.mediadroid.player.PlaybackMath
@@ -142,6 +144,9 @@ fun PlayerScreen(
     // MEDIADROID_SHOW=panel: the picture panel open from the start (documentation and checks).
     var panel by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "panel") }
     var canvas by remember { mutableStateOf(IntSize.Zero) }
+    // How the picture fills the window, for this player only, as the phone's gear; and the size it is drawn at.
+    var fit by remember { mutableStateOf(PictureFit.FIT) }
+    var shownSize by remember { mutableStateOf(IntSize.Zero) }
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     // The picture on screen as the stage drew it (or as decoded, without a filter), for a snapshot.
     val shownPicture = remember { arrayOfNulls<MediaReader.Picture>(1) }
@@ -281,21 +286,32 @@ fun PlayerScreen(
                 screenSetup = store.screenSetup(shownOn.key)
                 val widening = PictureShape.widening(shownOn.aspect, screenSetup.shape)
                 val pixelAspect = PictureShape.pixelAspect(raw.width, raw.height, engine.pixelAspect, aspect)
-                val look = listOf(picture, canvas, part, timing, pixelAspect, widening)
+                val look = listOf(picture, canvas, part, timing, pixelAspect, widening, fit)
                 if (raw !== lastShown || look != lastLook) {
                     lastShown = raw
                     lastLook = look
-                    // Fitted by the picture's true shape: non-square pixels (PAL DV, anamorphic DVD) widened, or the
-                    // shape set for a file whose flag is wrong; narrowed by what the screen widens (a lens).
-                    val (w, h) = fitted(
-                        ((part?.width ?: raw.width) * pixelAspect / widening).toInt(),
-                        part?.height ?: raw.height,
-                        canvas,
-                    )
-                    val throughStage = picture.hasFilters || pixelAspect != 1f || widening != 1f ||
+                    // Sized by the picture's true shape: non-square pixels (PAL DV, anamorphic DVD) widened, or the
+                    // shape set for a file whose flag is wrong; narrowed by what the screen widens (a lens); then
+                    // fitted, filled, stretched or widened panoramic into the window.
+                    val drawnWidth = (part?.width ?: raw.width) * pixelAspect / widening
+                    val drawnHeight = (part?.height ?: raw.height).toFloat()
+                    val drawnAspect = drawnWidth / drawnHeight
+                    val laidOut = canvas.width > 0 && canvas.height > 0
+                    val panorama = if (fit == PictureFit.PANORAMIC && laidOut) {
+                        PictureLayout.panorama(drawnAspect, canvas.width.toFloat() / canvas.height)
+                    } else {
+                        1f
+                    }
+                    val (w, h) = if (laidOut) {
+                        PictureLayout.size(fit, drawnAspect, canvas.width, canvas.height)
+                    } else {
+                        drawnWidth.toInt().coerceAtLeast(1) to drawnHeight.toInt().coerceAtLeast(1)
+                    }
+                    shownSize = IntSize(w, h)
+                    val throughStage = picture.hasFilters || pixelAspect != 1f || widening != 1f || panorama > 1f ||
                         raw.hdr != null || engine.drawsSubtitles
                     staged = if (throughStage && stage.ready && w > 0 && h > 0) {
-                        withContext(Dispatchers.Default) { stage.process(moment, picture, w, h, part) }
+                        withContext(Dispatchers.Default) { stage.process(moment, picture, w, h, part, panorama) }
                     } else {
                         raw.eightBit()
                     }
@@ -439,7 +455,7 @@ fun PlayerScreen(
                 true
             },
     ) {
-        Canvas(Modifier.fillMaxSize().onSizeChanged { canvas = it }) { frame?.let { drawLetterboxed(it) } }
+        Canvas(Modifier.fillMaxSize().onSizeChanged { canvas = it }) { frame?.let { drawShown(it, shownSize) } }
         subtitle?.let { line ->
             SubtitleLine(
                 line,
@@ -472,6 +488,8 @@ fun PlayerScreen(
                 },
                 nightMode = nightMode,
                 onNightMode = { nightMode = it },
+                fit = fit,
+                onFit = { fit = it },
                 aspect = aspect,
                 onAspect = {
                     aspect = it
@@ -615,18 +633,14 @@ private fun SubtitleLine(text: String, modifier: Modifier) {
     }
 }
 
-/** A [w] × [h] picture's size fitted into [canvas], its shape kept. */
-private fun fitted(w: Int, h: Int, canvas: IntSize): Pair<Int, Int> {
-    if (canvas.width <= 0 || canvas.height <= 0) return w to h
-    val scale = minOf(canvas.width.toFloat() / w, canvas.height.toFloat() / h)
-    return (w * scale).toInt().coerceAtLeast(1) to (h * scale).toInt().coerceAtLeast(1)
-}
-
-/** [image] as large as the canvas allows, its shape kept, centred. */
-private fun DrawScope.drawLetterboxed(image: ImageBitmap) {
+/**
+ * [image] centred at [shown], the size the picture size gave it (PictureLayout) — larger than the canvas for Fill, its
+ * overhang cut; before that is known, as large as the canvas allows, its shape kept.
+ */
+private fun DrawScope.drawShown(image: ImageBitmap, shown: IntSize) {
     val scale = minOf(size.width / image.width, size.height / image.height)
-    val w = image.width * scale
-    val h = image.height * scale
+    val w = if (shown.width > 0) shown.width.toFloat() else image.width * scale
+    val h = if (shown.height > 0) shown.height.toFloat() else image.height * scale
     drawImage(
         image,
         dstOffset = IntOffset(((size.width - w) / 2).toInt(), ((size.height - h) / 2).toInt()),
