@@ -31,6 +31,7 @@ oracle that bilinear scaling would pass as well proves nothing.
 | ACNet (`glsl/acnet`) | `acnet_f8b4.glsl`, TianZerL/ACNetGLSL `c6e5940` (MIT) | in libplacebo on 16-bit YUV (BT.709, full range), grey and in colour, the chroma scaled bilinearly as the stage's doubling does — with another chroma scaler it has to differ, so that setting is known to take |
 | Chroma upscaling (`yuv-spline.frag`, `chroma-krig-*.frag`) | libplacebo's renderer (7.360): its `spline36` plane scaler, and KrigBilateral (Shiandow, LGPL-3.0-or-later; the revision in `krig-url.txt`) as the mpv user shader it is | run by libplacebo on the same Mesa (`placebo.cpp`) on core/player's 4:2:0 fixture and the test picture, full-range BT.709 with the chroma sited at the centre, as the stage reads FFmpeg's planes; ours from planes with a padded stride, as a decoder's come. Each has to differ from FFmpeg's bilinear chroma |
 | Logo masking (`logo-mask.frag`) | FFmpeg's own delogo filter (GPL, an oracle only) | its captured output for four rectangles on core/player's `delogo/` picture, the three planes taken as R, G and B: within one step (max 1, mean ≤ 0.006), ours weighing in floats where FFmpeg divides 64-bit integers; core/player's `LogoMask` agrees byte for byte (`LogoMaskTest`) |
+| Deblocking (`deblock-es3.frag`), deringing (`cdef-direction-es3.frag`, `cdef-es3.frag`) | FFmpeg's `vf_deblock.c` filters (every row of a vertical edge judged) and dav1d 1.5.0's CDEF, each built into core/player's harness | their captured output on an MPEG-2 picture (core/player's `deblock/` and `cdef/` fixtures; `make-expected.sh` there holds the deblock harness to FFmpeg's command line first): weak and strong at several thresholds, CDEF with primary and secondary strengths alone and together. Byte for byte; each has to change the picture |
 
 1. Mesa's EGL, GLES and OpenGL (`pkg-config egl glesv2 opengl`) and libplacebo's development files (`pkg-config
    libplacebo`); GStreamer's `gst-launch-1.0` with gst-plugins-good's `deinterlace` and an x86-64 C compiler for the
@@ -85,6 +86,8 @@ pivoting, nearly singular where a colour edge meets a corner, so float rounding 
 Core/player's `ChromaUpscaling` agrees with libplacebo's YCbCr itself within a fifth of a step (spline36) and three
 quarters (KrigBilateral) (`ChromaUpscalingTest`); the desktop stage's passes with it within two steps of RGB
 (`GlStageTest`).
+Deblocking and deringing, on Mesa 26.2's llvmpipe: every case byte for byte (max 0) against FFmpeg's filters and dav1d.
+Each value is filtered as its 8-bit step; a frame of half floats keeps its finer part, moved by the same step.
 
 Debanding, on Mesa 26.2's llvmpipe (libplacebo 7.360 on the same), per 8-bit value:
 

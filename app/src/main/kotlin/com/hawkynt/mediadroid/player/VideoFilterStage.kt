@@ -333,6 +333,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var debandProgram = 0
     private var logoProgram = 0
 
+    // Deblocking's pass and deringing's two (GLSL ES 3.00; without, neither runs).
+    private var deblockProgram = 0
+    private var cdefDirectionProgram = 0
+    private var cdefProgram = 0
+
     // Debanding's frame index, which seeds its random numbers with the pixel's position: libplacebo's 8-bit counter.
     private var debandFrame = 0
 
@@ -1049,6 +1054,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(denoiseProgram)
             GLES20.glDeleteProgram(debandProgram)
             GLES20.glDeleteProgram(logoProgram)
+            GLES20.glDeleteProgram(deblockProgram)
+            GLES20.glDeleteProgram(cdefDirectionProgram)
+            GLES20.glDeleteProgram(cdefProgram)
             GLES20.glDeleteProgram(tonemapProgram)
             GLES20.glDeleteProgram(peakProgram)
             if (ditherProgram != 0) GLES20.glDeleteProgram(ditherProgram)
@@ -1225,6 +1233,17 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }.isSuccess
         if (!debandEs3) debandProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEBAND)
         logoProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_LOGO_MASK)
+        // Deblocking and deringing filter each value as its exact 8-bit step: GLSL ES 3.00's integers and texelFetch.
+        if (es3) {
+            runCatching {
+                val programs = listOf(
+                    Shaders.VIDEO_DEBLOCK_ES3, Shaders.VIDEO_CDEF_DIRECTION_ES3, Shaders.VIDEO_CDEF_ES3,
+                ).map { linked(program(Shaders.VIDEO_VERTEX_ES3, it)) }
+                deblockProgram = programs[0]
+                cdefDirectionProgram = programs[1]
+                cdefProgram = programs[2]
+            }
+        }
         tonemapProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TONEMAP)
         peakProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PEAK)
         // Dithering reads its texels exactly with GLSL ES 3.00's texelFetch; the GLSL ES 1.00 pass reads their centres.
@@ -1793,8 +1812,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * as libplacebo runs it first on the decoded picture: the steps it looks for are the source's own.
      */
     private fun denoised(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
-        var source = from
-        // A station logo hidden first, so the filters after it see the picture without it.
+        var source = deblocked(picture, from, width, height)
+        // A station logo hidden after deblocking, so the filters after it see the picture without it.
         picture.logo?.let { logo ->
             val rect = logo.rectangle(width, height)
             if (rect.left + rect.width < width && rect.top + rect.height < height) {
@@ -1842,6 +1861,77 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSigmaR2"), 2f * sigmaR * sigmaR)
             }
             source = denoised
+        }
+        return source
+    }
+
+    /**
+     * Step 3's start: deblocking, then deringing, as far as [picture] asks for them, over [from] — on the decoded
+     * picture's own block grid, so not where the picture was brought down to 1080p (its blocks no longer 8 pixels).
+     */
+    private fun deblocked(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
+        val deblock = picture.deblockParams()
+        val dering = picture.deringParams()
+        if ((deblock == null && dering == null) || deblockProgram == 0) return from
+        if (PictureSize(width, height) != eyeSize()) return from
+        // Where the picture shown starts in the decoder's frame: the 3D eye, then the black bars cropped inside it.
+        val video = PictureSize(
+            videoWidth.takeIf { it > 0 } ?: surfaceWidth(),
+            videoHeight.takeIf { it > 0 } ?: surfaceHeight(),
+        )
+        val stereo = filters.stereo
+        val crop = activeCrop()
+        val left = (video.width * stereo.x).toInt() + (crop?.left ?: 0)
+        val top = ((1f - stereo.y - stereo.height) * video.height).toInt() + (crop?.top ?: 0)
+        val (originX, originY) = Deblock.gridOrigin(left, top)
+        var source = from
+        val deep = deepInput(picture)
+        if (deblock != null) {
+            for (pass in 0..2) {
+                val into = frames[if (pass % 2 == 0) DEBLOCK_A else DEBLOCK_B].ensure(width, height, deep)
+                into.bind()
+                run(deblockProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                    GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uSize"), width, height)
+                    GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uOrigin"), originX, originY)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPass"), pass)
+                    GLES20.glUniform1i(
+                        GLES20.glGetUniformLocation(p, "uStrong"),
+                        if (deblock.filter == Deblock.Filter.STRONG) 1 else 0,
+                    )
+                    GLES30.glUniform4i(
+                        GLES20.glGetUniformLocation(p, "uThresholds"),
+                        Deblock.threshold(deblock.alpha), Deblock.threshold(deblock.beta),
+                        Deblock.threshold(deblock.gamma), Deblock.threshold(deblock.delta),
+                    )
+                }
+                source = into
+            }
+        }
+        if (dering != null) {
+            val blocksWide = (width - originX) / 8
+            val blocksHigh = (height - originY) / 8
+            if (blocksWide <= 0 || blocksHigh <= 0) return source
+            val blocks = frames[CDEF_BLOCKS].ensure(blocksWide, blocksHigh)
+            blocks.bind()
+            run(cdefDirectionProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uSize"), width, height)
+                GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uOrigin"), originX, originY)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrimary"), dering.primary)
+            }
+            val into = frames[if (source === frames[DEBLOCK_A]) DEBLOCK_B else DEBLOCK_A].ensure(width, height, deep)
+            into.bind()
+            run(cdefProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, blocks.texture)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uDirections"), 1)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+                GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uSize"), width, height)
+                GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uOrigin"), originX, originY)
+                GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uBlocks"), blocksWide, blocksHigh)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSecondary"), dering.secondary)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uDamping"), dering.damping)
+            }
+            source = into
         }
         return source
     }
@@ -2955,9 +3045,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** The picture with its station logo hidden (see LogoMask). */
         private const val LOGO_MASKED = CHROMA_FULL + 1
+        /** Deblocking's and deringing's frames, taking turns, and the blocks' directions and strengths. */
+        private const val DEBLOCK_A = LOGO_MASKED + 1
+        private const val DEBLOCK_B = DEBLOCK_A + 1
+        private const val CDEF_BLOCKS = DEBLOCK_B + 1
 
         // The picture on screen taken small for the histogram (see onScreenSample).
-        private const val SCREEN_SAMPLE = LOGO_MASKED + 1
+        private const val SCREEN_SAMPLE = CDEF_BLOCKS + 1
 
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()

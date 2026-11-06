@@ -129,8 +129,10 @@ val notices = tasks.register<Sync>("notices") {
     from(rootProject.file("engine/desktop/THIRD-PARTY-NOTICE.ffmpeg.txt"))
     from(rootProject.file("engine/desktop/THIRD-PARTY-NOTICE.Real-ESRGAN-ncnn.txt"))
     from(rootProject.file("app")) {
-        listOf("ACNet", "Anime4K", "FidelityFX-FSR", "NVIDIA-Image-Scaling", "Snapdragon-GSR", "hash-without-sine")
-            .forEach { include("THIRD-PARTY-NOTICE.$it.txt") }
+        listOf(
+            "ACNet", "Anime4K", "FidelityFX-FSR", "NVIDIA-Image-Scaling", "Snapdragon-GSR", "hash-without-sine",
+            "dav1d",
+        ).forEach { include("THIRD-PARTY-NOTICE.$it.txt") }
         // ncnn and the networks the desktop carries (DesktopNeural.CARRIED); libass, FreeType, FriBidi and HarfBuzz,
         // inside the native library with ncnn.
         listOf("ncnn", "RIFE", "IFRNet", "waifu2x", "Real-CUGAN", "libass")

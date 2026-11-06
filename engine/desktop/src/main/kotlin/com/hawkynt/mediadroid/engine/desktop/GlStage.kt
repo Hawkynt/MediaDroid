@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.imaging.Xbrz
 import com.hawkynt.mediadroid.player.Colorizing
+import com.hawkynt.mediadroid.player.Deblock
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.Ewa
@@ -216,7 +217,7 @@ class GlStage : AutoCloseable {
         // A change to the filters, to the part shown, or to the frames' depth makes every kept picture stale.
         val look = listOf(
             a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep, a.chroma, a.colorize,
-            a.logo,
+            a.logo, a.deblock, a.dering,
         )
         // Another chroma upscaler makes every picture uploaded from its planes stale.
         if (a.chroma != chroma) {
@@ -347,7 +348,44 @@ class GlStage : AutoCloseable {
                 glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(false, true).toFloat())
             }
         }
-        // 1b. Colour for a black-and-white picture, by the network whose test passed (see colored).
+        // 1b. Deblocking and deringing, on the decoded picture's own block grid, which the part shown (its bars, its
+        // 3D eye) may have cut into — before anything else changes the picture.
+        val part = region(picture, crop, a.stereo)
+        val (originX, originY) = Deblock.gridOrigin(part.left, part.top)
+        a.deblockParams()?.let { d ->
+            for (step in 0..2) {
+                source = pass("deblock-es3.frag", target("deblocked$step", w, h, half = deep), source.texture) { p ->
+                    glUniform2i(glGetUniformLocation(p, "uSize"), w, h)
+                    glUniform2i(glGetUniformLocation(p, "uOrigin"), originX, originY)
+                    glUniform1i(glGetUniformLocation(p, "uPass"), step)
+                    glUniform1i(glGetUniformLocation(p, "uStrong"), if (d.filter == Deblock.Filter.STRONG) 1 else 0)
+                    glUniform4i(
+                        glGetUniformLocation(p, "uThresholds"),
+                        Deblock.threshold(d.alpha), Deblock.threshold(d.beta),
+                        Deblock.threshold(d.gamma), Deblock.threshold(d.delta),
+                    )
+                }
+            }
+        }
+        val blocksWide = (w - originX) / 8
+        val blocksHigh = (h - originY) / 8
+        a.deringParams()?.takeIf { blocksWide > 0 && blocksHigh > 0 }?.let { d ->
+            val blockTarget = target("cdefBlocks", blocksWide, blocksHigh)
+            val blocks = pass("cdef-direction-es3.frag", blockTarget, source.texture) { p ->
+                glUniform2i(glGetUniformLocation(p, "uSize"), w, h)
+                glUniform2i(glGetUniformLocation(p, "uOrigin"), originX, originY)
+                glUniform1i(glGetUniformLocation(p, "uPrimary"), d.primary)
+            }
+            source = pass("cdef-es3.frag", target("deringed", w, h, half = deep), source.texture,
+                listOf(blocks.texture to "uDirections")) { p ->
+                glUniform2i(glGetUniformLocation(p, "uSize"), w, h)
+                glUniform2i(glGetUniformLocation(p, "uOrigin"), originX, originY)
+                glUniform2i(glGetUniformLocation(p, "uBlocks"), blocksWide, blocksHigh)
+                glUniform1i(glGetUniformLocation(p, "uSecondary"), d.secondary)
+                glUniform1i(glGetUniformLocation(p, "uDamping"), d.damping)
+            }
+        }
+        // 1c. Colour for a black-and-white picture, by the network whose test passed (see colored).
         if (a.colorize != PictureAdjustment.Colorize.OFF) source = colored(source)
         // 2. The station logo hidden, then deband, denoise and sharpen at the picture's own size.
         a.logo?.let { logo ->
@@ -1159,6 +1197,9 @@ class GlStage : AutoCloseable {
             "deinterlace.frag" to Shaders.VIDEO_DEINTERLACE,
             "deband-es3.frag" to Shaders.VIDEO_DEBAND_ES3,
             "logo-mask.frag" to Shaders.VIDEO_LOGO_MASK,
+            "deblock-es3.frag" to Shaders.VIDEO_DEBLOCK_ES3,
+            "cdef-direction-es3.frag" to Shaders.VIDEO_CDEF_DIRECTION_ES3,
+            "cdef-es3.frag" to Shaders.VIDEO_CDEF_ES3,
             "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
             "yuv-spline.frag" to Shaders.VIDEO_YUV_SPLINE,
             "chroma-krig-1.frag" to Shaders.VIDEO_CHROMA_KRIG_1,

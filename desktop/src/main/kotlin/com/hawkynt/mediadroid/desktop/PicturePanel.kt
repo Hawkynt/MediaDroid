@@ -229,6 +229,8 @@ fun PicturePanel(
             Triple("Sharpness", picture.sharpness) { v: Float -> picture.copy(sharpness = v) },
             Triple("Clarity", picture.clarity) { v: Float -> picture.copy(clarity = v) },
             Triple("Debanding", picture.deband) { v: Float -> picture.copy(deband = v) },
+            Triple("Deblocking", picture.deblock) { v: Float -> picture.copy(deblock = v) },
+            Triple("Deringing", picture.dering) { v: Float -> picture.copy(dering = v) },
         ).forEach { (label, value, set) ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(label, color = Color.White, modifier = Modifier.weight(1f))

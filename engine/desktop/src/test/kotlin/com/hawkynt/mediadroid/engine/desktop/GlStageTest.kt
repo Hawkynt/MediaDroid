@@ -1,5 +1,7 @@
 package com.hawkynt.mediadroid.engine.desktop
 
+import com.hawkynt.mediadroid.player.Cdef
+import com.hawkynt.mediadroid.player.Deblock
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.ChromaUpscaling
@@ -396,6 +398,34 @@ class GlStageTest {
             }
         }
         assertTrue("off by $worst", worst <= 2)
+    }
+
+    @Test
+    fun `deblocking and deringing agree with the references, on the grid of the part shown`() {
+        val part = PictureCrop(3, 5, picture.width - 3, picture.height - 5)
+        val look = PictureAdjustment(deblock = 0.5f, dering = 0.6f)
+        val out = stage.process(picture, look, part.width, part.height, part)
+        val rgb = ByteArray(part.width * part.height * 3) { i ->
+            val x = i / 3 % part.width
+            val y = i / 3 / part.width
+            picture.rgba[((y + part.top) * picture.width + x + part.left) * 4 + i % 3]
+        }
+        val (originX, originY) = Deblock.gridOrigin(part.left, part.top)
+        val deblock = requireNotNull(look.deblockParams())
+        val deblocked = ByteArray(rgb.size)
+        for (c in 0..2) {
+            val plane = ByteArray(part.width * part.height) { rgb[it * 3 + c] }
+            Deblock.apply(plane, part.width, part.height, deblock, originX, originY)
+                .forEachIndexed { i, v -> deblocked[i * 3 + c] = v }
+        }
+        val dering = requireNotNull(look.deringParams())
+        val expected = Cdef.apply(deblocked, part.width, part.height, dering, originX, originY)
+        var worst = 0
+        for (i in 0 until part.width * part.height) for (c in 0..2) {
+            worst = maxOf(worst, abs((out.rgba[i * 4 + c].toInt() and 255) - (expected[i * 3 + c].toInt() and 255)))
+        }
+        assertTrue("off by $worst", worst <= 1)
+        assertTrue(!expected.contentEquals(rgb))
     }
 
     @Test

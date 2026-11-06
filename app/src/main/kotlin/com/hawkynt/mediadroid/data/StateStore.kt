@@ -68,6 +68,9 @@ data class PictureOverride(
     val upscalerModel: String = "",
     /** The upscaler's network run eight ways. */
     val upscalerTta: Boolean = false,
+    /** Deblocking and deringing, 0 (off) .. 1. */
+    val deblock: Float = 0f,
+    val dering: Float = 0f,
 )
 
 /** How one output screen is set up (see [com.hawkynt.mediadroid.player.ScreenSetup]); names, as kept. */
@@ -116,6 +119,8 @@ data class Settings(
     var chroma: String = "BILINEAR",          // PictureAdjustment.Chroma name, the colour's upscaling
     var upscalerModel: String = "",           // the upscaler's model by its id (NeuralEnlarging.models), "" its default
     var upscalerTta: Boolean = false,         // the upscaler's network run eight ways
+    var deblock: Float = 0f,                  // 0 (off) .. 1, MPEG's block edges smoothed
+    var dering: Float = 0f,                   // 0 (off) .. 1, the ripples beside edges smoothed
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -314,6 +319,8 @@ class StateStore(context: Context) {
             chroma = chromaOf(chroma),
             upscalerModel = upscalerModel,
             upscalerTta = upscalerTta,
+            deblock = deblock,
+            dering = dering,
         )
     }
 
@@ -364,6 +371,8 @@ class StateStore(context: Context) {
                 chroma = chromaOf(it.chroma),
                 upscalerModel = it.upscalerModel,
                 upscalerTta = it.upscalerTta,
+                deblock = it.deblock,
+                dering = it.dering,
             )
         }
             ?: defaultPicture()
@@ -405,6 +414,8 @@ class StateStore(context: Context) {
                 chroma = picture.chroma.name,
                 upscalerModel = picture.upscalerModel,
                 upscalerTta = picture.upscalerTta,
+                deblock = picture.deblock,
+                dering = picture.dering,
             )
         }
         save()

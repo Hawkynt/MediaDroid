@@ -33,6 +33,10 @@
 //                                                           picture's width, which no pass may read)
 //   shader_check logo <in.ppm> <out.ppm> <x> <y> <width> <height> <blur|grey|dim>
 //                                                           glsl/video/logo-mask.frag over that rectangle
+//   shader_check deblock <in.ppm> <out.ppm> <weak|strong> <alpha> <beta> <gamma> <delta>
+//                                                           glsl/video/deblock-es3.frag's three passes
+//   shader_check cdef <in.ppm> <out.ppm> <primary> <secondary> <damping>
+//                                                           glsl/video/cdef-direction-es3.frag, then cdef-es3.frag
 //   shader_check deinterlace <in.ppm> <out.ppm> <mode> <tff 0|1>
 //                                                           glsl/video/deinterlace.frag (1 Auto, 2 Blend, 3 Bob)
 //   shader_check anime4k <in.ppm> <out.ppm>                 glsl/anime4k to twice the size
@@ -424,6 +428,53 @@ Picture logo(const Picture& in, int x, int y, int w, int h, int mode) {
     glUniform4f(glGetUniformLocation(prog, "uRect"), float(x), float(y), float(w), float(h));
     glUniform1i(glGetUniformLocation(prog, "uMode"), mode);
     draw(prog, out, source.texture);
+    return download(out);
+}
+
+// Deblocking as the stages run it: three passes over the picture, its grid from the top left (Deblock).
+Picture deblock(const Picture& in, bool strong, const float thresholds[4]) {
+    GLuint prog = program(appShader("video/vertex-es3.vert"), appShader("video/deblock-es3.frag"));
+    Target from = upload(in);
+    for (int pass = 0; pass < 3; pass++) {
+        Target into = target(in.width, in.height);
+        glUseProgram(prog);
+        glUniform2i(glGetUniformLocation(prog, "uSize"), in.width, in.height);
+        glUniform2i(glGetUniformLocation(prog, "uOrigin"), 0, 0);
+        glUniform1i(glGetUniformLocation(prog, "uPass"), pass);
+        glUniform1i(glGetUniformLocation(prog, "uStrong"), strong ? 1 : 0);
+        // FFmpeg's thresholds: the fraction times 255 in floats, cut to an integer (Deblock.threshold).
+        glUniform4i(glGetUniformLocation(prog, "uThresholds"), int(thresholds[0] * 255.0f), int(thresholds[1] * 255.0f),
+                    int(thresholds[2] * 255.0f), int(thresholds[3] * 255.0f));
+        draw(prog, into, from.texture);
+        from = into;
+    }
+    return download(from);
+}
+
+// Deringing as the stages run it: the blocks' directions and strengths, then the filter (Cdef).
+Picture cdef(const Picture& in, int primary, int secondary, int damping) {
+    const std::string vertex = appShader("video/vertex-es3.vert");
+    GLuint direction = program(vertex, appShader("video/cdef-direction-es3.frag"));
+    GLuint filter = program(vertex, appShader("video/cdef-es3.frag"));
+    Target source = upload(in);
+    const int bw = in.width / 8, bh = in.height / 8;
+    Target blocks = target(bw, bh);
+    glUseProgram(direction);
+    glUniform2i(glGetUniformLocation(direction, "uSize"), in.width, in.height);
+    glUniform2i(glGetUniformLocation(direction, "uOrigin"), 0, 0);
+    glUniform1i(glGetUniformLocation(direction, "uPrimary"), primary);
+    draw(direction, blocks, source.texture);
+    Target out = target(in.width, in.height);
+    glUseProgram(filter);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, blocks.texture);
+    glUniform1i(glGetUniformLocation(filter, "uDirections"), 1);
+    glUniform2i(glGetUniformLocation(filter, "uSize"), in.width, in.height);
+    glUniform2i(glGetUniformLocation(filter, "uOrigin"), 0, 0);
+    glUniform2i(glGetUniformLocation(filter, "uBlocks"), bw, bh);
+    glUniform1i(glGetUniformLocation(filter, "uSecondary"), secondary);
+    glUniform1i(glGetUniformLocation(filter, "uDamping"), damping);
+    draw(filter, out, source.texture);
     return download(out);
 }
 
@@ -995,7 +1046,12 @@ int main(int argc, char** argv) {
     } else if (a.size() == 8 && a[0] == "logo") {
         const int mode = a[7] == "grey" ? 1 : a[7] == "dim" ? 2 : 0;
         writePpm(a[2], logo(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4]), std::stoi(a[5]), std::stoi(a[6]), mode));
-    } else if (a.size() == 5 && a[0] == "deinterlace")
+    } else if (a.size() == 8 && a[0] == "deblock") {
+        const float thresholds[4] = {std::stof(a[4]), std::stof(a[5]), std::stof(a[6]), std::stof(a[7])};
+        writePpm(a[2], deblock(readPpm(a[1]), a[3] == "strong", thresholds));
+    } else if (a.size() == 6 && a[0] == "cdef")
+        writePpm(a[2], cdef(readPpm(a[1]), std::stoi(a[3]), std::stoi(a[4]), std::stoi(a[5])));
+    else if (a.size() == 5 && a[0] == "deinterlace")
         writePpm(a[2], deinterlace(readPpm(a[1]), std::stoi(a[3]), a[4] == "1"));
     else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));
     else if (a.size() == 3 && a[0] == "acnet") writePpm(a[2], acnet(readPpm(a[1])));

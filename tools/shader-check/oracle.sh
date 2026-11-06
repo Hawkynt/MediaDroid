@@ -398,6 +398,24 @@ for rect in "69 5 20 12" "1 1 30 18" "60 40 35 23" "40 20 3 2"; do
 done
 "$C" logo "$W/logo-input.ppm" "$W/logo.ppm" 69 5 20 12 blur
 differs "Logo masking against the picture it was given" "$W/logo.ppm" "$W/logo-input.ppm"
+# Deblocking and deringing: against FFmpeg's own deblock filters (with every row of a vertical edge judged, see
+# core/player's Deblock) and dav1d's own CDEF, run by core/player's harnesses on an MPEG-2 picture — their captured
+# output, the fixtures core/player's DeblockTest and CdefTest hold the references to (make-expected.sh there makes
+# them afresh). Byte for byte; each has to change the picture.
+R="$HERE/../../core/player/src/test/resources"
+for case in "weak 0.098 0.05 0.05 0.05" "strong 0.098 0.05 0.05 0.05" "strong 0.196 0.1 0.1 0.1" \
+  "weak 0.05 0.025 0.025 0.025"; do
+  # shellcheck disable=SC2086
+  "$C" deblock "$R/deblock/input.ppm" "$W/deblock.ppm" $case
+  check "Deblock ($case) against FFmpeg's filters" "$W/deblock.ppm" "$R/deblock/$(echo $case | tr ' ' -).ppm" 0 0
+done
+differs "Deblock against the picture it was given" "$W/deblock.ppm" "$R/deblock/input.ppm"
+for case in "8 2 5" "15 4 6" "4 0 3" "0 2 4" "3 1 4"; do
+  # shellcheck disable=SC2086
+  "$C" cdef "$R/cdef/input.ppm" "$W/cdef.ppm" $case
+  check "CDEF ($case) against dav1d's" "$W/cdef.ppm" "$R/cdef/$(echo $case | tr ' ' -).ppm" 0 0
+done
+differs "CDEF against the picture it was given" "$W/cdef.ppm" "$R/cdef/input.ppm"
 
 # Bob and Auto: the first field stays for either field order — a frame whose top field is 200 and bottom field 50
 # has to come out all 200 top field first and all 50 bottom field first.
