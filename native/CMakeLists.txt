@@ -43,7 +43,7 @@ endif()
 
 add_library(mediadroid_networks STATIC
     src/networks.cpp src/shaders.cpp src/warp_layer.cpp src/dain_layers.cpp src/xvfi.cpp src/enlarger.cpp
-    src/flavr.cpp src/pair_networks.cpp)
+    src/flavr.cpp src/pair_networks.cpp src/colorizer.cpp)
 set_target_properties(mediadroid_networks PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(mediadroid_networks PUBLIC src)
 target_link_libraries(mediadroid_networks PUBLIC ncnn)

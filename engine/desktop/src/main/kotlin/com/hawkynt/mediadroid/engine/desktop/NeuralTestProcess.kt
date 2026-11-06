@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.engine.desktop
 
+import com.hawkynt.mediadroid.player.Colorizing
 import com.hawkynt.mediadroid.player.NeuralChecks
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
@@ -21,6 +22,7 @@ object NeuralTestProcess {
     private const val PREFIX = "@mediadroid "
     private const val MOTION = "motion"
     private const val UPSCALER = "upscaler"
+    private const val COLORIZER = "colorizer"
 
     /** Test processes started so far. */
     @Volatile var processes = 0
@@ -36,6 +38,12 @@ object NeuralTestProcess {
     fun selfTest(models: File, choice: NeuralEnlarging.Choice): NeuralSelfTest.Outcome =
         NeuralSelfTest.across(NeuralEnlarging::fastEnough) { unit, until ->
             one(models, UPSCALER, choice.key, unit, until, PictureCheck.HEIGHT)
+        }
+
+    /** The colouriser's self-test with the models in [models]; blocks. */
+    fun selfTestColorizer(models: File): NeuralSelfTest.Outcome =
+        NeuralSelfTest.across(Colorizing::fastEnough) { unit, until ->
+            one(models, COLORIZER, "DDCOLOR", unit, until, Colorizing.SIZE)
         }
 
     /** The JVM a test runs in: this one's own `java`; null where the runtime carries none. */
@@ -137,6 +145,9 @@ object NeuralTestProcess {
     ): NeuralSelfTest.Timing? {
         val neural = DesktopNeural(models)
         val gpu = unit == "GPU"
+        if (kind == COLORIZER) {
+            return neural.colorizer(gpu)?.use { net -> NeuralChecks.colorizer({ net.run(it) }, unit, progress) }
+        }
         return if (kind == UPSCALER) {
             val choice = NeuralEnlarging.choice(name) ?: return null
             neural.enlarger(choice, gpu)?.use { net ->

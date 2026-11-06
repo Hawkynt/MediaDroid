@@ -119,6 +119,29 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_openIfrnet(
     return handle(mediadroid::openIfrnet(mediadroid::platform::loader(env, assets, text(env, dir)), gpu));
 }
 
+// DDColor from the folder [dir] (in [assets] where given), on the GPU or the CPU; 0 where it does not load.
+JNIEXPORT jlong JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_openColorizer(
+    JNIEnv* env, jobject, jobject assets, jstring dir, jboolean gpu) {
+    return reinterpret_cast<jlong>(
+        mediadroid::openDdcolor(mediadroid::platform::loader(env, assets, text(env, dir)), gpu).release());
+}
+
+JNIEXPORT jint JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_colorize(
+    JNIEnv* env, jobject, jlong handle, jobject grey, jobject ab) {
+    auto* it = reinterpret_cast<mediadroid::Colorizer*>(handle);
+    const auto* in = static_cast<const float*>(env->GetDirectBufferAddress(grey));
+    auto* out = static_cast<float*>(env->GetDirectBufferAddress(ab));
+    if (it == nullptr || in == nullptr || out == nullptr) return -1;
+    return it->colorize(in, out);
+}
+
+JNIEXPORT void JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_closeColorizer(JNIEnv*, jobject, jlong handle) {
+    delete reinterpret_cast<mediadroid::Colorizer*>(handle);
+}
+
 JNIEXPORT jint JNICALL
 Java_com_hawkynt_mediadroid_player_NativeInterpolation_enlarge(
     JNIEnv* env, jobject, jlong handle, jobject picture, jint w, jint h, jobject out, jint tile) {

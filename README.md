@@ -395,7 +395,13 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   (`realesrgan-x4plus`, RRDBNet, 33 MB, fetched when picked from the port's release zip — the file taken out and checked
   against its digest), both as [Real-ESRGAN-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) ships them,
   picked under Real-ESRGAN's chip and tried like the rest; the general model agrees with Real-ESRGAN's PyTorch model
-  within 0.16 per value on average ([tools/realesrgan](tools/realesrgan/README.md)).
+  within 0.16 per value on average ([tools/realesrgan](tools/realesrgan/README.md)). Colour for black-and-white
+  pictures by [DDColor](https://github.com/piddnad/DDColor) (Apache-2.0, its paper-tiny model written out for ncnn,
+  116 MB, fetched when picked and tested like the other networks): the network sees the picture's lightness at
+  256 × 256 on a thread of its own whenever it is free, its colour is smoothed over time, dropped at a cut, and laid
+  under every frame's own full-resolution lightness on the graphics card — so detail stays the picture's and the colour
+  does not flicker; it agrees with DDColor's PyTorch model within 0.2 of a and b's ±128 on average
+  ([tools/ddcolor](tools/ddcolor/README.md)); its chip shows where the files can be had, in place or online.
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
   (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture, sound and
   track panel, N for the next episode, [ and ] for slower and faster, C for a snapshot, `,` and `.` for one frame back
@@ -472,6 +478,7 @@ device; shaders live in `stage/src/main/glsl`.
 | [libass](https://github.com/libass/libass) 0.17.5 with [FreeType](https://freetype.org), [FriBidi](https://github.com/fribidi/fribidi) and [HarfBuzz](https://harfbuzz.github.io) | ASS/SSA subtitles drawn as authored, built from source in `native/` | ISC, FTL, LGPL-2.1+, MIT |
 | [RIFE 4.25 lite](https://github.com/TNTwise/rife-ncnn-vulkan), [IFRNet-S](https://github.com/nihui/ifrnet-ncnn-vulkan), [waifu2x CUnet](https://github.com/nihui/waifu2x-ncnn-vulkan), [Real-CUGAN SE](https://github.com/nihui/realcugan-ncnn-vulkan), [Real-ESRGAN x4v3](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) | carried in the app | MIT, BSD-3-Clause |
 | [waifu2x CUnet's other noise levels](https://github.com/nihui/waifu2x-ncnn-vulkan/tree/64914665c45893135c9e50c1c296170a121b9f77/models/models-cunet), [Real-CUGAN's other SE and pro models](https://github.com/nihui/realcugan-ncnn-vulkan/tree/395302c5c70f1bff604c974e92e0a87e45c9f9ee/models) | fetched when picked from the ports' own repositories, each file checked against its digest | MIT |
+| [DDColor paper-tiny](https://huggingface.co/piddnad/ddcolor_paper_tiny), for ncnn on [Hawkynt/mediadroid-models](https://huggingface.co/Hawkynt/mediadroid-models) ([conversion](tools/ddcolor/README.md)) | desktop: fetched when picked, each file checked against its digest | Apache-2.0 |
 | [DAIN](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/dain), [XVFI](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/xvfi), [FLAVR](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/flavr), [CAIN](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/cain), [RealSR](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/realsr) on [Hawkynt/mediadroid-models](https://huggingface.co/Hawkynt/mediadroid-models) | fetched when picked, each file checked against its digest | MIT; research and education only; Apache-2.0 |
 
 Each third party's notice sits beside the app as `app/THIRD-PARTY-NOTICE.*.txt`. The desktop app adds

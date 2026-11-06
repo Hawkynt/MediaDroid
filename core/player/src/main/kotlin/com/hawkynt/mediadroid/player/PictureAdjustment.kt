@@ -58,6 +58,8 @@ data class PictureAdjustment(
     val upscalerModel: String = "",
     /** The [upscaler]'s network run eight ways and averaged (test-time augmentation, see NeuralEnlarging.Choice). */
     val upscalerTta: Boolean = false,
+    /** Colour given to black-and-white pictures by a network (see [Colorizing]). */
+    val colorize: Colorize = Colorize.OFF,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
@@ -221,6 +223,19 @@ data class PictureAdjustment(
     }
 
     /**
+     * Colour for black-and-white pictures: [DDCOLOR] DDColor's network gives the colour at 256 × 256 every few frames,
+     * smoothed over time, laid under the frame's own lightness (see [Colorizing]).
+     */
+    enum class Colorize(val label: String, val description: String) {
+        OFF("Off", "The picture's own colours, or none."),
+        DDCOLOR(
+            "DDColor",
+            "A neural network colours black-and-white pictures: only the colour is its, the detail stays the " +
+                "picture's; fetched and tested.",
+        ),
+    }
+
+    /**
      * Deinterlacing, as the GL stage does it on each frame: [BLEND] averages every line with its
      * neighbours (no combing ever, a little softness); [BOB] keeps one field and rebuilds the other's
      * lines from their neighbours; [AUTO] does that only where a pixel combs — it differs from the lines
@@ -277,6 +292,7 @@ data class PictureAdjustment(
         get() = sharpness > 0f || clarity > 0f || noise != 0f || deband > 0f || cropBlackBars ||
             deinterlace != Deinterlace.OFF ||
             upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF || stereo != Stereo.OFF ||
+            colorize != Colorize.OFF ||
             !isColorNeutral
 
     /** The correction as a GPU shader applies it: saturation, contrast, brightness, then the true gamma curve. */

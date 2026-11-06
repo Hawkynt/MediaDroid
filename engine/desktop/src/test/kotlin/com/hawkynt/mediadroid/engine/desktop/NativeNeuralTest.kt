@@ -1,9 +1,11 @@
 package com.hawkynt.mediadroid.engine.desktop
 
+import com.hawkynt.mediadroid.player.Colorizing
 import com.hawkynt.mediadroid.player.ModelFolder
 import com.hawkynt.mediadroid.player.NeuralChecks
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
+import com.hawkynt.mediadroid.player.NeuralModels
 import com.hawkynt.mediadroid.player.NeuralSelfTest
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import org.junit.Assert.assertEquals
@@ -127,6 +129,63 @@ class NativeNeuralTest {
         }
         val (mean, max) = difference(out, ImageIO.read(javaClass.getResource("/enlargers/realesrgan-x4plus.png")))
         assertTrue("off by $mean on average, $max at most", mean <= 0.5 && max <= 8)
+    }
+
+    @Test
+    fun `DDColor on ncnn colours the check picture as its PyTorch model does, and passes its self-test`() {
+        // tools/ddcolor: the paper-tiny model in PyTorch on the CPU (check-ab.bin, its a and b rounded). Measured: off
+        // by 0.1 to 0.2 per value on average, 7.5 at the most, of a and b's ±128. The files are fetched from the model
+        // repository once they are published there (ModelFolder.reachable); until then this runs where they were put
+        // into the test models' folder by hand (tools/ddcolor/README.md).
+        val models = System.getProperty("mediadroid.testModels")?.let(::File) ?: folder.newFolder("models")
+        val neural = DesktopNeural(models)
+        val files = NeuralModels.DDCOLOR
+        if (!neural.ready(files) && ModelFolder.reachable(files)) {
+            assertTrue("not fetched", ModelFolder.fetch(neural.folder(files), files, {}))
+        }
+        assumeTrue("DDColor's files are not published yet", neural.ready(files))
+        val plane = Colorizing.SIZE * Colorizing.SIZE
+        val grey = requireNotNull(NeuralChecks::class.java.getResourceAsStream("/colorize/check.grey")).readBytes()
+        val input = FloatArray(3 * plane) { (grey[it % plane].toInt() and 0xFF) / 255f }
+        val ab = requireNotNull(neural.colorizer(false)).use { requireNotNull(it.run(input)) }
+        val expected = requireNotNull(javaClass.getResourceAsStream("/colorize/check-ab.bin")).readBytes()
+        var sum = 0.0
+        var max = 0.0
+        for (i in ab.indices) {
+            val d = abs(ab[i] - expected[i])
+            sum += d
+            max = maxOf(max, d.toDouble())
+        }
+        val mean = sum / ab.size
+        // The reference rounded to whole units: half a unit more either way.
+        assertTrue("off by $mean on average, $max at most", mean <= 0.8 && max <= 12)
+        assertNotNull(NeuralTestProcess.test(models, "colorizer", "DDCOLOR", "CPU", quiet))
+        assumeTrue("no display", System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null)
+        GlStage().use { stage ->
+            assumeTrue(stage.ready)
+            // The check picture, grey, as a video frame: once the colour thread's first run is in, it comes out in
+            // colour, its lightness kept.
+            val w = Colorizing.SIZE
+            val rgba = ByteArray(w * w * 4) { i -> if (i % 4 == 3) -1 else grey[i / 4] }
+            // A fresh picture each time, as playback brings: the stage keeps what it made of one it has seen.
+            var frame = 0L
+            fun picture() = MediaReader.Picture(frame++ * 40, w, w, rgba)
+            val colour = PictureAdjustment(colorize = PictureAdjustment.Colorize.DDCOLOR)
+            stage.neural = GlStage.Neural(neural, colorizer = NeuralInterpolation.Passed("CPU", mapOf(256 to 500.0)))
+            val until = System.nanoTime() + 30_000_000_000L
+            var out = stage.process(picture(), colour, w, w)
+            fun chroma(p: MediaReader.Picture) = (0 until w * w).sumOf { i ->
+                val r = p.rgba[i * 4].toInt() and 0xFF
+                val g = p.rgba[i * 4 + 1].toInt() and 0xFF
+                val b = p.rgba[i * 4 + 2].toInt() and 0xFF
+                maxOf(r, g, b) - minOf(r, g, b)
+            } / (w * w).toDouble()
+            while (chroma(out) < 4 && System.nanoTime() < until) {
+                Thread.sleep(100)
+                out = stage.process(picture(), colour, w, w)
+            }
+            assertTrue("no colour: ${chroma(out)}", chroma(out) >= 4)
+        }
     }
 
     @Test

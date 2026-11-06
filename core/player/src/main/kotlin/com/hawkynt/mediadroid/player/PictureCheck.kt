@@ -41,6 +41,7 @@ object PictureCheck {
         NeuralEnlarging.choice(picture)?.key ?: picture.upscaler.name,
         picture.interpolation.name,
         picture.chroma.name,
+        picture.colorize.name,
     ).joinToString("/")
 
     /**
@@ -52,6 +53,7 @@ object PictureCheck {
         val lighter = (to.deinterlace == PictureAdjustment.Deinterlace.OFF && from.deinterlace != to.deinterlace) ||
             (to.upscaler == PictureAdjustment.Upscaler.STANDARD && from.upscaler != to.upscaler) ||
             (to.interpolation == PictureAdjustment.Interpolation.OFF && from.interpolation != to.interpolation) ||
+            (to.colorize == PictureAdjustment.Colorize.OFF && from.colorize != to.colorize) ||
             (!to.fieldRate && from.fieldRate) ||
             (to.chroma == PictureAdjustment.Chroma.BILINEAR && from.chroma != to.chroma)
         return !lighter

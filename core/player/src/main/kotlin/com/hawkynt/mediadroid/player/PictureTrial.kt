@@ -55,6 +55,15 @@ object PictureTrial {
         /** Keeps [network] as passed. */
         fun keepMotion(network: PictureAdjustment.Interpolation, passed: NeuralInterpolation.Passed)
 
+        /** What the colouriser's self-test found once it passed; null before (and where it is not offered). */
+        fun colorizerPassed(): NeuralInterpolation.Passed? = null
+
+        /** The colouriser's self-test (see NeuralSelfTest); where it is not offered, it runs nowhere. */
+        fun selfTestColorizer(): NeuralSelfTest.Outcome = NeuralSelfTest.Outcome.Ran(emptyList())
+
+        /** Keeps the colouriser as passed. */
+        fun keepColorizer(passed: NeuralInterpolation.Passed) = Unit
+
         /** The stage dry run with [picture] (see PictureCheck); null where it could not be set up. */
         fun dryRun(picture: PictureAdjustment): PictureCheck.DryRun?
     }
@@ -64,6 +73,7 @@ object PictureTrial {
         neuralUpscaling(picture, device, say)
             ?: enlarging(picture, device, say)
             ?: motion(picture, device, say)
+            ?: colorizing(picture, device, say)
             ?: dryRun(picture, device, say)
 
     private fun neuralUpscaling(picture: PictureAdjustment, device: Device, say: (String) -> Unit): PictureVerdict? {
@@ -157,6 +167,38 @@ object PictureTrial {
             )
         }
         device.keepMotion(network, NeuralInterpolation.Passed(best.unit, best.msByHeight))
+        return null
+    }
+
+    private fun colorizing(picture: PictureAdjustment, device: Device, say: (String) -> Unit): PictureVerdict? {
+        if (picture.colorize == PictureAdjustment.Colorize.OFF || device.colorizerPassed() != null) return null
+        val label = picture.colorize.label
+        fetched(NeuralModels.DDCOLOR, label, device, say)?.let {
+            return PictureVerdict(false, "$it The colour stays as it was.")
+        }
+        say("Testing $label on this device…")
+        val timings = when (val outcome = device.selfTestColorizer()) {
+            NeuralSelfTest.Outcome.Ended -> return PictureVerdict(
+                false,
+                "$label needed more than this device can give — memory or graphics — and the test was ended. The " +
+                    "colour stays as it was.",
+            )
+            is NeuralSelfTest.Outcome.Ran -> outcome.timings
+        }
+        val best = timings.firstOrNull()
+        val ms = best?.msByHeight?.values?.firstOrNull()
+        if (best == null || ms == null) {
+            return PictureVerdict(false, "This device cannot run $label right. The colour stays as it was.")
+        }
+        if (!Colorizing.fastEnough(ms)) {
+            return PictureVerdict(
+                false,
+                "This device is too slow for $label: colouring a picture takes ${duration(ms)} on its fastest unit " +
+                    "(${best.unit}), and the colour should follow within ${Colorizing.BUDGET_MS.toInt()} ms. The " +
+                    "colour stays as it was.",
+            )
+        }
+        device.keepColorizer(NeuralInterpolation.Passed(best.unit, best.msByHeight))
         return null
     }
 

@@ -101,6 +101,18 @@ object NativeInterpolation {
     /** Frees the upscaler. */
     external fun closeEnlarger(handle: Long)
 
+    /** DDColor from the folder [dir] (in [assets] where given), on the GPU or the CPU; 0 where it does not load. */
+    external fun openColorizer(assets: Any?, dir: String, gpu: Boolean): Long
+
+    /**
+     * The colour of [grey] (Colorizing.input: three planes of 256 × 256 floats, native order) into [ab] (two planes of
+     * 256 × 256 floats, the a and b of Lab); 0 when it ran.
+     */
+    external fun colorize(handle: Long, grey: java.nio.FloatBuffer, ab: java.nio.FloatBuffer): Int
+
+    /** Frees the colouriser. */
+    external fun closeColorizer(handle: Long)
+
     /** [choice] opened: its model from [dir] (in [assets] where given), on the GPU or the CPU; 0 where not loaded. */
     fun openEnlarger(assets: Any?, dir: String, choice: NeuralEnlarging.Choice, gpu: Boolean): Long =
         openEnlarger(assets, dir, enlargerKind(choice.upscaler), choice.model.file, choice.scale, choice.tta, gpu)

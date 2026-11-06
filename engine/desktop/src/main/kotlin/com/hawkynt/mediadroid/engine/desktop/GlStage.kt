@@ -1,6 +1,7 @@
 package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.imaging.Xbrz
+import com.hawkynt.mediadroid.player.Colorizing
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.Ewa
@@ -205,7 +206,9 @@ class GlStage : AutoCloseable {
         // a plain 8-bit picture keeps its 8-bit frames, untouched.
         deep = Dither.applies(if (m.shown.hdr != null) 16 else 8, SCREEN_BITS, a)
         // A change to the filters, to the part shown, or to the frames' depth makes every kept picture stale.
-        val look = listOf(a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep, a.chroma)
+        val look = listOf(
+            a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep, a.chroma, a.colorize,
+        )
         // Another chroma upscaler makes every picture uploaded from its planes stale.
         if (a.chroma != chroma) {
             chroma = a.chroma
@@ -302,6 +305,8 @@ class GlStage : AutoCloseable {
                 glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(false, true).toFloat())
             }
         }
+        // 1b. Colour for a black-and-white picture, by the network whose test passed (see colored).
+        if (a.colorize != PictureAdjustment.Colorize.OFF) source = colored(source)
         // 2. Deband, denoise and sharpen at the picture's own size.
         a.debandParams()?.let { d ->
             debandFrame = (debandFrame + 1) and 0xFF
@@ -502,6 +507,7 @@ class GlStage : AutoCloseable {
         val networks: DesktopNeural,
         val motion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed> = emptyMap(),
         val enlargers: Map<NeuralEnlarging.Choice, NeuralInterpolation.Passed> = emptyMap(),
+        val colorizer: NeuralInterpolation.Passed? = null,
     )
 
     /** The neural networks the stage may run; set by the player, read on the stage's thread. */
@@ -577,6 +583,85 @@ class GlStage : AutoCloseable {
         val into = up(from.width * net.scale, from.height * net.scale)
         uploadRgb(into, rgb)
         return into
+    }
+
+    // Colouring (Colorizing): DDColor runs on a thread of its own, on the latest picture at 256 x 256 whenever it is
+    // free, so playback never waits on it; its results are smoothed over time and laid under every picture, a cut
+    // dropping the colour until the new scene's has come.
+    private val colorThread = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "colorize").apply { isDaemon = true }
+    }
+    private var colorJob: java.util.concurrent.Future<*>? = null
+    private var colorizerOpen: DesktopNeural.Colorizer? = null
+    private var colorizerFor: Pair<Neural, Boolean>? = null
+    private var colorLast: FloatArray? = null
+    private var colorCutAt = 0L
+    private var colorRuns = 0L
+    private val colorSmoother = Colorizing.Smoother()
+
+    // A finished run's colour and the cut count it was started at, handed from the colour thread.
+    @Volatile private var colorDone: Pair<FloatArray, Long>? = null
+
+    /** [from] in colour where the colouriser's test passed and a result is in; [from] itself otherwise. */
+    private fun colored(from: Target): Target {
+        val n = neural ?: return from
+        val gpu = n.colorizer?.unit?.let { it == "GPU" } ?: return from
+        val size = Colorizing.SIZE
+        val small = target("colorSmall", size, size)
+        copy(from, small)
+        val rgba = read(small)
+        // Read back bottom row first, as the stage holds pictures; the network wants the top first.
+        val top = ByteBuffer.allocateDirect(size * size * 4)
+        for (y in 0 until size) {
+            rgba.limit((size - y) * size * 4).position((size - 1 - y) * size * 4)
+            top.put(rgba)
+        }
+        MemoryUtil.memFree(rgba)
+        top.flip()
+        val grey = Colorizing.input(top, size, size)
+        if (Colorizing.cut(colorLast, grey)) {
+            colorCutAt = ++colorRuns
+            colorSmoother.clear()
+        }
+        colorLast = grey
+        colorDone?.let { (ab, cutAt) ->
+            colorDone = null
+            // A result from before the last cut belongs to the scene before.
+            if (cutAt == colorCutAt) {
+                colorSmoother.add(ab, cut = colorSmoother.current == null)
+                uploadAb(colorSmoother.current!!)
+            }
+        }
+        if (colorJob?.isDone != false) {
+            val key = n to gpu
+            val cutAt = colorCutAt
+            colorJob = colorThread.submit {
+                if (colorizerFor != key) {
+                    colorizerOpen?.close()
+                    colorizerOpen = n.networks.colorizer(gpu)
+                    colorizerFor = key
+                }
+                colorizerOpen?.run(grey)?.let { colorDone = it to cutAt }
+            }
+        }
+        if (colorSmoother.current == null) return from
+        return pass("colorize.frag", target("colored", from.width, from.height, half = deep), from.texture,
+            listOf(target("colorAb", size, size, half = true).texture to "uAb"))
+    }
+
+    // The smoothed colour into the a-and-b texture: its rows turned back to the stage's, bottom first.
+    private fun uploadAb(ab: FloatArray) {
+        val size = Colorizing.SIZE
+        val plane = size * size
+        val texels = MemoryUtil.memAllocFloat(plane * 4)
+        for (y in 0 until size) for (x in 0 until size) {
+            val at = (size - 1 - y) * size + x
+            texels.put(ab[at]).put(ab[plane + at]).put(0f).put(1f)
+        }
+        texels.flip()
+        glBindTexture(GL_TEXTURE_2D, target("colorAb", size, size, half = true).texture)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, size, size, GL_RGBA, GL_FLOAT, texels)
+        MemoryUtil.memFree(texels)
     }
 
     private fun idOf(picture: MediaReader.Picture): Long = pictureIds.getOrPut(picture) { ++nextId }
@@ -985,10 +1070,12 @@ class GlStage : AutoCloseable {
         thread.submit {
             interpolatorOpen?.close()
             enlargerOpen?.close()
+            colorThread.submit { colorizerOpen?.close() }
             if (window != 0L) GLFW.glfwDestroyWindow(window)
             out?.let(MemoryUtil::memFree)
         }.get()
         thread.shutdown()
+        colorThread.shutdown()
         motion.close()
     }
 
@@ -1009,6 +1096,7 @@ class GlStage : AutoCloseable {
         val ACNET = (1..11).map { "acnet/conv-$it.frag" }
         val SHADERS = mapOf(
             "temporal.frag" to Shaders.VIDEO_TEMPORAL,
+            "colorize.frag" to Shaders.VIDEO_COLORIZE,
             "deinterlace.frag" to Shaders.VIDEO_DEINTERLACE,
             "deband-es3.frag" to Shaders.VIDEO_DEBAND_ES3,
             "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,

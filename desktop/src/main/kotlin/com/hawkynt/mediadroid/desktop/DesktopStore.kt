@@ -79,6 +79,13 @@ class DesktopStore(private val folder: File) {
     val neuralMotion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed>
         get() = PictureAdjustment.Interpolation.entries.mapNotNull { n -> motionPassed(n)?.let { n to it } }.toMap()
 
+    /** What the colouriser's self-test found on this computer once it passed; null before. */
+    val colorizerPassed: NeuralInterpolation.Passed?
+        get() = settings.neuralColorizer?.let(NeuralInterpolation.Passed::decode)
+
+    /** Keeps the colouriser's passed self-test. */
+    fun keepColorizer(passed: NeuralInterpolation.Passed) = change { copy(neuralColorizer = passed.encode()) }
+
     /** Every neural upscaler's model whose self-test passed, with what it found. */
     val neuralEnlargers: Map<NeuralEnlarging.Choice, NeuralInterpolation.Passed>
         get() = settings.neuralEnlargers.entries.mapNotNull { (key, value) ->
@@ -174,6 +181,8 @@ internal data class DesktopSettings(
     val aspects: Map<String, String> = emptyMap(),
     /** Each output screen's setup by its key (a monitor's id). */
     val screens: Map<String, ScreenKept> = emptyMap(),
+    /** The colouriser, once its self-test passed, the same way. */
+    val neuralColorizer: String? = null,
 ) {
     companion object {
         private val json = Json {
@@ -278,6 +287,8 @@ internal data class PictureSettings(
     val upscalerModel: String = PictureAdjustment.Neutral.upscalerModel,
     /** The upscaler's network run eight ways. */
     val upscalerTta: Boolean = PictureAdjustment.Neutral.upscalerTta,
+    /** PictureAdjustment.Colorize name: colour for black-and-white pictures. */
+    val colorize: String = PictureAdjustment.Neutral.colorize.name,
 ) {
     fun toAdjustment(): PictureAdjustment {
         val p = PictureAdjustment.Neutral
@@ -301,6 +312,7 @@ internal data class PictureSettings(
             chroma = runCatching { PictureAdjustment.Chroma.valueOf(chroma) }.getOrDefault(p.chroma),
             upscalerModel = upscalerModel,
             upscalerTta = upscalerTta,
+            colorize = runCatching { PictureAdjustment.Colorize.valueOf(colorize) }.getOrDefault(p.colorize),
         )
     }
 
@@ -323,6 +335,7 @@ internal data class PictureSettings(
             chroma = p.chroma.name,
             upscalerModel = p.upscalerModel,
             upscalerTta = p.upscalerTta,
+            colorize = p.colorize.name,
         )
     }
 }

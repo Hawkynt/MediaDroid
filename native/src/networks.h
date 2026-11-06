@@ -82,6 +82,19 @@ std::unique_ptr<Enlarger> openRealSr(const Loader& load, bool gpu, bool tta = fa
 std::unique_ptr<Enlarger> openRealEsrgan(const Loader& load, bool gpu, const char* model = "realesr-animevideov3-x4",
                                          bool tta = false);
 
+// A network that gives a grey picture colour: DDColor (see colorizer.cpp).
+struct Colorizer {
+    // The side of the picture it works on.
+    static constexpr int SIZE = 256;
+    virtual ~Colorizer() = default;
+    // [grey]: the picture's lightness as a grey RGB, three planes of SIZE x SIZE floats 0..1; [ab]: the a and b of Lab
+    // it gives, two planes of SIZE x SIZE floats. 0 when it ran.
+    virtual int colorize(const float* grey, float* ab) = 0;
+};
+
+// DDColor's paper-tiny model (its "ddcolor"), on the GPU or the CPU; null where it does not load.
+std::unique_ptr<Colorizer> openDdcolor(const Loader& load, bool gpu);
+
 // CAIN (its "cain") and IFRNet (its "ifrnet"), two frames to the in-between, on the GPU or the CPU; null where they
 // do not load.
 std::unique_ptr<Interpolator> openCain(const Loader& load, bool gpu);

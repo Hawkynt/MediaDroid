@@ -297,6 +297,18 @@ object NeuralModels {
     )
 
     /**
+     * DDColor's paper-tiny model (piddnad/DDColor, Apache-2.0; ConvNeXt-T and a multi-scale colour decoder), written
+     * out for ncnn by tools/ddcolor/export.py and pnnx: the grey picture at 256 × 256 in, Lab's a and b out.
+     */
+    val DDCOLOR = Download(
+        "ddcolor",
+        listOf(
+            File("ddcolor.param", 50_830, "a9a6ddbdff8ed63928aee0f60370f011b0eb0954faa6ec6ec64e95b8f7f972af"),
+            File("ddcolor.bin", 115_752_240, "b9979c720cc89286818b84eced58cb5bcb3a11c11345198b47ffca0eafaffd9c"),
+        ),
+    )
+
+    /**
      * The networks the app carries itself, by folder: on Android its assets, on the desktop resources unpacked into
      * the app-data folder on first use, every file checked against its digest there (see ModelFolder.unpack).
      */
