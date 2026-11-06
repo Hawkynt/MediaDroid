@@ -1,0 +1,4 @@
+# Network files are checked against their SHA-256 (NeuralModels): kept byte for byte on every system, never given
+# CRLF line endings by a Windows checkout.
+*.param -text
+*.bin binary

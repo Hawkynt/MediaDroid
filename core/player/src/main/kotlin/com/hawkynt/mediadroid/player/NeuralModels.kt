@@ -110,6 +110,71 @@ object NeuralModels {
         ),
     )
 
+    /** RIFE 4.25 lite as rife-ncnn-vulkan runs it (MIT): carried in the app (app/src/main/assets/models). */
+    val RIFE = Download(
+        "rife-4.25-lite",
+        listOf(
+            File("flownet.param", 35_830, "e55b76f197b89637dc824ce89e64878df419214d3cf6a10aea0283c61b93a908"),
+            File("flownet.bin", 11_276_252, "350a15e464bea5ad378e06c0fb43996e90a0d35653d5a6ef6bc980d832538fb7"),
+        ),
+    )
+
+    /** IFRNet's S model as ifrnet-ncnn-vulkan runs it (MIT): carried in the app. */
+    val IFRNET = Download(
+        "ifrnet-s",
+        listOf(
+            File("ifrnet.param", 13_490, "fc684bb14ca0135adb7016125d5ecfcdd18f30922fd9937a64346804c909d6ae"),
+            File("ifrnet.bin", 5_921_992, "7c3fe0a5eb7e544bc8c615ee47d4bafcbc077f98d75eda217c9657979adb1e14"),
+        ),
+    )
+
+    /** waifu2x's CUnet as waifu2x-ncnn-vulkan runs it (MIT): carried in the app. */
+    val WAIFU2X = Download(
+        "waifu2x-cunet",
+        listOf(
+            File(
+                "noise1_scale2.0x_model.param", 7_249,
+                "ccc3b2f1c9fad829ecdda40cac8dc853fcddf14917170efba888b256fbf9074a",
+            ),
+            File(
+                "noise1_scale2.0x_model.bin", 2_776_400,
+                "862c0e40f3df956ff57bd4d168c85dea5d375b614077fdddd3ac8cfdb9a686da",
+            ),
+        ),
+    )
+
+    /** Real-CUGAN's SE model as realcugan-ncnn-vulkan runs it (MIT): carried in the app. */
+    val REALCUGAN = Download(
+        "realcugan-se",
+        listOf(
+            File("up2x-conservative.param", 4_761, "4b3b5c5710ad1d00503c8243417aa75f13fe497723e8b4952e8b1abfc08f9b84"),
+            File(
+                "up2x-conservative.bin", 2_573_648,
+                "91c72c136e7ff8556323d4449c5ceeff22d9829bf8463a01137cadb8d59b84a0",
+            ),
+        ),
+    )
+
+    /**
+     * The networks the app carries itself, by folder: on Android its assets, on the desktop resources unpacked into
+     * the app-data folder on first use, every file checked against its digest there (see ModelFolder.unpack).
+     */
+    val CARRIED = listOf(RIFE, IFRNET, WAIFU2X, REALCUGAN)
+
+    /** The files [network] runs from: carried or downloaded; null for one that is no network. */
+    fun files(network: PictureAdjustment.Interpolation): Download? = when (network) {
+        PictureAdjustment.Interpolation.RIFE -> RIFE
+        PictureAdjustment.Interpolation.IFRNET -> IFRNET
+        else -> download(network)
+    }
+
+    /** The files [upscaler] runs from: carried or downloaded; null for one that is no network on ncnn. */
+    fun files(upscaler: PictureAdjustment.Upscaler): Download? = when (upscaler) {
+        PictureAdjustment.Upscaler.WAIFU2X -> WAIFU2X
+        PictureAdjustment.Upscaler.REALCUGAN -> REALCUGAN
+        else -> download(upscaler)
+    }
+
     /** What [upscaler] needs downloaded; null for one the app carries itself. */
     fun download(upscaler: PictureAdjustment.Upscaler): Download? =
         if (upscaler == PictureAdjustment.Upscaler.REALSR) REALSR else null

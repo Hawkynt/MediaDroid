@@ -44,6 +44,16 @@ dependencies {
     testImplementation(libs.junit)
 }
 
+// The neural networks the app carries (NeuralModels.CARRIED), the same files as the Android app's assets, on the
+// classpath under models/: DesktopNeural unpacks them into the app-data folder on first use, digest-checked there.
+val carriedModels = tasks.register<Sync>("carriedModels") {
+    from(rootProject.file("app/src/main/assets/models")) {
+        include("rife-4.25-lite/**", "ifrnet-s/**", "waifu2x-cunet/**", "realcugan-se/**")
+    }
+    into(layout.buildDirectory.dir("generated/carried/models"))
+}
+sourceSets["main"].resources.srcDir(carriedModels.map { it.destinationDir.parentFile })
+
 tasks.test {
     systemProperty("mediadroid.ffmpegLicence", if (fullFfmpeg) "GPL" else "LGPL")
     // The native library's test (NativeNetworksTest) needs it built for this system first — CMake, a C++ compiler and
@@ -55,7 +65,7 @@ tasks.test {
         inputs.dir(library)
         systemProperty("mediadroid.native", library.path)
     } else {
-        exclude("**/NativeNetworksTest*")
+        exclude("**/NativeNetworksTest*", "**/NativeNeuralTest*")
     }
 }
 

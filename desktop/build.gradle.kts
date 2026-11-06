@@ -130,6 +130,8 @@ val notices = tasks.register<Sync>("notices") {
     from(rootProject.file("app")) {
         listOf("ACNet", "Anime4K", "FidelityFX-FSR", "NVIDIA-Image-Scaling", "Snapdragon-GSR", "hash-without-sine")
             .forEach { include("THIRD-PARTY-NOTICE.$it.txt") }
+        // ncnn and the networks the desktop carries (DesktopNeural.CARRIED).
+        listOf("ncnn", "RIFE", "IFRNet", "waifu2x", "Real-CUGAN").forEach { include("THIRD-PARTY-NOTICE.$it.txt") }
     }
     listOf("imaging", "library", "player", "sources").forEach { core ->
         from(rootProject.file("core/$core/THIRD_PARTY_NOTICES.md")) { rename { "THIRD-PARTY-NOTICE.core-$core.md" } }

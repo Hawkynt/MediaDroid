@@ -75,7 +75,9 @@ struct Ifrnet : Interpolator {
         const float half[3] = {0.5f, 0.5f, 0.5f};
         ncnn::Mat result;
         {
-            ncnn::Mat timestep(roundUp32(w), roundUp32(h), 1);
+            // At the network's coarsest level, a sixteenth of the padded size each way, as ifrnet-ncnn-vulkan makes
+            // it: the network joins it there with its features (cat_0), and a whole-size plane overran that join.
+            ncnn::Mat timestep(roundUp32(w) / 16, roundUp32(h) / 16, 1);
             timestep.fill(time);
             ncnn::Extractor ex = net.create_extractor();
             ex.input("in0", planes(first, w, h, half, ncnn::BORDER_CONSTANT));

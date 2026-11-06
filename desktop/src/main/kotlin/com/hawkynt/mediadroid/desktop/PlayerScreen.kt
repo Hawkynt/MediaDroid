@@ -127,8 +127,10 @@ fun PlayerScreen(
     val bitmap = remember { PictureBitmap() }
     // The picture stage (deinterlacing, upscalers, colour) on the graphics card, made once per player.
     val stage = remember { com.hawkynt.mediadroid.engine.desktop.GlStage() }
-    // What a choice is tried with before it is taken (PictureTrial, as on Android).
-    val trial = remember { DesktopTrial() }
+    // The neural networks, their files in the app-data folder's models/ (DesktopNeural), and what a choice is tried
+    // with before it is taken (PictureTrial, as on Android).
+    val neural = remember { com.hawkynt.mediadroid.engine.desktop.DesktopNeural(File(AppFolder.current(), "models")) }
+    val trial = remember { DesktopTrial(store, neural) }
     var picture by remember { mutableStateOf(store.picture) }
     // MEDIADROID_SHOW=panel: the picture panel open from the start (documentation and checks).
     var panel by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "panel") }
@@ -215,6 +217,12 @@ fun PlayerScreen(
     }
     // Film is undone in the engine, before the pictures queue up (see Film).
     LaunchedEffect(picture.deinterlace) { engine.film = picture.deinterlace == PictureAdjustment.Deinterlace.FILM }
+    // The networks the stage may run: those whose self-tests passed, as of the picture taken last.
+    LaunchedEffect(picture) {
+        stage.neural = com.hawkynt.mediadroid.engine.desktop.GlStage.Neural(
+            neural, store.neuralMotion, store.neuralEnlargers,
+        )
+    }
     // Every window frame: the picture due now — through the stage when the household set filters, or the video is HDR,
     // which the stage tone-maps — the clock, the end. Smooth motion draws anew at every refresh, field rate at the
     // middle of each picture's time.

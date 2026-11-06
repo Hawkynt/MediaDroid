@@ -78,6 +78,20 @@ class DesktopStoreTest {
     }
 
     @Test
+    fun `a network's passed self-test is kept, so it is not tested again`() {
+        val data = folder.newFolder("data")
+        val passed = com.hawkynt.mediadroid.player.NeuralInterpolation.Passed("GPU", mapOf(480 to 6.5, 720 to 14.0))
+        DesktopStore(data).apply {
+            keepMotion(PictureAdjustment.Interpolation.DAIN, passed)
+            keepEnlarger(PictureAdjustment.Upscaler.REALSR, passed)
+        }
+        val again = DesktopStore(data)
+        assertEquals(passed, again.motionPassed(PictureAdjustment.Interpolation.DAIN))
+        assertEquals(mapOf(PictureAdjustment.Upscaler.REALSR to passed), again.neuralEnlargers)
+        assertEquals(null, again.motionPassed(PictureAdjustment.Interpolation.RIFE))
+    }
+
+    @Test
     fun `a fresh store has the defaults, and watching a video forgets where it was left`() {
         val store = DesktopStore(folder.newFolder("data"))
         assertNull(store.libraryFolder)

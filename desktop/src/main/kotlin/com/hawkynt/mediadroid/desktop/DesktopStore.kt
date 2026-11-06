@@ -1,6 +1,7 @@
 package com.hawkynt.mediadroid.desktop
 
 import com.hawkynt.mediadroid.library.Source
+import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -53,6 +54,30 @@ class DesktopStore(private val folder: File) {
     var sources: List<Source>
         get() = settings.sources
         set(value) = change { copy(sources = value) }
+
+    /** What [network]'s self-test found on this computer once it passed; null before. */
+    fun motionPassed(network: PictureAdjustment.Interpolation): NeuralInterpolation.Passed? =
+        settings.neuralMotion[network.name]?.let(NeuralInterpolation.Passed::decode)
+
+    /** What [upscaler]'s self-test found on this computer once it passed; null before. */
+    fun enlargerPassed(upscaler: PictureAdjustment.Upscaler): NeuralInterpolation.Passed? =
+        settings.neuralEnlargers[upscaler.name]?.let(NeuralInterpolation.Passed::decode)
+
+    /** Keeps [network]'s passed self-test. */
+    fun keepMotion(network: PictureAdjustment.Interpolation, passed: NeuralInterpolation.Passed) =
+        change { copy(neuralMotion = neuralMotion + (network.name to passed.encode())) }
+
+    /** Keeps [upscaler]'s passed self-test. */
+    fun keepEnlarger(upscaler: PictureAdjustment.Upscaler, passed: NeuralInterpolation.Passed) =
+        change { copy(neuralEnlargers = neuralEnlargers + (upscaler.name to passed.encode())) }
+
+    /** Every neural smooth-motion network whose self-test passed, with what it found. */
+    val neuralMotion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed>
+        get() = PictureAdjustment.Interpolation.entries.mapNotNull { n -> motionPassed(n)?.let { n to it } }.toMap()
+
+    /** Every neural upscaler whose self-test passed, with what it found. */
+    val neuralEnlargers: Map<PictureAdjustment.Upscaler, NeuralInterpolation.Passed>
+        get() = PictureAdjustment.Upscaler.entries.mapNotNull { u -> enlargerPassed(u)?.let { u to it } }.toMap()
 
     fun resumeMs(video: String): Long = settings.resume[video] ?: 0
 
@@ -117,6 +142,10 @@ internal data class DesktopSettings(
     val resume: Map<String, Long> = emptyMap(),
     /** The video locations watched to the end. */
     val watched: Set<String> = emptySet(),
+    /** Neural smooth motion by network, once its self-test passed: NeuralInterpolation.Passed, encoded. */
+    val neuralMotion: Map<String, String> = emptyMap(),
+    /** Neural upscalers by name, once their self-test passed, the same way. */
+    val neuralEnlargers: Map<String, String> = emptyMap(),
 ) {
     companion object {
         private val json = Json {

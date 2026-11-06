@@ -41,20 +41,13 @@ import com.hawkynt.mediadroid.player.PlaybackMath
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
-/** The choices the desktop stage runs (GlStage, Film in the engine); the neural ones follow. */
+/**
+ * The choices the desktop stage runs (GlStage, Film in the engine, the networks on ncnn through DesktopNeural); every
+ * one of Android's but Real-ESRGAN, which follows.
+ */
 val DesktopDeinterlacers = PictureAdjustment.Deinterlace.entries.toList()
-val DesktopInterpolations = PictureAdjustment.Interpolation.entries.filter { !it.isNeural }
-val DesktopUpscalers = listOf(
-    PictureAdjustment.Upscaler.STANDARD,
-    PictureAdjustment.Upscaler.LANCZOS,
-    PictureAdjustment.Upscaler.FSR,
-    PictureAdjustment.Upscaler.EWA,
-    PictureAdjustment.Upscaler.NIS,
-    PictureAdjustment.Upscaler.GSR,
-    PictureAdjustment.Upscaler.ANIME4K,
-    PictureAdjustment.Upscaler.ACNET,
-    PictureAdjustment.Upscaler.XBRZ,
-)
+val DesktopInterpolations = PictureAdjustment.Interpolation.entries.toList()
+val DesktopUpscalers = PictureAdjustment.Upscaler.entries.filter { it != PictureAdjustment.Upscaler.NEURAL }
 
 /** How a track picker names [track]: its own label, else its language, else its place among its kind ([number]). */
 fun trackName(track: Track, number: Int): String =

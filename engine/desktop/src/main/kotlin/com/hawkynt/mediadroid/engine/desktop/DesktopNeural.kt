@@ -1,0 +1,136 @@
+package com.hawkynt.mediadroid.engine.desktop
+
+import com.hawkynt.mediadroid.player.ModelFolder
+import com.hawkynt.mediadroid.player.NativeInterpolation
+import com.hawkynt.mediadroid.player.NeuralEnlarging
+import com.hawkynt.mediadroid.player.NeuralModels
+import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.shaders.NcnnShaders
+import java.io.File
+import java.nio.ByteBuffer
+
+/**
+ * The neural networks on the desktop: the native library (NativeNetworks, `libmediadroid.so` / `mediadroid.dll`) runs
+ * them on ncnn — on the GPU through Vulkan, or on the CPU where no Vulkan device is there — from their files in
+ * [models], a folder per network in the app-data folder: the ones the app carries unpacked there from its resources on
+ * first use, every file checked against its digest (ModelFolder.unpack); the others fetched there when picked
+ * (ModelFolder.fetch). A network belongs to the thread that opened it.
+ */
+class DesktopNeural(val models: File) {
+
+    /** Whether the native library loaded and took the compute shaders. */
+    val loaded: Boolean
+        get() = NativeNetworks.loaded &&
+            NativeInterpolation.load({ check(NativeNetworks.loaded) }, NcnnShaders.ALL)
+
+    /** Whether ncnn finds a Vulkan device. */
+    val hasGpu: Boolean get() = loaded && NativeInterpolation.hasGpu()
+
+    /** Where [download]'s files are kept. */
+    fun folder(download: NeuralModels.Download): File = File(models, download.folder)
+
+    /**
+     * Whether [download]'s files are in place: one the app carries is unpacked first (checked in full then, by size
+     * after); one fetched must have been fetched.
+     */
+    fun ready(download: NeuralModels.Download): Boolean {
+        if (download in NeuralModels.CARRIED && !ModelFolder.ready(folder(download), download)) {
+            return ModelFolder.unpack(folder(download), download) { name ->
+                DesktopNeural::class.java.getResourceAsStream("/models/${download.folder}/$name")
+            }
+        }
+        return ModelFolder.ready(folder(download), download)
+    }
+
+    /** [network] on the GPU or the CPU ([gpu]), or null where it cannot run there or its files are not in place. */
+    fun interpolator(network: PictureAdjustment.Interpolation, gpu: Boolean): Interpolator? {
+        if (!network.isNeural || !loaded || (gpu && !hasGpu)) return null
+        val files = NeuralModels.files(network) ?: return null
+        if (!ready(files)) return null
+        val dir = folder(files).path
+        val handle = when (network) {
+            PictureAdjustment.Interpolation.RIFE -> NativeInterpolation.openRife(null, dir, gpu)
+            PictureAdjustment.Interpolation.IFRNET -> NativeInterpolation.openIfrnet(null, dir, gpu)
+            PictureAdjustment.Interpolation.DAIN -> NativeInterpolation.openDain(dir, gpu)
+            PictureAdjustment.Interpolation.XVFI -> NativeInterpolation.openXvfi(dir, gpu)
+            PictureAdjustment.Interpolation.CAIN -> NativeInterpolation.openCain(dir, gpu)
+            PictureAdjustment.Interpolation.FLAVR -> NativeInterpolation.openFlavr(dir, gpu)
+            else -> 0L
+        }
+        return if (handle == 0L) null else Interpolator(handle, network, gpu)
+    }
+
+    /** [upscaler] on the GPU or the CPU ([gpu]), or null where it cannot run there or its files are not in place. */
+    fun enlarger(upscaler: PictureAdjustment.Upscaler, gpu: Boolean): Enlarger? {
+        if (!upscaler.isEnlarger || !loaded || (gpu && !hasGpu)) return null
+        val files = NeuralModels.files(upscaler) ?: return null
+        if (!ready(files)) return null
+        val kind = NativeInterpolation.enlargerKind(upscaler)
+        val handle = NativeInterpolation.openEnlarger(null, folder(files).path, kind, gpu)
+        return if (handle == 0L) null else Enlarger(handle, upscaler, gpu)
+    }
+
+    /** A frame interpolation network: two RGBA frames in, the in-between halfway as RGB bytes out. */
+    class Interpolator internal constructor(
+        private var handle: Long,
+        val network: PictureAdjustment.Interpolation,
+        val gpu: Boolean,
+    ) : AutoCloseable {
+        private var out: ByteBuffer = ByteBuffer.allocateDirect(0)
+
+        /**
+         * The in-between of the RGBA frames [earlier] and [later] ([width] × [height], rows as stored) as RGB bytes in
+         * the same row order — valid until the next call; null where the network failed. A frame met again (the same
+         * id, 0 for none) keeps what was worked out from it; [before] and [after] are the frames around the pair.
+         */
+        fun run(
+            earlier: ByteBuffer,
+            later: ByteBuffer,
+            width: Int,
+            height: Int,
+            earlierId: Long = 0,
+            laterId: Long = 0,
+            before: ByteBuffer? = null,
+            after: ByteBuffer? = null,
+        ): ByteBuffer? {
+            if (out.capacity() < width * height * 3) out = ByteBuffer.allocateDirect(width * height * 3)
+            val ran = NativeInterpolation.between(
+                handle, earlier, later, width, height, 0.5f, out, earlierId, laterId, before, after,
+            )
+            return if (ran == 0) out.also { it.rewind() } else null
+        }
+
+        override fun close() {
+            if (handle != 0L) NativeInterpolation.close(handle)
+            handle = 0L
+        }
+    }
+
+    /** An upscaler: an RGBA picture in, [scale] times its size as RGB bytes out. */
+    class Enlarger internal constructor(
+        private var handle: Long,
+        val upscaler: PictureAdjustment.Upscaler,
+        val gpu: Boolean,
+    ) : AutoCloseable {
+        private var out: ByteBuffer = ByteBuffer.allocateDirect(0)
+
+        /** How much larger it makes a picture. */
+        val scale: Int = NeuralEnlarging.scale(upscaler)
+
+        /**
+         * The RGBA [picture] ([width] × [height], rows as stored) at [scale] times its size as RGB bytes in the same
+         * row order — valid until the next call; null where the network failed.
+         */
+        fun run(picture: ByteBuffer, width: Int, height: Int): ByteBuffer? {
+            val bytes = width * height * scale * scale * 3
+            if (out.capacity() < bytes) out = ByteBuffer.allocateDirect(bytes)
+            val ran = NativeInterpolation.enlarge(handle, picture, width, height, out)
+            return if (ran == 0) out.also { it.rewind() } else null
+        }
+
+        override fun close() {
+            if (handle != 0L) NativeInterpolation.closeEnlarger(handle)
+            handle = 0L
+        }
+    }
+}
