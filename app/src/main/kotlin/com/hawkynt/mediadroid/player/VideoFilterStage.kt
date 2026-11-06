@@ -394,6 +394,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // Adaptive: whether the picture has stood still long enough to be woven whole, from each new frame's luma.
     private val motionAdaptive = MotionAdaptive()
     private var adaptiveLuma: Deinterlacer.Plane? = null
+
+    // Old console: the last three frames' luma, oldest first, to weigh the shown frame's fields on.
+    private val consoleLumas = arrayOfNulls<Deinterlacer.Plane>(3)
     private var framesToJudge = 0
     private var readBack: ByteBuffer? = null
 
@@ -1317,6 +1320,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             val afresh = remember(width, height)
             if (framesToJudge > 0) judge(width, height)
             if (picture.deinterlace == PictureAdjustment.Deinterlace.ADAPTIVE) adapt(width, height, afresh)
+            // Old console's lumas are its own: chosen anew, it weighs only frames it has read.
+            if (picture.deinterlace == PictureAdjustment.Deinterlace.OLD_CONSOLE) {
+                console(width, height, afresh)
+            } else {
+                consoleLumas.fill(null)
+            }
         }
         val next = frames[history[2]]
         val cur = if (historyCount >= 2) frames[history[1]] else next
@@ -1326,12 +1335,16 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         deinterlaceLatencyMs = intervalMs.toInt().coerceIn(0, MAX_LATENCY_MS)
         deinterlaceFrames = if (historyCount >= 2) 1f else 0f
         val woven = frames[2].ensure(width, height, deepInput(picture))
-        val method = if (picture.deinterlace == PictureAdjustment.Deinterlace.ADAPTIVE && motionAdaptive.weave) {
-            Deinterlacer.WEAVE
-        } else {
-            Deinterlacer.shaderMethod(picture.deinterlace.method ?: Deinterlacer.Method.YADIF)
+        val method = when {
+            picture.deinterlace == PictureAdjustment.Deinterlace.OLD_CONSOLE -> Deinterlacer.OLD_CONSOLE
+            picture.deinterlace == PictureAdjustment.Deinterlace.ADAPTIVE && motionAdaptive.weave -> Deinterlacer.WEAVE
+            else -> Deinterlacer.shaderMethod(picture.deinterlace.method ?: Deinterlacer.Method.YADIF)
         }
-        rebuildField(woven, prev, cur, next, secondField, method)
+        // Old console: the shown frame's field averaged with the one before where they hardly differ.
+        val average = method == Deinterlacer.OLD_CONSOLE && consoleLumas[1]?.let { shown ->
+            OldGame.averages(consoleLumas[0], shown, secondField, fieldOrder.topFieldFirst, JUDGED_COLUMN_STEP)
+        } == true
+        rebuildField(woven, prev, cur, next, secondField, method, average)
         val shrunk = reduced(woven)
         return denoised(picture, shrunk, shrunk.width, shrunk.height)
     }
@@ -1346,7 +1359,21 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         adaptiveLuma = luma
     }
 
-    /** A temporal deinterlacer into [target] ([method]: temporal.frag's uMethod): [cur] with a field rebuilt. */
+    /**
+     * Old console (see OldGame): the newest frame's luma, every fourth column, read back beside the two before it — the
+     * shown frame's and its predecessor's, which its fields are weighed on; a new history starts afresh.
+     */
+    private fun console(width: Int, height: Int, afresh: Boolean) {
+        if (afresh) consoleLumas.fill(null)
+        consoleLumas[0] = consoleLumas[1]
+        consoleLumas[1] = consoleLumas[2]
+        consoleLumas[2] = packedLuma(frames[history[2]], width, height, JUDGED_COLUMN_STEP, 1)
+    }
+
+    /**
+     * A temporal deinterlacer into [target] ([method]: temporal.frag's uMethod): [cur] with a field rebuilt — or, old
+     * console, its field stretched, [average]d with the one before.
+     */
     private fun rebuildField(
         target: Frame,
         prev: Frame,
@@ -1354,6 +1381,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         next: Frame,
         secondField: Boolean,
         method: Int,
+        average: Boolean = false,
     ) = exact(prev.texture, cur.texture, next.texture) {
         target.bind()
         GLES20.glUseProgram(temporalProgram)
@@ -1371,6 +1399,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 Deinterlacer.rebuiltParity(secondField, fieldOrder.topFieldFirst).toFloat(),
             )
             GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMethod"), method)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uAverage"), if (average) 1 else 0)
         }
     }
 

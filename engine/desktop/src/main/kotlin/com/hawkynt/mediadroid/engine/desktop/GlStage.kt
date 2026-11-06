@@ -9,6 +9,7 @@ import com.hawkynt.mediadroid.player.MotionAdaptive
 import com.hawkynt.mediadroid.player.MotionInterpolation
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
+import com.hawkynt.mediadroid.player.OldGame
 import com.hawkynt.mediadroid.player.Nis
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
@@ -32,12 +33,12 @@ import kotlin.math.pow
  * at the size it is shown: its black bars cropped as it comes in (AutoCrop finds them) and the 3D eye cut out of what
  * is left, so every pass after sees the picture alone; an HDR one tone-mapped to SDR as it comes in (ToneMap, its peak
  * measured as it plays: PeakDetect), deinterlaced (Auto, Blend, Bob, YADIF, BWDIF, Greedy HM, Greedy 2-Frame, Adaptive
- * with MotionAdaptive, every field at field rate; Film is the engine's, see Film), debanded, denoised, sharpened,
- * blended into the next picture by the clock (Low, Medium, High) or along the motion between them (Motion, with
- * MotionSearch), enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the neural ones plain for now) at the
- * strength chosen, colour-corrected, and dithered to 8 bits where it holds more (Dither). Each picture is filtered once
- * and kept while it is on screen or next. The passes and their uniforms are the Android stage's (VideoFilterStage), the
- * shaders those tools/shader-check holds to their originals.
+ * with MotionAdaptive, Old console with OldGame, every field at field rate; Film is the engine's, see Film), debanded,
+ * denoised, sharpened, blended into the next picture by the clock (Low, Medium, High) or along the motion between them
+ * (Motion, with MotionSearch), enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the neural ones plain for
+ * now) at the strength chosen, colour-corrected, and dithered to 8 bits where it holds more (Dither). Each picture is
+ * filtered once and kept while it is on screen or next. The passes and their uniforms are the Android stage's
+ * (VideoFilterStage), the shaders those tools/shader-check holds to their originals.
  */
 class GlStage : AutoCloseable {
 
@@ -289,6 +290,17 @@ class GlStage : AutoCloseable {
     }
 
     /**
+     * Old console: whether [picture]'s field shown ([second] or its first) is averaged with the field before (see
+     * OldGame), from the pictures' luma every fourth column; never for HDR pictures.
+     */
+    private fun consoleAverages(picture: MediaReader.Picture, before: MediaReader.Picture?, second: Boolean): Boolean {
+        if (picture.hdr != null) return false
+        val prev = before?.takeIf { it.hdr == null && it.width == picture.width && it.height == picture.height }
+        val step = ADAPTIVE_COLUMN_STEP
+        return OldGame.averages(prev?.let { Film.luma(it, step) }, Film.luma(picture, step), second, true, step)
+    }
+
+    /**
      * [picture] (its 3D eye) deinterlaced — a temporal deinterlacer reading [before] and [after] where known, its
      * [second] field rebuilt at field rate — debanded, denoised and sharpened at its own size; kept while it is used.
      */
@@ -314,12 +326,15 @@ class GlStage : AutoCloseable {
                 glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
                 glUniform1i(glGetUniformLocation(p, "uSecond"), if (second) 1 else 0)
                 glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(second, true).toFloat())
-                val method = if (a.deinterlace == PictureAdjustment.Deinterlace.ADAPTIVE && motionAdaptive.weave) {
-                    Deinterlacer.WEAVE
-                } else {
-                    Deinterlacer.shaderMethod(a.deinterlace.method ?: Deinterlacer.Method.YADIF)
+                val method = when {
+                    a.deinterlace == PictureAdjustment.Deinterlace.OLD_CONSOLE -> Deinterlacer.OLD_CONSOLE
+                    a.deinterlace == PictureAdjustment.Deinterlace.ADAPTIVE && motionAdaptive.weave ->
+                        Deinterlacer.WEAVE
+                    else -> Deinterlacer.shaderMethod(a.deinterlace.method ?: Deinterlacer.Method.YADIF)
                 }
                 glUniform1i(glGetUniformLocation(p, "uMethod"), method)
+                val average = method == Deinterlacer.OLD_CONSOLE && consoleAverages(picture, before, second)
+                glUniform1i(glGetUniformLocation(p, "uAverage"), if (average) 1 else 0)
             }
         } else if (a.deinterlace != PictureAdjustment.Deinterlace.OFF &&
             a.deinterlace != PictureAdjustment.Deinterlace.FILM
@@ -1111,7 +1126,7 @@ class GlStage : AutoCloseable {
         const val NIS_SHARPNESS = 0.5f
         const val XBRZ_TABLE_WIDTH = 36
 
-        /** Every how many columns Adaptive weighs a picture's luma, as on Android. */
+        /** Every how many columns Adaptive and Old console weigh a picture's luma, as on Android. */
         const val ADAPTIVE_COLUMN_STEP = 4
 
         // What the stage hands on: 8-bit RGBA, read back for the screen.

@@ -221,6 +221,43 @@ else
   echo "Greedy HM and Greedy 2-Frame need GStreamer (gst-launch-1.0) and a C compiler"; failed=1
 fi
 
+# Old console: each field stretched to the full height against FFmpeg's field filter and bilinear scaling, both
+# fields of a frame, either field first; then, the frame's two fields alike (a picture that stands still), averaging has
+# to change nothing, and on the moving frames it has to.
+for size in "720 576" "720 480"; do
+  w=${size% *}
+  h=${size#* }
+  "$C" picture "$W/interlaced-source.ppm" $size
+  python3 -I "$HERE/fields.py" "$W/interlaced-source.ppm" "$W/field"
+  for tff in 1 0; do
+    for second in 0 1; do
+      field=$([ $((tff ^ second)) = 1 ] && echo top || echo bottom)
+      ffmpeg -loglevel error -y -i "$W/field1.ppm" \
+        -vf "format=gbrp,field=$field,scale=$w:$h:flags=bilinear+accurate_rnd,format=rgb24" "$W/console-ffmpeg.ppm"
+      "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/console.ppm" oldconsole $tff $second
+      parity=$([ $tff = 1 ] && echo tff || echo bff)
+      check "Old console ${size/ /×} $parity field $((second + 1)) ($field) stretched, against FFmpeg" \
+        "$W/console.ppm" "$W/console-ffmpeg.ppm" 1 0.5
+    done
+  done
+  # A 240p picture standing still: each field the same picture, row 2i + 1 row 2i again.
+  python3 -I - "$W/interlaced-source.ppm" "$W/doubled.ppm" <<'PY'
+import sys
+parts = open(sys.argv[1], 'rb').read().split(maxsplit=4)
+w, h = int(parts[1]), int(parts[2])
+px = parts[4][-w * h * 3:]
+rows = [px[(y - y % 2) * w * 3:(y - y % 2 + 1) * w * 3] for y in range(h)]
+open(sys.argv[2], 'wb').write(b'P6\n%d %d\n255\n' % (w, h) + b''.join(rows))
+PY
+  "$C" temporal "$W/doubled.ppm" "$W/doubled.ppm" "$W/doubled.ppm" "$W/console-still.ppm" oldconsole-average 1 0
+  "$C" temporal "$W/doubled.ppm" "$W/doubled.ppm" "$W/doubled.ppm" "$W/console-alone.ppm" oldconsole 1 0
+  check "Old console averaging ${size/ /×} a still picture changes nothing" "$W/console-still.ppm" \
+    "$W/console-alone.ppm" 0 0
+  "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/console-average.ppm" oldconsole-average 1 0
+  "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/console.ppm" oldconsole 1 0
+  differs "Old console averaging moving fields" "$W/console-average.ppm" "$W/console.ppm"
+done
+
 # YUV to RGB (FFmpeg's decoded frames): against FFmpeg's own conversion, BT.601 and BT.709, limited range; grey is
 # exact (no chroma to scale), colour within FFmpeg's bilinear chroma.
 for matrix in 601 709; do

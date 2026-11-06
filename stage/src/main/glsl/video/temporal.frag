@@ -2,7 +2,8 @@
 // picks one: 0 YADIF and 1 BWDIF, converted from FFmpeg's vf_yadif.c (Michael Niedermayer) and vf_bwdif.c (Thomas
 // Mundt), LGPL-2.1-or-later; 2 Greedy High Motion, converted from GStreamer's greedyh.c (tvtime's, Tom Barry after
 // DScaler, LGPL); 3 Greedy 2-Frame, written anew from DScaler's (GPL-2.0, behaviour only); 4 none — the frame woven as
-// it is (Adaptive on a still picture). The same arithmetic on each colour channel, in whole steps of 0..255, but for
+// it is (Adaptive on a still picture); 5 old-console mode (OldGame, after DScaler's Old Game): every row drawn anew from
+// the kept field alone, averaged with the field before where uAverage. The same arithmetic on each colour channel, in whole steps of 0..255, but for
 // Greedy 2-Frame's choice, which all three channels take together. Rows count from the top; uParity picks the field
 // rebuilt (see Deinterlacer.rebuiltParity): with uSecond the earlier one, from the shown frame and the next, otherwise
 // the later one, from the previous frame and the shown one.
@@ -14,6 +15,7 @@ uniform vec2 uSize;
 uniform bool uSecond;
 uniform float uParity;
 uniform int uMethod;
+uniform bool uAverage;
 varying vec2 vTex;
 vec3 px(sampler2D s, float x, float y) {
   return floor(texture2D(s, vec2(x + 0.5, uSize.y - y - 0.5) / uSize).rgb * 255.0 + 0.5);
@@ -135,11 +137,27 @@ vec3 greedy2Frame(float x, float y) {
   bool weave = !moved && (still(uTex, uPrev, pair, y - 1.0) || still(uTex, uPrev, pair, y + 1.0));
   return weave ? floor((newest + before(x, y) + 1.0) * 0.5) : floor((cur(x, y - 1.0) + cur(x, y + 1.0) + 1.0) * 0.5);
 }
+// Old console (OldGame.picture): field line i of the kept field — rows uParity, uParity + 2, … — averaged with the same
+// line of the field before (its lowest bit dropped first, then rounded up, as DScaler) where uAverage; row y three
+// quarters of field line y / 2 and a quarter of the line on its other side, rounded.
+vec3 consoleLine(float x, float i) {
+  float row = 2.0 * clamp(i, 0.0, floor(uSize.y * 0.5) - 1.0);
+  vec3 newest = cur(x, row + uParity);
+  if (!uAverage) return newest;
+  return floor((newest - mod(newest, 2.0) + before(x, row + 1.0 - uParity) + 1.0) * 0.5);
+}
+vec3 oldConsole(float x, float y) {
+  float near = floor(y * 0.5);
+  float far = mod(y, 2.0) < 0.5 ? near - 1.0 : near + 1.0;
+  return floor((3.0 * consoleLine(x, near) + consoleLine(x, far) + 2.0) * 0.25);
+}
 void main() {
   float x = floor(gl_FragCoord.x);
   float y = uSize.y - 1.0 - floor(gl_FragCoord.y);
   vec3 v;
-  if (mod(y + uParity, 2.0) < 0.5) {
+  if (uMethod == 5) {
+    v = oldConsole(x, y);
+  } else if (mod(y + uParity, 2.0) < 0.5) {
     v = cur(x, y);
   } else {
     if (uMethod == 0) v = yadif(x, y);

@@ -16,8 +16,8 @@
 //   shader_check lanczos <in.ppm> <out.ppm> <width> <height> <antiring>
 //                                                           glsl/video/lanczos.frag to that size
 //   shader_check nis <in.ppm> <out.ppm> <width> <height>    glsl/video/nis.frag to that size (at most twice)
-//   shader_check temporal <prev.ppm> <cur.ppm> <next.ppm> <out.ppm> <yadif|bwdif|greedyh|greedy2frame|weave>
-//                         <tff 0|1> <second 0|1>
+//   shader_check temporal <prev.ppm> <cur.ppm> <next.ppm> <out.ppm>
+//                         <yadif|bwdif|greedyh|greedy2frame|weave|oldconsole|oldconsole-average> <tff 0|1> <second 0|1>
 //                                                           glsl/video/temporal.frag: one field of cur rebuilt
 //   shader_check xbrz <in.ppm> <out.ppm> <factor> <table.bin>
 //                                                           glsl/xbrz to factor (2..6) times the size
@@ -244,8 +244,10 @@ void draw(GLuint prog, const Target& into, GLuint input, const float* matrix = k
 }
 
 // A temporal deinterlacer as VideoFilterStage.rebuildField runs it — uMethod as Deinterlacer.shaderMethod numbers them,
-// 4 weaving — [cur] with one field rebuilt from [prev], [cur], [next]; the field as Deinterlacer.rebuiltParity picks it.
-Picture temporal(const Picture& prev, const Picture& cur, const Picture& next, int method, bool tff, bool second) {
+// 4 weaving, 5 old console ([average]d or not) — [cur] with one field rebuilt from [prev], [cur], [next]; the field as
+// Deinterlacer.rebuiltParity picks it.
+Picture temporal(const Picture& prev, const Picture& cur, const Picture& next, int method, bool average, bool tff,
+                 bool second) {
     GLuint prog = appProgram("video/temporal.frag");
     Target p = upload(prev), c = upload(cur), n = upload(next);
     // The stage reads these exact pixels nearest (VideoFilterStage.exact).
@@ -266,6 +268,7 @@ Picture temporal(const Picture& prev, const Picture& cur, const Picture& next, i
     glUniform1i(glGetUniformLocation(prog, "uSecond"), second ? 1 : 0);
     glUniform1f(glGetUniformLocation(prog, "uParity"), float((tff ? 1 : 0) ^ (second ? 0 : 1)));
     glUniform1i(glGetUniformLocation(prog, "uMethod"), method);
+    glUniform1i(glGetUniformLocation(prog, "uAverage"), average ? 1 : 0);
     draw(prog, out, c.texture);
     return download(out);
 }
@@ -955,10 +958,11 @@ int main(int argc, char** argv) {
         writePpm(a[3], gsrQualcomm(a[1], readPpm(a[2]), std::stoi(a[4]), std::stoi(a[5])));
     else if (a.size() == 3 && a[0] == "fsr-rcas") writePpm(a[2], rcasOnly(readPpm(a[1])));
     else if (a.size() == 8 && a[0] == "temporal") {
-        const std::vector<std::string> methods = {"yadif", "bwdif", "greedyh", "greedy2frame", "weave"};
-        const auto method = std::find(methods.begin(), methods.end(), a[5]);
+        const std::vector<std::string> methods = {"yadif", "bwdif", "greedyh", "greedy2frame", "weave", "oldconsole"};
+        const bool average = a[5] == "oldconsole-average";
+        const auto method = std::find(methods.begin(), methods.end(), average ? "oldconsole" : a[5]);
         if (method == methods.end()) fail("temporal: no such method");
-        writePpm(a[4], temporal(readPpm(a[1]), readPpm(a[2]), readPpm(a[3]), int(method - methods.begin()),
+        writePpm(a[4], temporal(readPpm(a[1]), readPpm(a[2]), readPpm(a[3]), int(method - methods.begin()), average,
                                 a[6] == "1", a[7] == "1"));
     }
     else if (a.size() == 5 && a[0] == "xbrz") writePpm(a[2], xbrz(readPpm(a[1]), std::stoi(a[3]), a[4]));

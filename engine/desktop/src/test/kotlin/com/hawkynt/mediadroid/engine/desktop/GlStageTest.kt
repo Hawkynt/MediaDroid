@@ -3,6 +3,7 @@ package com.hawkynt.mediadroid.engine.desktop
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.ChromaUpscaling
+import com.hawkynt.mediadroid.player.OldGame
 import com.hawkynt.mediadroid.player.Panorama
 import com.hawkynt.mediadroid.player.ScreenRect
 import com.hawkynt.mediadroid.player.ScreenSetup
@@ -272,6 +273,34 @@ class GlStageTest {
             val worst = worstDifference(out.rgba, expected)
             assertTrue("$mode off by $worst", worst <= 1)
             assertTrue("$mode rebuilt nothing", worstDifference(out.rgba, p[1].rgba) > 100)
+        }
+    }
+
+    @Test
+    fun `Old console stretches each field as the core's reference does, averaging it with the one before when still`() {
+        // Large enough for DScaler's comb factor, which leaves 16 field lines and columns out at each edge.
+        val w = 256
+        val h = 192
+        val console = PictureAdjustment(deinterlace = PictureAdjustment.Deinterlace.OLD_CONSOLE)
+        fun luma(picture: MediaReader.Picture) =
+            Deinterlacer.Plane(w, h, IntArray(w * h) { picture.rgba[it * 4].toInt() and 255 })
+        // Moving half a bar a field: each field drawn alone; still with a little noise between the fields: averaged.
+        val moving = (0 until 3).map { combed(it * 40L, it * 19, w, h) }
+        val still = (0 until 3).map { k ->
+            MediaReader.Picture(k * 40L, w, h, ByteArray(w * h * 4) { i ->
+                val noise = (i / 4 / w) % 2 * (k + 1)
+                if (i % 4 == 3) -1 else ((if ((i / 4 % w) % 16 < 8) 30 else 220) + noise).toByte()
+            })
+        }
+        for ((p, averaged) in listOf(moving to false, still to true)) {
+            for (second in listOf(false, true)) {
+                val phase = if (second) 0.7f else 0.2f
+                val out = stage.process(Moment(p[1], p[0], p[2], phase = phase), console.copy(fieldRate = true), w, h)
+                val reference = OldGame.picture(luma(p[0]), luma(p[1]), second, true, averaged)
+                val expected = ByteArray(w * h * 4) { i -> if (i % 4 == 3) -1 else reference.pixels[i / 4].toByte() }
+                val worst = worstDifference(out.rgba, expected)
+                assertTrue("averaged $averaged, second $second: off by $worst", worst <= 1)
+            }
         }
     }
 
