@@ -72,15 +72,6 @@ class NeuralTestService : Service() {
 
     override fun onBind(intent: Intent): IBinder = requests.binder
 
-    /** How a self-test in the test process came out. */
-    sealed interface Outcome {
-        /** It ran: what each unit that ran the network right took, fastest first (empty where none did). */
-        data class Ran(val timings: List<NeuralInterpolator.Timing>) : Outcome
-
-        /** Every unit's test process ended before it answered: the network was more than the device could give. */
-        data object Ended : Outcome
-    }
-
     companion object {
         private const val TEST = 1
         private const val STARTED = 2
@@ -97,39 +88,19 @@ class NeuralTestService : Service() {
 
         /**
          * [network]'s self-test on the GPU, then the CPU unless the GPU kept up, each in a fresh test process, all
-         * of it within [NeuralInterpolation.MAX_WAIT_MS]; blocks until both answered, ended or were cut short — not
-         * on the main thread.
+         * of it within [NeuralInterpolation.MAX_WAIT_MS] (NeuralSelfTest.across); blocks until both answered, ended
+         * or were cut short — not on the main thread.
          */
-        fun selfTest(context: Context, network: PictureAdjustment.Interpolation): Outcome =
-            selfTest(context, network.name, upscaling = false) { NeuralInterpolation.fastEnough(it) }
+        fun selfTest(context: Context, network: PictureAdjustment.Interpolation): NeuralSelfTest.Outcome =
+            NeuralSelfTest.across(NeuralInterpolation::fastEnough) { unit, until ->
+                selfTest(context, network.name, upscaling = false, NeuralUpscaler.Unit.valueOf(unit), until)
+            }
 
         /** [upscaler]'s self-test (waifu2x, Real-CUGAN; see NeuralEnlarger.selfTest), the same way. */
-        fun selfTest(context: Context, upscaler: PictureAdjustment.Upscaler): Outcome =
-            selfTest(context, upscaler.name, upscaling = true) { NeuralEnlarging.fastEnough(it) }
-
-        private fun selfTest(context: Context, name: String, upscaling: Boolean, fast: (Double) -> Boolean): Outcome {
-            val timings = ArrayList<NeuralInterpolator.Timing>()
-            var ended = 0
-            // All of it within NeuralInterpolation.MAX_WAIT_MS: the GPU until half of it, the CPU until the end.
-            val start = System.nanoTime()
-            val units = listOf(NeuralUpscaler.Unit.GPU, NeuralUpscaler.Unit.CPU)
-            for ((i, unit) in units.withIndex()) {
-                if (timings.any { fast(it.msByHeight.values.first()) }) break
-                val until = start + (NeuralInterpolation.MAX_WAIT_MS * 1e6 * (i + 1) / units.size).toLong()
-                when (val one = selfTest(context, name, upscaling, unit, until)) {
-                    null -> ended++
-                    else -> one.timing?.let { timings += it }
-                }
+        fun selfTest(context: Context, upscaler: PictureAdjustment.Upscaler): NeuralSelfTest.Outcome =
+            NeuralSelfTest.across(NeuralEnlarging::fastEnough) { unit, until ->
+                selfTest(context, upscaler.name, upscaling = true, NeuralUpscaler.Unit.valueOf(unit), until)
             }
-            return if (timings.isEmpty() && ended > 0) {
-                Outcome.Ended
-            } else {
-                Outcome.Ran(timings.sortedBy { it.msByHeight.values.first() })
-            }
-        }
-
-        /** One unit's answer: its timing, or null where it cannot run the network or runs it wrong. */
-        private class Answer(val timing: NeuralInterpolator.Timing?)
 
         /**
          * The test on [unit] in a fresh test process, cut short at [until] (System.nanoTime) — its starting and
@@ -141,11 +112,11 @@ class NeuralTestService : Service() {
             upscaling: Boolean,
             unit: NeuralUpscaler.Unit,
             until: Long,
-        ): Answer? {
+        ): NeuralSelfTest.Answer? {
             val lock = Any()
             val done = CountDownLatch(1)
             val gone = CountDownLatch(1)
-            var answer: Answer? = null
+            var answer: NeuralSelfTest.Answer? = null
             var pid = 0
             var runningHeight = 0
             var runningSince = 0L
@@ -166,7 +137,9 @@ class NeuralTestService : Service() {
                             RESULT -> {
                                 val passed = message.data.getString(PASSED)
                                     ?.let { NeuralInterpolation.Passed.decode(it) }
-                                answer = Answer(passed?.let { NeuralInterpolator.Timing(unit, it.msByHeight) })
+                                answer = NeuralSelfTest.Answer(
+                                    passed?.let { NeuralSelfTest.Timing(unit.name, it.msByHeight) },
+                                )
                                 done.countDown()
                             }
                         }
@@ -209,9 +182,9 @@ class NeuralTestService : Service() {
                         // while still loading) counting as having taken as long as a whole test may.
                         val smallest =
                             if (upscaling) PictureCheck.HEIGHT else NeuralInterpolation.TEST_SIZES.first().height
-                        val height = runningHeight.takeIf { it != 0 } ?: smallest
-                        times[height] = NeuralInterpolation.MAX_WAIT_MS
-                        answer = Answer(NeuralInterpolator.Timing(unit, LinkedHashMap(times)))
+                        answer = NeuralSelfTest.Answer(
+                            NeuralSelfTest.cutShort(unit.name, times, runningHeight, smallest),
+                        )
                     }
                 }
                 break

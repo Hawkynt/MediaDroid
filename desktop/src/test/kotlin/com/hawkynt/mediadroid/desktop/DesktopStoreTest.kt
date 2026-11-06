@@ -58,6 +58,24 @@ class DesktopStoreTest {
     }
 
     @Test
+    fun `smooth motion, field rate and the upscaler's strength are the household's, the 3D eye is not`() {
+        val data = folder.newFolder("data")
+        DesktopStore(data).picture = PictureAdjustment(
+            deinterlace = PictureAdjustment.Deinterlace.BWDIF,
+            fieldRate = true,
+            upscaler = PictureAdjustment.Upscaler.FSR,
+            upscalerStrength = 0.6f,
+            interpolation = PictureAdjustment.Interpolation.MOTION,
+            stereo = PictureAdjustment.Stereo.LEFT,
+        )
+        val again = DesktopStore(data).picture
+        assertEquals(PictureAdjustment.Interpolation.MOTION, again.interpolation)
+        assertTrue(again.fieldRate)
+        assertEquals(0.6f, again.upscalerStrength)
+        assertEquals(PictureAdjustment.Stereo.OFF, again.stereo)
+    }
+
+    @Test
     fun `a fresh store has the defaults, and watching a video forgets where it was left`() {
         val store = DesktopStore(folder.newFolder("data"))
         assertNull(store.libraryFolder)

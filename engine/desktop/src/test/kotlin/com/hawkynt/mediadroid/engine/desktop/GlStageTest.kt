@@ -12,6 +12,8 @@ import org.junit.BeforeClass
 import org.junit.Test
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /** The desktop stage on this machine's graphics (skipped where there is no display to make a context on). */
 class GlStageTest {
@@ -108,6 +110,130 @@ class GlStageTest {
         val flat = MediaReader.Picture(0, 32, 24, ByteArray(32 * 24 * 4) { i -> if (i % 4 == 3) -1 else 0x5a })
         val out = stage.process(flat, PictureAdjustment(upscaler = PictureAdjustment.Upscaler.XBRZ), 64, 48)
         assertTrue(out.rgba.indices.filter { it % 4 != 3 }.all { out.rgba[it] == 0x5a.toByte() })
+    }
+
+    // A picture of smooth waves, moved [dx] × [dy] pixels: something for Motion's search to find.
+    private fun waves(w: Int, h: Int, dx: Int, dy: Int, pts: Long): MediaReader.Picture {
+        val rgba = ByteArray(w * h * 4)
+        for (y in 0 until h) for (x in 0 until w) {
+            for (c in 0 until 3) {
+                val v = 128 + 100 * sin((x + dx) / 9.0 + c) * cos((y + dy) / 7.0 - c)
+                rgba[(y * w + x) * 4 + c] = v.toInt().toByte()
+            }
+            rgba[(y * w + x) * 4 + 3] = -1
+        }
+        return MediaReader.Picture(pts, w, h, rgba)
+    }
+
+    private fun meanDifference(a: ByteArray, b: ByteArray, w: Int, h: Int, margin: Int): Double {
+        var sum = 0L
+        var n = 0
+        for (y in margin until h - margin) for (x in margin until w - margin) for (c in 0 until 3) {
+            val i = (y * w + x) * 4 + c
+            sum += abs((a[i].toInt() and 255) - (b[i].toInt() and 255))
+            n++
+        }
+        return sum.toDouble() / n
+    }
+
+    private fun flat(pts: Long, value: Int) =
+        MediaReader.Picture(pts, 32, 24, ByteArray(32 * 24 * 4) { i -> if (i % 4 == 3) -1 else value.toByte() })
+
+    @Test
+    fun `blending High shows the two pictures mixed by the clock, Low only around the middle`() {
+        val a = flat(0, 40)
+        val b = flat(40, 200)
+        val high = PictureAdjustment(interpolation = PictureAdjustment.Interpolation.HIGH)
+        fun at(phase: Float, p: PictureAdjustment = high) =
+            stage.process(Moment(a, next = b, phase = phase), p, 32, 24).rgba[0].toInt() and 255
+        assertEquals(40, at(0f))
+        assertTrue("${at(0.5f)}", abs(at(0.5f) - 120) <= 1)
+        assertEquals(200, at(1f))
+        val low = high.copy(interpolation = PictureAdjustment.Interpolation.LOW)
+        assertEquals(40, at(0.3f, low))
+        assertEquals(200, at(0.7f, low))
+    }
+
+    @Test
+    fun `Motion builds the picture between along the motion, nearer the truth than a blend`() {
+        val w = 256
+        val h = 192
+        // A move small against the waves: no scene cut, which Motion would not bridge.
+        val first = waves(w, h, 0, 0, 0)
+        val last = waves(w, h, 4, 2, 40)
+        val truth = waves(w, h, 2, 1, 20)
+        val motion = PictureAdjustment(interpolation = PictureAdjustment.Interpolation.MOTION)
+        val moment = Moment(first, next = last, phase = 0.5f)
+        // Asked once, the search starts; until its vectors are in, the earlier picture stays.
+        val alone = stage.process(Moment(first), PictureAdjustment.Neutral, w, h).rgba
+        var out = stage.process(moment, motion, w, h).rgba
+        val deadline = System.nanoTime() + 2_000_000_000L
+        while (out.contentEquals(alone) && System.nanoTime() < deadline) {
+            Thread.sleep(20)
+            out = stage.process(moment, motion, w, h).rgba
+        }
+        val blend = stage.process(moment, motion.copy(interpolation = PictureAdjustment.Interpolation.HIGH), w, h)
+        val motionError = meanDifference(out, truth.rgba, w, h, 24)
+        val blendError = meanDifference(blend.rgba, truth.rgba, w, h, 24)
+        assertTrue("motion $motionError, blend $blendError", motionError < blendError / 2)
+    }
+
+    @Test
+    fun `at field rate the second half of a picture's time shows its other field`() {
+        val w = 64
+        val h = 48
+        // Interlaced: the odd rows a moment later than the even ones.
+        fun combed(pts: Long, shift: Int) = MediaReader.Picture(pts, w, h, ByteArray(w * h * 4) { i ->
+            val y = i / 4 / w
+            val x = i / 4 % w
+            if (i % 4 == 3) -1 else (if ((x + shift + (y % 2) * 5) % 16 < 8) 30 else 220).toByte()
+        })
+        val p = (0 until 3).map { combed(it * 40L, it * 7) }
+        val fields = PictureAdjustment(deinterlace = PictureAdjustment.Deinterlace.BWDIF, fieldRate = true)
+        fun at(phase: Float, a: PictureAdjustment) = stage.process(Moment(p[1], p[0], p[2], phase = phase), a, w, h)
+        val first = at(0.2f, fields)
+        val second = at(0.7f, fields)
+        assertTrue(first.rgba.indices.any { abs(first.rgba[it] - second.rgba[it]) > 8 })
+        val frames = fields.copy(fieldRate = false)
+        assertTrue(at(0.2f, frames).rgba.contentEquals(at(0.7f, frames).rgba))
+    }
+
+    @Test
+    fun `an upscaler at half strength lies halfway between plain scaling and itself`() {
+        val fsr = PictureAdjustment(upscaler = PictureAdjustment.Upscaler.FSR)
+        val full = stage.process(picture, fsr, 128, 96)
+        val half = stage.process(picture, fsr.copy(upscalerStrength = 0.5f), 128, 96)
+        val plain = stage.process(picture, PictureAdjustment.Neutral, 128, 96)
+        val worst = full.rgba.indices.filter { it % 4 != 3 }.maxOf { i ->
+            val expected = ((full.rgba[i].toInt() and 255) + (plain.rgba[i].toInt() and 255)) / 2.0
+            abs((half.rgba[i].toInt() and 255) - expected)
+        }
+        assertTrue("off by $worst", worst <= 1.5)
+    }
+
+    @Test
+    fun `one eye of a 3D picture fills the picture`() {
+        // Side by side: the left eye dark, the right one light.
+        val w = 64
+        val h = 32
+        val sideBySide = MediaReader.Picture(0, w, h, ByteArray(w * h * 4) { i ->
+            if (i % 4 == 3) -1 else (if (i / 4 % w < w / 2) 50 else 210).toByte()
+        })
+        val left = stage.process(sideBySide, PictureAdjustment(stereo = PictureAdjustment.Stereo.LEFT), w, h)
+        val right = stage.process(sideBySide, PictureAdjustment(stereo = PictureAdjustment.Stereo.RIGHT), w, h)
+        assertTrue(left.rgba.indices.filter { it % 4 != 3 }.all { left.rgba[it] == 50.toByte() })
+        assertTrue(right.rgba.indices.filter { it % 4 != 3 }.all { right.rgba[it] == 210.toByte() })
+    }
+
+    @Test
+    fun `a dry run measures every picture and the work it took, more while mixing at every refresh`() {
+        val lanczos = PictureAdjustment(upscaler = PictureAdjustment.Upscaler.LANCZOS)
+        val run = requireNotNull(StageDryRun.run(lanczos, 1280, 1024, 60.0))
+        assertEquals(30, run.frames)
+        assertTrue(run.workMs > 0.0)
+        val medium = lanczos.copy(interpolation = PictureAdjustment.Interpolation.MEDIUM)
+        val mixing = requireNotNull(StageDryRun.run(medium, 1280, 1024, 60.0))
+        assertTrue("${mixing.workMs} vs ${run.workMs}", mixing.workMs > run.workMs)
     }
 
     companion object {
