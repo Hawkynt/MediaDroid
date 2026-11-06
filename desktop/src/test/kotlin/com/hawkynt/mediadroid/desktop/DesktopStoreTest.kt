@@ -132,6 +132,22 @@ class DesktopStoreTest {
     }
 
     @Test
+    fun `a video keeps its own subtitle delay, in sync forgets it, and the others start in sync`() {
+        val data = folder.newFolder("data")
+        DesktopStore(data).apply {
+            setSubtitleDelay("/v/a.mkv", 1_500)
+            setSubtitleDelay("/v/b.mkv", -300)
+            setSubtitleDelay("/v/b.mkv", 0)
+        }
+        val again = DesktopStore(data)
+        assertEquals(1_500, again.subtitleDelayMs("/v/a.mkv"))
+        assertEquals(0, again.subtitleDelayMs("/v/b.mkv"))
+        assertEquals(0, again.subtitleDelayMs("/v/c.mkv"))
+        val json = Json.parseToJsonElement(File(data, "settings.json").readText()).jsonObject
+        assertEquals("{\"/v/a.mkv\":1500}", json["subtitleDelays"].toString())
+    }
+
+    @Test
     fun `a fresh store has the defaults, and watching a video forgets where it was left`() {
         val store = DesktopStore(folder.newFolder("data"))
         assertNull(store.libraryFolder)

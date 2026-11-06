@@ -124,6 +124,9 @@ fun PlayerScreen(
     tuning.normalizeLoudness = sound.evenLoudness
     tuning.audioDelayMs = sound.audioDelayMs
     tuning.nightMode = nightMode
+    // The subtitle delay each video keeps, as on Android.
+    var subtitleDelayMs by remember(index) { mutableIntStateOf(store.subtitleDelayMs(playing.video)) }
+    tuning.subtitleDelayMs = subtitleDelayMs
     val engine = remember {
         DesktopPlaybackEngine(tuning, files = places::remoteFile).apply {
             // MEDIADROID_MUTE=1: checks and documentation runs play silently.
@@ -574,6 +577,11 @@ fun PlayerScreen(
                     store.setScreenSetup(screen().key, it)
                 },
                 colorizers = colorizers,
+                subtitleDelayMs = subtitleDelayMs,
+                onSubtitleDelay = {
+                    subtitleDelayMs = it
+                    store.setSubtitleDelay(playing.video, it)
+                },
             )
         }
         snapshotNote?.takeIf { now < snapshotNoteUntil }?.let { note ->

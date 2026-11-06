@@ -231,6 +231,62 @@ class DesktopPlaybackEngineTest {
     }
 
     @Test
+    fun `the subtitle delay shows a file's lines beside the video later or sooner`() {
+        val sink = ManualSink()
+        val srt = MediaRequest.SubtitleFile(fixture("clip.de.srt"), null, "de", "Deutsch", forced = false)
+        val tuning = PlaybackTuning.Mutable().apply { subtitleDelayMs = 500 }
+        DesktopPlaybackEngine(tuning) { sink }.use { engine ->
+            engine.open(MediaRequest(clip, subtitles = listOf(srt)))
+            waitFor { engine.isPlaying }
+            engine.select(Track.Kind.TEXT, engine.tracks.single { it.kind == Track.Kind.TEXT }.id)
+            Thread.sleep(100)
+            // Later: the line due at 0.2 s shows from 0.7 s, and lasts until 1.3 s.
+            sink.playedMs = 300
+            Thread.sleep(20)
+            assertNull(engine.subtitle())
+            sink.playedMs = 750
+            waitFor { engine.subtitle() == "First line" }
+            sink.playedMs = 1250
+            assertEquals("First line", engine.subtitle())
+            sink.playedMs = 1350
+            waitFor { engine.subtitle() == null }
+            // Sooner: the second line, due at 1 s, shows from 0.5 s.
+            tuning.subtitleDelayMs = -500
+            sink.playedMs = 200
+            assertEquals("First line", engine.subtitle())
+            sink.playedMs = 550
+            assertEquals("Second line\nwith two rows", engine.subtitle())
+        }
+    }
+
+    @Test
+    fun `the subtitle delay shows a file's own subtitle stream later or sooner`() {
+        val sink = ManualSink()
+        val tuning = PlaybackTuning.Mutable().apply { subtitleDelayMs = 1_000 }
+        DesktopPlaybackEngine(tuning) { sink }.use { engine ->
+            engine.open(MediaRequest(fixture("subtitled.mkv")))
+            waitFor { engine.isPlaying }
+            engine.select(Track.Kind.TEXT, engine.tracks.single { it.kind == Track.Kind.TEXT }.id)
+            // The stream picked is read again from where it plays.
+            waitFor { sink.flushed > 0 }
+            // Later: the first line, due at 0.2 to 0.8 s, shows at 1.2 s, where the second would be without it.
+            sink.playedMs = 1200
+            waitFor { engine.picture(); engine.subtitle() == "First line" }
+            sink.playedMs = 2100
+            // The pictures taken as they fall due, so the reader goes on to the lines after.
+            waitFor { engine.picture(); engine.subtitle() == "Second line\nwith two rows" }
+            // Sooner: once read, the second line shows before its time, and the first ends before its own.
+            tuning.subtitleDelayMs = -200
+            sink.playedMs = 900
+            assertEquals("Second line\nwith two rows", engine.subtitle())
+            sink.playedMs = 500
+            assertEquals("First line", engine.subtitle())
+            sink.playedMs = 650
+            assertNull(engine.subtitle())
+        }
+    }
+
+    @Test
     fun `a sound file beside the video is a track, and once picked its sound plays with the pictures`() {
         val sink = ManualSink()
         DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->

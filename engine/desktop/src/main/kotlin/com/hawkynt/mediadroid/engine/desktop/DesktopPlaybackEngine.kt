@@ -12,6 +12,7 @@ import com.hawkynt.mediadroid.player.FileLoudness
 import com.hawkynt.mediadroid.player.LibAss
 import com.hawkynt.mediadroid.player.LoudnessChain
 import com.hawkynt.mediadroid.player.PictureCrop
+import com.hawkynt.mediadroid.player.SubtitleLook
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArrayList
@@ -598,7 +599,7 @@ class DesktopPlaybackEngine(
         visible: IntArray?,
     ): AssPicture? {
         val opened = reader
-        val atMs = positionMs + soundDelayMs() - tuning.subtitleDelayMs
+        val atMs = positionMs + soundDelayMs() - subtitleDelayMs()
         val videoWidth = opened?.width ?: 0
         val videoHeight = opened?.height ?: 0
         val shown = visible ?: intArrayOf(0, 0, width, height)
@@ -612,7 +613,11 @@ class DesktopPlaybackEngine(
         return AssPicture(drawn.x + frame.x, drawn.y + frame.y, drawn.width, drawn.height, drawn.pixels)
     }
 
-    /** The subtitle line due with the picture, while subtitles are on and a subtitle track is picked; else null. */
+    /**
+     * The subtitle line due with the picture, while subtitles are on and a subtitle track is picked; else null. The
+     * subtitle delay asks for the line of a moment that much earlier, as on Android (DelayedTextRenderer): positive
+     * shows the lines later, negative sooner.
+     */
     fun subtitle(): String? {
         if (!subtitlesOn || selectedText == null || ass != null) return null
         return due(cues)
@@ -625,12 +630,16 @@ class DesktopPlaybackEngine(
     }
 
     private fun due(lines: List<MediaReader.Cue>): String? {
-        val now = positionMs + soundDelayMs()
+        val now = positionMs + soundDelayMs() - subtitleDelayMs()
         // The latest begun: a teletext page shows until the next replaces it (MediaReader.UNTIL_REPLACED), and a
         // cleared page is an empty one.
         return lines.filter { now >= it.startMs && now < it.endMs }.maxByOrNull { it.startMs }?.text
             ?.takeIf { it.isNotEmpty() }
     }
+
+    /** The subtitle delay (positive: the lines later), within the range the player offers. */
+    private fun subtitleDelayMs(): Int =
+        tuning.subtitleDelayMs.coerceIn(-SubtitleLook.DELAY_LIMIT_MS, SubtitleLook.DELAY_LIMIT_MS)
 
     override var subtitlesOn: Boolean = true
 
