@@ -137,6 +137,18 @@ fun PlayerScreen(
     // The neural networks, their files in the app-data folder's models/ (DesktopNeural), and what a choice is tried
     // with before it is taken (PictureTrial, as on Android).
     val neural = remember { com.hawkynt.mediadroid.engine.desktop.DesktopNeural(File(AppFolder.current(), "models")) }
+    // Colour is offered where DDColor's files can be had: passed here before, in place, or reachable in the model
+    // repository — so its chip appears by itself once they are published.
+    val colorizers by androidx.compose.runtime.produceState(
+        com.hawkynt.mediadroid.player.Colorizing.offered(store.colorizerPassed != null),
+    ) {
+        val ddcolor = com.hawkynt.mediadroid.player.NeuralModels.DDCOLOR
+        val available = withContext(Dispatchers.IO) {
+            store.colorizerPassed != null || neural.ready(ddcolor) ||
+                com.hawkynt.mediadroid.player.ModelFolder.reachable(ddcolor)
+        }
+        value = com.hawkynt.mediadroid.player.Colorizing.offered(available)
+    }
     val trial = remember { DesktopTrial(store, neural) }
     var picture by remember { mutableStateOf(store.picture) }
     // This video's shape where its file's flag is wrong, and the setup of the screen the window is on (a lens).
@@ -236,7 +248,7 @@ fun PlayerScreen(
     // The networks the stage may run: those whose self-tests passed, as of the picture taken last.
     LaunchedEffect(picture) {
         stage.neural = com.hawkynt.mediadroid.engine.desktop.GlStage.Neural(
-            neural, store.neuralMotion, store.neuralEnlargers,
+            neural, store.neuralMotion, store.neuralEnlargers, store.colorizerPassed,
         )
     }
     // Every window frame: the picture due now — through the stage when the household set filters, the video is HDR,
@@ -541,6 +553,7 @@ fun PlayerScreen(
                     screenSetup = it
                     store.setScreenSetup(screen().key, it)
                 },
+                colorizers = colorizers,
             )
         }
         snapshotNote?.takeIf { now < snapshotNoteUntil }?.let { note ->

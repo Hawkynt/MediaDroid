@@ -89,6 +89,7 @@ fun PicturePanel(
     screenName: String = "This screen",
     screenSetup: ScreenSetup = ScreenSetup.Default,
     onScreenSetup: (ScreenSetup) -> Unit = {},
+    colorizers: List<PictureAdjustment.Colorize> = listOf(PictureAdjustment.Colorize.OFF),
 ) {
     Column(
         modifier.width(380.dp).fillMaxHeight().background(Color(0xF01A1A2E)).verticalScroll(rememberScrollState())
@@ -339,6 +340,25 @@ fun PicturePanel(
             }
         }
         motion.Below(picture.interpolation.description)
+        // Colour for black-and-white pictures: offered where the network's files can be had (Colorizing.offered).
+        if (colorizers.size > 1) {
+            val colouring = remember { Trial() }
+            Text("Colour", color = Color.White, modifier = Modifier.padding(top = 8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                colorizers.forEach { colorize ->
+                    FilterChip(
+                        selected = picture.colorize == colorize,
+                        enabled = colouring.trying == null,
+                        onClick = {
+                            val candidate = picture.copy(colorize = colorize)
+                            colouring.pick(scope, picture, candidate, colorize.label, check, onChange)
+                        },
+                        label = { Text(colorize.label) },
+                    )
+                }
+            }
+            colouring.Below(picture.colorize.description)
+        }
         Text("3D as 2D: one eye", color = Color.White, modifier = Modifier.padding(top = 8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PictureAdjustment.Stereo.entries.forEach { eye ->

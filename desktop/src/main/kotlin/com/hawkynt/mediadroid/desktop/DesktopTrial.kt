@@ -62,13 +62,19 @@ class DesktopTrial(private val store: DesktopStore, private val neural: DesktopN
     override fun keepMotion(network: PictureAdjustment.Interpolation, passed: NeuralInterpolation.Passed) =
         store.keepMotion(network, passed)
 
+    override fun colorizerPassed() = store.colorizerPassed
+
+    override fun selfTestColorizer() = NeuralTestProcess.selfTestColorizer(neural.models)
+
+    override fun keepColorizer(passed: NeuralInterpolation.Passed) = store.keepColorizer(passed)
+
     override fun dryRun(picture: PictureAdjustment): PictureCheck.DryRun? {
         val screen = largestScreen()
         val scale = minOf(screen.width.toDouble() / PictureCheck.WIDTH, screen.height.toDouble() / PictureCheck.HEIGHT)
         val width = (PictureCheck.WIDTH * scale).toInt().coerceAtLeast(PictureCheck.WIDTH)
         val height = (PictureCheck.HEIGHT * scale).toInt().coerceAtLeast(PictureCheck.HEIGHT)
         val hz = screen.refreshRate.takeIf { it != DisplayMode.REFRESH_RATE_UNKNOWN } ?: DEFAULT_REFRESH_HZ
-        val passed = GlStage.Neural(neural, store.neuralMotion, store.neuralEnlargers)
+        val passed = GlStage.Neural(neural, store.neuralMotion, store.neuralEnlargers, store.colorizerPassed)
         return StageDryRun.run(picture, width, height, hz.toDouble(), passed)
     }
 

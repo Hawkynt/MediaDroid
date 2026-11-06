@@ -2,3 +2,4 @@
 # CRLF line endings by a Windows checkout.
 *.param -text
 *.bin binary
+*.grey binary

@@ -117,6 +117,28 @@ object ModelFolder {
         return ok
     }
 
+    /**
+     * Whether [download] can be fetched: its first file answers at its URL ([answers]: an HTTP HEAD that ends in 2xx,
+     * redirects followed). Blocks; false offline.
+     */
+    fun reachable(download: NeuralModels.Download, answers: (String) -> Boolean = ::headOk): Boolean {
+        val url = if (download.archive != null) download.source else download.url(download.files.first())
+        return runCatching { answers(url) }.getOrDefault(false)
+    }
+
+    private fun headOk(url: String): Boolean {
+        val connection = URI(url).toURL().openConnection() as HttpURLConnection
+        connection.requestMethod = "HEAD"
+        connection.instanceFollowRedirects = true
+        connection.connectTimeout = 10_000
+        connection.readTimeout = 10_000
+        return try {
+            connection.responseCode in 200..299
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun http(url: String): InputStream {
         val connection = URI(url).toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000

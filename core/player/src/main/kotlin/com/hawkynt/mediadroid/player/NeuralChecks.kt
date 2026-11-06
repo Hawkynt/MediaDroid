@@ -33,6 +33,14 @@ object NeuralChecks {
         fun run(picture: ByteBuffer, width: Int, height: Int): ByteBuffer?
     }
 
+    /**
+     * A colouriser on its unit (NativeInterpolation.colorize): [grey] (Colorizing.input's three planes) to the a and b
+     * of Lab at 256 × 256, null where it failed.
+     */
+    fun interface Colorize {
+        fun run(grey: FloatArray): FloatArray?
+    }
+
     /** What a self-test tells as it goes, for whoever waits on it to cut it short. */
     interface Progress {
         /** A picture at the test size of [height] is being made. */
@@ -190,6 +198,53 @@ object NeuralChecks {
         log("check on $unit: off by $mean, $ms ms")
         return if (NeuralEnlarging.rightEnough(mean)) ms else null
     }
+
+    /**
+     * The self-test of the colouriser [net] on [unit]: whether it colours the check picture (resources colorize/,
+     * tools/ddcolor) as DDColor's PyTorch model does — its a and b averaged over 16 × 16 blocks within
+     * Colorizing.MAX_ERROR — and what that one run took; null where it runs wrong. One run is all the test's time
+     * allows for a network this size, so its time counts its first run's warming up too: a little against the device.
+     */
+    fun colorizer(net: Colorize, unit: String, progress: Progress, log: (String) -> Unit = {}): NeuralSelfTest.Timing? {
+        val size = Colorizing.SIZE
+        progress.running(size)
+        val grey = checkGrey()
+        val start = System.nanoTime()
+        val ab = net.run(grey) ?: return null
+        val ms = (System.nanoTime() - start) / 1e6
+        if (ab.size != 2 * size * size) return null
+        val expected = checkAb()
+        var error = 0.0
+        for (i in expected.indices) {
+            val plane = i / 256
+            val by = i % 256 / 16
+            val bx = i % 16
+            var sum = 0.0
+            val corner = plane * size * size + by * 16 * size + bx * 16
+            for (y in 0 until 16) for (x in 0 until 16) sum += ab[corner + y * size + x]
+            error += abs(sum / 256 - expected[i])
+        }
+        error /= expected.size
+        log("check on $unit: off by $error, $ms ms")
+        if (!Colorizing.rightEnough(error)) return null
+        progress.timed(size, ms)
+        return NeuralSelfTest.Timing(unit, mapOf(size to ms))
+    }
+
+    // The colouriser's check picture as the network's input: its grey in R, G and B.
+    private fun checkGrey(): FloatArray {
+        val bytes = requireNotNull(NeuralChecks::class.java.getResourceAsStream("/colorize/check.grey")).use {
+            it.readBytes()
+        }
+        val plane = Colorizing.SIZE * Colorizing.SIZE
+        return FloatArray(3 * plane) { (bytes[it % plane].toInt() and 0xFF) / 255f }
+    }
+
+    // What DDColor's PyTorch model makes of it, averaged over 16 × 16 blocks: 256 a values, then 256 b.
+    private fun checkAb(): DoubleArray =
+        requireNotNull(NeuralChecks::class.java.getResourceAsStream("/colorize/check.ab")).bufferedReader().use { r ->
+            r.readLines().filter { it.isNotBlank() }.map { it.trim().toDouble() }.toDoubleArray()
+        }
 
     /**
      * A test frame: smooth random blotches about [CELL] pixels across in each colour, moved 5 × 3 pixels per [shift].

@@ -49,6 +49,13 @@ class PictureTrialTest {
             motion[network] = passed
         }
 
+        var colorizer: NeuralInterpolation.Passed? = null
+        override fun colorizerPassed() = colorizer
+        override fun selfTestColorizer() = outcome.also { tested += "DDCOLOR" }
+        override fun keepColorizer(passed: NeuralInterpolation.Passed) {
+            colorizer = passed
+        }
+
         override fun dryRun(picture: PictureAdjustment): PictureCheck.DryRun? = dryRun.also { dryRuns += picture }
     }
 
@@ -206,6 +213,28 @@ class PictureTrialTest {
         assertEquals(listOf("NEURAL:x4plus"), device.tested)
         assertEquals(null, device.upscalingKept)
         assertTrue("Testing Real-ESRGAN General on this device…" in said)
+    }
+
+    @Test
+    fun `colour is fetched, tested once and kept, refused where a picture's colour takes over a second`() {
+        val colour = PictureAdjustment(colorize = PictureAdjustment.Colorize.DDCOLOR)
+        val slow = FakeDevice(
+            outcome = NeuralSelfTest.Outcome.Ran(listOf(NeuralSelfTest.Timing("CPU", mapOf(256 to 1500.0)))),
+        )
+        assertEquals(
+            "This device is too slow for DDColor: colouring a picture takes 1500 ms on its fastest unit (CPU), and " +
+                "the colour should follow within 1000 ms. The colour stays as it was.",
+            check(colour, slow).message,
+        )
+        val fast = FakeDevice(
+            outcome = NeuralSelfTest.Outcome.Ran(listOf(NeuralSelfTest.Timing("GPU", mapOf(256 to 120.0)))),
+            ready = false,
+        )
+        assertTrue(check(colour, fast).keepsUp)
+        assertEquals(listOf("ddcolor"), fast.fetched)
+        assertEquals("GPU", fast.colorizer?.unit)
+        assertTrue(check(colour, fast).keepsUp)
+        assertEquals(listOf("DDCOLOR"), fast.tested)
     }
 
     @Test

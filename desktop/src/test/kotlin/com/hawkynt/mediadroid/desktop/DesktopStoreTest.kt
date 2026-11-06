@@ -95,6 +95,20 @@ class DesktopStoreTest {
     }
 
     @Test
+    fun `colour and the colouriser's passed self-test are kept`() {
+        val data = folder.newFolder("data")
+        val passed = com.hawkynt.mediadroid.player.NeuralInterpolation.Passed("GPU", mapOf(256 to 120.0))
+        DesktopStore(data).apply {
+            picture = PictureAdjustment(colorize = PictureAdjustment.Colorize.DDCOLOR)
+            keepColorizer(passed)
+        }
+        val again = DesktopStore(data)
+        assertEquals(PictureAdjustment.Colorize.DDCOLOR, again.picture.colorize)
+        assertEquals(passed, again.colorizerPassed)
+        assertNull(DesktopStore(folder.newFolder("fresh")).colorizerPassed)
+    }
+
+    @Test
     fun `a network's passed self-test is kept, so it is not tested again`() {
         val data = folder.newFolder("data")
         val passed = com.hawkynt.mediadroid.player.NeuralInterpolation.Passed("GPU", mapOf(480 to 6.5, 720 to 14.0))

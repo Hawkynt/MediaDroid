@@ -35,6 +35,9 @@ class PictureCheckTest {
         assertNotEquals(PictureCheck.key(waifu2x), PictureCheck.key(waifu2x.copy(upscalerTta = true)))
         assertTrue(PictureCheck.needed(waifu2x, waifu2x.copy(upscalerTta = true)))
         assertEquals(PictureCheck.key(lanczos), PictureCheck.key(lanczos.copy(upscalerModel = "noise3")))
+        val colour = lanczos.copy(colorize = PictureAdjustment.Colorize.DDCOLOR)
+        assertTrue(PictureCheck.needed(lanczos, colour))
+        assertFalse(PictureCheck.needed(colour, lanczos))
     }
 
     @Test
