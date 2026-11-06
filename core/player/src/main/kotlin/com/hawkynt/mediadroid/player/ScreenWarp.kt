@@ -83,6 +83,8 @@ object Keystone {
  */
 class ScreenWarp private constructor(
     private val rows: DoubleArray,
+    // The map without the picture's place: from the screen to where the overlays laid out on it come from.
+    private val overlayRows: DoubleArray,
     /** How many times wider than its shape the picture is shown, panoramic; 1 for not at all. */
     val panorama: Float,
     /** Whether the whole screen is drawn by the stage (a keystone): the picture's place on it is in the map. */
@@ -91,6 +93,33 @@ class ScreenWarp private constructor(
     /** Nothing bent at all: the stage's last pass draws the picture as it is. */
     val isIdentity: Boolean
         get() = panorama <= 1f && rows.indices.all { rows[it] == IDENTITY[it] }
+
+    /**
+     * Whether the overlays over the picture — subtitles, teletext, libass's signs — are bent with it: a projector's
+     * mirror, flip or keystone. The panorama leaves them as they are, to stay readable.
+     */
+    val bendsOverlays: Boolean
+        get() = overlayRows.indices.any { overlayRows[it] != IDENTITY[it] }
+
+    /**
+     * Where an overlay laid out on a [width] × [height] screen (pixels, rows from the top) is drawn so it lands with
+     * the picture: the screen's mirror, flip and keystone, as a 3 × 3 projective matrix row by row — as
+     * android.graphics.Matrix and Skia's Matrix33 take it. The identity where nothing is bent.
+     */
+    fun overlayMatrix(width: Float, height: Float): FloatArray = inPixels(invert(overlayRows), width, height)
+
+    /** The way back of [overlayMatrix]: from where an overlay is drawn to where it was laid out. */
+    fun overlayBackMatrix(width: Float, height: Float): FloatArray = inPixels(overlayRows, width, height)
+
+    // [m] (on coordinates 0 to 1 from the bottom left) on pixels from the top left of a [width] × [height] screen.
+    private fun inPixels(m: DoubleArray, width: Float, height: Float): FloatArray {
+        val w = width.toDouble()
+        val h = height.toDouble()
+        val toPixels = doubleArrayOf(w, 0.0, 0.0, 0.0, -h, h, 0.0, 0.0, 1.0)
+        val fromPixels = doubleArrayOf(1.0 / w, 0.0, 0.0, 0.0, -1.0 / h, 1.0, 0.0, 0.0, 1.0)
+        val p = times(toPixels, times(m, fromPixels))
+        return FloatArray(9) { (p[it] / p[8]).toFloat() }
+    }
 
     /** The map as GLSL's mat3 takes it: column by column. */
     val matrix: FloatArray
@@ -112,7 +141,7 @@ class ScreenWarp private constructor(
     }
 
     override fun equals(other: Any?): Boolean = other is ScreenWarp && other.rows.contentEquals(rows) &&
-        other.panorama == panorama && other.wholeScreen == wholeScreen
+        other.overlayRows.contentEquals(overlayRows) && other.panorama == panorama && other.wholeScreen == wholeScreen
 
     override fun hashCode(): Int = rows.contentHashCode() * 31 + panorama.hashCode()
 
@@ -121,7 +150,7 @@ class ScreenWarp private constructor(
 
         private val IDENTITY = doubleArrayOf(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
 
-        val None = ScreenWarp(IDENTITY, 1f, false)
+        val None = ScreenWarp(IDENTITY, IDENTITY, 1f, false)
 
         /**
          * The warp for a screen set up as [setup], the picture taking the rectangle [picture] of it — the whole
@@ -144,9 +173,12 @@ class ScreenWarp private constructor(
                 0.0, 0.0, 1.0,
             )
             val rows = times(rect, times(square, seen)).let { m -> DoubleArray(9) { m[it] / m[8] } }
+            val overlay = times(square, seen).let { m -> DoubleArray(9) { m[it] / m[8] } }
             // Exact where nothing bends, so an untouched screen is the identity, not something a rounding away.
-            if (!setup.mirror && !setup.flip && !setup.keystoned) return ScreenWarp(IDENTITY, panorama, false)
-            return ScreenWarp(rows, panorama, setup.keystoned)
+            if (!setup.mirror && !setup.flip && !setup.keystoned) {
+                return ScreenWarp(IDENTITY, IDENTITY, panorama, false)
+            }
+            return ScreenWarp(rows, overlay, panorama, setup.keystoned)
         }
 
         private fun times(a: DoubleArray, b: DoubleArray) = DoubleArray(9) { i ->

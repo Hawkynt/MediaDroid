@@ -172,7 +172,13 @@ private fun PlayerView.panelAspect(): Float =
  * and subtitles drawn above it are neither scaled nor tinted. [drift] moves the picture and the subtitles together
  * (BurnInDrift, an OLED screen's burn-in care).
  */
-private fun PlayerView.applyVideoLook(fit: PictureFit, zoom: Float, pan: Offset, drift: Offset = Offset.Zero) {
+private fun PlayerView.applyVideoLook(
+    fit: PictureFit,
+    zoom: Float,
+    pan: Offset,
+    drift: Offset = Offset.Zero,
+    bend: ScreenWarp = ScreenWarp.None,
+) {
     resizeMode = fit.resizeMode
     val frame = findViewById<View>(androidx.media3.ui.R.id.exo_content_frame) ?: return
     frame.scaleX = zoom
@@ -184,6 +190,31 @@ private fun PlayerView.applyVideoLook(fit: PictureFit, zoom: Float, pan: Offset,
     // The second subtitle track sits in the overlay frame.
     overlayFrameLayout?.translationX = drift.x
     overlayFrameLayout?.translationY = drift.y
+    // The subtitles — text and teletext, the second track, libass's signs — bent as the stage bends the picture: a
+    // projector's mirror, flip and keystone (ScreenWarp.overlayMatrix).
+    val ass = (frame as? android.view.ViewGroup)?.let { group ->
+        (0 until group.childCount).map { group.getChildAt(it) }
+            .filterIsInstance<com.hawkynt.mediadroid.player.AssOverlayView>()
+    }.orEmpty()
+    (listOfNotNull(subtitleView, overlayFrameLayout) + ass).forEach { it.bendWith(bend) }
+}
+
+/**
+ * This view's drawing bent by [warp] over its own size: through the view's animation matrix, which takes a projective
+ * one, from Android 10; before, only the mirror and the flip, by its scale about its middle.
+ */
+private fun View.bendWith(warp: ScreenWarp) {
+    if (android.os.Build.VERSION.SDK_INT >= 29) {
+        animationMatrix = if (warp.bendsOverlays && width > 0 && height > 0) {
+            android.graphics.Matrix().apply { setValues(warp.overlayMatrix(width.toFloat(), height.toFloat())) }
+        } else {
+            null
+        }
+    } else {
+        val m = warp.overlayMatrix(1f, 1f)
+        scaleX = if (m[0] < 0f) -1f else 1f
+        scaleY = if (m[4] < 0f) -1f else 1f
+    }
 }
 
 /**
@@ -1492,7 +1523,7 @@ fun PlayerScreen(
                 val elsewhere = presentation?.isShowing == true
                 view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
                 com.hawkynt.mediadroid.player.AssOverlayView.show(view, !elsewhere)
-                if (!elsewhere) view.applyVideoLook(fit, zoom, pan, view.drift())
+                if (!elsewhere) view.applyVideoLook(fit, zoom, pan, view.drift(), warpShown)
                 view.showShape(player.videoSize)
                 val density = view.resources.displayMetrics.density
                 val cutout = view.rootWindowInsets
@@ -1510,7 +1541,7 @@ fun PlayerScreen(
 
         presentation?.let { shown ->
             if (shown.isShowing) {
-                shown.playerView.applyVideoLook(fit, zoom, pan, shown.playerView.drift())
+                shown.playerView.applyVideoLook(fit, zoom, pan, shown.playerView.drift(), warpShown)
                 shown.playerView.showShape(player.videoSize)
                 engine.second.viewOf(shown.playerView)?.applyLook(subtitleLook)
             }

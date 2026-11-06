@@ -95,6 +95,8 @@ import com.hawkynt.mediadroid.player.PictureLayout
 import com.hawkynt.mediadroid.player.PictureShape
 import com.hawkynt.mediadroid.player.ScreenRect
 import com.hawkynt.mediadroid.player.ScreenWarp
+import com.hawkynt.mediadroid.player.bent
+import androidx.compose.ui.draw.drawWithContent
 import com.hawkynt.mediadroid.player.TestPattern
 import com.hawkynt.mediadroid.player.PictureTrial
 import com.hawkynt.mediadroid.player.PlaybackMath
@@ -187,6 +189,8 @@ fun PlayerScreen(
     // The histogram of the picture on screen, off until switched on in the panel; its last count.
     var histogramShown by remember { mutableStateOf(false) }
     var histogram by remember { mutableStateOf<Histogram?>(null) }
+    // How the stage bends the picture now, for the text subtitles over it.
+    var overlayWarp by remember { mutableStateOf(ScreenWarp.None) }
     // Burn-in care on an OLED screen (BurnInDrift): the drift's step, counted from the player's start, and where the
     // picture, its subtitles and the histogram have drifted to — nowhere unless the screen is set as OLED.
     var driftStep by remember { mutableLongStateOf(0L) }
@@ -315,6 +319,12 @@ fun PlayerScreen(
         var staged: MediaReader.Picture? = null
         var drawn = AssPicture.EMPTY
         var drawnSecond = AssPicture.EMPTY
+        // libass's subtitles bent as the stage bent the picture they go over (a projector's mirror, flip, keystone),
+        // and what they were bent for.
+        var shownWarp = ScreenWarp.None
+        var bentFor: List<Any>? = null
+        var bent = AssPicture.EMPTY
+        var bentSecond = AssPicture.EMPTY
         // The part of the video the staged picture shows, for the subtitles libass lays out on the whole video.
         var shownPart: PictureCrop? = null
         var shownPlace: IntArray? = null
@@ -416,6 +426,8 @@ fun PlayerScreen(
                     // stage draws (centred on the window with a keystone), and the part of that the window shows
                     // (Fill's overhang cut).
                     shownPart = part
+                    shownWarp = warp
+                    overlayWarp = warp
                     shownPlace = if (warp.wholeScreen) {
                         intArrayOf((outW - w) / 2, (outH - h) / 2, w, h)
                     } else {
@@ -473,13 +485,20 @@ fun PlayerScreen(
                     changed = true
                 }
                 if (changed) {
-                    val shown = if (drawn.isEmpty && drawnSecond.isEmpty) {
+                    val warp = if (showing == null) shownWarp else ScreenWarp.None
+                    val key = listOf(drawn, drawnSecond, warp, base.width, base.height)
+                    if (key != bentFor) {
+                        bentFor = key
+                        bent = drawn.bent(warp, base.width, base.height)
+                        bentSecond = drawnSecond.bent(warp, base.width, base.height)
+                    }
+                    val shown = if (bent.isEmpty && bentSecond.isEmpty) {
                         base
                     } else {
                         MediaReader.Picture(base.ptsMs, base.width, base.height, base.rgba.copyOf())
                             .also {
-                                drawn.blendInto(it.rgba, it.width, it.height)
-                                drawnSecond.blendInto(it.rgba, it.width, it.height)
+                                bent.blendInto(it.rgba, it.width, it.height)
+                                bentSecond.blendInto(it.rgba, it.width, it.height)
                             }
                     }
                     shownPicture[0] = shown
@@ -619,18 +638,35 @@ fun PlayerScreen(
             frame?.let { drawShown(it, shownSize, IntOffset(drift.first, drift.second)) }
         }
         val drifted = Modifier.offset { IntOffset(drift.first, drift.second) }
-        subtitle?.let { line ->
-            SubtitleLine(
-                line,
-                Modifier.align(Alignment.BottomCenter).then(drifted).padding(start = 48.dp, end = 48.dp,
-                    bottom = if (controlsShown) 120.dp else 40.dp),
-            )
-        }
-        secondLine?.let { line ->
-            SubtitleLine(
-                line,
-                Modifier.align(Alignment.TopCenter).then(drifted).padding(start = 48.dp, end = 48.dp, top = 40.dp),
-            )
+        // The text subtitles bent as the picture is (ScreenWarp.overlayMatrix): read the right way round on a
+        // rear-projection screen, on the picture on a keystoned one.
+        Box(
+            Modifier.fillMaxSize().drawWithContent {
+                val bend = overlayWarp
+                if (!bend.bendsOverlays) {
+                    drawContent()
+                    return@drawWithContent
+                }
+                drawContext.canvas.save()
+                drawContext.canvas.concat(composeMatrix(bend.overlayMatrix(size.width, size.height)))
+                drawContent()
+                drawContext.canvas.restore()
+            },
+        ) {
+            subtitle?.let { line ->
+                SubtitleLine(
+                    line,
+                    Modifier.align(Alignment.BottomCenter).then(drifted).padding(start = 48.dp, end = 48.dp,
+                        bottom = if (controlsShown) 120.dp else 40.dp),
+                )
+            }
+            secondLine?.let { line ->
+                SubtitleLine(
+                    line,
+                    Modifier.align(Alignment.TopCenter).then(drifted)
+                        .padding(start = 48.dp, end = 48.dp, top = 40.dp),
+                )
+            }
         }
         if (histogramShown) {
             HistogramOverlay(
@@ -858,6 +894,23 @@ private fun clock(ms: Long): String {
 }
 
 private const val CONTROLS_MS = 3_000L
+
+/**
+ * A 3 × 3 projective matrix, row by row (ScreenWarp.overlayMatrix), as Compose's 4 × 4 one, which carries the
+ * perspective row as well.
+ */
+internal fun composeMatrix(m: FloatArray): androidx.compose.ui.graphics.Matrix =
+    androidx.compose.ui.graphics.Matrix().apply {
+        this[0, 0] = m[0]
+        this[1, 0] = m[1]
+        this[3, 0] = m[2]
+        this[0, 1] = m[3]
+        this[1, 1] = m[4]
+        this[3, 1] = m[5]
+        this[0, 3] = m[6]
+        this[1, 3] = m[7]
+        this[3, 3] = m[8]
+    }
 
 /** How often the histogram is counted. */
 private const val HISTOGRAM_MS = 500L
