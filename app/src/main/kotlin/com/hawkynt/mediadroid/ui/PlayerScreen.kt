@@ -111,6 +111,9 @@ import androidx.compose.material.icons.filled.Info
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.mutableLongStateOf
+import com.hawkynt.mediadroid.player.BurnInDrift
 
 
 /** How long the controls stay up after the last touch, like the streaming apps' players. */
@@ -166,15 +169,21 @@ private fun PlayerView.panelAspect(): Float =
 
 /**
  * Fit, zoom and picture correction on the video frame inside a player view only — the controls
- * and subtitles drawn above it are neither scaled nor tinted.
+ * and subtitles drawn above it are neither scaled nor tinted. [drift] moves the picture and the subtitles together
+ * (BurnInDrift, an OLED screen's burn-in care).
  */
-private fun PlayerView.applyVideoLook(fit: PictureFit, zoom: Float, pan: Offset) {
+private fun PlayerView.applyVideoLook(fit: PictureFit, zoom: Float, pan: Offset, drift: Offset = Offset.Zero) {
     resizeMode = fit.resizeMode
     val frame = findViewById<View>(androidx.media3.ui.R.id.exo_content_frame) ?: return
     frame.scaleX = zoom
     frame.scaleY = zoom
-    frame.translationX = pan.x
-    frame.translationY = pan.y
+    frame.translationX = pan.x + drift.x
+    frame.translationY = pan.y + drift.y
+    subtitleView?.translationX = drift.x
+    subtitleView?.translationY = drift.y
+    // The second subtitle track sits in the overlay frame.
+    overlayFrameLayout?.translationX = drift.x
+    overlayFrameLayout?.translationY = drift.y
 }
 
 /**
@@ -452,6 +461,22 @@ fun PlayerScreen(
     var fit by remember { mutableStateOf(PictureFit.FIT) }
     // The part of the picture's width and height left once the stage has cropped its black bars; 1 and 1 without.
     var cropShare by remember { mutableStateOf(1f to 1f) }
+    // Burn-in care on an OLED screen (BurnInDrift): the drift's step, counted from the player's start.
+    var driftStep by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        val start = System.currentTimeMillis()
+        while (true) {
+            val elapsed = System.currentTimeMillis() - start
+            driftStep = elapsed / BurnInDrift.STEP_MS
+            delay(BurnInDrift.STEP_MS - elapsed % BurnInDrift.STEP_MS)
+        }
+    }
+    // Where the picture and the overlays have drifted to on this view's screen; nowhere unless it is an OLED one.
+    fun PlayerView.drift(): Offset {
+        if (!store.screenSetup(screenKey(display)).burnInCare) return Offset.Zero
+        val (x, y) = BurnInDrift.offset(driftStep * BurnInDrift.STEP_MS, BurnInDrift.amplitude(rootView.height))
+        return Offset(x.toFloat(), y.toFloat())
+    }
     // How the stage bends the picture's geometry (panoramic, a projector's); none while it does not draw it.
     var warpShown by remember { mutableStateOf(ScreenWarp.None) }
     // The view's frame in the picture's shape: cropped, as this video's shape is set, for the screen it is on.
@@ -1467,7 +1492,7 @@ fun PlayerScreen(
                 val elsewhere = presentation?.isShowing == true
                 view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
                 com.hawkynt.mediadroid.player.AssOverlayView.show(view, !elsewhere)
-                if (!elsewhere) view.applyVideoLook(fit, zoom, pan)
+                if (!elsewhere) view.applyVideoLook(fit, zoom, pan, view.drift())
                 view.showShape(player.videoSize)
                 val density = view.resources.displayMetrics.density
                 val cutout = view.rootWindowInsets
@@ -1485,7 +1510,7 @@ fun PlayerScreen(
 
         presentation?.let { shown ->
             if (shown.isShowing) {
-                shown.playerView.applyVideoLook(fit, zoom, pan)
+                shown.playerView.applyVideoLook(fit, zoom, pan, shown.playerView.drift())
                 shown.playerView.showShape(player.videoSize)
                 engine.second.viewOf(shown.playerView)?.applyLook(subtitleLook)
             }
@@ -1980,7 +2005,11 @@ fun PlayerScreen(
         }
         if (statisticsShown || histogramShown) {
             // The statistics, and beneath them the histogram — on the left, beside the gear's picture controls.
-            Column(Modifier.align(Alignment.TopStart).then(safeArea).padding(8.dp)) {
+            val overlayDrift = playerView?.drift() ?: Offset.Zero
+            Column(
+                Modifier.align(Alignment.TopStart).then(safeArea).padding(8.dp)
+                    .offset { androidx.compose.ui.unit.IntOffset(overlayDrift.x.toInt(), overlayDrift.y.toInt()) },
+            ) {
                 if (statisticsShown) StatisticsOverlay(statistics, Modifier)
                 if (histogramShown) {
                     HistogramOverlay(histogram, Modifier.padding(top = if (statisticsShown) 8.dp else 0.dp))

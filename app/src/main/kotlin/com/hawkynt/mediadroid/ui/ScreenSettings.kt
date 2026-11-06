@@ -94,6 +94,12 @@ private fun ScreenSetupRows(name: String, key: String, store: StateStore) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     ProjectorRows(setup, ::save)
+    SwitchLine(
+        "OLED screen: burn-in care",
+        "The picture, its black bars and the subtitles drift a few pixels every half minute, too slowly to see, " +
+            "so no edge stays on the same pixels for hours. Only for OLED screens; others need nothing.",
+        setup.burnInCare,
+    ) { save(setup.copy(burnInCare = it)) }
 }
 
 /**

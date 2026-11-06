@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -85,6 +86,7 @@ import com.hawkynt.mediadroid.player.AutoCrop
 import com.hawkynt.mediadroid.player.ChapterSteps
 import com.hawkynt.mediadroid.player.FrameStep
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.BurnInDrift
 import com.hawkynt.mediadroid.player.Histogram
 import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.PictureFit
@@ -170,6 +172,22 @@ fun PlayerScreen(
     // The histogram of the picture on screen, off until switched on in the panel; its last count.
     var histogramShown by remember { mutableStateOf(false) }
     var histogram by remember { mutableStateOf<Histogram?>(null) }
+    // Burn-in care on an OLED screen (BurnInDrift): the drift's step, counted from the player's start, and where the
+    // picture, its subtitles and the histogram have drifted to — nowhere unless the screen is set as OLED.
+    var driftStep by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        val start = System.currentTimeMillis()
+        while (true) {
+            val elapsed = System.currentTimeMillis() - start
+            driftStep = elapsed / BurnInDrift.STEP_MS
+            delay(BurnInDrift.STEP_MS - elapsed % BurnInDrift.STEP_MS)
+        }
+    }
+    val drift = if (screenSetup.burnInCare) {
+        BurnInDrift.offset(driftStep * BurnInDrift.STEP_MS, BurnInDrift.amplitude(screen().height))
+    } else {
+        0 to 0
+    }
     LaunchedEffect(pattern) { if (pattern != null) engine.pause() }
     var shownSize by remember { mutableStateOf(IntSize.Zero) }
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -574,19 +592,27 @@ fun PlayerScreen(
                 true
             },
     ) {
-        Canvas(Modifier.fillMaxSize().onSizeChanged { canvas = it }) { frame?.let { drawShown(it, shownSize) } }
+        Canvas(Modifier.fillMaxSize().onSizeChanged { canvas = it }) {
+            frame?.let { drawShown(it, shownSize, IntOffset(drift.first, drift.second)) }
+        }
+        val drifted = Modifier.offset { IntOffset(drift.first, drift.second) }
         subtitle?.let { line ->
             SubtitleLine(
                 line,
-                Modifier.align(Alignment.BottomCenter).padding(start = 48.dp, end = 48.dp,
+                Modifier.align(Alignment.BottomCenter).then(drifted).padding(start = 48.dp, end = 48.dp,
                     bottom = if (controlsShown) 120.dp else 40.dp),
             )
         }
         secondLine?.let { line ->
-            SubtitleLine(line, Modifier.align(Alignment.TopCenter).padding(start = 48.dp, end = 48.dp, top = 40.dp))
+            SubtitleLine(
+                line,
+                Modifier.align(Alignment.TopCenter).then(drifted).padding(start = 48.dp, end = 48.dp, top = 40.dp),
+            )
         }
         if (histogramShown) {
-            HistogramOverlay(histogram, Modifier.align(Alignment.TopStart).padding(top = 72.dp, start = 12.dp))
+            HistogramOverlay(
+                histogram, Modifier.align(Alignment.TopStart).then(drifted).padding(top = 72.dp, start = 12.dp),
+            )
         }
         if (panel) {
             PicturePanel(
@@ -776,15 +802,15 @@ private fun SubtitleLine(text: String, modifier: Modifier) {
 
 /**
  * [image] centred at [shown], the size the picture size gave it (PictureLayout) — larger than the canvas for Fill, its
- * overhang cut; before that is known, as large as the canvas allows, its shape kept.
+ * overhang cut; before that is known, as large as the canvas allows, its shape kept. Moved by [drift] (BurnInDrift).
  */
-private fun DrawScope.drawShown(image: ImageBitmap, shown: IntSize) {
+private fun DrawScope.drawShown(image: ImageBitmap, shown: IntSize, drift: IntOffset = IntOffset.Zero) {
     val scale = minOf(size.width / image.width, size.height / image.height)
     val w = if (shown.width > 0) shown.width.toFloat() else image.width * scale
     val h = if (shown.height > 0) shown.height.toFloat() else image.height * scale
     drawImage(
         image,
-        dstOffset = IntOffset(((size.width - w) / 2).toInt(), ((size.height - h) / 2).toInt()),
+        dstOffset = IntOffset(((size.width - w) / 2).toInt(), ((size.height - h) / 2).toInt()) + drift,
         dstSize = IntSize(w.toInt(), h.toInt()),
     )
 }

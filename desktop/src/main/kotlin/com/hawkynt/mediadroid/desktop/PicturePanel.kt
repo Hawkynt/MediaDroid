@@ -519,6 +519,12 @@ fun PicturePanel(
             color = Color.Gray,
             fontSize = 13.sp,
         )
+        SwitchRow(
+            "OLED screen: burn-in care",
+            "The picture, its black bars and the subtitles drift a few pixels every half minute, too slowly to see. " +
+                "Only for OLED screens.",
+            screenSetup.burnInCare,
+        ) { onScreenSetup(screenSetup.copy(burnInCare = it)) }
         // Test patterns through the stage, with the picture above and this screen's setup; the video paused.
         Text("Test patterns", color = Color.White, modifier = Modifier.padding(top = 8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
