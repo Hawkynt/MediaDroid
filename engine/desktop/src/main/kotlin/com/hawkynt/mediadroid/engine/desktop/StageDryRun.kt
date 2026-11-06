@@ -26,13 +26,21 @@ object StageDryRun {
 
     /**
      * What the stage does with [picture] drawing at [width] × [height] on a screen refreshing [refreshHz] times a
-     * second; null where the stage could not be set up. Takes under two seconds the first time; blocks.
+     * second, the neural networks as [neural] has them; null where the stage could not be set up. Takes under two
+     * seconds the first time; blocks.
      */
-    fun run(picture: PictureAdjustment, width: Int, height: Int, refreshHz: Double): PictureCheck.DryRun? {
+    fun run(
+        picture: PictureAdjustment,
+        width: Int,
+        height: Int,
+        refreshHz: Double,
+        neural: GlStage.Neural? = null,
+    ): PictureCheck.DryRun? {
         val key = "${PictureCheck.key(picture)}@${width}x$height"
         known[key]?.let { return it }
         return GlStage().use { stage ->
             if (!stage.ready) return@use null
+            stage.neural = neural
             measure(stage, picture, width, height, refreshHz)?.also { known[key] = it }
         }
     }

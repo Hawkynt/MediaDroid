@@ -4,6 +4,7 @@ import com.hawkynt.mediadroid.imaging.Xbrz
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.Ewa
 import com.hawkynt.mediadroid.player.MotionInterpolation
+import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.Nis
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
@@ -178,8 +179,9 @@ class GlStage : AutoCloseable {
             kept.forEach { it.picture = null }
         }
         val next = m.next?.takeIf { it.width == m.shown.width && it.height == m.shown.height }
-        val blending = a.interpolation != PictureAdjustment.Interpolation.OFF && !a.interpolation.isNeural &&
-            next != null
+        // A neural network only where its self-test passed and it opens on the unit it passed on.
+        val blending = a.interpolation != PictureAdjustment.Interpolation.OFF && next != null &&
+            (!a.interpolation.isNeural || interpolator(a.interpolation) != null)
         // At field rate the second half of a picture's time shows its other field.
         val second = a.isFieldRate && !blending && next != null && m.phase >= 0.5f
         var source = filtered(m.shown, m.previous, next, a, second)
@@ -302,6 +304,18 @@ class GlStage : AutoCloseable {
     ): Target {
         val phase = m.phase.coerceIn(0f, 1f)
         var weight = a.interpolation.weight(phase)
+        // A network's in-between: the picture runs from the earlier through it to the later (NeuralInterpolation.mix).
+        if (a.interpolation.isNeural) {
+            val middle = inBetween(a.interpolation, m.shown, next, earlier, later)
+            if (middle != null) {
+                val mix = NeuralInterpolation.mix(phase)
+                val (from, to) = if (mix.towardsMiddle) earlier to middle else middle to later
+                return pass("blend.frag", target("mixed", earlier.width, earlier.height), to.texture,
+                    listOf(from.texture to "uPrevious")) {
+                    glUniform1f(glGetUniformLocation(it, "uWeight"), mix.weight)
+                }
+            }
+        }
         var vectors: MotionSearch.Vectors? = null
         if (a.interpolation.isMotionCompensated) {
             motion.request(m.shown, next, region(m.shown, crop, a.stereo))
@@ -418,8 +432,119 @@ class GlStage : AutoCloseable {
             PictureAdjustment.Upscaler.ANIME4K -> anime4k(from)
             PictureAdjustment.Upscaler.ACNET -> acnet(from)
             PictureAdjustment.Upscaler.XBRZ -> xbrz(from, outW, outH)
-            else -> from
+            else -> if (upscaler.isEnlarger) enlarged(upscaler, from) ?: from else from
         }
+    }
+
+    /**
+     * What the self-tests found, and the networks to run (DesktopNeural): a neural choice runs only where its test
+     * passed, on the unit it passed on; null, none runs.
+     */
+    class Neural(
+        val networks: DesktopNeural,
+        val motion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed> = emptyMap(),
+        val enlargers: Map<PictureAdjustment.Upscaler, NeuralInterpolation.Passed> = emptyMap(),
+    )
+
+    /** The neural networks the stage may run; set by the player, read on the stage's thread. */
+    @Volatile var neural: Neural? = null
+
+    // The networks open on the stage's thread, which they belong to: one interpolator, one upscaler.
+    private var interpolatorOpen: DesktopNeural.Interpolator? = null
+    private var enlargerOpen: DesktopNeural.Enlarger? = null
+    private var tried = HashSet<Any>()
+    private var betweenFor: Pair<MediaReader.Picture, MediaReader.Picture>? = null
+    private val pictureIds = java.util.WeakHashMap<MediaReader.Picture, Long>()
+    private var nextId = 0L
+
+    /** [network] on the unit its test passed on, opened here once; null where it did not pass or does not open. */
+    private fun interpolator(network: PictureAdjustment.Interpolation): DesktopNeural.Interpolator? {
+        val n = neural ?: return null
+        val gpu = n.motion[network]?.unit?.let { it == "GPU" } ?: return null
+        interpolatorOpen?.takeIf { it.network == network && it.gpu == gpu }?.let { return it }
+        interpolatorOpen?.close()
+        interpolatorOpen = null
+        betweenFor = null
+        // A network that would not open is not tried again at every refresh.
+        if (!tried.add(Triple(n, network, gpu))) return null
+        interpolatorOpen = n.networks.interpolator(network, gpu)
+        return interpolatorOpen
+    }
+
+    private fun enlarger(upscaler: PictureAdjustment.Upscaler): DesktopNeural.Enlarger? {
+        val n = neural ?: return null
+        val gpu = n.enlargers[upscaler]?.unit?.let { it == "GPU" } ?: return null
+        enlargerOpen?.takeIf { it.upscaler == upscaler && it.gpu == gpu }?.let { return it }
+        enlargerOpen?.close()
+        enlargerOpen = null
+        if (!tried.add(Triple(n, upscaler, gpu))) return null
+        enlargerOpen = n.networks.enlarger(upscaler, gpu)
+        return enlargerOpen
+    }
+
+    /**
+     * The in-between of [shown] and [next] (filtered: [earlier], [later]) made by [network] at the size its test
+     * found the machine keeps up with (NeuralInterpolation.workingSize), once per pair; null where there is none.
+     */
+    private fun inBetween(
+        network: PictureAdjustment.Interpolation,
+        shown: MediaReader.Picture,
+        next: MediaReader.Picture,
+        earlier: Target,
+        later: Target,
+    ): Target? {
+        val net = interpolator(network) ?: return null
+        val times = neural?.motion?.get(network)?.msByHeight ?: return null
+        val size = NeuralInterpolation.workingSize(earlier.width, earlier.height, times) ?: return null
+        val into = target("inBetween", size.width, size.height)
+        if (betweenFor?.first === shown && betweenFor?.second === next) return into
+        val a = read(scaled(earlier, "netEarlier", size))
+        val b = read(scaled(later, "netLater", size))
+        val rgb = net.run(a, b, size.width, size.height, idOf(shown), idOf(next))
+        MemoryUtil.memFree(a)
+        MemoryUtil.memFree(b)
+        rgb ?: return null
+        uploadRgb(into, rgb)
+        betweenFor = shown to next
+        return into
+    }
+
+    /** [from] enlarged by [upscaler]'s network, two or four times its size; null where it does not run. */
+    private fun enlarged(upscaler: PictureAdjustment.Upscaler, from: Target): Target? {
+        val net = enlarger(upscaler) ?: return null
+        val picture = read(from)
+        val rgb = net.run(picture, from.width, from.height)
+        MemoryUtil.memFree(picture)
+        rgb ?: return null
+        val into = target("up", from.width * net.scale, from.height * net.scale)
+        uploadRgb(into, rgb)
+        return into
+    }
+
+    private fun idOf(picture: MediaReader.Picture): Long = pictureIds.getOrPut(picture) { ++nextId }
+
+    /** [from] at [size], plainly scaled; [from] itself where it has that size. */
+    private fun scaled(from: Target, name: String, size: NeuralInterpolation.Size): Target {
+        if (from.width == size.width && from.height == size.height) return from
+        val into = target(name, size.width, size.height)
+        copy(from, into)
+        return into
+    }
+
+    /** [from]'s pixels as RGBA, rows as the stage holds them (bottom first); free it with MemoryUtil.memFree. */
+    private fun read(from: Target): ByteBuffer {
+        val buffer = MemoryUtil.memAlloc(from.width * from.height * 4)
+        glBindFramebuffer(GL_FRAMEBUFFER, from.framebuffer)
+        glPixelStorei(GL_PACK_ALIGNMENT, 1)
+        glReadPixels(0, 0, from.width, from.height, GL_RGBA, GL_UNSIGNED_BYTE, buffer)
+        return buffer
+    }
+
+    /** [rgb] (RGB bytes, rows as the stage holds them) into [into]. */
+    private fun uploadRgb(into: Target, rgb: ByteBuffer) {
+        glBindTexture(GL_TEXTURE_2D, into.texture)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, into.width, into.height, GL_RGB, GL_UNSIGNED_BYTE, rgb)
     }
 
     // Anime4K: four convolutions at the picture's size into half-float textures taking turns, then twice the size —
@@ -706,6 +831,8 @@ class GlStage : AutoCloseable {
 
     override fun close() {
         thread.submit {
+            interpolatorOpen?.close()
+            enlargerOpen?.close()
             if (window != 0L) GLFW.glfwDestroyWindow(window)
             out?.let(MemoryUtil::memFree)
         }.get()

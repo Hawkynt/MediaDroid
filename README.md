@@ -356,6 +356,13 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   queue up, its four pictures of five spread over the cycle's own time. A choice is tried as on the phone: the same
   checks (`PictureTrial` in `:core:player`), the dry run on a stage of its own drawing at the size the largest screen
   shows 576p, at that screen's refresh rate.
+- The neural networks run on the same native tree as on the phone (`libmediadroid.so` / `mediadroid.dll`): ncnn on
+  Vulkan where the machine has a Vulkan device, else on the CPU. Their files live in the app-data folder's `models/`,
+  a folder per network beside `settings.json`: RIFE, IFRNet, waifu2x and Real-CUGAN come inside the app and are
+  unpacked there on first use, every file checked against its SHA-256 (and put back if it no longer matches);
+  DAIN, XVFI, FLAVR, CAIN and RealSR are fetched there when picked, checked the same way. A self-test runs each unit
+  in a Java process of its own, so a network or a graphics driver that takes the process down takes only the test —
+  the same checks as on the phone (`NeuralChecks`), within the same two seconds.
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
   (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture, sound and
   track panel, N for the next episode, [ and ] for slower and faster, C for a snapshot, `,` and `.` for one frame back
