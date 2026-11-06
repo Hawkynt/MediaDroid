@@ -1,6 +1,7 @@
 package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.player.Dither
+import com.hawkynt.mediadroid.player.Panorama
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
@@ -279,6 +280,37 @@ class GlStageTest {
         val medium = lanczos.copy(interpolation = PictureAdjustment.Interpolation.MEDIUM)
         val mixing = requireNotNull(StageDryRun.run(medium, 1280, 1024, 60.0))
         assertTrue("${mixing.workMs} vs ${run.workMs}", mixing.workMs > run.workMs)
+    }
+
+    @Test
+    fun `panoramic keeps the middle in shape and stretches the sides where Panorama puts them`() {
+        // A 4:3 picture whose red channel is its column: shown at 16:9, each column of the screen tells which column
+        // of the picture it read.
+        val w = 64
+        val h = 48
+        val ramp = MediaReader.Picture(0, w, h, ByteArray(w * h * 4) { i ->
+            when (i % 4) {
+                0 -> ((i / 4 % w) * 4).toByte()
+                3 -> -1
+                else -> 0
+            }
+        })
+        val outW = 256
+        val outH = 144
+        val ratio = 4f / 3f
+        val out = stage.process(ramp, PictureAdjustment.Neutral, outW, outH, panorama = ratio)
+        var worst = 0.0
+        for (x in 0 until outW) {
+            val read = (out.rgba[(outH / 2 * outW + x) * 4].toInt() and 255) / 4.0
+            // Where the picture's column centres are: bilinear between them, held at the edges.
+            val column = (Panorama.source((x + 0.5) / outW, ratio.toDouble()) * w - 0.5).coerceIn(0.0, w - 1.0)
+            worst = maxOf(worst, abs(read - column))
+        }
+        assertTrue("off by $worst columns", worst <= 0.5)
+        // Unlike a plain stretch, which would read the middle of the screen's left quarter from the picture's.
+        val plain = stage.process(ramp, PictureAdjustment.Neutral, outW, outH)
+        val quarter = (outH / 2 * outW + outW / 4) * 4
+        assertTrue(abs((out.rgba[quarter].toInt() and 255) - (plain.rgba[quarter].toInt() and 255)) > 8)
     }
 
     companion object {

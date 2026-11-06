@@ -36,6 +36,7 @@ import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.player.AspectOverride
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCheck
+import com.hawkynt.mediadroid.player.PictureFit
 import com.hawkynt.mediadroid.player.PictureControl
 import com.hawkynt.mediadroid.player.PictureVerdict
 import com.hawkynt.mediadroid.player.PlaybackMath
@@ -77,6 +78,8 @@ fun PicturePanel(
     onSound: (SoundSettings) -> Unit = {},
     nightMode: Boolean = false,
     onNightMode: (Boolean) -> Unit = {},
+    fit: PictureFit = PictureFit.FIT,
+    onFit: (PictureFit) -> Unit = {},
     aspect: AspectOverride = AspectOverride.AUTO,
     onAspect: (AspectOverride) -> Unit = {},
     screenName: String = "This screen",
@@ -131,6 +134,20 @@ fun PicturePanel(
             }
         }
         Text("Picture", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        // How the picture fills the window, as the phone's gear offers it.
+        Text("Picture size", color = Color.White)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PictureFit.entries.forEach { option ->
+                FilterChip(selected = fit == option, onClick = { onFit(option) }, label = { Text(option.label) })
+            }
+        }
+        if (fit == PictureFit.PANORAMIC) {
+            Text(
+                "A narrow picture fills a wide screen: the middle as it is, the sides stretched.",
+                color = Color.Gray,
+                fontSize = 13.sp,
+            )
+        }
         // The frame's shape where the file's flag is wrong (PictureShape), kept for this video, as in the phone's gear.
         Text("Shape of this video", color = Color.White)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

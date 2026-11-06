@@ -135,7 +135,8 @@ class GlStage : AutoCloseable {
 
     /**
      * [picture] alone as [adjustment] has it, at [width] × [height]: RGBA rows from the top — only its part [crop]
-     * (the picture inside its black bars), when one is given.
+     * (the picture inside its black bars), when one is given; [panorama] times wider than its shape, its middle
+     * kept in shape (Panorama), where above 1.
      */
     fun process(
         picture: MediaReader.Picture,
@@ -143,12 +144,14 @@ class GlStage : AutoCloseable {
         width: Int,
         height: Int,
         crop: PictureCrop? = null,
-    ): MediaReader.Picture = process(Moment(picture), adjustment, width, height, crop)
+        panorama: Float = 1f,
+    ): MediaReader.Picture = process(Moment(picture), adjustment, width, height, crop, panorama)
 
     /**
      * The picture [moment] shows as [adjustment] has it, at [width] × [height]: RGBA rows from the top. A temporal
      * deinterlacer reads the pictures either side of it; smooth motion mixes it into the next by the moment's phase.
-     * Only the part [crop] of each picture (inside its black bars) is shown, when one is given.
+     * Only the part [crop] of each picture (inside its black bars) is shown, when one is given; [panorama] times wider
+     * than its shape, its middle kept in shape (Panorama), where above 1.
      */
     fun process(
         moment: Moment,
@@ -156,10 +159,11 @@ class GlStage : AutoCloseable {
         width: Int,
         height: Int,
         crop: PictureCrop? = null,
+        panorama: Float = 1f,
     ): MediaReader.Picture = if (!ready) {
         moment.shown
     } else {
-        thread.submit<MediaReader.Picture> { run(moment, adjustment, width, height, crop) }.get()
+        thread.submit<MediaReader.Picture> { run(moment, adjustment, width, height, crop, panorama) }.get()
     }
 
     // The part of [picture] the stage works on: inside the [crop] where it fits the picture, of that the [stereo] eye.
@@ -180,7 +184,14 @@ class GlStage : AutoCloseable {
 
     private var crop: PictureCrop? = null
 
-    private fun run(m: Moment, a: PictureAdjustment, outW: Int, outH: Int, crop: PictureCrop?): MediaReader.Picture {
+    private fun run(
+        m: Moment,
+        a: PictureAdjustment,
+        outW: Int,
+        outH: Int,
+        crop: PictureCrop?,
+        panorama: Float,
+    ): MediaReader.Picture {
         this.crop = crop
         // Where the picture holds more than the 8 bits it is read back in — HDR's tone-mapped floats, the colour
         // correction's or debanding's results — every pass draws into half floats and the last one dithers (Dither);
@@ -216,7 +227,7 @@ class GlStage : AutoCloseable {
                 }
             }
         }
-        // To the shown size, colour-corrected.
+        // To the shown size, colour-corrected, bent panoramic.
         val shown = target("shown", outW, outH, half = deep)
         val u = a.shaderUniforms()
         pass("adjust.frag", shown, source.texture) { p ->
@@ -224,6 +235,7 @@ class GlStage : AutoCloseable {
             glUniform1f(glGetUniformLocation(p, "uContrast"), u.contrast)
             glUniform1f(glGetUniformLocation(p, "uSaturation"), u.saturation)
             glUniform1f(glGetUniformLocation(p, "uInverseGamma"), u.inverseGamma)
+            glUniform1f(glGetUniformLocation(p, "uPanorama"), panorama)
         }
         if (!deep) return download(shown, m.shown.ptsMs)
         // Dithered to 8 bits, the last pass before the picture is read back: libplacebo's blue noise
