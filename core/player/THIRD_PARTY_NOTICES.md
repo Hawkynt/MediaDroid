@@ -104,3 +104,8 @@ own deblock filters (n8.0's `vf_deblock.c`, every row of a vertical edge judged)
 from the unchanged filters `make-expected.sh` first holds to FFmpeg n9.0.2's command-line output, byte for byte.
 `src/test/resources/cdef/` — `input.ppm` likewise; the other `.ppm` files dav1d 1.5.0's own CDEF run on it by `harness.c`,
 built against dav1d's files by `make-expected.sh`.
+`engine/desktop/src/test/resources/mpv/` (the desktop stage's tests) — two mpv user shaders as test fixtures, not carried
+by the apps: bloc97's `Anime4K_Upscale_CNN_x2_S.glsl` (Anime4K, MIT, © 2019-2021 bloc97) and igv's
+`FSRCNNX_x2_8-0-4-1.glsl` (LGPL-3.0-or-later, © 2017-2021 igv), each with its licence in its header; the pictures written
+by `make-input.py` there; `anime4k.ppm` and `fsrcnnx.ppm` libplacebo 7.360's own renderer running them, on Mesa's
+OpenGL through `tools/shader-check/placebo.cpp`, made by `make-expected.sh`.

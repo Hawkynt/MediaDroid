@@ -8,6 +8,8 @@ import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.Ewa
 import com.hawkynt.mediadroid.player.MotionAdaptive
 import com.hawkynt.mediadroid.player.MotionInterpolation
+import com.hawkynt.mediadroid.player.MpvShader
+import com.hawkynt.mediadroid.player.MpvShaders
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.OldGame
@@ -240,6 +242,11 @@ class GlStage : AutoCloseable {
             val later = filtered(next, m.shown, m.after, a, false)
             source = mixed(m, next, source, later, a)
         }
+        // The mpv user shader chosen, its hooks before the picture is enlarged (MpvShader).
+        val user = a.shader?.let { MpvShaders.library[it] }?.takeIf { it.supported }
+        if (user != null) {
+            source = userHooks(user, source, MpvShader.BEFORE_SCALING, outW, outH, m.shown.width, m.shown.height)
+        }
         // Enlarging to the shown size (at most twice where the upscaler is made for that, the rest bilinear), at the
         // strength chosen: below full strength the plain picture laid over it by that share.
         if (a.upscales && (outW > source.width || outH > source.height)) {
@@ -252,6 +259,16 @@ class GlStage : AutoCloseable {
                     glUniform1f(glGetUniformLocation(p, "uWeight"), a.plainShare)
                 }
             }
+        }
+        // The user shader's hooks on the enlarged picture, at the shown size.
+        if (user != null && user.passes.any { p -> p.hooks.any { it in MpvShader.AFTER_SCALING } }) {
+            if (source.width != outW || source.height != outH) {
+                val scaled = target("mpvScaled", outW, outH, half = true)
+                source = pass("blend.frag", scaled, source.texture, listOf(source.texture to "uPrevious")) { p ->
+                    glUniform1f(glGetUniformLocation(p, "uWeight"), 1f)
+                }
+            }
+            source = userHooks(user, source, MpvShader.AFTER_SCALING, outW, outH, m.shown.width, m.shown.height)
         }
         // To the shown size, colour-corrected, its geometry bent (ScreenWarp).
         val shown = target("shown", outW, outH, half = deep)
@@ -548,6 +565,124 @@ class GlStage : AutoCloseable {
             glUniform2f(glGetUniformLocation(p, "uGrid"), along.gridWidth.toFloat(), along.gridHeight.toFloat())
             glUniform2f(glGetUniformLocation(p, "uSearch"), (w / along.scale).toFloat(), (h / along.scale).toFloat())
             glUniform1f(glGetUniformLocation(p, "uScale"), along.scale.toFloat())
+        }
+    }
+
+    // The mpv user shaders' programs, by their source; and the frame counter and random number their passes are given.
+    private val userPrograms = HashMap<String, Int>()
+    private var hookFrame = 0
+    private val hookRandom = java.util.Random(0)
+
+    /**
+     * [from] through [shader]'s passes hooking [stages], in mpv's order — the textures held the way mpv holds them, the
+     * picture's top row first (turned round on the way in and out), in half floats; `LUMA` the picture's Y, put back
+     * with its colour once its passes have run (glsl/video/mpv-luma.frag, mpv-recombine.frag). [outW] × [outH] is the
+     * size shown (`OUTPUT`, `target_size`), [inputW] × [inputH] the video's (`input_size`). A pass whose `WHEN` does
+     * not hold, or that reads a texture there is not, is left out; a pass that will not compile ends the shader there.
+     */
+    private fun userHooks(
+        shader: MpvShader,
+        from: Target,
+        stages: List<String>,
+        outW: Int,
+        outH: Int,
+        inputW: Int,
+        inputH: Int,
+    ): Target {
+        if (stages.none { shader.planned(it).isNotEmpty() }) return from
+        val turn = floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 1f)
+        // A copy is a blend wholly of the one picture, the program's other input pointed at it too (see copy).
+        fun turned(t: Target, name: String) = pass(
+            "blend.frag", target(name, t.width, t.height, half = true), t.texture, listOf(t.texture to "uPrevious"),
+        ) {
+            glUniform1f(glGetUniformLocation(it, "uWeight"), 1f)
+            glUniformMatrix4fv(glGetUniformLocation(it, "uTexMatrix"), false, turn)
+        }
+        val textures = HashMap<String, Target>()
+        val writes = HashMap<String, Int>()
+        // Every hook point but LUMA stands for the picture itself.
+        val pictureNames = (MpvShader.BEFORE_SCALING + MpvShader.AFTER_SCALING) - "LUMA"
+        fun picture(t: Target) = pictureNames.forEach { textures[it] = t }
+        picture(turned(from, "mpvIn"))
+        hookFrame++
+        fun sizes() = textures.mapValues { MpvShader.Size(it.value.width, it.value.height) } +
+            ("OUTPUT" to MpvShader.Size(outW, outH))
+        fun runPass(stage: String, planned: MpvShader.Planned): Boolean {
+            val hooked = textures.getValue(stage)
+            val sizes = sizes() + ("HOOKED" to MpvShader.Size(hooked.width, hooked.height))
+            if (!planned.runs(sizes)) return true
+            val names = planned.textures(stage)
+            if (names.any { it !in textures }) return true
+            val size = planned.size(sizes)
+            val program = runCatching { userProgram(planned.source(stage)) }.getOrNull() ?: return false
+            val save = planned.pass.save?.takeIf { it != "HOOKED" } ?: stage
+            val count = writes.merge(save, 1, Int::plus)!!
+            val into = target("mpv:$save:${count % 2}", size.width, size.height, half = true)
+            glBindFramebuffer(GL_FRAMEBUFFER, into.framebuffer)
+            glViewport(0, 0, into.width, into.height)
+            glUseProgram(program)
+            names.forEachIndexed { unit, name ->
+                val t = textures.getValue(name)
+                glActiveTexture(GL_TEXTURE0 + unit)
+                glBindTexture(GL_TEXTURE_2D, t.texture)
+                // Read as libplacebo reads a hook's textures: linearly, clamped at the edges.
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+                glUniform1i(glGetUniformLocation(program, "${name}_raw"), unit)
+                glUniform2f(glGetUniformLocation(program, "${name}_size"), t.width.toFloat(), t.height.toFloat())
+            }
+            for (unit in names.size until 8) {
+                glActiveTexture(GL_TEXTURE0 + unit)
+                glBindTexture(GL_TEXTURE_2D, 0)
+            }
+            glActiveTexture(GL_TEXTURE0)
+            glUniform2f(glGetUniformLocation(program, "mpvTarget"), into.width.toFloat(), into.height.toFloat())
+            glUniform1i(glGetUniformLocation(program, "frame"), hookFrame)
+            glUniform1f(glGetUniformLocation(program, "random"), hookRandom.nextFloat())
+            glUniform2f(glGetUniformLocation(program, "input_size"), inputW.toFloat(), inputH.toFloat())
+            glUniform2f(glGetUniformLocation(program, "target_size"), outW.toFloat(), outH.toFloat())
+            glUniform2f(glGetUniformLocation(program, "tex_offset"), 0f, 0f)
+            glBindVertexArray(vao)
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
+            if (save == stage && stage in pictureNames) picture(into) else textures[save] = into
+            return true
+        }
+        run stages@{
+            for (stage in stages) {
+                val passes = shader.planned(stage)
+                if (passes.isEmpty()) continue
+                if (stage == "LUMA") {
+                    val before = textures.getValue("MAIN")
+                    val lumaTarget = target("mpvLuma", before.width, before.height, half = true)
+                    textures["LUMA"] = pass("mpv-luma.frag", lumaTarget, before.texture)
+                    if (!passes.all { runPass(stage, it) }) return@stages
+                    val luma = textures.getValue("LUMA")
+                    picture(pass("mpv-recombine.frag", target("mpvRecombined", luma.width, luma.height, half = true),
+                        before.texture, listOf(luma.texture to "uLuma")))
+                } else if (!passes.all { runPass(stage, it) }) {
+                    return@stages
+                }
+            }
+        }
+        return turned(textures.getValue("MAIN"), "mpvOut")
+    }
+
+    /** A user shader's pass as a program, built once: its fragment shader with the stage's vertex shader beside it. */
+    private fun userProgram(fragment: String): Int = userPrograms.getOrPut(fragment) {
+        val version = fragment.substringBefore('\n')
+        val vertex = version + "\n" + Shaders.VIDEO_VERTEX_ES3.substringAfter('\n')
+        fun compile(type: Int, source: String): Int = glCreateShader(type).also {
+            glShaderSource(it, source)
+            glCompileShader(it)
+            check(glGetShaderi(it, GL_COMPILE_STATUS) != 0) { "mpv shader: " + glGetShaderInfoLog(it) }
+        }
+        glCreateProgram().also {
+            glAttachShader(it, compile(GL_VERTEX_SHADER, vertex))
+            glAttachShader(it, compile(GL_FRAGMENT_SHADER, fragment))
+            glBindAttribLocation(it, 0, "aPosition")
+            glBindAttribLocation(it, 1, "aTexCoord")
+            glLinkProgram(it)
+            check(glGetProgrami(it, GL_LINK_STATUS) != 0) { "mpv shader: " + glGetProgramInfoLog(it) }
         }
     }
 
@@ -1253,6 +1388,8 @@ class GlStage : AutoCloseable {
             "deblock-es3.frag" to Shaders.VIDEO_DEBLOCK_ES3,
             "cdef-direction-es3.frag" to Shaders.VIDEO_CDEF_DIRECTION_ES3,
             "cdef-es3.frag" to Shaders.VIDEO_CDEF_ES3,
+            "mpv-luma.frag" to Shaders.VIDEO_MPV_LUMA,
+            "mpv-recombine.frag" to Shaders.VIDEO_MPV_RECOMBINE,
             "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
             "yuv-spline.frag" to Shaders.VIDEO_YUV_SPLINE,
             "chroma-krig-1.frag" to Shaders.VIDEO_CHROMA_KRIG_1,

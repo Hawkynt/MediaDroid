@@ -37,6 +37,7 @@ import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.player.AspectOverride
 import com.hawkynt.mediadroid.player.Keystone
 import com.hawkynt.mediadroid.player.LogoMask
+import com.hawkynt.mediadroid.player.MpvShaders
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCheck
@@ -366,6 +367,27 @@ fun PicturePanel(
             }
         }
         chroma.Below(picture.chroma.description)
+        // The mpv user shaders in the app-data folder's shaders/ (MpvShaders), each tried before it is taken.
+        val shaders = remember { Trial() }
+        Text("mpv shaders", color = Color.White, modifier = Modifier.padding(top = 8.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            (listOf<String?>(null) + MpvShaders.choices).forEach { name ->
+                val label = name?.removeSuffix(".glsl") ?: "Off"
+                FilterChip(
+                    selected = picture.shader == name,
+                    enabled = shaders.trying == null,
+                    onClick = { shaders.pick(scope, picture, picture.copy(shader = name), label, check, onChange) },
+                    label = { Text(label) },
+                )
+            }
+        }
+        shaders.Below(
+            picture.shader?.let { MpvShaders.library[it]?.description } ?: if (MpvShaders.choices.isEmpty()) {
+                "Put mpv .glsl shaders into the shaders folder beside the app's settings to choose them here."
+            } else {
+                "Off: no mpv shader runs."
+            },
+        )
         val motion = remember { Trial() }
         Text("Smooth motion", color = Color.White, modifier = Modifier.padding(top = 8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

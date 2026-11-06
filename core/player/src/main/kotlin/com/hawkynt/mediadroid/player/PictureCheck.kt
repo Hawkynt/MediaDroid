@@ -42,6 +42,7 @@ object PictureCheck {
         picture.interpolation.name,
         picture.chroma.name,
         picture.colorize.name,
+        picture.shader.orEmpty(),
     ).joinToString("/")
 
     /**
@@ -55,7 +56,8 @@ object PictureCheck {
             (to.interpolation == PictureAdjustment.Interpolation.OFF && from.interpolation != to.interpolation) ||
             (to.colorize == PictureAdjustment.Colorize.OFF && from.colorize != to.colorize) ||
             (!to.fieldRate && from.fieldRate) ||
-            (to.chroma == PictureAdjustment.Chroma.BILINEAR && from.chroma != to.chroma)
+            (to.chroma == PictureAdjustment.Chroma.BILINEAR && from.chroma != to.chroma) ||
+            (to.shader == null && from.shader != to.shader)
         return !lighter
     }
 }

@@ -337,6 +337,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var deblockProgram = 0
     private var cdefDirectionProgram = 0
     private var cdefProgram = 0
+    private var mpvLumaProgram = 0
+    private var mpvRecombineProgram = 0
 
     // Debanding's frame index, which seeds its random numbers with the pixel's position: libplacebo's 8-bit counter.
     private var debandFrame = 0
@@ -1061,6 +1063,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(deblockProgram)
             GLES20.glDeleteProgram(cdefDirectionProgram)
             GLES20.glDeleteProgram(cdefProgram)
+            GLES20.glDeleteProgram(mpvLumaProgram)
+            GLES20.glDeleteProgram(mpvRecombineProgram)
+            mpvPrograms.values.forEach { GLES20.glDeleteProgram(it) }
+            mpvFrames.values.forEach { it.release() }
             GLES20.glDeleteProgram(tonemapProgram)
             GLES20.glDeleteProgram(peakProgram)
             if (ditherProgram != 0) GLES20.glDeleteProgram(ditherProgram)
@@ -1250,6 +1256,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 cdefProgram = programs[2]
             }
         }
+        mpvLumaProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_LUMA)
+        mpvRecombineProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_RECOMBINE)
         tonemapProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TONEMAP)
         peakProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PEAK)
         // Dithering reads its texels exactly with GLSL ES 3.00's texelFetch; the GLSL ES 1.00 pass reads their centres.
@@ -2244,18 +2252,27 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }
     }
 
-    /** Steps 4 and 5: sharpness and clarity, and the picture onto the screen, enlarged as chosen. */
-    private fun output(from: Frame, width: Int, height: Int, picture: PictureAdjustment) {
+    /**
+     * Steps 4 and 5: sharpness and clarity, and the picture onto the screen, enlarged as chosen — an mpv user shader's
+     * hooks (see [userHooks]) on the picture before it is enlarged and on it enlarged.
+     */
+    private fun output(from: Frame, inWidth: Int, inHeight: Int, picture: PictureAdjustment) {
         var source = from
         grainNow = 0f
         grainToShow = filters.grain
         val outWidth = query(EGL14.EGL_WIDTH)
         val outHeight = query(EGL14.EGL_HEIGHT)
+        val user = picture.shader?.let { MpvShaders.library[it] }?.takeIf { it.supported && halfTargets && es3 }
+        if (user != null) source = userHooks(user, source, MpvShader.BEFORE_SCALING, outWidth, outHeight)
+        val width = source.width
+        val height = source.height
+        val afterHooks = user != null && user.passes.any { p -> p.hooks.any { it in MpvShader.AFTER_SCALING } }
         // The colour correction, the panorama and the dithering are the last passes: the rest is drawn at the
-        // screen's size into a frame of its own — in half floats where the picture is dithered.
+        // screen's size into a frame of its own — in half floats where the picture is dithered; so too where the user
+        // shader hooks it there.
         ditherNow = dithers(picture)
         val bend = warp
-        val adjusting = !picture.isColorNeutral || ditherNow || !bend.isIdentity
+        val adjusting = !picture.isColorNeutral || ditherNow || !bend.isIdentity || afterHooks
         val upscaling = picture.upscales && outWidth > width
         val sharpen: (Int) -> Unit = { p ->
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
@@ -2519,6 +2536,23 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             }
         }
         if (!adjusting) return
+        if (afterHooks && user != null) {
+            val hooked = userHooks(user, frames[ADJUSTED], MpvShader.AFTER_SCALING, outWidth, outHeight)
+            frames[ADJUSTED].bind()
+            run(blendProgram, GLES20.GL_TEXTURE_2D, hooked.texture, identity) { p ->
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrevious"), 0)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWeight"), 1f)
+            }
+            if (picture.isColorNeutral && !ditherNow && bend.isIdentity) {
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+                GLES20.glViewport(0, 0, outWidth, outHeight)
+                run(blendProgram, GLES20.GL_TEXTURE_2D, frames[ADJUSTED].texture, identity) { p ->
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrevious"), 0)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWeight"), 1f)
+                }
+                return
+            }
+        }
         var last = frames[ADJUSTED]
         if (!picture.isColorNeutral || !bend.isIdentity) {
             // The colour correction and the geometry: onto the screen, or into a half-float frame of its own for the
@@ -2542,6 +2576,117 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             }
         }
         if (ditherNow) dither(last, outWidth, outHeight)
+    }
+
+    // The mpv user shaders' frames by the name the passes save them under, and their programs by source; the frame
+    // counter and random number the passes are given.
+    private val mpvFrames = HashMap<String, Frame>()
+    private val mpvPrograms = HashMap<String, Int>()
+    private var hookFrame = 0
+    private val hookRandom = java.util.Random(0)
+
+    /**
+     * [from] through [shader]'s passes hooking [stages], in mpv's order (see MpvShader) — the frames held the way mpv
+     * holds its textures, the picture's top row first (turned round on the way in and out), in half floats; `LUMA` the
+     * picture's Y, put back with its colour once its passes have run (glsl/video/mpv-luma.frag, mpv-recombine.frag).
+     * [outWidth] × [outHeight] is the screen's size (`OUTPUT`, `target_size`). A pass whose `WHEN` does not hold, or
+     * that reads a texture there is not, is left out; one that will not compile ends the shader there. As the desktop
+     * stage's GlStage.userHooks, which is held to libplacebo running the same shaders.
+     */
+    private fun userHooks(shader: MpvShader, from: Frame, stages: List<String>, outWidth: Int, outHeight: Int): Frame {
+        if (stages.none { shader.planned(it).isNotEmpty() }) return from
+        val turn = floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 1f)
+        fun frame(name: String, w: Int, h: Int) = mpvFrames.getOrPut(name) { Frame() }.ensure(w, h, half = true)
+        fun turned(f: Frame, name: String): Frame {
+            val into = frame(name, f.width, f.height)
+            into.bind()
+            run(blendProgram, GLES20.GL_TEXTURE_2D, f.texture, turn) { p ->
+                // A copy: the blend's other input is the same picture (its uniform may still name another unit).
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrevious"), 0)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWeight"), 1f)
+            }
+            return into
+        }
+        val textures = HashMap<String, Frame>()
+        val writes = HashMap<String, Int>()
+        val pictureNames = (MpvShader.BEFORE_SCALING + MpvShader.AFTER_SCALING) - "LUMA"
+        fun picture(f: Frame) = pictureNames.forEach { textures[it] = f }
+        picture(turned(from, "mpvIn"))
+        hookFrame++
+        fun sizes() = textures.mapValues { MpvShader.Size(it.value.width, it.value.height) } +
+            ("OUTPUT" to MpvShader.Size(outWidth, outHeight))
+        fun runPass(stage: String, planned: MpvShader.Planned): Boolean {
+            val hooked = textures.getValue(stage)
+            val sizes = sizes() + ("HOOKED" to MpvShader.Size(hooked.width, hooked.height))
+            if (!planned.runs(sizes)) return true
+            val names = planned.textures(stage)
+            if (names.any { it !in textures }) return true
+            val size = planned.size(sizes)
+            val program = runCatching { userProgram(planned.source(stage)) }.getOrNull() ?: return false
+            val save = planned.pass.save?.takeIf { it != "HOOKED" } ?: stage
+            val count = writes.merge(save, 1, Int::plus)!!
+            val into = frame("mpv:$save:${count % 2}", size.width, size.height)
+            into.bind()
+            GLES20.glUseProgram(program)
+            names.forEachIndexed { unit, name ->
+                val t = textures.getValue(name)
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE0 + unit)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, t.texture)
+                GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "${name}_raw"), unit)
+                GLES20.glUniform2f(
+                    GLES20.glGetUniformLocation(program, "${name}_size"), t.width.toFloat(), t.height.toFloat(),
+                )
+            }
+            fun vec2(name: String, x: Float, y: Float) =
+                GLES20.glUniform2f(GLES20.glGetUniformLocation(program, name), x, y)
+            vec2("mpvTarget", into.width.toFloat(), into.height.toFloat())
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "frame"), hookFrame)
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "random"), hookRandom.nextFloat())
+            vec2("input_size", videoWidth.toFloat(), videoHeight.toFloat())
+            vec2("target_size", outWidth.toFloat(), outHeight.toFloat())
+            vec2("tex_offset", 0f, 0f)
+            val position = GLES20.glGetAttribLocation(program, "aPosition")
+            GLES20.glEnableVertexAttribArray(position)
+            GLES20.glVertexAttribPointer(position, 2, GLES20.GL_FLOAT, false, 0, QUAD)
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+            GLES20.glDisableVertexAttribArray(position)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+            if (save == stage && stage in pictureNames) picture(into) else textures[save] = into
+            return true
+        }
+        run stages@{
+            for (stage in stages) {
+                val passes = shader.planned(stage)
+                if (passes.isEmpty()) continue
+                if (stage == "LUMA") {
+                    val before = textures.getValue("MAIN")
+                    val luma = frame("mpvLuma", before.width, before.height)
+                    luma.bind()
+                    run(mpvLumaProgram, GLES20.GL_TEXTURE_2D, before.texture, identity) {}
+                    textures["LUMA"] = luma
+                    if (!passes.all { runPass(stage, it) }) return@stages
+                    val hooked = textures.getValue("LUMA")
+                    val recombined = frame("mpvRecombined", hooked.width, hooked.height)
+                    recombined.bind()
+                    run(mpvRecombineProgram, GLES20.GL_TEXTURE_2D, before.texture, identity) { p ->
+                        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, hooked.texture)
+                        GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uLuma"), 1)
+                        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+                    }
+                    picture(recombined)
+                } else if (!passes.all { runPass(stage, it) }) {
+                    return@stages
+                }
+            }
+        }
+        return turned(textures.getValue("MAIN"), "mpvOut")
+    }
+
+    /** A user shader's pass as a program, built once: its fragment shader with the stage's vertex shader beside it. */
+    private fun userProgram(fragment: String): Int = mpvPrograms.getOrPut(fragment) {
+        val version = fragment.substringBefore('\n')
+        linked(program(version + "\n" + Shaders.VIDEO_VERTEX_ES3.substringAfter('\n'), fragment))
     }
 
     /**

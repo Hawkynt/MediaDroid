@@ -118,6 +118,15 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
         com.hawkynt.mediadroid.player.AviAudioFraming.remote = { SourceAccess.resolve(app, it) }
         com.hawkynt.mediadroid.player.ownedLocation = { Source.owning(store.sources, it) != null }
     }
+    // The mpv user shaders of the folder picked in Settings, read once off the main thread (MpvShaderFolder).
+    LaunchedEffect(store) {
+        val folder = store.data.settings.shaderFolder
+        if (!demo && folder.isNotEmpty()) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.hawkynt.mediadroid.data.MpvShaderFolder.load(context.applicationContext, folder)
+            }
+        }
+    }
 
     fun storageAccess() = demo || Environment.isExternalStorageManager()
     var hasAccess by remember { mutableStateOf(storageAccess()) }
