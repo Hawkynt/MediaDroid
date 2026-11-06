@@ -50,6 +50,9 @@ dependencies {
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)
     testImplementation(libs.junit)
+    // The presentation benchmark's window and its OpenGL calls (PresentationBench).
+    testImplementation(libs.lwjgl.glfw)
+    testImplementation(libs.lwjgl.opengl)
 }
 
 // The icons (desktop/icons) on the classpath too, for the window's own icon.
@@ -94,6 +97,24 @@ tasks.register<JavaExec>("icons") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("com.hawkynt.mediadroid.desktop.IconsKt")
     args(rootDir.path)
+    dependsOn("testClasses")
+}
+
+// How the stage's picture reaches the window, each candidate measured at 1080p and 4K against a 60 Hz clock on this
+// machine's display (#287, README "Platform support"): ./gradlew :desktop:presentationBench [-Pframes=600], the table
+// in build/reports/presentation.md; -Poffscreen draws off screen on the same card where the display presents nothing (a
+// locked session). Needs a display; not part of `test`.
+tasks.register<JavaExec>("presentationBench") {
+    group = "verification"
+    description = "Measures how the stage's picture reaches the window"
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.hawkynt.mediadroid.desktop.PresentationBenchKt")
+    jvmArgs("-Xmx2g")
+    args(
+        providers.gradleProperty("frames").getOrElse("600"),
+        layout.buildDirectory.file("reports/presentation.md").get().asFile.path,
+        if (providers.gradleProperty("offscreen").isPresent) "offscreen" else "screen",
+    )
     dependsOn("testClasses")
 }
 

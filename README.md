@@ -425,6 +425,33 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   queue up, its four pictures of five spread over the cycle's own time. A choice is tried as on the phone: the same
   checks (`PictureTrial` in `:core:player`), the dry run on a stage of its own drawing at the size the largest screen
   shows 576p, at that screen's refresh rate.
+- How the stage's picture reaches the window was measured, not assumed ([#287](https://github.com/Hawkynt/MediaDroid/issues/287);
+  `./gradlew :desktop:presentationBench`, `-Poffscreen` where the display presents nothing): the stage draws a new
+  1080p or 4K picture whenever a 60 Hz clock asks for one, each picture uploaded fresh as a decoded one is, and Skia on
+  OpenGL draws it with a control bar over it, as Compose Desktop draws on Linux. The cost is what presenting adds to a
+  picture, read-back and drawing together; the stage's filters are left out. On an Intel UHD (Tiger Lake GT1, Mesa
+  26.2 iris), off screen because the session was locked, 600 pictures each:
+
+  | Candidate | Picture | Mean ms | p95 ms | Max ms | Dropped |
+  | --- | --- | ---: | ---: | ---: | ---: |
+  | `glReadPixels` into memory (before) | 1080p | 11.47 | 12.99 | 14.94 | 107 |
+  | pixel-buffer object, waited for | 1080p | 8.83 | 10.18 | 12.55 | 1 |
+  | **two pixel-buffer objects, one picture late** | 1080p | **3.59** | 4.20 | 5.93 | 0 |
+  | the stage's texture shared with Skia | 1080p | 0.24 | 0.30 | 0.39 | 0 |
+  | `glReadPixels` into memory (before) | 4K | 28.31 | 31.92 | 34.22 | 1205 |
+  | pixel-buffer object, waited for | 4K | 24.30 | 28.30 | 30.90 | 1029 |
+  | two pixel-buffer objects, one picture late | 4K | 16.04 | 17.46 | 25.83 | 600 |
+  | the stage's texture shared with Skia | 4K | 0.26 | 0.36 | 0.47 | 17 |
+
+  The desktop presents through **two pixel-buffer objects**: each picture is read back while the one before is
+  handed over, so nobody waits for the graphics card. It is the one candidate within the 4 ms budget at 1080p that
+  Compose Desktop's public API allows, and the picture stays in memory, where the subtitles, the histogram and the
+  snapshot read it. It costs one screen refresh of delay, and the newest picture is collected at the next refresh. The
+  plain read-back stays as a fallback (`-Dmediadroid.presentation=sync` or `MEDIADROID_PRESENTATION=sync`), and the
+  dry run uses it, so a check waits for what the stage really takes. Only texture sharing holds 4K at 60 here. Compose
+  keeps its own Skia context internal and draws through Direct3D 12 on Windows, so sharing waits for that, or for a
+  native surface under the controls. Not measured yet: the pacing on a real screen's refresh (the session was
+  locked) and Windows on real graphics. The CI runs the benchmark on llvmpipe as a regression record only.
 - The neural networks run on the same native tree as on the phone (`libmediadroid.so` / `mediadroid.dll`): ncnn on
   Vulkan where the machine has a Vulkan device, else on the CPU. Their files live in the app-data folder's `models/`,
   a folder per network beside `settings.json`: RIFE, IFRNet, waifu2x, Real-CUGAN and Real-ESRGAN come inside the app

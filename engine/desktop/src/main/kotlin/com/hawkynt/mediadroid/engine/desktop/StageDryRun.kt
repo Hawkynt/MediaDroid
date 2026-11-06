@@ -39,7 +39,8 @@ object StageDryRun {
     ): PictureCheck.DryRun? {
         val key = "${PictureCheck.key(picture)}@${width}x$height"
         known[key]?.let { return it }
-        return GlStage().use { stage ->
+        // Read back at once: what the stage takes for a picture is waited for, not hidden behind the next call.
+        return GlStage(Presentation.SYNC).use { stage ->
             if (!stage.ready) return@use null
             stage.neural = neural
             measure(stage, picture, width, height, refreshHz)?.also { known[key] = it }

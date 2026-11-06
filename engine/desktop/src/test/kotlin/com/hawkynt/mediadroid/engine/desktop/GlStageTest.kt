@@ -718,6 +718,31 @@ class GlStageTest {
         assertTrue((lifted.rgba[0].toInt() and 255) > 8)
     }
 
+    @Test
+    fun `every presentation reads back the same picture, the lagged one a picture late`() {
+        val w = 320
+        val h = 180
+        val first = MediaReader.Picture(0, w, h, TestPattern.BARS_HD.render(w, h))
+        val second = MediaReader.Picture(40, w, h, TestPattern.LEVELS.render(w, h))
+        val expected = GlStage(Presentation.SYNC).use { sync ->
+            listOf(first, second).map { sync.process(it, PictureAdjustment.Neutral, w, h).rgba }
+        }
+        GlStage(Presentation.PBO).use { pbo ->
+            assertTrue(expected[0].contentEquals(pbo.process(first, PictureAdjustment.Neutral, w, h).rgba))
+            assertTrue(expected[1].contentEquals(pbo.process(second, PictureAdjustment.Neutral, w, h).rgba))
+        }
+        GlStage(Presentation.PBO_LAGGED).use { lagged ->
+            // The first picture is waited for; after it, each call hands out the one before.
+            assertTrue(expected[0].contentEquals(lagged.process(first, PictureAdjustment.Neutral, w, h).rgba))
+            val behind = lagged.process(second, PictureAdjustment.Neutral, w, h)
+            assertEquals(first.ptsMs, behind.ptsMs)
+            assertTrue(expected[0].contentEquals(behind.rgba))
+            val newest = lagged.latest()!!
+            assertEquals(second.ptsMs, newest.ptsMs)
+            assertTrue(expected[1].contentEquals(newest.rgba))
+        }
+    }
+
     companion object {
         private lateinit var stage: GlStage
 
@@ -732,7 +757,7 @@ class GlStageTest {
             val windows = System.getProperty("os.name").startsWith("Windows")
             val display = System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null
             expect("no display", windows || display)
-            stage = GlStage()
+            stage = GlStage(Presentation.PBO)
             expect("no OpenGL 4.3 context", stage.ready)
         }
 
