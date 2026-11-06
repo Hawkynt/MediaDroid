@@ -1,0 +1,15 @@
+# ETSI EN 300 706 V1.2.1, table 36: the Latin national option sub-sets. Each line is a sub-set's name, a tab, and the
+# 13 characters it puts at the G0 positions 2/3, 2/4, 4/0, 5/B, 5/C, 5/D, 5/E, 5/F, 6/0, 7/B, 7/C, 7/D, 7/E.
+Czech/Slovak	#ůčťžýířéáěúš
+English	£$@←½→↑#―¼‖¾÷
+Estonian	#õŠÄÖŽÜÕšäöžü
+French	éïàëêùî#èâôûç
+German	#$§ÄÖÜ^_°äöüß
+Italian	£$é°ç→↑#ùàòèì
+Lettish/Lithuanian	#$ŠėęŽčūšąųžį
+Polish	#ńąƵŚŁćóężśłź
+Portuguese/Spanish	ç$¡áéíóú¿üñèà
+Rumanian	#¤ŢÂŞĂÎıţâşăî
+Serbian/Croatian/Slovenian	#ËČĆŽĐŠëčćžđš
+Swedish/Finnish/Hungarian	#¤ÉÄÖÅÜ_éäöåü
+Turkish	₺ğİŞÖÇÜĞışöçü

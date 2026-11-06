@@ -22,6 +22,7 @@ import androidx.media3.extractor.avi.AviExtractor
 import androidx.media3.extractor.mp3.Mp3Extractor
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.text.SubtitleParser
+import androidx.media3.extractor.ts.TsExtractor
 import com.hawkynt.mediadroid.library.FsFile
 import java.io.EOFException
 
@@ -40,14 +41,19 @@ object AviAudioFraming {
      */
     val extractors: ExtractorsFactory = extractors(DefaultSubtitleParserFactory())
 
-    /** [extractors] with the subtitles Media3 parses as it reads decided by [parsers] (see AssSubtitles). */
+    /**
+     * [extractors] with the subtitles Media3 parses as it reads decided by [parsers] (see AssSubtitles), and teletext
+     * read from transport streams and parsed besides (TeletextSubtitles).
+     */
     fun extractors(parsers: SubtitleParser.Factory): ExtractorsFactory = object : ExtractorsFactory {
-        private fun media3() = DefaultExtractorsFactory().setSubtitleParserFactory(parsers)
+        private val withTeletext = TeletextSubtitles.parsers(parsers)
 
-        override fun createExtractors(): Array<Extractor> = wrap(media3().createExtractors(), null)
+        private fun media3() = DefaultExtractorsFactory().setSubtitleParserFactory(withTeletext)
+
+        override fun createExtractors(): Array<Extractor> = wrap(media3().createExtractors(), null, withTeletext)
 
         override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> =
-            wrap(media3().createExtractors(uri, responseHeaders), uri) + FfmpegExtractor(uri, remote)
+            wrap(media3().createExtractors(uri, responseHeaders), uri, withTeletext) + FfmpegExtractor(uri, remote)
     }
 
     /** The file behind a network location, for FFmpeg's demuxers; the app points this at its sources. */
@@ -58,14 +64,17 @@ object AviAudioFraming {
     fun recording(extractors: Array<Extractor>, uri: Uri): Array<Extractor> =
         extractors.map { RecordingExtractor(it, uri.toString()) }.toTypedArray()
 
-    private fun wrap(extractors: Array<Extractor>, uri: Uri?): Array<Extractor> = extractors.map {
-        val framed = when (it) {
-            is AviExtractor -> FramingExtractor(it)
-            is Mp3Extractor -> NotProgramStream(it)
-            else -> it
-        }
-        if (uri != null) RecordingExtractor(framed, uri.toString()) else framed
-    }.toTypedArray()
+    private fun wrap(extractors: Array<Extractor>, uri: Uri?, parsers: SubtitleParser.Factory): Array<Extractor> =
+        extractors.map {
+            val framed = when (it) {
+                is AviExtractor -> FramingExtractor(it)
+                is Mp3Extractor -> NotProgramStream(it)
+                // Media3's own, with teletext read as well (TeletextSubtitles).
+                is TsExtractor -> TeletextSubtitles.tsExtractor(parsers)
+                else -> it
+            }
+            if (uri != null) RecordingExtractor(framed, uri.toString()) else framed
+        }.toTypedArray()
 
     /** Notes in [DemuxerLog] which extractor took the file: the one Media3 initialises is the one it chose. */
     private class RecordingExtractor(private val inner: Extractor, private val location: String) : Extractor {

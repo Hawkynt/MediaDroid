@@ -119,6 +119,28 @@ class MediaReaderTest {
     }
 
     @Test
+    fun `a DVB recording's teletext pages are subtitle tracks, each read as the page shows it`() {
+        // teletext/subtitles.ts (made by teletext/make.py): pages 888 (German) and 777 (English, hard of hearing).
+        val ts = File(requireNotNull(javaClass.getResource("/teletext/subtitles.ts")).toURI()).path
+        MediaReader(ts).use { r ->
+            val text = r.tracks.filter { it.kind == Track.Kind.TEXT }
+            assertEquals(listOf("Teletext 888", "Teletext 777"), text.map { it.label })
+            assertEquals(listOf("deu", "eng"), text.map { it.language })
+            r.selectText(text[0].id)
+            val german = generateSequence { r.read() }.filterIsInstance<MediaReader.Cue>().toList()
+            assertEquals(listOf("Hallo!\nGrüße aus Hamburg", "", "Bis bald."), german.map { it.text })
+            // On the pictures' clock (the video starts at 40 ms), each until the next.
+            assertEquals(listOf(960L, 2960L, 4960L), german.map { it.startMs })
+            assertTrue(german.all { it.endMs == MediaReader.UNTIL_REPLACED })
+        }
+        MediaReader(ts).use { r ->
+            r.selectText(r.tracks.last { it.kind == Track.Kind.TEXT }.id)
+            val read = generateSequence { r.read() }.filterIsInstance<MediaReader.Cue>().map { it.text }.toList()
+            assertEquals(listOf("(Musik)", "(Applaus)", ""), read)
+        }
+    }
+
+    @Test
     fun `a file's own subtitle stream reads the same, with its language`() {
         val mkv = File(requireNotNull(javaClass.getResource("/subtitled.mkv")).toURI()).path
         assertEquals(expected, cues(mkv))
