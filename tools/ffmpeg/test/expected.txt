@@ -6,6 +6,11 @@ sample-144.rm format=rm streams=2
   #1 packets=101 keyframes=101
   seek 1000ms ok=true next=960ms key=true
   frame 160x120 at 1000000us
+sample-full.y4m format=yuv4mpegpipe streams=1
+  #0 kind=0 codec=rawvideo decoder=rawvideo format=yuv420p 320x240 0Hz 0ch params=48B
+  #0 packets=50 keyframes=50
+  seek 1000ms ok=true next=960ms key=true
+  frame 160x120 at 1000000us
 sample.asf format=asf streams=2
   #0 kind=0 codec=msmpeg4v3 decoder=msmpeg4 format=yuv420p 320x240 0Hz 0ch params=48B
   #1 kind=1 codec=wmav1 decoder=wmav1 format=fltp 0x0 44100Hz 1ch params=52B
@@ -67,6 +72,7 @@ sample.y4m format=yuv4mpegpipe streams=1
   frame 160x120 at 1000000us
 == ffprobe packet counts (oracle)
 sample-144.rm 0,rv10,yuv420p,50 1,ra_144,s16,101 
+sample-full.y4m 0,rawvideo,yuv420p,50 
 sample.asf 0,msmpeg4v3,yuv420p,50 1,wmav1,fltp,44 
 sample.dv 0,dvvideo,yuv420p,50 1,pcm_s16le,s16,50 
 sample.m2v 0,mpeg2video,yuv420p,50,  
@@ -78,6 +84,7 @@ sample.wtv 0,mpeg2video,yuv420p,50,  1,mp2,s16p,84
 sample.y4m 0,rawvideo,yuv420p,50 
 == thumbnails: which frame of ffmpeg's own decode at the same size (oracle) each one is, byte for byte
 sample-144.rm 160x120 is decoded frame 24
+sample-full.y4m 160x120 is decoded frame 24
 sample.asf 160x120 is decoded frame 13
 sample.dv 160x120 is decoded frame 25
 sample.m2v 160x120 is decoded frame 0
@@ -92,6 +99,8 @@ sample-144.rm #0 ffmpeg rv10 frames=50 320x240 0Hz 0ch
 sample-144.rm #1 ffmpeg ra_144 frames=101 0x0 8000Hz 1ch
 sample-144.rm #0 blob rv10 frames=50 320x240 0Hz 0ch
 sample-144.rm #1 blob ra_144 frames=101 0x0 8000Hz 1ch
+sample-full.y4m #0 ffmpeg rawvideo frames=50 320x240 0Hz 0ch
+sample-full.y4m #0 blob rawvideo frames=50 320x240 0Hz 0ch
 sample.asf #0 ffmpeg msmpeg4v3 frames=50 320x240 0Hz 0ch
 sample.asf #1 ffmpeg wmav1 frames=43 0x0 44100Hz 1ch
 sample.asf #0 blob msmpeg4v3 frames=50 320x240 0Hz 0ch

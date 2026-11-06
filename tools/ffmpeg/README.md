@@ -61,7 +61,7 @@ JAVA_HOME=…/jdk21 tools/ffmpeg/test/check.sh <host-ffmpeg-prefix> <out-dir>
 ```
 
 It writes a two-second sample of every container the app demuxes with FFmpeg (WMV, ASF, RealMedia with
-RealVideo 1/2 and RealAudio 1.0, DV, MXF, NUT, WTV, raw MPEG-2, Y4M), runs `FfmpegDemuxer.java` over
+RealVideo 1/2 and RealAudio 1.0, DV, MXF, NUT, WTV, raw MPEG-2, Y4M — once more in full range, plain yuv420p rather than MJPEG's yuvj), runs `FfmpegDemuxer.java` over
 JNI on them, records ffprobe's packet counts as the oracle, and decodes every stream twice — from
 FFmpeg's own parameters and from MediaDroid's codec-parameter blob alone. It also takes the thumbnail
 picture of every sample (`FfmpegDemuxer.frame`, from a demuxer opened just for it, as the app does) and
