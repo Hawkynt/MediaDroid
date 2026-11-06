@@ -415,10 +415,14 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   Pictures folder (`MediaDroid` inside it; on Linux the one xdg-user-dirs names, on Windows the one Windows knows of,
   wherever it or OneDrive moved it) and shows where it went.
 - Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
-  language last picked is where the next video starts. ASS/SSA subtitles are drawn as they were authored, by
-  [libass](https://github.com/libass/libass) — their fonts (those the file carries, then the system's), positions,
-  rotations, karaoke, fades and drawn signs — at the size the picture is shown, so the text stays sharp. Teletext pages of DVB recordings are subtitle tracks, as on the phone. A second subtitle track shows at the top, as on the phone. Sound tracks likewise, the file's own and those beside it
-  (`Film.en.ac3`). Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.
+  language last picked is where the next video starts, and the panel's subtitle delay (−10 … +10 s in tenths of a
+  second, Sooner and Later) is kept per video, as on the phone — a file's own subtitle stream is read as it plays, so
+  its lines come sooner only as far as it is read ahead, about a second. ASS/SSA subtitles are drawn as they were
+  authored, by [libass](https://github.com/libass/libass) — their fonts (those the file carries, then the system's),
+  positions, rotations, karaoke, fades and drawn signs — at the size the picture is shown, so the text stays sharp, and
+  follow the same delay. Teletext pages of DVB recordings are subtitle tracks, as on the phone. A second subtitle track
+  shows at the top, as on the phone. Sound tracks likewise, the file's own and those beside it (`Film.en.ac3`).
+  Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.
 - Sound settings in the same panel, through the very sample code Android runs (`LoudnessChain` in `:core:player`):
   the loudness gain (−12 … +12 dB), even loudness (ReplayGain from the tags FFmpeg reads, else EBU R128 measured as it
   plays), night mode for the evening, and the audio delay in 50 ms steps with Sooner and Later; all but night mode

@@ -45,6 +45,7 @@ import com.hawkynt.mediadroid.player.PictureVerdict
 import com.hawkynt.mediadroid.player.PlaybackMath
 import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.ScreenShape
+import com.hawkynt.mediadroid.player.SubtitleLook
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -92,6 +93,8 @@ fun PicturePanel(
     screenSetup: ScreenSetup = ScreenSetup.Default,
     onScreenSetup: (ScreenSetup) -> Unit = {},
     colorizers: List<PictureAdjustment.Colorize> = listOf(PictureAdjustment.Colorize.OFF),
+    subtitleDelayMs: Int = 0,
+    onSubtitleDelay: (Int) -> Unit = {},
 ) {
     Column(
         modifier.width(380.dp).fillMaxHeight().background(Color(0xF01A1A2E)).verticalScroll(rememberScrollState())
@@ -159,6 +162,7 @@ fun PicturePanel(
                     }
                 }
             }
+            SubtitleDelayControls(subtitleDelayMs, onSubtitleDelay)
         }
         Text("Picture", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
         // How the picture fills the window, as the phone's gear offers it.
@@ -551,6 +555,25 @@ private fun SoundSettingsControls(
     Text(
         PlaybackMath.syncText("sound", sound.audioDelayMs).replaceFirstChar { it.uppercase() } +
             ". Later when you hear a word before the lips move, sooner when after.",
+        color = Color.Gray,
+        fontSize = 13.sp,
+    )
+}
+
+/** The subtitle delay in tenths of a second with Sooner and Later, worded as in Android's gear. */
+@Composable
+private fun SubtitleDelayControls(delayMs: Int, onDelay: (Int) -> Unit) {
+    Text("Delay", color = Color.White, modifier = Modifier.padding(top = 8.dp))
+    fun nudge(steps: Int) = onDelay(SubtitleLook(delayMs = delayMs).nudgeDelay(steps).delayMs)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { nudge(-1) }) { Text("Sooner") }
+        Text(if (delayMs == 0) "in sync" else "%+.1f s".format(delayMs / 1000f), color = Color.White)
+        OutlinedButton(onClick = { nudge(1) }) { Text("Later") }
+        if (delayMs != 0) TextButton(onClick = { onDelay(0) }) { Text("Reset") }
+    }
+    Text(
+        PlaybackMath.syncText("subtitles", delayMs).replaceFirstChar { it.uppercase() } +
+            ". Later when a line shows before it is spoken, sooner when after. Kept for this video.",
         color = Color.Gray,
         fontSize = 13.sp,
     )

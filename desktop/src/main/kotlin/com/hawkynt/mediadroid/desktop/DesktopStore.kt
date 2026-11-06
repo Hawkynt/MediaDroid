@@ -17,8 +17,9 @@ import java.util.Properties
 /**
  * The desktop app's own state, `settings.json` in [folder] (the app-data folder, AppFolder): the library folder, the
  * household's picture, sound, subtitle language and speed, the window, the network sources, and per video its resume
- * point and whether it was watched. Saved on every change, written aside and moved over the old file, so a crash
- * midway never leaves half a file. The `state.properties` of earlier versions is taken over once and moved aside.
+ * point, its subtitle delay and whether it was watched. Saved on every change, written aside and moved over the old
+ * file, so a crash midway never leaves half a file. The `state.properties` of earlier versions is taken over once and
+ * moved aside.
  */
 class DesktopStore(private val folder: File) {
 
@@ -116,6 +117,13 @@ class DesktopStore(private val folder: File) {
         copy(resume = if (positionMs <= 0) resume - video else resume + (video to positionMs))
     }
 
+    /** The subtitle delay a video keeps (positive: the lines later), as Android keeps it per video; 0 in sync. */
+    fun subtitleDelayMs(video: String): Int = settings.subtitleDelays[video] ?: 0
+
+    fun setSubtitleDelay(video: String, delayMs: Int) = change {
+        copy(subtitleDelays = if (delayMs == 0) subtitleDelays - video else subtitleDelays + (video to delayMs))
+    }
+
     fun watched(video: String): Boolean = video in settings.watched
 
     fun markWatched(video: String) = change { copy(watched = watched + video, resume = resume - video) }
@@ -183,6 +191,8 @@ internal data class DesktopSettings(
     val screens: Map<String, ScreenKept> = emptyMap(),
     /** The colouriser, once its self-test passed, the same way. */
     val neuralColorizer: String? = null,
+    /** Subtitle delays in milliseconds, by video location; a video in sync has none. */
+    val subtitleDelays: Map<String, Int> = emptyMap(),
 ) {
     companion object {
         private val json = Json {

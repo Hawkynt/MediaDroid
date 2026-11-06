@@ -90,6 +90,36 @@ class LibAssEngineTest {
         assertTrue(drawn.y < 60 && drawn.y + drawn.height > 300)
     }
 
+    @Test
+    fun `the subtitle delay moves the ASS lines as it moves the text ones`() {
+        val ass = MediaRequest.SubtitleFile(fixture("/ass/styled.ass"), null, "en", "English", forced = false)
+        val tuning = PlaybackTuning.Mutable()
+        DesktopPlaybackEngine(tuning) { SilentSink() }.use { engine ->
+            engine.open(MediaRequest(fixture("/clip.mp4"), subtitles = listOf(ass)))
+            engine.select(Track.Kind.TEXT, engine.tracks.single { it.kind == Track.Kind.TEXT && it.source == 1 }.id)
+            var drawn: AssPicture? = null
+            waitFor {
+                engine.subtitlePicture(WIDTH, HEIGHT)?.let { drawn = it }
+                drawn?.isEmpty == false
+            }
+            engine.pause()
+            engine.seekTo(1500)
+            // The seek taken by the reader, not only asked for: a picture from there is shown.
+            waitFor { engine.positionMs == 1500L && (engine.picture()?.ptsMs ?: 0L) >= 1_480L }
+            // The lines run from 0 to 3 s: 2 s later, at 1.5 s they have not begun.
+            tuning.subtitleDelayMs = 2_000
+            drawn = engine.subtitlePicture(WIDTH, HEIGHT) ?: drawn
+            assertTrue(drawn!!.isEmpty)
+            // 1 s sooner they still show; 2 s sooner they are over.
+            tuning.subtitleDelayMs = -1_000
+            drawn = engine.subtitlePicture(WIDTH, HEIGHT) ?: drawn
+            assertTrue(!drawn!!.isEmpty)
+            tuning.subtitleDelayMs = -2_000
+            drawn = engine.subtitlePicture(WIDTH, HEIGHT) ?: drawn
+            assertTrue(drawn!!.isEmpty)
+        }
+    }
+
     private companion object {
         const val WIDTH = 640
         const val HEIGHT = 360
