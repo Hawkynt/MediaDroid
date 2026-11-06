@@ -62,6 +62,29 @@ class FilmTest {
     }
 
     @Test
+    fun `2-2 pulldown at 25 frames a second whose film frames start on the bottom field comes back whole`() {
+        val frames = HashMap<Int, ByteArray>()
+        val film = { k: Int -> frames.getOrPut(k) { filmFrame(k) } }
+        // Picture k: the top field of film frame k, the bottom field of film frame k + 1.
+        fun picture(k: Int): MediaReader.Picture {
+            val t = film(k)
+            val b = film(k + 1)
+            val out = ByteArray(w * h * 4)
+            for (y in 0 until h) System.arraycopy(if (y % 2 == 0) t else b, y * w * 4, out, y * w * 4, w * 4)
+            return MediaReader.Picture(k * 40L, w, h, out)
+        }
+        val out = Film().let { f -> (0 until 40).flatMap { f.add(picture(it)) } }
+        // Nothing dropped: seven cycles of five are out, the eighth waits for the picture after it.
+        assertEquals(35, out.size)
+        // Once film is found every picture is its film frame, whole; until then the pictures are deinterlaced.
+        val matched = out.map { p -> (0 until 41).indexOfFirst { film(it).contentEquals(p.rgba) } }
+        val found = matched.indexOfFirst { it >= 0 }
+        assertTrue("$matched", found in 1..5)
+        assertEquals((found until 35).toList(), matched.drop(found))
+        assertTrue(out.zipWithNext { a, b -> b.ptsMs - a.ptsMs }.all { it == 40L })
+    }
+
+    @Test
     fun `a picture whose fields belong together is kept as it is, a woven one takes its rows from its neighbour`() {
         val a = MediaReader.Picture(0, 4, 4, ByteArray(64) { 1 })
         val b = MediaReader.Picture(40, 4, 4, ByteArray(64) { 2 })

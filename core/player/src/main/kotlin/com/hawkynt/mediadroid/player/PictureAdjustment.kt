@@ -242,8 +242,9 @@ data class PictureAdjustment(
      * above and below in the same direction — so progressive pictures pass untouched. [YADIF] and
      * [BWDIF] are temporal (see [Deinterlacer]): they look at the frames before and after too, so still
      * parts keep their full detail, and the picture runs one frame behind, the sound waiting as long.
-     * [FILM] undoes 3:2 pulldown (see [Telecine]) — for film on NTSC video, 24 frames a second spread
-     * over 30: the fields matched back into whole film frames and the repeated one of every five dropped.
+     * [FILM] undoes pulldown (see [FilmCadence]) — 3:2 for film on NTSC video, 24 frames a second spread
+     * over 30: the fields matched back into whole film frames and the repeated one of every five dropped; 2:2 for
+     * film on PAL video ([Pulldown22]): woven whole, and anything that is not film deinterlaced.
      */
     enum class Deinterlace(val label: String, val description: String) {
         OFF("Off", "The picture as it comes: for progressive video, the lightest."),
@@ -252,7 +253,7 @@ data class PictureAdjustment(
         BOB("Bob", "One field at a time, its lines doubled: sharp motion, finer detail flickers."),
         YADIF("YADIF", "FFmpeg's YADIF: the frames before and after weighed, so still parts keep full detail."),
         BWDIF("BWDIF", "FFmpeg's BWDIF: like YADIF with finer filters, the best detail in motion."),
-        FILM("Film", "For films on NTSC video: the film's own 24 frames put back together, shown evenly."),
+        FILM("Film", "For films on video: the film's own frames put back together, NTSC's 3:2 and PAL's 2:2."),
         ;
 
         /** Whether it needs the neighbouring frames, and so can show every field as a picture of its own. */

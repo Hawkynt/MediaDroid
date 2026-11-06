@@ -2,23 +2,24 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.FieldOrder
+import com.hawkynt.mediadroid.player.FilmCadence
 import com.hawkynt.mediadroid.player.Telecine
 import com.hawkynt.mediadroid.player.YuvMatrix
 
 /**
- * Film on the desktop (PictureAdjustment.Deinterlace.FILM): 3:2 pulldown undone as the Android stage undoes it — each
- * decoded picture matched with its neighbours' fields (Telecine.FieldMatch, FFmpeg's fieldmatch) and woven, a picture
- * still combed after matching deinterlaced by YADIF, and of every five the repeated one dropped (Telecine.Decimate,
- * mixed: video without a repeated picture keeps all five). The kept pictures take the cycle's own time, spread evenly
- * over it — the film's own 24 a second from 30 — so the sound needs no wait: the pictures are decoded ahead of the
- * clock, about six of them held here meanwhile. Which field comes first is told from the first pictures (FieldOrder).
- * On the reader's thread, between decoder and queue; HDR pictures pass untouched.
+ * Film on the desktop (PictureAdjustment.Deinterlace.FILM): pulldown undone as the Android stage undoes it, by
+ * FilmCadence — at NTSC's rate each decoded picture matched with its neighbours' fields (FFmpeg's fieldmatch) and
+ * woven, and of every five the repeated one dropped (mixed: video without a repeated picture keeps all five); at PAL's
+ * 2:2 film found and woven whole. A picture still combed after matching, or not film at PAL's rate, is deinterlaced
+ * by YADIF. The kept pictures take the cycle's own time, spread evenly over it — the film's own 24 a second from 30 —
+ * so the sound needs no wait: the pictures are decoded ahead of the clock, about six of them held here meanwhile.
+ * Which field comes first is told from the first pictures (FieldOrder). On the reader's thread, between decoder and
+ * queue; HDR pictures pass untouched.
  */
 class Film {
     private val order = FieldOrder()
     private var toJudge = FRAMES_TO_JUDGE
-    private var match = Telecine.FieldMatch()
-    private var decimate = newDecimate()
+    private val cadence = FilmCadence()
     private val pictures = ArrayDeque<MediaReader.Picture>()
     private val lumas = ArrayDeque<Deinterlacer.Plane>()
     private val cycle = ArrayList<MediaReader.Picture>()
@@ -30,8 +31,7 @@ class Film {
         cycle.clear()
         order.reset()
         toJudge = FRAMES_TO_JUDGE
-        match = Telecine.FieldMatch(order.topFieldFirst)
-        decimate = newDecimate()
+        cadence.reset()
     }
 
     /** Takes the next decoded [picture]; returns the pictures a finished cycle keeps, in order, else none. */
@@ -58,24 +58,21 @@ class Film {
         val next = pictures[n - 1]
         val cur = pictures[n - 2]
         val prev = if (n >= 3) pictures[n - 3] else cur
-        val curLuma = lumas[n - 2]
-        val prevLuma = if (n >= 3) lumas[n - 3] else curLuma
+        val prevLuma = if (n >= 3) lumas[n - 3] else null
         val topFirst = order.topFieldFirst
-        if (match.field != (if (topFirst) 1 else 0)) match = Telecine.FieldMatch(topFirst)
-        val (matched, woven) = match.add(prevLuma, curLuma, lumas[n - 1])
-        val verdict = decimate.add(woven)
-        cycle += if (matched.combed) {
+        val judged = cadence.add(prevLuma, lumas[n - 2], lumas[n - 1], topFirst, intervalNs(cur, next))
+        cycle += if (judged.combed) {
             yadif(prev, cur, next, topFirst)
         } else {
-            when (matched.match) {
-                Telecine.Match.PREVIOUS -> weave(cur, prev, match.field)
-                Telecine.Match.NEXT -> weave(cur, next, match.field)
-                Telecine.Match.BOTTOM -> weave(cur, prev, 1 - match.field)
-                Telecine.Match.UPPER -> weave(cur, next, 1 - match.field)
+            when (judged.match) {
+                Telecine.Match.PREVIOUS -> weave(cur, prev, judged.field)
+                Telecine.Match.NEXT -> weave(cur, next, judged.field)
+                Telecine.Match.BOTTOM -> weave(cur, prev, 1 - judged.field)
+                Telecine.Match.UPPER -> weave(cur, next, 1 - judged.field)
                 Telecine.Match.CURRENT -> cur
             }
         }
-        if (verdict == null) return emptyList()
+        val verdict = judged.cycle ?: return emptyList()
         val kept = cycle.filterIndexed { i, _ -> i != verdict.drop }
         val first = cycle.first().ptsMs
         val span = (cycle.last().ptsMs - first).takeIf { it > 0 }?.let { it * cycle.size / (cycle.size - 1) }
@@ -86,7 +83,9 @@ class Film {
         }
     }
 
-    private fun newDecimate() = Telecine.Decimate(mixed = true, duplicatePercent = DUPLICATE_PERCENT)
+    // The time between two pictures, from their stamps; NTSC's where they carry none.
+    private fun intervalNs(cur: MediaReader.Picture, next: MediaReader.Picture): Long =
+        (next.ptsMs - cur.ptsMs).takeIf { it > 0 }?.let { it * 1_000_000L } ?: (DEFAULT_FRAME_MS * 1_000_000L)
 
     companion object {
         /** Pictures wider than this are matched on every second column, as on Android. */
@@ -94,9 +93,6 @@ class Film {
 
         /** The pictures the field order is judged on after a start. */
         private const val FRAMES_TO_JUDGE = 50
-
-        /** Decimate's `dupthresh`, as on Android. */
-        private const val DUPLICATE_PERCENT = 3.0
 
         /** A cycle's frame time where its pictures carry no usable times: NTSC's. */
         private const val DEFAULT_FRAME_MS = 1001L / 30
