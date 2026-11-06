@@ -36,6 +36,7 @@ and the first is held to its own output.
 | [DScaler](https://github.com/JohnAdders/DScaler) `Help/AspectRatio.htm` and `Help/Aspect.htm` (the source formats, "Aspect Ratio of Display Screen", the custom screen aspect for a Panamorph lens) | GPL-2.0 | `PictureShape` and `ScreenShape`: a frame's shape set over its flag, a screen seen wider than its pixels and pictures drawn narrower to match |
 | [DScaler](https://github.com/JohnAdders/DScaler) `Help/Mirror.htm` (rear projection, with the vertical flip for a ceiling mount) and `Help/LinearCorrection.htm` (the trapezoid and two-axis keystone modes) | GPL-2.0 | `ScreenSetup`'s mirror, flip and keystones; the map itself is `ScreenWarp`'s own, after Heckbert (below) |
 | [DScaler](https://github.com/JohnAdders/DScaler) `Help/LinearCorrection.htm` and `Plugins/FLT_LinearCorrection` (the "Stretch" mode: 4:3 to 16:9, a non-linear zoom) | GPL-2.0 | `Panorama`: the idea of a 4:3 picture widened to a wide screen with the stretch growing towards the sides; DScaler's own curve was not taken — ours keeps the middle exactly in shape and is solved back by Cardano's formula |
+| [DScaler](https://github.com/JohnAdders/DScaler) `DScaler/FD_50Hz.cpp` (`UpdatePALPulldownMode`) and `FD_Common.cpp` (`CalcCombFactor`, `CalculateTotalCombFactor`, `CalcDiffFactor`), its help's "2:2 Pulldown Settings" and "Shared Pulldown Settings" — © 2000 John Adcock and the DScaler authors | GPL-2.0 | `Pulldown22`: the comb factor (a pixel between the other field's lines sticking out of both beyond their own difference, threshold 73 on halved values; lines counted only beside combed lines), the field difference (squares shifted down by 12), and the detection's thresholds — a drop under 40 %, three in a row on the same field, movement over 100, a comb factor over 150; leaving film on a bad pair is this project's own rule, after the help's 10 % rise |
 
 ## Test fixtures
 
@@ -61,6 +62,9 @@ through `tools/shader-check/placebo.cpp`, made by `make-expected.sh`.
 `minterpolate` output for it, made with the command in that script's header.
 `src/test/resources/loudness/expected.txt` — the integrated loudness of the `LoudnessSignals` test signals, measured by
 `measure.sh` beside it with libebur128 1.2.6 (through `oracle.c`) and FFmpeg's `ebur128` filter.
+`src/test/resources/pulldown/` — `pal.gray.gz`, `pal-film.gray.gz` and `pal.txt` written by `make-input.py` there: a
+PAL clip whose every frame's make-up is known by construction, the answer `Pulldown22` is held to; FFmpeg n9.0.2's idet
+calls it top field first throughout.
 `src/test/resources/cropdetect/` — the `.gray.gz` clips synthetic (FFmpeg's lavfi sources), the `.txt` files FFmpeg
 n9.0.2's own `cropdetect` lines for them, run as an oracle over the same bytes; both made by `make-expected.sh`.
 `src/test/resources/chroma/` — `input.yuv` written by `make-input.py` there; `spline36.ppm` and `krig.ppm` libplacebo

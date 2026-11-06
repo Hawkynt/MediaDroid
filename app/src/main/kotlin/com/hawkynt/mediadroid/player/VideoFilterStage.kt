@@ -393,13 +393,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var framesToJudge = 0
     private var readBack: ByteBuffer? = null
 
-    // Film (3:2 pulldown removed, see Telecine): each frame's fields matched on a thread of its own, woven
-    // into one of two banks of five slots (frames[11] on), and once a bank's cycle is judged its four kept
-    // frames shown evenly. The matcher and the decimator live on that thread; a new history (a seek) starts
-    // a new generation, whose verdicts alone count.
+    // Film (3:2 or 2:2 pulldown removed, see FilmCadence): each frame judged on a thread of its own, woven into one
+    // of two banks of five slots (frames[11] on), and once a bank's cycle is judged its kept frames shown evenly.
+    // The cadence lives on that thread; a new history (a seek) starts a new generation, whose verdicts alone count.
     private val filmWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
-    private var fieldMatch = Telecine.FieldMatch()
-    private var decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
+    private val filmCadence = FilmCadence()
     private var filmPending: java.util.concurrent.Future<FilmVerdict>? = null
     private var filmGeneration = 0
 
@@ -1356,12 +1354,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
-     * Film: a decoded frame joins the history, and the one before it is matched with its neighbours'
-     * fields (see Telecine) into the bank being filled — or, still combed after matching, deinterlaced by
-     * YADIF. Once a bank holds a cycle of five, the one repeated frame is dropped and the other four are
-     * shown evenly over the five frames' time, starting now: the film's own 24 a second from 30, about
-     * five frames behind, which the sound is told to wait. A cycle with no repeated frame — video, not
-     * film — keeps all five, so Film left on for ordinary video costs only the delay.
+     * Film: a decoded frame joins the history, and the one before it is judged with its neighbours (see
+     * FilmCadence) into the bank being filled: woven from its matched fields, or — still combed after matching, or
+     * at PAL's rate not 2:2 film — deinterlaced by YADIF. Once a bank holds a cycle of five, a repeated frame is
+     * dropped and the others are shown evenly over the five frames' time, starting now: the film's own 24 a second
+     * from 30, about five frames behind, which the sound is told to wait. A cycle with no repeated frame — video,
+     * not film, and anything at PAL's rate — keeps all five, so Film left on for ordinary video costs only the delay.
      */
     private fun film() {
         val (width, height) = eyeSize()
@@ -1389,7 +1387,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         if (historyCount < 2) return
         // Film chosen with a history already running has no lumas of its own yet.
         val curLuma = filmLumas[1] ?: return
-        val prevLuma = filmLumas[0] ?: curLuma
+        val prevLuma = filmLumas[0]
         val restart = filmAfresh
         filmAfresh = false
         val topFirst = fieldOrder.topFieldFirst
@@ -1399,20 +1397,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val next = history[2]
         val interval = frameIntervalNs
         filmPending = filmWorker.submit<FilmVerdict> {
-            if (restart || fieldMatch.field != (if (topFirst) 1 else 0)) {
-                fieldMatch = Telecine.FieldMatch(topFirst)
-                if (restart) decimate = Telecine.Decimate(mixed = true, duplicatePercent = FILM_DUPLICATE_PERCENT)
-            }
+            if (restart) filmCadence.reset()
             val started = System.nanoTime()
-            val (matched, woven) = fieldMatch.add(prevLuma, curLuma, luma)
-            val cycle = decimate.add(woven)
+            val judged = filmCadence.add(prevLuma, curLuma, luma, topFirst, interval)
+            val cycle = judged.cycle
             statistics?.let { stats ->
                 stats.work(System.nanoTime() - started)
                 if (cycle != null && cycle.drop >= 0) stats.dropped()
             }
-            val verdict = FilmVerdict(
-                matched, cycle, fieldMatch.field, prev, cur, next, generation, width, height, interval,
-            )
+            val verdict = FilmVerdict(judged, prev, cur, next, generation, width, height, interval)
             handler.post { busy { applyFilm(verdict) } }
             verdict
         }
@@ -1420,9 +1413,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     /** One frame's Film verdict from the worker, with the frames it was judged on. */
     private class FilmVerdict(
-        val matched: Telecine.Matched,
-        val cycle: Telecine.Decimate.Cycle?,
-        val field: Int,
+        val judged: FilmCadence.Verdict,
         val prev: Int,
         val cur: Int,
         val next: Int,
@@ -1456,14 +1447,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val next = frames[verdict.next]
         EGL14.eglMakeCurrent(display, idle, idle, context)
         val slot = frames[FILM_SLOTS + filmBank * Telecine.CYCLE + filmPosition].ensure(width, height)
-        if (verdict.matched.combed) {
+        val judged = verdict.judged
+        if (judged.combed) {
             rebuildField(slot, prev, cur, next, secondField = false, bwdif = false)
         } else {
-            val (other, rows) = when (verdict.matched.match) {
-                Telecine.Match.PREVIOUS -> prev to verdict.field
-                Telecine.Match.NEXT -> next to verdict.field
-                Telecine.Match.BOTTOM -> prev to 1 - verdict.field
-                Telecine.Match.UPPER -> next to 1 - verdict.field
+            val (other, rows) = when (judged.match) {
+                Telecine.Match.PREVIOUS -> prev to judged.field
+                Telecine.Match.NEXT -> next to judged.field
+                Telecine.Match.BOTTOM -> prev to 1 - judged.field
+                Telecine.Match.UPPER -> next to 1 - judged.field
                 Telecine.Match.CURRENT -> cur to -1
             }
             slot.bind()
@@ -1479,7 +1471,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             }
         }
 
-        val cycle = verdict.cycle
+        val cycle = judged.cycle
         if (cycle == null) {
             filmPosition++
             return
@@ -2768,13 +2760,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** Film runs about five frames behind: a sixth of a second for NTSC. */
         private const val MAX_FILM_LATENCY_MS = 250
-
-        /**
-         * How unlike its predecessor a frame may be and still count as Film's repeated one, in FFmpeg's terms
-         * (dupthresh, its default 1.1): the luma read back from the graphics chip carries the colour
-         * conversion's rounding, so a repeated MPEG-2 frame measured about 1.7 % here, real motion over 25 %.
-         */
-        private const val FILM_DUPLICATE_PERCENT = 3.0
 
         /** Where Film's two banks of matched frames start in the frames. */
         private const val FILM_SLOTS = 11

@@ -336,7 +336,7 @@ class DesktopPlaybackEngine(
     }
 
     /**
-     * Film (3:2 pulldown undone, see Film) on the pictures decoded from now on; those queued already stay as they
+     * Film (3:2 or 2:2 pulldown undone, see Film) on the pictures decoded from now on; those queued already stay as they
      * are.
      */
     @Volatile var film: Boolean = false
