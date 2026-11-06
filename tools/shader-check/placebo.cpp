@@ -12,13 +12,21 @@
 //   placebo_oracle peak <pq|hlg> <in16.ppm>...
 //                     the pictures as successive frames through libplacebo's peak detection (its defaults): per
 //                     frame the detected peak and average, both in PQ
+//   placebo_oracle dither <in16.ppm> <out.ppm>
+//                     the 16-bit picture dithered to 8 bits as libplacebo's renderer does it for an 8-bit screen
+//                     (pl_shader_dither, its defaults: blue noise, a 64 × 64 matrix, not temporal)
+//   placebo_oracle bluenoise
+//                     prints that matrix as pl_generate_blue_noise makes it in a fresh process (its rand()
+//                     unseeded): 64 rows of 64 ranks, 0 to 4095, each the value times 4096
 //
 // The picture as one RGBA texture (8 or 16 bits), top row first, as libplacebo's own frames are.
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <libplacebo/dispatch.h>
+#include <libplacebo/dither.h>
 #include <libplacebo/opengl.h>
 #include <libplacebo/shaders/colorspace.h>
+#include <libplacebo/shaders/dithering.h>
 #include <libplacebo/shaders/sampling.h>
 #include <libplacebo/tone_mapping.h>
 
@@ -252,15 +260,56 @@ int peak(const std::string& transfer, int count, char** files) {
     return 0;
 }
 
+// The last pass of libplacebo's renderer for an 8-bit target (pass_output_target): the picture dithered to 8 bits
+// with its default dither, the matrix made on first use and kept in the state object.
+int dither(char** argv) {
+    Picture16 in = readPpm16(argv[0]);
+    std::vector<uint16_t> rgbaIn = rgba16(in, true);
+    pl_tex src = texture(in.width, in.height, "rgba16", rgbaIn.data(), false);
+    pl_tex dst = texture(in.width, in.height, "rgba8", nullptr, true);
+    pl_dispatch dp = pl_dispatch_create(logger, gpu);
+    pl_shader sh = pl_dispatch_begin(dp);
+    pl_sample_src sample{};
+    sample.tex = src;
+    pl_shader_sample_direct(sh, &sample);
+    pl_shader_obj state = nullptr;
+    pl_shader_dither(sh, 8, &state, &pl_dither_default_params);
+    pl_dispatch_params run{};
+    run.shader = &sh;
+    run.target = dst;
+    if (!pl_dispatch_finish(dp, &run)) fail("the dither pass failed");
+    writePpm(argv[1], readBack(dst, in.width, in.height));
+    pl_shader_obj_destroy(&state);
+    pl_dispatch_destroy(&dp);
+    pl_tex_destroy(gpu, &src);
+    pl_tex_destroy(gpu, &dst);
+    return 0;
+}
+
+int blueNoise() {
+    const int size = 1 << pl_dither_default_params.lut_size;
+    std::vector<float> data(size_t(size) * size);
+    pl_generate_blue_noise(data.data(), size);
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            std::printf(x ? " %d" : "%d", int(std::lround(data[y * size + x] * size * size)));
+        }
+        std::printf("\n");
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
     if (mode == "curve" && argc > 2) return curve(argc - 2, argv + 2);
+    if (mode == "bluenoise" && argc == 2) return blueNoise();
     startPlacebo(mode == "peak");
     int result = 0;
     if (mode == "deband" && argc == 9) result = deband(argv + 2);
     else if (mode == "tonemap" && argc == 6) result = tonemap(argv + 2);
+    else if (mode == "dither" && argc == 4) result = dither(argv + 2);
     else if (mode == "peak" && argc > 3) result = peak(argv[2], argc - 3, argv + 3);
     else fail("usage: see the head of tools/shader-check/placebo.cpp");
     pl_opengl_destroy(&gl);

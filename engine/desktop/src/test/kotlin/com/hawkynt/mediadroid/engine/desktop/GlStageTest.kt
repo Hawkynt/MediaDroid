@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.engine.desktop
 
+import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
@@ -13,6 +14,7 @@ import org.junit.Test
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** The desktop stage on this machine's graphics (skipped where there is no display to make a context on). */
@@ -91,18 +93,61 @@ class GlStageTest {
         val hdr = MediaReader.Picture(1, w, h, rgba, ToneMap.Transfer.PQ)
         val out = stage.process(hdr, PictureAdjustment.Neutral, w, h)
         val detect = PeakDetect().apply { update(PeakDetect.blocks(rgb16, w, h, ToneMap.Transfer.PQ)) }
-        val expected = ToneMap.apply(rgb16, w, h, ToneMap.pass(ToneMap.Transfer.PQ, detect.peak))
+        val pass = ToneMap.pass(ToneMap.Transfer.PQ, detect.peak)
+        // Tone-mapped in floats, then dithered to 8 bits as the stage's last pass does it (see Dither).
+        val mapped = ShortArray(w * h * 3)
+        val pixel = FloatArray(3)
+        for (p in 0 until w * h) {
+            for (c in 0..2) pixel[c] = (rgb16[p * 3 + c].toInt() and 0xFFFF) / 65535f
+            val m = ToneMap.map(pixel, pass)
+            for (c in 0..2) mapped[p * 3 + c] = (m[c].coerceIn(0f, 1f) * 65535f).roundToInt().toShort()
+        }
+        val expected = Dither.apply(mapped, w, h)
         val off = (0 until w * h * 3).map { i ->
             abs((out.rgba[i / 3 * 4 + i % 3].toInt() and 255) - (expected[i].toInt() and 255))
         }
+        // Dithered, not rounded: a good share of the values differ from the nearest level.
+        val rounded = ToneMap.apply(rgb16, w, h, pass)
+        val unlikeRounded = (0 until w * h * 3).count { out.rgba[it / 3 * 4 + it % 3] != rounded[it] }
+        assertTrue("only $unlikeRounded values unlike rounding", unlikeRounded > w * h * 3 / 10)
         if (stage.renderer.startsWith("llvmpipe")) {
             // Mesa's software rasteriser (CI) computes pow() less exactly, and PQ raises to the 78.84th power: there
-            // a few values land up to 3 off (6 of 6144 measured, 240 by 1), never more, and almost all within 1.
-            assertTrue("off by ${off.max()}", off.max() <= 3)
+            // a few values land up to 3 off, and the dither's threshold can tip one of them a level further (6 of 6144
+            // measured more than 1 off, the most 4, 325 by 1), never more, and almost all within 1.
+            assertTrue("off by ${off.max()}", off.max() <= 4)
             assertTrue("${off.count { it > 1 }} off by more than 1", off.count { it > 1 } <= off.size / 100)
         } else {
             assertTrue("off by ${off.max()}", off.max() <= 1)
         }
+    }
+
+    @Test
+    fun `a colour correction between two levels is dithered over both, in the right shares`() {
+        // Level 100 everywhere, brightened by 0.4 of a level: rounded, all 100; dithered, about two in five go to 101.
+        val flat = MediaReader.Picture(0, 64, 64, ByteArray(64 * 64 * 4) { i -> if (i % 4 == 3) -1 else 100 })
+        val brighter = PictureAdjustment(brightness = 0.4f / PictureAdjustment.BRIGHTNESS_SPAN)
+        val out = stage.process(flat, brighter, 64, 64)
+        val values = out.rgba.indices.filter { it % 4 != 3 }.map { out.rgba[it].toInt() and 255 }
+        assertTrue(values.all { it == 100 || it == 101 })
+        val share = values.count { it == 101 }.toDouble() / values.size
+        assertEquals(0.4, share, 0.05)
+    }
+
+    @Test
+    fun `a blend between two levels keeps its half level in half floats for the dither`() {
+        // Levels 100 and 101 blended half and half (100.5), then brightened by 0.4 of a level: 100.9, dithered nine
+        // in ten to 101. Blended in 8 bits it would have rounded to a whole level first, and dithered from there.
+        fun level(pts: Long, value: Int) =
+            MediaReader.Picture(pts, 64, 64, ByteArray(64 * 64 * 4) { i -> if (i % 4 == 3) -1 else value.toByte() })
+        val blended = PictureAdjustment(
+            interpolation = PictureAdjustment.Interpolation.HIGH,
+            brightness = 0.4f / PictureAdjustment.BRIGHTNESS_SPAN,
+        )
+        val out = stage.process(Moment(level(0, 100), next = level(40, 101), phase = 0.5f), blended, 64, 64)
+        val values = out.rgba.indices.filter { it % 4 != 3 }.map { out.rgba[it].toInt() and 255 }
+        assertTrue(values.all { it == 100 || it == 101 })
+        val share = values.count { it == 101 }.toDouble() / values.size
+        assertEquals(0.9, share, 0.05)
     }
 
     @Test

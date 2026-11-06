@@ -251,6 +251,29 @@ for transfer in pq hlg; do
   done
 done
 
+# Dithering: libplacebo's own pl_shader_dither (its defaults: blue noise, 64 × 64), run by libplacebo on the same Mesa,
+# on core/player's 16-bit gradients and on the HDR picture's coded values; ours with the matrix libplacebo makes, from a
+# float frame — byte for byte, the frame held either way up and in GLSL ES 1.00 too. From half floats, as the stages
+# hold their frames, a value within half-float rounding of where the threshold tips it goes the other way: one value
+# in thirty measured. With another matrix (libplacebo's turned on its side) it has to differ, or the matrix would not
+# reach the pass.
+"$B/placebo_oracle" bluenoise >"$W/bluenoise.txt"
+awk '{ for (x = 1; x <= NF; x++) m[x, NR] = $x } END { for (y = 1; y <= NF; y++) {
+       for (x = 1; x <= NR; x++) printf "%s%s", m[y, x], (x < NR ? " " : "\n") } }' "$W/bluenoise.txt" \
+  >"$W/bluenoise-turned.txt"
+python3 -I "$HERE/../../core/player/src/test/resources/dither/make-input.py" "$W/gradients16.ppm"
+for name in gradients16 hdr/input; do
+  "$B/placebo_oracle" dither "$W/$name.ppm" "$W/dither-libplacebo.ppm"
+  for variant in "" top es1; do
+    SHADER_CHECK_DITHER=$variant "$C" dither "$W/$name.ppm" "$W/dither.ppm" "$W/bluenoise.txt"
+    check "Dither $name${variant:+ ($variant)} against libplacebo" "$W/dither.ppm" "$W/dither-libplacebo.ppm" 0 0
+  done
+  SHADER_CHECK_DITHER=half "$C" dither "$W/$name.ppm" "$W/dither.ppm" "$W/bluenoise.txt"
+  check "Dither $name from half floats against libplacebo" "$W/dither.ppm" "$W/dither-libplacebo.ppm" 1 0.05
+  "$C" dither "$W/$name.ppm" "$W/dither-turned.ppm" "$W/bluenoise-turned.txt"
+  differs "Dither $name with another matrix" "$W/dither-turned.ppm" "$W/dither-libplacebo.ppm"
+done
+
 # Lanczos and EWA: their kernels against libplacebo's lanczos and ewa_lanczossharp, antiringing off on both sides
 # (ours pulls into the four nearest pixels' range, libplacebo's weighs a soft minimum and maximum: not the same rule).
 for size in "480 360" "640 480"; do

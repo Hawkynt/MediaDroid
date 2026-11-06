@@ -22,6 +22,7 @@ oracle that bilinear scaling would pass as well proves nothing.
 | Debanding (`deband-es3.frag`, `deband.frag`) | libplacebo's own `pl_shader_deband` (7.360) | run by libplacebo itself on the same Mesa's desktop OpenGL (`placebo.cpp`), on a picture of 8-bit steps (core/player's fixture) and the test picture, one to four iterations, with and without grain, frame indices 0 to 255; the frame held both ways up. The GLSL ES 1.00 variant draws other random numbers (no unsigned integers for pcg3d), so it is held only to moving no value further than the threshold lets it |
 | HDR tone mapping (`tonemap.frag`, `hdr.glsl`) | libplacebo's own `pl_shader_color_map_ex` (7.360) with `pl_tone_map_bt2390` and `pl_gamut_map_clip` | run by libplacebo itself on the same Mesa (`placebo.cpp`) on core/player's HDR picture (16 bits: a grey ramp over the whole range, BT.2020's primaries and secondaries, mid colours, near-black, highlights), read as PQ without metadata and mastered at 400, 1000 and 4000 nits, and as HLG; ours from the stage's half-float HDR frame, its uniforms worked out as libplacebo works out its own |
 | HDR peak detection (`peak.frag`) | libplacebo's own `pl_shader_detect_peak` (its defaults) | the same picture, a little darker, a good deal darker and nearly black, each as a scene's first frame (libplacebo's smoothing takes that as it is), PQ and HLG: our blocks read back as `PeakDetect` takes them, the peak and the average in PQ |
+| Dithering (`dither-es3.frag`, `dither.frag`, `dither.glsl`) | libplacebo's own `pl_shader_dither` (7.360, its defaults: blue noise, 64 × 64) | run by libplacebo itself on the same Mesa (`placebo.cpp`) on 16-bit pictures (core/player's gradients, the HDR picture's coded values) into an 8-bit target; ours with the matrix libplacebo makes (`placebo_oracle bluenoise`), from a float frame and from half floats as the stages hold them, the frame both ways up, GLSL ES 3.00 and 1.00. With the matrix turned on its side it has to differ |
 | YUV to RGB (`yuv.frag`) | FFmpeg's own conversion (swscale, `accurate_rnd`, bilinear chroma) | a yuv420p frame uploaded as `takeYuv` uploads it, BT.601 and BT.709 limited range, the matrix as `YuvMatrix.toRgb` computes it; full range (MJPEG's) squeezed first by the FFmpeg decoder's own `mediadroid_range.h`, which unsqueezed has to fail |
 | ACNet (`glsl/acnet`) | `acnet_f8b4.glsl`, TianZerL/ACNetGLSL `c6e5940` (MIT) | in libplacebo on 16-bit YUV (BT.709, full range), grey and in colour, the chroma scaled bilinearly as the stage's doubling does — with another chroma scaler it has to differ, so that setting is known to take |
 
@@ -77,6 +78,19 @@ half step and the shader compiler's float arithmetic rounds it the other way; th
 byte for byte (`DebandTest`). What the check found and the pass now does: each texel requantised to its byte times the
 float nearest 1/255, as libplacebo's output on Mesa rounds — read as the chip hands it over, about one value in eight
 rounded the other way (mean 0.13); a true division by 255 still left 0.03.
+
+Dithering, on Mesa 26.2's llvmpipe (libplacebo 7.360 on the same), per 8-bit value:
+
+| Check | Max | Mean |
+|-------|-----|------|
+| Dither, ES 3.00 and ES 1.00, from a float frame, either way up | 0 | 0 |
+| Dither from half floats (as the stages hold the picture) | 1 | ≤ 0.036 |
+
+From half floats a value within half-float rounding of where its threshold tips it goes the other way; libplacebo's own
+renderer holds its frames in half floats too. Core/player's `Dither` agrees with libplacebo byte for byte, the matrix
+and the picture (`DitherTest`). What the check found and the pass now does: its samplers are `highp` — ES gives a
+sampler `lowp` by default, and Mesa then read the float frame in half floats even from a full-float texture, one value
+in thirty a level low, exact 8-bit levels among them.
 
 Outermost pixels are left out where the originals read past the picture: AMD's RCAS fetches beyond the edge (one
 pixel), NVIDIA's tile loader wraps an unsigned index at the top and left (eight pixels, as `NisTest` does).
