@@ -362,7 +362,8 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   and forward, Page Up and Page Down for the next and the previous chapter, L to repeat a part), a window that
   remembers its size and place.
 - Snapshot: the camera button (or C) saves the picture as the stage shows it, filters and all, as a PNG in the user's
-  Pictures folder (`MediaDroid` inside it; on Linux the one xdg-user-dirs names) and shows where it went.
+  Pictures folder (`MediaDroid` inside it; on Linux the one xdg-user-dirs names, on Windows the one Windows knows of,
+  wherever it or OneDrive moved it) and shows where it went.
 - Subtitles from the file itself and from the files beside it (`Film.de.srt`), outlined over the picture; the
   language last picked is where the next video starts. Sound tracks likewise, the file's own and those beside it
   (`Film.en.ac3`). Playback speed from 0.2× to 5×, the sound at its own pitch, kept for the next video.
