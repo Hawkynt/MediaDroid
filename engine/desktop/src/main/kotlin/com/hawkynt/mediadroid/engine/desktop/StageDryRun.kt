@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCheck
+import com.hawkynt.mediadroid.player.YuvMatrix
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -59,9 +60,11 @@ object StageDryRun {
         // The pictures as the window gets them, each with what Film took to make it.
         val decoded = ArrayDeque<Pair<MediaReader.Picture, Double>>()
         var fed = 0
+        // A chroma upscaler runs on the decoded planes: the pictures carry theirs, as the reader's do then.
+        val planes = if (picture.chroma != PictureAdjustment.Chroma.BILINEAR) frames.map(::planesOf) else null
         fun feed() {
             val raw = MediaReader.Picture((fed * intervalMs).toLong(), PictureCheck.WIDTH, PictureCheck.HEIGHT,
-                frames[fed % frames.size])
+                frames[fed % frames.size], planes = planes?.get(fed % frames.size))
             fed++
             if (film == null) {
                 decoded.addLast(raw to 0.0)
@@ -126,6 +129,29 @@ object StageDryRun {
             }
             rgba
         }
+    }
+
+    /** [rgba] (a test picture) as limited-range BT.601 4:2:0 planes, as a decoder hands an SD picture over. */
+    private fun planesOf(rgba: ByteArray): MediaReader.Planes {
+        val w = PictureCheck.WIDTH
+        val h = PictureCheck.HEIGHT
+        val cw = (w + 1) / 2
+        val ch = (h + 1) / 2
+        fun c(x: Int, y: Int, k: Int) =
+            rgba[(y.coerceAtMost(h - 1) * w + x.coerceAtMost(w - 1)) * 4 + k].toInt() and 0xFF
+        fun luma(x: Int, y: Int) = 0.299 * c(x, y, 0) + 0.587 * c(x, y, 1) + 0.114 * c(x, y, 2)
+        val y = ByteArray(w * h) { (16 + luma(it % w, it / w) * 219 / 255 + 0.5).toInt().toByte() }
+        val u = ByteArray(cw * ch) {
+            val x = it % cw * 2
+            val row = it / cw * 2
+            (128 + (c(x, row, 2) - luma(x, row)) / 1.772 * 224 / 255 + 0.5).toInt().toByte()
+        }
+        val v = ByteArray(cw * ch) {
+            val x = it % cw * 2
+            val row = it / cw * 2
+            (128 + (c(x, row, 0) - luma(x, row)) / 1.402 * 224 / 255 + 0.5).toInt().toByte()
+        }
+        return MediaReader.Planes(y, u, v, YuvMatrix.BT601, fullRange = false)
     }
 
     private fun blotch(x: Int, y: Int, channel: Int): Int {

@@ -271,6 +271,22 @@ fun PicturePanel(
                 valueRange = 0f..1f,
             )
         }
+        // How the colour of a 4:2:0 picture is enlarged to its brightness's size (ChromaUpscaling).
+        val chroma = remember { Trial() }
+        Text("Colour edges", color = Color.White, modifier = Modifier.padding(top = 8.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PictureAdjustment.Chroma.entries.forEach { filter ->
+                FilterChip(
+                    selected = picture.chroma == filter,
+                    enabled = chroma.trying == null,
+                    onClick = {
+                        chroma.pick(scope, picture, picture.copy(chroma = filter), filter.label, check, onChange)
+                    },
+                    label = { Text(filter.label) },
+                )
+            }
+        }
+        chroma.Below(picture.chroma.description)
         val motion = remember { Trial() }
         Text("Smooth motion", color = Color.White, modifier = Modifier.padding(top = 8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

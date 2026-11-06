@@ -39,18 +39,20 @@ object PictureCheck {
         if (picture.fieldRate) "fields" else "frames",
         picture.upscaler.name,
         picture.interpolation.name,
+        picture.chroma.name,
     ).joinToString("/")
 
     /**
      * Whether going from [from] to [to] needs a check: anything that adds work does; a row set back to its plainest
-     * choice (no deinterlacing, standard scaling, no smooth motion) only takes work away.
+     * choice (no deinterlacing, standard scaling, no smooth motion, bilinear chroma) only takes work away.
      */
     fun needed(from: PictureAdjustment, to: PictureAdjustment): Boolean {
         if (key(from) == key(to)) return false
         val lighter = (to.deinterlace == PictureAdjustment.Deinterlace.OFF && from.deinterlace != to.deinterlace) ||
             (to.upscaler == PictureAdjustment.Upscaler.STANDARD && from.upscaler != to.upscaler) ||
             (to.interpolation == PictureAdjustment.Interpolation.OFF && from.interpolation != to.interpolation) ||
-            (!to.fieldRate && from.fieldRate)
+            (!to.fieldRate && from.fieldRate) ||
+            (to.chroma == PictureAdjustment.Chroma.BILINEAR && from.chroma != to.chroma)
         return !lighter
     }
 }

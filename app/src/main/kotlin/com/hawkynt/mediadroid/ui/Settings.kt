@@ -370,6 +370,7 @@ fun SettingsScreen(
                     it.upscalerStrength = defaultPicture.upscalerStrength
                     it.deband = defaultPicture.deband
                     it.cropBlackBars = defaultPicture.cropBlackBars
+                    it.chroma = defaultPicture.chroma.name
                 }
             },
             check = pictureCheck(androidx.compose.ui.platform.LocalContext.current, store),

@@ -185,6 +185,20 @@ fun PictureSliders(
                 onValueChangeFinished = onDone,
             )
         }
+        // How the colour of a 4:2:0 picture is enlarged to its brightness's size (see ChromaUpscaling).
+        val chroma = remember { Trial() }
+        Text("Colour edges", fontSize = 16.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PictureAdjustment.Chroma.entries.forEach { filter ->
+                FilterChip(
+                    selected = picture.chroma == filter,
+                    enabled = chroma.trying == null,
+                    onClick = { chroma.pick(picture, picture.copy(chroma = filter), filter.label, check, take) },
+                    label = { Text(filter.label, fontSize = 15.sp) },
+                )
+            }
+        }
+        chroma.Below(picture.chroma.description)
         val motion = remember { Trial() }
         Text("Smooth motion", fontSize = 16.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

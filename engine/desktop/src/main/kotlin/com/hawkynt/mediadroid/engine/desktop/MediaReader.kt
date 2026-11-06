@@ -7,6 +7,7 @@ import com.hawkynt.mediadroid.player.AssFonts
 import com.hawkynt.mediadroid.player.ReplayGain
 import com.hawkynt.mediadroid.player.SubtitleText
 import com.hawkynt.mediadroid.player.ToneMap
+import com.hawkynt.mediadroid.player.YuvMatrix
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext
 import org.bytedeco.ffmpeg.avcodec.AVPacket
 import org.bytedeco.ffmpeg.avformat.AVFormatContext
@@ -35,6 +36,8 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
     /**
      * A decoded picture: [rgba] is [width] × [height] × 4 bytes, rows from the top — or, for an HDR video ([hdr] its
      * transfer), its coded BT.2020 values at 16 bits, 8 bytes a pixel (little-endian), for the stage to tone-map.
+     * [planes]: the 4:2:0 frame it was converted from, where the reader was asked to keep them ([keepPlanes]) — for the
+     * stage to enlarge its chroma itself.
      */
     class Picture(
         val ptsMs: Long,
@@ -42,11 +45,24 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         val height: Int,
         val rgba: ByteArray,
         val hdr: ToneMap.Transfer? = null,
+        val planes: Planes? = null,
     ) {
         /** The picture as 8-bit RGBA: an HDR one's coded values cut to 8 bits, untone-mapped (no stage to map it). */
         fun eightBit(): Picture =
             if (hdr == null) this else Picture(ptsMs, width, height, ByteArray(width * height * 4) { rgba[it * 2 + 1] })
     }
+
+    /**
+     * An 8-bit 4:2:0 frame as decoded: [y] at the picture's size, [u] and [v] half that each way (rounded up), rows
+     * from the top without padding; its colours through [matrix], [fullRange] where coded over 0..255 (JPEG's range).
+     */
+    class Planes(val y: ByteArray, val u: ByteArray, val v: ByteArray, val matrix: YuvMatrix, val fullRange: Boolean)
+
+    /**
+     * Whether pictures carry their 4:2:0 [Planes] beside the RGBA — for a chroma upscaler other than bilinear (see
+     * ChromaUpscaling), which the stage runs on them; set from any thread, taken from the next picture.
+     */
+    @Volatile var keepPlanes = false
 
     /** Decoded sound: [pcm] is interleaved 16-bit little-endian stereo at [SAMPLE_RATE]. */
     class Sound(val ptsMs: Long, val pcm: ByteArray)
@@ -356,7 +372,31 @@ class MediaReader(path: String, from: FsFile? = null) : AutoCloseable {
         val data: BytePointer = rgbaFrame.data(0)
         for (y in 0 until h) data.position((y * stride).toLong()).get(out, y * w * bytes, w * bytes)
         data.position(0)
-        return Picture(ptsMs, w, h, out, hdr)
+        return Picture(ptsMs, w, h, out, hdr, if (keepPlanes && !deep) planes(w, h) else null)
+    }
+
+    /** The decoded frame's planes, where it is 8-bit 4:2:0 (yuv420p, or MJPEG's yuvj420p); else null. */
+    private fun planes(w: Int, h: Int): Planes? {
+        val format = frame.format()
+        if (format != avutil.AV_PIX_FMT_YUV420P && format != avutil.AV_PIX_FMT_YUVJ420P) return null
+        fun plane(i: Int, pw: Int, ph: Int): ByteArray {
+            val out = ByteArray(pw * ph)
+            val data = frame.data(i)
+            val stride = frame.linesize(i)
+            for (y in 0 until ph) data.position(y.toLong() * stride).get(out, y * pw, pw)
+            data.position(0)
+            return out
+        }
+        val cw = (w + 1) / 2
+        val ch = (h + 1) / 2
+        val signalled = when (frame.colorspace()) {
+            avutil.AVCOL_SPC_BT709 -> YuvMatrix.BT709
+            avutil.AVCOL_SPC_BT470BG, avutil.AVCOL_SPC_SMPTE170M -> YuvMatrix.BT601
+            avutil.AVCOL_SPC_BT2020_NCL -> YuvMatrix.BT2020
+            else -> null
+        }
+        val full = format == avutil.AV_PIX_FMT_YUVJ420P || frame.color_range() == avutil.AVCOL_RANGE_JPEG
+        return Planes(plane(0, w, h), plane(1, cw, ch), plane(2, cw, ch), YuvMatrix.of(signalled, h), full)
     }
 
     private fun sound(ptsMs: Long): Sound? {

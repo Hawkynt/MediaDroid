@@ -25,6 +25,7 @@ oracle that bilinear scaling would pass as well proves nothing.
 | Dithering (`dither-es3.frag`, `dither.frag`, `dither.glsl`) | libplacebo's own `pl_shader_dither` (7.360, its defaults: blue noise, 64 × 64) | run by libplacebo itself on the same Mesa (`placebo.cpp`) on 16-bit pictures (core/player's gradients, the HDR picture's coded values) into an 8-bit target; ours with the matrix libplacebo makes (`placebo_oracle bluenoise`), from a float frame and from half floats as the stages hold them, the frame both ways up, GLSL ES 3.00 and 1.00. With the matrix turned on its side it has to differ |
 | YUV to RGB (`yuv.frag`) | FFmpeg's own conversion (swscale, `accurate_rnd`, bilinear chroma) | a yuv420p frame uploaded as `takeYuv` uploads it, BT.601 and BT.709 limited range, the matrix as `YuvMatrix.toRgb` computes it; full range (MJPEG's) squeezed first by the FFmpeg decoder's own `mediadroid_range.h`, which unsqueezed has to fail |
 | ACNet (`glsl/acnet`) | `acnet_f8b4.glsl`, TianZerL/ACNetGLSL `c6e5940` (MIT) | in libplacebo on 16-bit YUV (BT.709, full range), grey and in colour, the chroma scaled bilinearly as the stage's doubling does — with another chroma scaler it has to differ, so that setting is known to take |
+| Chroma upscaling (`yuv-spline.frag`, `chroma-krig-*.frag`) | libplacebo's renderer (7.360): its `spline36` plane scaler, and KrigBilateral (Shiandow, LGPL-3.0-or-later; the revision in `krig-url.txt`) as the mpv user shader it is | run by libplacebo on the same Mesa (`placebo.cpp`) on core/player's 4:2:0 fixture and the test picture, full-range BT.709 with the chroma sited at the centre, as the stage reads FFmpeg's planes; ours from planes with a padded stride, as a decoder's come. Each has to differ from FFmpeg's bilinear chroma |
 
 1. Mesa's EGL, GLES and OpenGL (`pkg-config egl glesv2 opengl`) and libplacebo's development files (`pkg-config
    libplacebo`); for Anime4K and ACNet, FFmpeg built with libplacebo and a Vulkan driver (FFmpeg's filter makes its own
@@ -63,6 +64,19 @@ round a value to different sides. The peak's steps come from the stage's HDR fra
 value near the top to about four 14-bit steps (libplacebo reads 16 bits; the desktop stage does too); core/player's
 `PeakDetect` agrees with libplacebo over a whole scene, smoothing and scene changes included, within two
 (`PeakDetectTest`), its `ToneMap` within one 8-bit step (`ToneMapTest`).
+
+Chroma upscaling, on Mesa 26.2's llvmpipe (libplacebo 7.360 on the same), per 8-bit value:
+
+| Check | Max | Mean |
+|-------|-----|------|
+| Spline36, fixture / test picture | 1 / 1 | 0.15 / 0.12 |
+| KrigBilateral, fixture / test picture | 1 / 2 | 0.17 / 0.12 |
+
+libplacebo reads spline36's weights from a table it interpolates; KrigBilateral solves a small system per pixel without
+pivoting, nearly singular where a colour edge meets a corner, so float rounding in another order moves it most there.
+Core/player's `ChromaUpscaling` agrees with libplacebo's YCbCr itself within a fifth of a step (spline36) and three
+quarters (KrigBilateral) (`ChromaUpscalingTest`); the desktop stage's passes with it within two steps of RGB
+(`GlStageTest`).
 
 Debanding, on Mesa 26.2's llvmpipe (libplacebo 7.360 on the same), per 8-bit value:
 

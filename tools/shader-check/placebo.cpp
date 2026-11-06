@@ -18,6 +18,12 @@
 //   placebo_oracle bluenoise
 //                     prints that matrix as pl_generate_blue_noise makes it in a fresh process (its rand()
 //                     unseeded): 64 rows of 64 ranks, 0 to 4095, each the value times 4096
+//   placebo_oracle chroma <in.yuv> <width> <height> <spline36|shader file> <out.ppm> [rgb]
+//                     a yuv420p frame (full range BT.709, chroma sited at the centre, as the stage's YUV pass reads
+//                     it) through libplacebo's renderer, the chroma planes enlarged by spline36 (pl_render_params'
+//                     plane_upscaler) or by an mpv user shader hooking CHROMA (KrigBilateral); out the YCbCr itself
+//                     at the luma's size, 16 bits a value (Y, Cb, Cr in place of R, G, B) — or with [rgb] the
+//                     picture in 8-bit RGB, as the stage's pass draws it
 //
 // The picture as one RGBA texture (8 or 16 bits), top row first, as libplacebo's own frames are.
 #include <EGL/egl.h>
@@ -25,6 +31,8 @@
 #include <libplacebo/dispatch.h>
 #include <libplacebo/dither.h>
 #include <libplacebo/opengl.h>
+#include <libplacebo/renderer.h>
+#include <libplacebo/shaders/custom.h>
 #include <libplacebo/shaders/colorspace.h>
 #include <libplacebo/shaders/dithering.h>
 #include <libplacebo/shaders/sampling.h>
@@ -299,6 +307,104 @@ int blueNoise() {
     return 0;
 }
 
+// One plane of a yuv420p frame as an 8-bit single-channel texture.
+pl_tex planeTexture(int w, int h, const uint8_t* data) {
+    pl_tex_params params{};
+    params.w = w;
+    params.h = h;
+    params.format = pl_find_named_fmt(gpu, "r8");
+    params.sampleable = true;
+    params.host_writable = true;
+    params.initial_data = data;
+    pl_tex tex = pl_tex_create(gpu, &params);
+    if (!tex) fail("cannot make a plane texture");
+    return tex;
+}
+
+// A 16-bit RGBA texture's first three values written as a 16-bit PPM.
+void writePpm16(const char* path, pl_tex tex, int w, int h) {
+    std::vector<uint16_t> data(size_t(w) * h * 4);
+    pl_tex_transfer_params download{};
+    download.tex = tex;
+    download.ptr = data.data();
+    if (!pl_tex_download(gpu, &download)) fail("cannot read back");
+    FILE* file = std::fopen(path, "wb");
+    if (!file) fail(std::string("cannot write ") + path);
+    std::fprintf(file, "P6\n%d %d\n65535\n", w, h);
+    for (size_t i = 0; i < size_t(w) * h; i++) {
+        for (int c = 0; c < 3; c++) {
+            const uint16_t v = data[i * 4 + c];
+            std::fputc(v >> 8, file);
+            std::fputc(v & 0xFF, file);
+        }
+    }
+    std::fclose(file);
+}
+
+// The renderer on a yuv420p frame, the luma at its own size and the chroma enlarged to it; the target holds the
+// result as YCbCr again (the same full-range BT.709 both ways, so libplacebo's decode and encode cancel out).
+int chroma(char** argv) {
+    const int w = std::atoi(argv[1]);
+    const int h = std::atoi(argv[2]);
+    const int cw = (w + 1) / 2;
+    const int ch = (h + 1) / 2;
+    const std::string data = readFile(argv[0]);
+    if (data.size() != size_t(w) * h + 2 * size_t(cw) * ch) fail("not a yuv420p frame of that size");
+    const auto* bytes = reinterpret_cast<const uint8_t*>(data.data());
+    pl_tex planes[3] = {
+        planeTexture(w, h, bytes),
+        planeTexture(cw, ch, bytes + size_t(w) * h),
+        planeTexture(cw, ch, bytes + size_t(w) * h + size_t(cw) * ch),
+    };
+    pl_frame image{};
+    image.num_planes = 3;
+    for (int i = 0; i < 3; i++) {
+        image.planes[i].texture = planes[i];
+        image.planes[i].components = 1;
+        image.planes[i].component_mapping[0] = i;
+    }
+    image.repr.sys = PL_COLOR_SYSTEM_BT_709;
+    image.repr.levels = PL_COLOR_LEVELS_FULL;
+    image.color = pl_color_space_bt709;
+    pl_frame_set_chroma_location(&image, PL_CHROMA_CENTER);
+    const bool rgb = argv[5] != nullptr;
+    pl_tex out = texture(w, h, rgb ? "rgba8" : "rgba16", nullptr, true);
+    pl_frame target{};
+    target.num_planes = 1;
+    target.planes[0].texture = out;
+    target.planes[0].components = 3;
+    for (int i = 0; i < 3; i++) target.planes[0].component_mapping[i] = i;
+    target.repr = rgb ? pl_color_repr_rgb : image.repr;
+    // Encoded with the 8-bit offsets it was decoded with (the chroma's middle at 128/255), not a 16-bit target's 0.5.
+    if (!rgb) {
+        target.repr.bits.sample_depth = 8;
+        target.repr.bits.color_depth = 8;
+    }
+    target.color = image.color;
+    const std::string filter = argv[3];
+    const pl_hook* hook = nullptr;
+    pl_render_params params{};
+    params.color_map_params = &pl_color_map_default_params;
+    params.color_adjustment = &pl_color_adjustment_neutral;
+    params.plane_upscaler = filter == "spline36" ? &pl_filter_spline36 : &pl_filter_bilinear;
+    if (filter != "bilinear" && filter != "spline36") {
+        const std::string shader = readFile(filter);
+        hook = pl_mpv_user_shader_parse(gpu, shader.data(), shader.size());
+        if (!hook) fail("libplacebo cannot read " + filter);
+        params.hooks = &hook;
+        params.num_hooks = 1;
+    }
+    pl_renderer renderer = pl_renderer_create(logger, gpu);
+    if (!pl_render_image(renderer, &image, &target, &params)) fail("the render failed");
+    if (rgb) writePpm(argv[4], readBack(out, w, h));
+    else writePpm16(argv[4], out, w, h);
+    if (hook) pl_mpv_user_shader_destroy(&hook);
+    pl_renderer_destroy(&renderer);
+    pl_tex_destroy(gpu, &out);
+    for (pl_tex& t : planes) pl_tex_destroy(gpu, &t);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -311,6 +417,8 @@ int main(int argc, char** argv) {
     else if (mode == "tonemap" && argc == 6) result = tonemap(argv + 2);
     else if (mode == "dither" && argc == 4) result = dither(argv + 2);
     else if (mode == "peak" && argc > 3) result = peak(argv[2], argc - 3, argv + 3);
+    else if (mode == "chroma" && (argc == 7 || (argc == 8 && std::string(argv[7]) == "rgb")))
+        result = chroma(argv + 2);
     else fail("usage: see the head of tools/shader-check/placebo.cpp");
     pl_opengl_destroy(&gl);
     pl_log_destroy(&logger);

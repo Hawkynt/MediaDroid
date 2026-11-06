@@ -49,6 +49,8 @@ data class PictureAdjustment(
      * gives it and no filter runs for it.
      */
     val aspect: AspectOverride = AspectOverride.AUTO,
+    /** How the colour of a 4:2:0 picture is enlarged to its brightness's size, see [ChromaUpscaling]. */
+    val chroma: Chroma = Chroma.BILINEAR,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
@@ -197,6 +199,18 @@ data class PictureAdjustment(
 
         /** Enlarged by a network on ncnn (see [NeuralEnlarging]). */
         val isEnlarger: Boolean get() = this == WAIFU2X || this == REALCUGAN || this == REALSR
+    }
+
+    /**
+     * Enlarging a 4:2:0 picture's colour, a quarter as many samples as pixels, to its brightness's size (see
+     * [ChromaUpscaling]) — where the stage gets the picture's planes: from the bundled FFmpeg on Android (a device's
+     * decoder hands over RGB its driver made) and every picture the desktop decodes. [BILINEAR] blends the nearest
+     * four; [SPLINE36] weighs six by six, sharper; [KRIG] is KrigBilateral: the colour follows the brightness's edges.
+     */
+    enum class Chroma(val label: String, val description: String) {
+        BILINEAR("Bilinear", "The colour's nearest four samples blended: soft colour edges, the lightest."),
+        SPLINE36("Spline36", "Six by six samples weighed (libplacebo's spline36): crisper colour edges."),
+        KRIG("KrigBilateral", "Colour edges following the brightness's (Shiandow's KrigBilateral): no bleeding."),
     }
 
     /**

@@ -185,6 +185,11 @@ class GlStage : AutoCloseable {
 
     private var crop: PictureCrop? = null
 
+    // The chroma upscaler the pictures are uploaded with (from their planes, where they carry them), and the planes'
+    // textures: luma, Cb, Cr.
+    private var chroma = PictureAdjustment.Chroma.BILINEAR
+    private val planeTextures = IntArray(3)
+
     private fun run(
         m: Moment,
         a: PictureAdjustment,
@@ -199,7 +204,12 @@ class GlStage : AutoCloseable {
         // a plain 8-bit picture keeps its 8-bit frames, untouched.
         deep = Dither.applies(if (m.shown.hdr != null) 16 else 8, SCREEN_BITS, a)
         // A change to the filters, to the part shown, or to the frames' depth makes every kept picture stale.
-        val look = listOf(a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep)
+        val look = listOf(a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep, a.chroma)
+        // Another chroma upscaler makes every picture uploaded from its planes stale.
+        if (a.chroma != chroma) {
+            chroma = a.chroma
+            uploaded.forEach { it.picture = null }
+        }
         if (look != keptLook) {
             keptLook = look
             kept.forEach { it.picture = null }
@@ -751,6 +761,25 @@ class GlStage : AutoCloseable {
         val left = region.left
         val top = region.top
         val transfer = picture.hdr
+        val planes = picture.planes
+        if (transfer == null && planes != null && chroma != PictureAdjustment.Chroma.BILINEAR) {
+            // The whole picture from its planes, then the region out of it (its top row where v is 1).
+            val whole = chromaUpscaled(picture, planes)
+            val pw = picture.width.toFloat()
+            val ph = picture.height.toFloat()
+            val within = floatArrayOf(
+                w / pw, 0f, 0f, 0f,
+                0f, h / ph, 0f, 0f,
+                0f, 0f, 1f, 0f,
+                left / pw, 1f - (top + h) / ph, 0f, 1f,
+            )
+            // A copy: the blend's other input is the same picture (see copy).
+            pass("blend.frag", into, whole.texture, listOf(whole.texture to "uPrevious")) { p ->
+                glUniform1f(glGetUniformLocation(p, "uWeight"), 1f)
+                glUniformMatrix4fv(glGetUniformLocation(p, "uTexMatrix"), false, within)
+            }
+            return
+        }
         val bytes = if (transfer == null) 4 else 8
         val buffer = MemoryUtil.memAlloc(w * h * bytes)
         for (y in 0 until h) buffer.put(picture.rgba, ((top + h - 1 - y) * picture.width + left) * bytes, w * bytes)
@@ -783,6 +812,68 @@ class GlStage : AutoCloseable {
         MemoryUtil.memFree(read)
         val tone = ToneMap.pass(transfer, peakDetect.peak)
         pass("tonemap.frag", into, coded.texture) { p -> toneUniforms(p, tone) }
+    }
+
+    /**
+     * [picture] in RGB at its own size from its 4:2:0 [planes], the chroma enlarged by the [chroma] chosen (see
+     * ChromaUpscaling) — spline36 in one pass, KrigBilateral in three — as the Android stage does with the FFmpeg
+     * decoder's planes; the frame holds the picture's top row where v is 1, as uploaded pictures are held.
+     */
+    private fun chromaUpscaled(picture: MediaReader.Picture, planes: MediaReader.Planes): Target {
+        val w = picture.width
+        val h = picture.height
+        val cw = (w + 1) / 2
+        val ch = (h + 1) / 2
+        if (planeTextures[0] == 0) {
+            glGenTextures(planeTextures)
+            planeTextures.forEach {
+                glBindTexture(GL_TEXTURE_2D, it)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            }
+        }
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+        listOf(Triple(planes.y, w, h), Triple(planes.u, cw, ch), Triple(planes.v, cw, ch)).forEachIndexed { i, plane ->
+            val bytes = MemoryUtil.memAlloc(plane.first.size).put(plane.first).flip()
+            glBindTexture(GL_TEXTURE_2D, planeTextures[i])
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, plane.second, plane.third, 0, GL_RED, GL_UNSIGNED_BYTE, bytes)
+            MemoryUtil.memFree(bytes)
+        }
+        // Rows from the top in the planes, the picture's top row where v is 1 in the frames: turned round.
+        val flip = floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 1f)
+        val colour = if (planes.fullRange) planes.matrix.toRgbFull() else planes.matrix.toRgb()
+        val chromaPlanes = listOf(planeTextures[1] to "uU", planeTextures[2] to "uV")
+        val common: (Int) -> Unit = { p ->
+            glUniformMatrix4fv(glGetUniformLocation(p, "uTexMatrix"), false, flip)
+            glUniformMatrix3fv(glGetUniformLocation(p, "uColor"), false, colour)
+            glUniform1f(glGetUniformLocation(p, "uFoot"), if (planes.fullRange) 0f else 16f / 255f)
+        }
+        val whole = target("chroma-whole", w, h)
+        if (chroma == PictureAdjustment.Chroma.SPLINE36) {
+            return pass("yuv-spline.frag", whole, planeTextures[0], chromaPlanes) { p ->
+                common(p)
+                glUniform1f(glGetUniformLocation(p, "uChroma"), 1f)
+                glUniform2f(glGetUniformLocation(p, "uChromaSize"), cw.toFloat(), ch.toFloat())
+                glUniform1f(glGetUniformLocation(p, "uChromaWidth"), cw.toFloat())
+            }
+        }
+        val first = pass("chroma-krig-1.frag", target("chroma-low", w, ch, half = true), planeTextures[0]) { p ->
+            glUniformMatrix4fv(glGetUniformLocation(p, "uTexMatrix"), false, flip)
+            glUniform2f(glGetUniformLocation(p, "uLumaSize"), w.toFloat(), h.toFloat())
+            glUniform1f(glGetUniformLocation(p, "uChromaHeight"), ch.toFloat())
+        }
+        val second = pass("chroma-krig-2.frag", target("chroma-lower", cw, ch, half = true), first.texture) { p ->
+            glUniform1f(glGetUniformLocation(p, "uLumaWidth"), w.toFloat())
+            glUniform1f(glGetUniformLocation(p, "uChromaWidth"), cw.toFloat())
+        }
+        return pass("chroma-krig-3.frag", whole, planeTextures[0], chromaPlanes + (second.texture to "uLow")) { p ->
+            common(p)
+            glUniform1f(glGetUniformLocation(p, "uLumaStride"), w.toFloat())
+            glUniform2f(glGetUniformLocation(p, "uLumaSize"), w.toFloat(), h.toFloat())
+            glUniform2f(glGetUniformLocation(p, "uChromaSize"), cw.toFloat(), ch.toFloat())
+        }
     }
 
     /** Hands [pass]'s uniforms (ToneMap.Pass.uniforms) to [program]. */
@@ -918,6 +1009,10 @@ class GlStage : AutoCloseable {
             "deinterlace.frag" to Shaders.VIDEO_DEINTERLACE,
             "deband-es3.frag" to Shaders.VIDEO_DEBAND_ES3,
             "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
+            "yuv-spline.frag" to Shaders.VIDEO_YUV_SPLINE,
+            "chroma-krig-1.frag" to Shaders.VIDEO_CHROMA_KRIG_1,
+            "chroma-krig-2.frag" to Shaders.VIDEO_CHROMA_KRIG_2,
+            "chroma-krig-3.frag" to Shaders.VIDEO_CHROMA_KRIG_3,
             "tonemap.frag" to Shaders.VIDEO_TONEMAP,
             "peak.frag" to Shaders.VIDEO_PEAK,
             "denoise.frag" to Shaders.VIDEO_DENOISE,

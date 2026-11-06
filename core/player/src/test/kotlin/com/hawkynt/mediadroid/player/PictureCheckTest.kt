@@ -11,7 +11,8 @@ class PictureCheckTest {
     fun `every choice of deinterlacing, upscaling and smooth motion says what it does`() {
         val descriptions = PictureAdjustment.Deinterlace.entries.map { it.description } +
             PictureAdjustment.Upscaler.entries.map { it.description } +
-            PictureAdjustment.Interpolation.entries.map { it.description }
+            PictureAdjustment.Interpolation.entries.map { it.description } +
+            PictureAdjustment.Chroma.entries.map { it.description }
         descriptions.forEach { assertTrue(it, it.length >= 20) }
         assertEquals(descriptions.size, descriptions.toSet().size)
     }
@@ -43,6 +44,10 @@ class PictureCheckTest {
         assertTrue(PictureCheck.needed(busy, busy.copy(upscaler = PictureAdjustment.Upscaler.LANCZOS)))
         assertTrue(PictureCheck.needed(busy, busy.copy(fieldRate = true)))
         assertFalse(PictureCheck.needed(busy, busy.copy(sharpness = 0.5f)))
+        val krig = busy.copy(chroma = PictureAdjustment.Chroma.KRIG)
+        assertTrue(PictureCheck.needed(busy, krig))
+        assertTrue(PictureCheck.needed(krig, krig.copy(chroma = PictureAdjustment.Chroma.SPLINE36)))
+        assertFalse(PictureCheck.needed(krig, busy))
     }
 
     @Test

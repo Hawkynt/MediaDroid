@@ -23,6 +23,12 @@
 //   shader_check yuv <in.yuv> <width> <height> <601|709|2020> <out.ppm> [full]
 //                                                           glsl/video/yuv.frag: a yuv420p frame to RGB; a full
 //                                                           range one squeezed first, as the FFmpeg decoder does
+//   shader_check chroma <in.yuv> <width> <height> <spline36|krig> <out.ppm>
+//                                                           a full-range BT.709 yuv420p frame to RGB, its chroma
+//                                                           enlarged by glsl/video/yuv-spline.frag or the three
+//                                                           chroma-krig passes; the planes uploaded with a padded
+//                                                           stride, as a decoder's buffers come (garbage past the
+//                                                           picture's width, which no pass may read)
 //   shader_check deinterlace <in.ppm> <out.ppm> <mode> <tff 0|1>
 //                                                           glsl/video/deinterlace.frag (1 Auto, 2 Blend, 3 Bob)
 //   shader_check anime4k <in.ppm> <out.ppm>                 glsl/anime4k to twice the size
@@ -310,6 +316,91 @@ Picture yuv(const std::string& path, int w, int h, double kr, double kb, bool fu
     glUniformMatrix3fv(glGetUniformLocation(prog, "uColor"), 1, GL_FALSE, matrix);
     glUniform1f(glGetUniformLocation(prog, "uChroma"), 1.0f);
     draw(prog, out, tex[0], flip);
+    return download(out);
+}
+
+// A full-range BT.709 yuv420p frame to RGB as VideoFilterStage.copyCoded does it with a chroma upscaler: the planes as
+// luminance textures [pad] texels wider than the picture (a decoder's stride, white beyond the picture so a read past
+// it shows), the texture matrix taking the picture's part and turning the rows round, as takeYuv sets it.
+Picture chroma(const std::string& path, int w, int h, const std::string& filter) {
+    const std::string data = readFile(path);
+    const int cw = (w + 1) / 2, ch = (h + 1) / 2;
+    if (data.size() != size_t(w) * h + 2 * size_t(cw) * ch) fail("not a yuv420p frame of that size: " + path);
+    const int pad = 16;
+    const int strides[3] = {w + pad, cw + pad, cw + pad};
+    const int widths[3] = {w, cw, cw};
+    const int heights[3] = {h, ch, ch};
+    const size_t offsets[3] = {0, size_t(w) * h, size_t(w) * h + size_t(cw) * ch};
+    GLuint tex[3];
+    glGenTextures(3, tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    for (int i = 0; i < 3; i++) {
+        std::vector<uint8_t> plane(size_t(strides[i]) * heights[i], 255);
+        for (int y = 0; y < heights[i]; y++) {
+            std::copy_n(data.data() + offsets[i] + size_t(y) * widths[i], widths[i],
+                        plane.begin() + std::ptrdiff_t(y) * strides[i]);
+        }
+        glBindTexture(GL_TEXTURE_2D, tex[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, strides[i], heights[i], 0, GL_LUMINANCE, GL_UNSIGNED_BYTE,
+                     plane.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    // Full-range BT.709 (YuvMatrix.toRgbFull): no foot, luma and chroma at their own scale.
+    const double kr = 0.2126, kb = 0.0722, kg = 1 - kr - kb;
+    const float matrix[9] = {
+        1, 1, 1,
+        0, float(-2 * (1 - kb) * kb / kg), float(2 * (1 - kb)),
+        float(2 * (1 - kr)), float(-2 * (1 - kr) * kr / kg), 0,
+    };
+    const float lumaPart = float(w) / float(strides[0]);
+    const float flip[16] = {lumaPart, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1};
+    const float chromaScale = float(cw) / float(strides[1]) / lumaPart;
+    auto planes = [&](GLuint prog) {
+        glUseProgram(prog);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, tex[1]);
+        glUniform1i(glGetUniformLocation(prog, "uU"), 1);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, tex[2]);
+        glUniform1i(glGetUniformLocation(prog, "uV"), 2);
+        glUniformMatrix3fv(glGetUniformLocation(prog, "uColor"), 1, GL_FALSE, matrix);
+        glUniform1f(glGetUniformLocation(prog, "uFoot"), 0.0f);
+    };
+    Target out = target(w, h);
+    if (filter == "spline36") {
+        GLuint prog = appProgram("video/yuv-spline.frag");
+        planes(prog);
+        glUniform1f(glGetUniformLocation(prog, "uChroma"), chromaScale);
+        glUniform2f(glGetUniformLocation(prog, "uChromaSize"), float(strides[1]), float(ch));
+        glUniform1f(glGetUniformLocation(prog, "uChromaWidth"), float(cw));
+        draw(prog, out, tex[0], flip);
+        return download(out);
+    }
+    if (filter != "krig") fail("no such chroma filter: " + filter);
+    const std::string vertex = appShader("video/vertex-es3.vert");
+    GLuint first = program(vertex, appShader("video/chroma-krig-1.frag"));
+    GLuint second = program(vertex, appShader("video/chroma-krig-2.frag"));
+    GLuint third = program(vertex, appShader("video/chroma-krig-3.frag"));
+    Target low1 = target(w, ch, true), low2 = target(cw, ch, true);
+    glUseProgram(first);
+    glUniform2f(glGetUniformLocation(first, "uLumaSize"), float(strides[0]), float(h));
+    glUniform1f(glGetUniformLocation(first, "uChromaHeight"), float(ch));
+    draw(first, low1, tex[0], flip);
+    glUseProgram(second);
+    glUniform1f(glGetUniformLocation(second, "uLumaWidth"), float(w));
+    glUniform1f(glGetUniformLocation(second, "uChromaWidth"), float(cw));
+    draw(second, low2, low1.texture);
+    planes(third);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, low2.texture);
+    glUniform1i(glGetUniformLocation(third, "uLow"), 3);
+    glUniform1f(glGetUniformLocation(third, "uLumaStride"), float(strides[0]));
+    glUniform2f(glGetUniformLocation(third, "uLumaSize"), float(w), float(h));
+    glUniform2f(glGetUniformLocation(third, "uChromaSize"), float(cw), float(ch));
+    draw(third, out, tex[0], flip);
     return download(out);
 }
 
@@ -870,7 +961,9 @@ int main(int argc, char** argv) {
         const double kr = a[4] == "601" ? 0.299 : a[4] == "709" ? 0.2126 : 0.2627;
         const double kb = a[4] == "601" ? 0.114 : a[4] == "709" ? 0.0722 : 0.0593;
         writePpm(a[5], yuv(a[1], std::stoi(a[2]), std::stoi(a[3]), kr, kb, a.size() == 7));
-    } else if (a.size() == 5 && a[0] == "deinterlace")
+    } else if (a.size() == 6 && a[0] == "chroma")
+        writePpm(a[5], chroma(a[1], std::stoi(a[2]), std::stoi(a[3]), a[4]));
+    else if (a.size() == 5 && a[0] == "deinterlace")
         writePpm(a[2], deinterlace(readPpm(a[1]), std::stoi(a[3]), a[4] == "1"));
     else if (a.size() == 3 && a[0] == "anime4k") writePpm(a[2], anime4k(readPpm(a[1])));
     else if (a.size() == 3 && a[0] == "acnet") writePpm(a[2], acnet(readPpm(a[1])));

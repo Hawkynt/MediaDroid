@@ -23,6 +23,12 @@ enum class YuvMatrix(private val kr: Double, private val kb: Double) {
      */
     fun toRgbTenBit(): FloatArray = matrix(1024.0 / 876, 1024.0 / 896)
 
+    /**
+     * 8-bit full-range YUV — luma 0..255, chroma about 128, each over 255, as JPEG and MJPEG cameras code it — to RGB,
+     * as [toRgb] lays it out; the shader takes nothing off luma and 128/255 off chroma first.
+     */
+    fun toRgbFull(): FloatArray = matrix(1.0, 1.0)
+
     /** The matrix with luma scaled by [y] and chroma by [c] to full range. */
     private fun matrix(y: Double, c: Double): FloatArray {
         val kg = 1 - kr - kb
