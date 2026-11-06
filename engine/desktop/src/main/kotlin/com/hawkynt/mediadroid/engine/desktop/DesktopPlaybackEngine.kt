@@ -12,6 +12,7 @@ import com.hawkynt.mediadroid.player.FileLoudness
 import com.hawkynt.mediadroid.player.LibAss
 import com.hawkynt.mediadroid.player.LoudnessChain
 import com.hawkynt.mediadroid.player.PictureCrop
+import com.hawkynt.mediadroid.player.PlaybackMath
 import com.hawkynt.mediadroid.player.SubtitleLook
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -20,10 +21,11 @@ import java.util.concurrent.LinkedBlockingDeque
 
 /**
  * The desktop playback engine: a [MediaReader] on a thread of its own decodes ahead — the sound into the
- * [AudioSink], which paces it, the pictures into a short queue — and the clock is the sound's: the time the reader
- * started from plus what the sink has played (wall time where the file has no sound). [picture] hands out the latest
- * picture due by that clock, for the window to draw at its next refresh, and [moment] that picture with the ones
- * around it for the stage. With [film] on, the pictures go through Film on their way to the queue.
+ * [AudioSink], which paces it (with the sound set later, through [HeldSound] as far as that delay), the pictures into
+ * a short queue — and the clock is the sound's: the time the reader started from plus what the sink has played (wall
+ * time where the file has no sound). [picture] hands out the latest picture due by that clock, for the window to draw
+ * at its next refresh, and [moment] that picture with the ones around it for the stage. With [film] on, the pictures
+ * go through Film on their way to the queue.
  * ASS/SSA subtitles — the file's own streams and files beside it — are drawn by libass where the native library
  * carries it ([subtitlePicture]: styles, positions, karaoke, signs, the file's attached fonts); everything else, and
  * ASS without it, as lines of text ([subtitle]).
@@ -155,8 +157,10 @@ class DesktopPlaybackEngine(
         val chain = LoudnessChain(MediaReader.SAMPLE_RATE, 2)
         var loudness = fileLoudness(source, null)
         var samples = ShortArray(0)
+        val held = HeldSound()
         try {
             while (running) {
+                held.feed(sink)
                 if (filmChanged) {
                     filmChanged = false
                     pulldown.reset()
@@ -177,6 +181,7 @@ class DesktopPlaybackEngine(
                     pictureMs = Long.MIN_VALUE
                     soundMs = Long.MIN_VALUE
                     pictures.clear()
+                    held.clear()
                     pulldown.reset()
                     if (selectedText?.startsWith("sidecar:") == false) cues.clear()
                     if (secondText?.startsWith("sidecar:") == false) secondCues.clear()
@@ -244,7 +249,7 @@ class DesktopPlaybackEngine(
                             // With the sound set sooner than the picture, the last pictures are due after the
                             // sound's end: silence keeps its clock going until then.
                             val sooner = -soundDelayMs()
-                            if (sooner > 0) sink?.write(ByteArray(sooner * MediaReader.SAMPLE_RATE / 1000 * 4))
+                            if (sooner > 0) held.add(ByteArray(sooner * MediaReader.SAMPLE_RATE / 1000 * 4))
                             waitForEnd()
                         }
                         Thread.sleep(10)
@@ -259,6 +264,7 @@ class DesktopPlaybackEngine(
                                     pictures.offerLast(picture)
                                     break
                                 }
+                                held.feed(sink)
                                 Thread.sleep(5)
                             }
                         }
@@ -278,7 +284,15 @@ class DesktopPlaybackEngine(
                                 view.clear()
                                 view.put(samples, 0, count)
                             }
-                            sink?.write(pcm)
+                            // The sound set later is due that much after the pictures read with it: held here as far as
+                            // that, so the reader goes on to them though the output is full.
+                            held.add(pcm)
+                            val limit = soundDelayMs().coerceAtLeast(0).toLong() * MediaReader.SAMPLE_RATE / 1000 * 4
+                            while (running && pendingSeekMs == null) {
+                                held.feed(sink)
+                                if (held.bytes <= limit) break
+                                Thread.sleep(2)
+                            }
                         }
                     }
                     is MediaReader.Cue -> if (item.second) secondCues += item else cues += item
@@ -297,8 +311,60 @@ class DesktopPlaybackEngine(
     private fun fileLoudness(source: MediaReader, soundFile: MediaReader?): FileLoudness =
         FileLoudness("$openedPath#$selectedSound", runCatching { (soundFile ?: source).replayGain?.gainDb }.getOrNull())
 
-    /** The lip-sync delay (positive: the sound later), where there is sound to delay. */
-    private fun soundDelayMs(): Int = if (hasSound) tuning.audioDelayMs else 0
+    /** The lip-sync delay (positive: the sound later), where there is sound to delay, within Android's range. */
+    private fun soundDelayMs(): Int = if (hasSound) {
+        tuning.audioDelayMs.coerceIn(-PlaybackMath.AUDIO_DELAY_LIMIT_MS, PlaybackMath.AUDIO_DELAY_LIMIT_MS)
+    } else {
+        0
+    }
+
+    /**
+     * Sound decoded but not yet given to the output, in order: what [feed] cannot hand over without waiting. The reader
+     * holds up to the sound's positive delay here, on top of what the output itself holds.
+     */
+    private class HeldSound {
+        private val queue = ArrayDeque<ByteArray>()
+        private var offset = 0
+
+        /** How many bytes are held. */
+        var bytes = 0L
+            private set
+
+        fun add(pcm: ByteArray) {
+            if (pcm.isEmpty()) return
+            queue.addLast(pcm)
+            bytes += pcm.size
+        }
+
+        /** Hands [sink] as much as it takes now without waiting, whole frames only; without one, drops it all. */
+        fun feed(sink: AudioSink?) {
+            if (sink == null) return clear()
+            while (queue.isNotEmpty()) {
+                val first = queue.first()
+                val room = sink.available() / FRAME_BYTES * FRAME_BYTES
+                if (room <= 0) return
+                val count = minOf(room, first.size - offset)
+                sink.write(if (offset == 0 && count == first.size) first else first.copyOfRange(offset, offset + count))
+                offset += count
+                bytes -= count
+                if (offset == first.size) {
+                    queue.removeFirst()
+                    offset = 0
+                }
+            }
+        }
+
+        fun clear() {
+            queue.clear()
+            offset = 0
+            bytes = 0
+        }
+
+        private companion object {
+            /** 16-bit stereo. */
+            const val FRAME_BYTES = 4
+        }
+    }
 
     /**
      * How many pictures may wait to be shown: a few, and while the sound is set sooner than the picture as many more

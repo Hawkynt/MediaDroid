@@ -16,6 +16,9 @@ interface AudioSink : AutoCloseable {
     /** Queues 16-bit little-endian interleaved PCM, waiting while the output is full. */
     fun write(pcm: ByteArray)
 
+    /** How many bytes [write] takes now without waiting. */
+    fun available(): Int
+
     fun playedMs(): Long
 
     fun pause()
@@ -57,6 +60,9 @@ class JavaSoundSink(private val bufferMs: Int = 1_000) : AudioSink {
     override fun write(pcm: ByteArray) {
         line?.write(pcm, 0, pcm.size - pcm.size % frameBytes)
     }
+
+    // Without a line, writing drops the sound: there is always room.
+    override fun available(): Int = line?.available() ?: Int.MAX_VALUE
 
     override fun playedMs(): Long = line?.let { (it.microsecondPosition - flushedAtUs) / 1000 } ?: 0
 
