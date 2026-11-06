@@ -167,7 +167,7 @@ of its own, within two seconds of the tap. All of it runs on the graphics chip b
 | Anime4K | a small network for line art, 2× | [bloc97/Anime4K](https://github.com/bloc97/Anime4K) — within 1/255 of libplacebo ([check](tools/shader-check)) |
 | ACNet | a small network on the luma, for anime, 2× | [TianZerL/ACNetGLSL](https://github.com/TianZerL/ACNetGLSL) (F8B4), from [Anime4KCPP](https://github.com/TianZerL/Anime4KCPP) — within 1/255 of libplacebo ([check](tools/shader-check)) |
 | xBRZ | rules for pixel art and cartoons, 2–6× | [Zenju's xBRZ](https://sourceforge.net/projects/xbrz/) — pixel for pixel, on the GPU too ([check](tools/shader-check)) |
-| Real-ESRGAN | neural, 4×, in tiles (TFLite: NPU, GPU or CPU; on the desktop ncnn, the compact video model) | [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), [Qualcomm's export](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) |
+| Real-ESRGAN | neural, 4×, in tiles (TFLite: NPU, GPU or CPU; on the desktop ncnn, the compact video model or the general x4plus, fetched, 33 MB) | [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), [Qualcomm's export](https://huggingface.co/qualcomm/Real-ESRGAN-General-x4v3) |
 | waifu2x | neural CUnet for drawings, 2× (ncnn); noise removal off or 0–3, eight ways on request | [nagadomi/waifu2x](https://github.com/nagadomi/waifu2x) via [waifu2x-ncnn-vulkan](https://github.com/nihui/waifu2x-ncnn-vulkan) |
 | Real-CUGAN | neural, for anime, 2×, 3× or 4× (ncnn); conservative, no denoise or denoise 1–3, the pro models, eight ways on request | [bilibili's Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) via [realcugan-ncnn-vulkan](https://github.com/nihui/realcugan-ncnn-vulkan) |
 | RealSR | neural, for photos and film, 4×; fetched, 33 MB | [jixiaozhong/RealSR](https://github.com/jixiaozhong/RealSR) via [realsr-ncnn-vulkan](https://github.com/nihui/realsr-ncnn-vulkan) — [files](https://huggingface.co/Hawkynt/mediadroid-models/tree/main/realsr) |
@@ -391,9 +391,11 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   matches); DAIN, XVFI, FLAVR, CAIN and RealSR are fetched there when picked, checked the same way. A self-test runs each unit
   in a Java process of its own, so a network or a graphics driver that takes the process down takes only the test —
   the same checks as on the phone (`NeuralChecks`), within the same two seconds. Real-ESRGAN runs on ncnn there too,
-  without TFLite: the compact video model (`realesr-animevideov3-x4`, 1.2 MB) as
-  [Real-ESRGAN-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) ships it — the general model the phone
-  carries has no ncnn conversion upstream.
+  without TFLite: the compact video model (`realesr-animevideov3-x4`, 1.2 MB, carried) and the general model
+  (`realesrgan-x4plus`, RRDBNet, 33 MB, fetched when picked from the port's release zip — the file taken out and checked
+  against its digest), both as [Real-ESRGAN-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) ships them,
+  picked under Real-ESRGAN's chip and tried like the rest; the general model agrees with Real-ESRGAN's PyTorch model
+  within 0.16 per value on average ([tools/realesrgan](tools/realesrgan/README.md)).
 - The screens are the Android ones, laid out for a mouse, a keyboard and a large window: menus, keyboard shortcuts
   (space to pause, arrows to seek, F to go full screen, S for the next subtitles, P for the picture, sound and
   track panel, N for the next episode, [ and ] for slower and faster, C for a snapshot, `,` and `.` for one frame back

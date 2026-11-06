@@ -14,6 +14,7 @@ class PictureTrialTest {
         var ready: Boolean = true,
         var fetches: Boolean = true,
         var upscaling: NeuralSelfTest.Timing? = null,
+        override val neuralOnNcnn: Boolean = false,
     ) : PictureTrial.Device {
         val enlargers = HashMap<NeuralEnlarging.Choice, NeuralInterpolation.Passed>()
         val motion = HashMap<PictureAdjustment.Interpolation, NeuralInterpolation.Passed>()
@@ -193,6 +194,18 @@ class PictureTrialTest {
             "This device cannot run Real-ESRGAN at all; the upscaler stays as it was.",
             check(PictureAdjustment(upscaler = PictureAdjustment.Upscaler.NEURAL), FakeDevice()).message,
         )
+    }
+
+    @Test
+    fun `where Real-ESRGAN runs on ncnn each of its models is fetched and tested as the other networks are`() {
+        val passed = NeuralSelfTest.Outcome.Ran(listOf(NeuralSelfTest.Timing("GPU", mapOf(576 to 30.0))))
+        val device = FakeDevice(outcome = passed, ready = false, neuralOnNcnn = true)
+        val general = PictureAdjustment(upscaler = PictureAdjustment.Upscaler.NEURAL, upscalerModel = "x4plus")
+        assertTrue(check(general, device).keepsUp)
+        assertEquals(listOf("realesrgan-x4plus"), device.fetched)
+        assertEquals(listOf("NEURAL:x4plus"), device.tested)
+        assertEquals(null, device.upscalingKept)
+        assertTrue("Testing Real-ESRGAN General on this device…" in said)
     }
 
     @Test

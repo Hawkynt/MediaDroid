@@ -4,9 +4,9 @@ package com.hawkynt.mediadroid.player
  * The upscalers made by networks on ncnn (waifu2x's CUnet, Real-CUGAN's SE and pro models, RealSR's DF2K_JPEG model,
  * as nihui's ncnn ports run them; on the desktop Real-ESRGAN too): two, three or four times the picture's size, the
  * screen's scaling doing the rest. Each upscaler offers the [models] its port ships — waifu2x's noise levels,
- * Real-CUGAN's denoise strengths, scales and pro models — and each model may run eight ways ([Choice.tta]). Like the
- * other neural choices, one is taken only where a self-test finds the device runs that very choice right and fast
- * enough.
+ * Real-CUGAN's denoise strengths, scales and pro models, Real-ESRGAN's video and general models — and each model may
+ * run eight ways ([Choice.tta]). Like the other neural choices, one is taken only where a self-test finds the device
+ * runs that very choice right and fast enough.
  */
 object NeuralEnlarging {
     /** How much larger [upscaler]'s default model makes a picture: RealSR and Real-ESRGAN four times, else twice. */
@@ -131,7 +131,14 @@ object NeuralEnlarging {
 
     private val SINGLE_MODELS = listOf(
         Model(PictureAdjustment.Upscaler.REALSR, "", "4×", 4, "x4", NeuralModels.REALSR),
-        Model(PictureAdjustment.Upscaler.NEURAL, "", "4×", 4, "realesr-animevideov3-x4", NeuralModels.REALESRGAN),
+        // Real-ESRGAN on ncnn (the desktop's): its compact video model, carried, and its general x4plus model, fetched.
+        Model(
+            PictureAdjustment.Upscaler.NEURAL, "", "Anime video", 4, "realesr-animevideov3-x4", NeuralModels.REALESRGAN,
+        ),
+        Model(
+            PictureAdjustment.Upscaler.NEURAL, "x4plus", "General", 4, "realesrgan-x4plus",
+            NeuralModels.REALESRGAN_X4PLUS,
+        ),
     )
 
     /** The models [upscaler] runs, its default among them; none for an upscaler that is no network on ncnn. */

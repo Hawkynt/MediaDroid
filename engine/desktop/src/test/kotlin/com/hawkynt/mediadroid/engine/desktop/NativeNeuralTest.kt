@@ -113,6 +113,23 @@ class NativeNeuralTest {
     }
 
     @Test
+    fun `Real-ESRGAN's general model, out of the port's release, agrees with PyTorch`() {
+        // tools/realesrgan: RRDBNet with RealESRGAN_x4plus.pth on the CPU, the picture mirrored by 10 around as the
+        // port mirrors it. Measured: off by 0.14 per value on average, 1 at the most.
+        val models = System.getProperty("mediadroid.testModels")?.let(::File) ?: folder.newFolder("models")
+        val neural = DesktopNeural(models)
+        val choice = NeuralEnlarging.choice("NEURAL:x4plus")!!
+        val files = choice.model.files
+        if (!neural.ready(files)) assertTrue("not fetched", ModelFolder.fetch(neural.folder(files), files, {}))
+        val (input, w, h) = rgba("input.png")
+        val out = requireNotNull(neural.enlarger(choice, false)).use { net ->
+            ByteArray(w * h * 48).also(requireNotNull(net.run(input, w, h))::get)
+        }
+        val (mean, max) = difference(out, ImageIO.read(javaClass.getResource("/enlargers/realesrgan-x4plus.png")))
+        assertTrue("off by $mean on average, $max at most", mean <= 0.5 && max <= 8)
+    }
+
+    @Test
     fun `tiles enlarge as the ncnn ports' tiles do, close to the whole picture`() {
         val neural = DesktopNeural(folder.root)
         val (input, w, h) = rgba("input.png")

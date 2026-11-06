@@ -57,9 +57,10 @@ class NeuralEnlargingModelsTest {
     }
 
     @Test
-    fun `RealSR and Real-ESRGAN have a model each, the screen's own scalers none`() {
+    fun `RealSR has one model, Real-ESRGAN on ncnn its video model by default, the screen's own scalers none`() {
         assertEquals(NeuralModels.REALSR, NeuralEnlarging.models(PictureAdjustment.Upscaler.REALSR).single().files)
-        assertEquals(NeuralModels.REALESRGAN, NeuralEnlarging.models(PictureAdjustment.Upscaler.NEURAL).single().files)
+        val realEsrgan = NeuralEnlarging.models(PictureAdjustment.Upscaler.NEURAL)
+        assertEquals(NeuralModels.REALESRGAN, realEsrgan.single { it.isDefault }.files)
         assertEquals(emptyList<NeuralEnlarging.Model>(), NeuralEnlarging.models(PictureAdjustment.Upscaler.FSR))
     }
 

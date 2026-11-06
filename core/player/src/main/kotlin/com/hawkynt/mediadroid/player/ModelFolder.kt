@@ -25,6 +25,7 @@ object ModelFolder {
         progress: (Float) -> Unit,
         open: (String) -> InputStream = ::http,
     ): Boolean {
+        download.archive?.let { return fromArchive(dir, download, it, progress, open) }
         var done = 0L
         return put(dir, download, { file -> open(download.url(file)) }) { n ->
             done += n
@@ -72,6 +73,48 @@ object ModelFolder {
             if (!ok) return false
         }
         return true
+    }
+
+    // [download]'s files taken out of the release zip at its source, read as it streams in: each written aside and kept
+    // only with its own size and digest; nothing fetched where all are there already.
+    private fun fromArchive(
+        dir: File,
+        download: NeuralModels.Download,
+        archive: NeuralModels.Archive,
+        progress: (Float) -> Unit,
+        open: (String) -> InputStream,
+    ): Boolean {
+        if (ready(dir, download) && download.files.all { it.matches(File(dir, it.name).inputStream()) }) return true
+        dir.mkdirs()
+        val wanted = download.files.associateBy { archive.prefix + it.name }
+        val kept = HashSet<String>()
+        runCatching {
+            val counting = object : java.io.FilterInputStream(open(download.source)) {
+                var read = 0L
+                override fun read(): Int = super.read().also { if (it >= 0) count(1) }
+                override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { count(it) }
+                private fun count(n: Int) {
+                    if (n <= 0) return
+                    read += n
+                    progress((read.toFloat() / archive.bytes).coerceAtMost(1f))
+                }
+            }
+            java.util.zip.ZipInputStream(counting).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    val file = wanted[entry.name] ?: continue
+                    val part = File(dir, "${file.name}.part")
+                    part.outputStream().use { zip.copyTo(it) }
+                    val target = File(dir, file.name)
+                    target.delete()
+                    if (file.matches(part.inputStream()) && part.renameTo(target)) kept += file.name
+                    part.delete()
+                }
+            }
+        }
+        val ok = download.files.all { it.name in kept }
+        if (ok) progress(1f) else download.files.forEach { File(dir, it.name).delete() }
+        return ok
     }
 
     private fun http(url: String): InputStream {
