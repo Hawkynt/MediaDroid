@@ -5,11 +5,13 @@ import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.library.FsFile
+import com.hawkynt.mediadroid.player.AssFrame
 import com.hawkynt.mediadroid.player.AssPicture
 import com.hawkynt.mediadroid.player.AssTrack
 import com.hawkynt.mediadroid.player.FileLoudness
 import com.hawkynt.mediadroid.player.LibAss
 import com.hawkynt.mediadroid.player.LoudnessChain
+import com.hawkynt.mediadroid.player.PictureCrop
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArrayList
@@ -494,10 +496,20 @@ class DesktopPlaybackEngine(
 
     /**
      * The picked ASS subtitles due with the picture (less the subtitle delay) drawn for a picture of [width] ×
-     * [height] — the size it is shown at, for sharp text; null where nothing changed since the last call,
+     * [height] — the size it is shown at, for sharp text — that shows [crop] of the video's pixels (null for all of
+     * them): laid out on the whole video, signs keep their place and lines stay inside what shows of the picture
+     * ([AssFrame]). The picture fills the [width] × [height], or the [place] in it (x, y, width, height: a keystone
+     * draws the whole screen); [visible] (left, top, right, bottom) is the part on the screen, all of it where null.
+     * Its box is in the [width] × [height]'s pixels. Null where nothing changed since the last call,
      * [AssPicture.EMPTY] once they are switched off.
      */
-    fun subtitlePicture(width: Int, height: Int): AssPicture? {
+    fun subtitlePicture(
+        width: Int,
+        height: Int,
+        crop: PictureCrop? = null,
+        place: IntArray? = null,
+        visible: IntArray? = null,
+    ): AssPicture? {
         val track = ass
         if (track == null || !subtitlesOn) {
             if (!assShown) return null
@@ -507,7 +519,17 @@ class DesktopPlaybackEngine(
         assShown = true
         val opened = reader
         val atMs = positionMs + soundDelayMs() - tuning.subtitleDelayMs
-        return track.render(atMs, width, height, opened?.width ?: 0, opened?.height ?: 0)
+        val videoWidth = opened?.width ?: 0
+        val videoHeight = opened?.height ?: 0
+        val shown = visible ?: intArrayOf(0, 0, width, height)
+        val at = place ?: intArrayOf(0, 0, width, height)
+        val frame = AssFrame.shown(
+            width, height, shown[0], shown[1], shown[2], shown[3], crop, videoWidth, videoHeight,
+            at[0], at[1], at[2], at[3],
+        ) ?: return AssPicture.EMPTY
+        val drawn = track.render(atMs, frame, videoWidth, videoHeight) ?: return null
+        if (drawn.isEmpty) return drawn
+        return AssPicture(drawn.x + frame.x, drawn.y + frame.y, drawn.width, drawn.height, drawn.pixels)
     }
 
     /** The subtitle line due with the picture, while subtitles are on and a subtitle track is picked; else null. */

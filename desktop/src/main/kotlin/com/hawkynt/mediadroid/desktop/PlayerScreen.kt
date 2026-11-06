@@ -254,6 +254,10 @@ fun PlayerScreen(
         var crop: PictureCrop? = null
         var staged: MediaReader.Picture? = null
         var drawn = AssPicture.EMPTY
+        // The part of the video the staged picture shows, for the subtitles libass lays out on the whole video.
+        var shownPart: PictureCrop? = null
+        var shownPlace: IntArray? = null
+        var shownVisible: IntArray? = null
         while (true) {
             withFrameNanos { }
             // Another video opened (its frame cleared): nothing of the last one is drawn again.
@@ -319,6 +323,22 @@ fun PlayerScreen(
                         ScreenWarp.of(screenSetup, panorama = panorama)
                     }
                     val (outW, outH) = if (warp.wholeScreen) canvas.width to canvas.height else w to h
+                    // Where the subtitles go (AssFrame): the part of the video shown, the picture's place in what the
+                    // stage draws (centred on the window with a keystone), and the part of that the window shows
+                    // (Fill's overhang cut).
+                    shownPart = part
+                    shownPlace = if (warp.wholeScreen) {
+                        intArrayOf((outW - w) / 2, (outH - h) / 2, w, h)
+                    } else {
+                        intArrayOf(0, 0, outW, outH)
+                    }
+                    shownVisible = if (laidOut) {
+                        val left = maxOf(0, (outW - canvas.width) / 2)
+                        val top = maxOf(0, (outH - canvas.height) / 2)
+                        intArrayOf(left, top, minOf(outW, left + canvas.width), minOf(outH, top + canvas.height))
+                    } else {
+                        null
+                    }
                     shownSize = IntSize(outW, outH)
                     val throughStage = picture.hasFilters || pixelAspect != 1f || widening != 1f ||
                         !warp.isIdentity || raw.hdr != null || engine.drawsSubtitles || raw.planes != null
@@ -332,7 +352,15 @@ fun PlayerScreen(
             }
             staged?.let { base ->
                 // Off the window's thread: libass's first font lookup, or a heavy sign, takes its time.
-                withContext(Dispatchers.Default) { engine.subtitlePicture(base.width, base.height) }?.let {
+                // The place and the part shown are for what the stage drew; a picture straight from the decoder
+                // fills itself.
+                val asStaged = base.width == shownSize.width && base.height == shownSize.height
+                withContext(Dispatchers.Default) {
+                    engine.subtitlePicture(
+                        base.width, base.height, shownPart,
+                        shownPlace.takeIf { asStaged }, shownVisible.takeIf { asStaged },
+                    )
+                }?.let {
                     drawn = it
                     changed = true
                 }
