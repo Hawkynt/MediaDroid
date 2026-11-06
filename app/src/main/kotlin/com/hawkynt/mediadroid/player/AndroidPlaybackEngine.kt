@@ -38,6 +38,12 @@ class AndroidPlaybackEngine(
     /** ASS/SSA subtitles as libass draws them: the renderer feeds them, an [AssOverlayView] puts them up. */
     val assSubtitles = AssSubtitles({ attachedFonts(openedPath) }, { location -> wholeFile(location) })
 
+    /** The subtitle track shown second, at the top: its renderers, its track selection, its cues ([secondSubtitle]). */
+    val second = SecondSubtitles(androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context))
+
+    /** ASS shown second, drawn by libass at the top by an overlay of its own. */
+    val secondAss = AssSubtitles({ attachedFonts(openedPath) }, { location -> wholeFile(location) }, top = true)
+
     // The fonts of the file read last, kept: switching subtitles on and off reads them once.
     @Volatile private var fontsRead: Pair<String, List<Pair<String, ByteArray>>>? = null
 
@@ -87,6 +93,7 @@ class AndroidPlaybackEngine(
                     )
                     .build(),
             )
+            .setTrackSelector(second.selector)
             .setRenderersFactory(
                 object : DefaultRenderersFactory(context) {
                     override fun buildTextRenderers(
@@ -104,6 +111,11 @@ class AndroidPlaybackEngine(
                         built.mapTo(out) {
                             DelayedTextRenderer(it) { tuning.subtitleDelayMs }
                         }
+                        // The second set, after the first: given only the track picked to show second.
+                        if (AssSubtitles.available) out += secondAss.renderer().also(second::addRenderer)
+                        val secondText = androidx.media3.exoplayer.text.TextRenderer(second.output, outputLooper)
+                        second.addRenderer(secondText)
+                        out += DelayedTextRenderer(secondText) { tuning.subtitleDelayMs }
                     }
 
                     override fun buildVideoRenderers(
@@ -269,6 +281,7 @@ class AndroidPlaybackEngine(
 
     override fun open(request: MediaRequest, autoPlay: Boolean) {
         openedPath = request.path
+        secondSubtitle = null
         fileLoudness = FileLoudness(request.path, null)
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguage(request.audioLanguage.ifEmpty { null })
@@ -323,9 +336,30 @@ class AndroidPlaybackEngine(
             exo.volume = value
         }
 
-    override val tracks: List<Track> get() = tracksOf(exo.currentTracks)
+    override val tracks: List<Track> get() = marked(tracksOf(exo.currentTracks))
+
+    // The second track's id ("group:index" of the tracks playing).
+    private var secondId: String? = null
+
+    override var secondSubtitle: String?
+        get() = secondId
+        set(value) {
+            val pick = value?.let { id ->
+                val (group, index) = id.split(':').map { it.toInt() }
+                exo.currentTracks.groups.getOrNull(group)?.takeIf { it.type == C.TRACK_TYPE_TEXT }
+                    ?.let { it.mediaTrackGroup to index }
+            }
+            secondId = value.takeIf { pick != null }
+            second.wanted = pick
+        }
+
+    /** [tracks] with the one shown second marked. */
+    private fun marked(tracks: List<Track>): List<Track> =
+        tracks.map { if (it.kind == Track.Kind.TEXT && it.id == secondId) it.copy(second = true) else it }
 
     override fun select(kind: Track.Kind, id: String?) {
+        // The one shown second, picked first, is first only.
+        if (kind == Track.Kind.TEXT && id != null && id == secondId) secondSubtitle = null
         val type = typeOf(kind)
         val builder = exo.trackSelectionParameters.buildUpon().clearOverridesOfType(type)
         if (id != null) {
@@ -352,7 +386,7 @@ class AndroidPlaybackEngine(
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) =
-                listener.onTracksChanged(tracksOf(tracks))
+                listener.onTracksChanged(marked(tracksOf(tracks)))
 
             override fun onVideoSizeChanged(size: VideoSize) =
                 listener.onVideoSize(size.width, size.height, size.pixelWidthHeightRatio)

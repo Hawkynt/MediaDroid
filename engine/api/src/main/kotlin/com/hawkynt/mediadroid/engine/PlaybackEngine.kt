@@ -48,6 +48,15 @@ interface PlaybackEngine : AutoCloseable {
     /** Subtitles shown at all, whichever track. */
     var subtitlesOn: Boolean
 
+    /**
+     * A second subtitle track shown beside the first, at the top of the picture — a second language to learn by, or
+     * the signs beside the dialogue (mpv's secondary-sid): its id, or null for none. Never the track picked for the
+     * first; a new video starts without one.
+     */
+    var secondSubtitle: String?
+        get() = null
+        set(@Suppress("UNUSED_PARAMETER") value) = Unit
+
     fun addListener(listener: Listener)
 
     fun removeListener(listener: Listener)

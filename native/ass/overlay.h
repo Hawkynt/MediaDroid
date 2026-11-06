@@ -61,6 +61,10 @@ public:
     // Every event dropped, the header kept (a stream switched or started again).
     void flush();
 
+    // Where the lines without a place of their own stand: 0 where their style puts them (the default), 100 at the top
+    // (libass's line position) — for a track shown second, above the first.
+    void setLinePosition(double percent);
+
     // The track at [timeMs] drawn for a frame [width] × [height], the video's own pixels [storageWidth] ×
     // [storageHeight] (for the shapes the script's resolution implies; 0 for the frame's). Where the frame shows only
     // part of the video, the margins say how far the whole video reaches past it on each side (0 or below): signs keep
@@ -82,6 +86,7 @@ private:
     bool systemFonts_ = false;
     bool fontsChanged_ = true;
     bool first_ = true;
+    double linePosition_ = 0.0;
 };
 
 }  // namespace mediadroid::subtitles

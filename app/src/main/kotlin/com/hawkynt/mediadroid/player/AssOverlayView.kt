@@ -148,7 +148,10 @@ class AssOverlayView(
         ) {
             if (!AssSubtitles.available) return
             val frame = view.findViewById<FrameLayout>(androidx.media3.ui.R.id.exo_content_frame) ?: return
-            if ((0 until frame.childCount).any { frame.getChildAt(it) is AssOverlayView }) return
+            // One overlay for each set of subtitles: the first, and the second at the top.
+            if ((0 until frame.childCount).any { (frame.getChildAt(it) as? AssOverlayView)?.subtitles === subtitles }) {
+                return
+            }
             frame.addView(
                 AssOverlayView(view.context, subtitles, positionMs, videoSize, crop, place),
                 ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),

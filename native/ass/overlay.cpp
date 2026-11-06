@@ -163,6 +163,11 @@ void Track::flush() {
     if (track_) ass_flush_events(track_);
 }
 
+void Track::setLinePosition(double percent) {
+    std::lock_guard<std::mutex> guard(lock_);
+    linePosition_ = std::clamp(percent, 0.0, 100.0);
+}
+
 void Track::fontsIfChanged() {
     if (!fontsChanged_) return;
     fontsChanged_ = false;
@@ -180,6 +185,7 @@ bool Track::render(int64_t timeMs, int width, int height, int storageWidth, int 
     ass_set_frame_size(renderer_, width, height);
     ass_set_margins(renderer_, marginTop, marginBottom, marginLeft, marginRight);
     ass_set_use_margins(renderer_, marginTop != 0 || marginBottom != 0 || marginLeft != 0 || marginRight != 0);
+    ass_set_line_position(renderer_, linePosition_);
     ass_set_storage_size(renderer_, storageWidth > 0 ? storageWidth : width, storageHeight > 0 ? storageHeight : height);
     int change = 0;
     const ASS_Image* images = ass_render_frame(renderer_, track_, timeMs, &change);

@@ -161,6 +161,25 @@ class LibAssTest {
         }
     }
 
+    @Test
+    fun `a track shown second stands at the top, its signs where they are`() {
+        AssTrack().use { track ->
+            track.addFont("NotoSans-Basic.ttf", resource("NotoSans-Basic.ttf"))
+            val script = String(resource("styled.ass"))
+            track.header(script.substringBefore("Dialogue:").toByteArray())
+            track.event("0,0,Default,,0,0,0,,Hello".toByteArray(), 0, 1000)
+            track.event("1,0,Default,,0,0,0,,{\\an5\\pos(320,180)}Sign".toByteArray(), 2000, 1000)
+            val below = track.render(500, WIDTH, HEIGHT)!!
+            val sign = track.render(2500, WIDTH, HEIGHT)!!
+            track.linePosition(100.0)
+            val above = track.render(500, WIDTH, HEIGHT)!!
+            assertTrue(below.y > HEIGHT / 2 && above.y + above.height < HEIGHT / 2)
+            assertEquals(listOf(below.width, below.height), listOf(above.width, above.height))
+            val signAbove = track.render(2500, WIDTH, HEIGHT)!!
+            assertEquals(listOf(sign.x, sign.y), listOf(signAbove.x, signAbove.y))
+        }
+    }
+
     /** The largest difference of two ARGB pixels' alpha or premultiplied colours. */
     private fun difference(a: Int, b: Int): Int {
         val alphaA = a ushr 24

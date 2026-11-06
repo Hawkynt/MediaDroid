@@ -431,6 +431,7 @@ fun PlayerScreen(
     var subtitlesOn by remember { mutableStateOf(settings.subtitlesOn) }
     var audioPicker by remember { mutableStateOf(false) }
     var subtitlePicker by remember { mutableStateOf(false) }
+    var secondPicker by remember { mutableStateOf(false) }
     // Once the household picks a track by hand, the settings language steps back.
     var manualTrackPick by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(false) }
@@ -978,6 +979,22 @@ fun PlayerScreen(
         }
     }
 
+    // Over a player view's picture: the ASS subtitles libass draws, first and second, and the second track's text at
+    // the top.
+    fun attachSubtitles(view: PlayerView) {
+        for (subtitles in listOf(engine.assSubtitles, engine.secondAss)) {
+            com.hawkynt.mediadroid.player.AssOverlayView.attach(
+                view,
+                subtitles,
+                positionMs = { player.currentPosition - engine.tuning.subtitleDelayMs },
+                videoSize = { player.videoSize.width to player.videoSize.height },
+                crop = { assCrop[0] },
+                place = { view.placeFor(player.videoSize) },
+            )
+        }
+        engine.second.attach(view)
+    }
+
     // The video on the external display while the phone keeps the controls; back to the phone
     // when switched off or when the display goes away.
     DisposableEffect(onSecondScreen, externalDisplay?.displayId) {
@@ -985,15 +1002,7 @@ fun PlayerScreen(
         if (onSecondScreen && display != null) {
             presentation = VideoPresentation(context, display, player).also {
                 it.show()
-                val view = it.playerView
-                com.hawkynt.mediadroid.player.AssOverlayView.attach(
-                    view,
-                    engine.assSubtitles,
-                    positionMs = { player.currentPosition - engine.tuning.subtitleDelayMs },
-                    videoSize = { player.videoSize.width to player.videoSize.height },
-                    crop = { assCrop[0] },
-                    place = { view.placeFor(player.videoSize) },
-                )
+                attachSubtitles(it.playerView)
             }
             darkPhone.secondScreen(true)
             PlayerWindow.elsewhere = true
@@ -1430,18 +1439,12 @@ fun PlayerScreen(
                     findViewById<View>(androidx.media3.ui.R.id.exo_rew)?.onHold({ startHold(false) }, ::endHold)
                     onScrub { scrub = it }
                     playerView = this
-                    com.hawkynt.mediadroid.player.AssOverlayView.attach(
-                        this,
-                        engine.assSubtitles,
-                        positionMs = { player.currentPosition - engine.tuning.subtitleDelayMs },
-                        videoSize = { player.videoSize.width to player.videoSize.height },
-                        crop = { assCrop[0] },
-                        place = { placeFor(player.videoSize) },
-                    )
+                    attachSubtitles(this)
                 }
             },
             update = { view ->
                 view.subtitleView?.applyLook(subtitleLook)
+                engine.second.viewOf(view)?.applyLook(subtitleLook)
                 // While the picture is on the other screen the phone's surface would keep showing the
                 // last frame it got; it is hidden so the phone stays black behind the controls.
                 val elsewhere = presentation?.isShowing == true
@@ -1467,6 +1470,7 @@ fun PlayerScreen(
             if (shown.isShowing) {
                 shown.playerView.applyVideoLook(fit, zoom, pan)
                 shown.playerView.showShape(player.videoSize)
+                engine.second.viewOf(shown.playerView)?.applyLook(subtitleLook)
             }
         }
         // The bare picture listens for gestures; with the controls up, touches go to the controls.
@@ -1712,6 +1716,7 @@ fun PlayerScreen(
                 },
                 onAudioTrack = { audioPicker = true },
                 onSubtitleTrack = { subtitlePicker = true },
+                onSecondSubtitleTrack = { secondPicker = true },
                 onClose = { panelOpen = false },
                 afterPictureSize = {
                     if (android.os.Build.VERSION.SDK_INT >= 28) {
@@ -2032,6 +2037,20 @@ fun PlayerScreen(
                 },
             )
         }
+        if (secondPicker) {
+            // A second track at the top: a language to learn by, or the signs beside the dialogue.
+            TrackDialog(
+                tracks = com.hawkynt.mediadroid.engine.Tracks.secondText(engine.tracks),
+                kind = com.hawkynt.mediadroid.engine.Track.Kind.TEXT,
+                noneLabel = "None",
+                marked = { it.second },
+                onDismiss = { secondPicker = false },
+                onPick = { picked ->
+                    engine.secondSubtitle = picked?.id
+                    secondPicker = false
+                },
+            )
+        }
         if (subtitlePicker) {
             TrackDialog(
                 tracks = engine.tracks,
@@ -2117,6 +2136,10 @@ private fun TrackDialog(
     tracks: List<com.hawkynt.mediadroid.engine.Track>,
     kind: com.hawkynt.mediadroid.engine.Track.Kind,
     labelFor: (com.hawkynt.mediadroid.engine.Track) -> String? = { null },
+    /** What the first choice, no track of its own, is called. */
+    noneLabel: String = "Automatic",
+    /** The track shown marked as the one playing; none by default. */
+    marked: (com.hawkynt.mediadroid.engine.Track) -> Boolean = { false },
     onDismiss: () -> Unit,
     onPick: (com.hawkynt.mediadroid.engine.Track?) -> Unit,
 ) {
@@ -2126,12 +2149,13 @@ private fun TrackDialog(
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close", fontSize = 18.sp) } },
         text = {
             Column {
-                TextButton(onClick = { onPick(null) }) { Text("Automatic", fontSize = 20.sp) }
+                TextButton(onClick = { onPick(null) }) { Text(noneLabel, fontSize = 20.sp) }
                 choices.forEachIndexed { i, track ->
                     val label = labelFor(track) ?: track.label ?: track.language ?: "Track ${i + 1}"
                     TextButton(onClick = { onPick(track) }) {
                         Text(
                             buildString {
+                                if (marked(track)) append("✓ ")
                                 append(label)
                                 track.language?.let { append("  ($it)") }
                             },
@@ -2171,6 +2195,8 @@ private fun PlayerPanel(
     check: PictureTry = { _, _ -> PictureVerdict(true) },
     onAudioTrack: () -> Unit,
     onSubtitleTrack: () -> Unit,
+    /** Picks a second subtitle track, shown at the top beside the first. */
+    onSecondSubtitleTrack: () -> Unit = {},
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     sections: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
@@ -2257,6 +2283,9 @@ private fun PlayerPanel(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
             OutlinedButton(onClick = onAudioTrack) { Text("Audio track…", fontSize = 16.sp) }
             OutlinedButton(onClick = onSubtitleTrack) { Text("Subtitle track…", fontSize = 16.sp) }
+        }
+        OutlinedButton(onClick = onSecondSubtitleTrack, modifier = Modifier.padding(top = 8.dp)) {
+            Text("Second subtitles…", fontSize = 16.sp)
         }
     }
 }

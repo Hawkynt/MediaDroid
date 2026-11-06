@@ -41,4 +41,13 @@ class TracksTest {
         assertEquals(0, Track("a1", Track.Kind.AUDIO, "deu", null).source)
         assertEquals(2, Track("a2", Track.Kind.AUDIO, "eng", "Director's commentary", source = 2).source)
     }
+
+    @Test
+    fun `a second subtitle track is any but the first's`() {
+        val playing =
+            listOf(tracks[0], text("t1", "eng").copy(selected = true), tracks[2], tracks[3].copy(second = true))
+        assertEquals(listOf("t2", "t3"), Tracks.secondText(playing).map { it.id })
+        assertEquals("t3", Tracks.second(playing)?.id)
+        assertNull(Tracks.second(tracks))
+    }
 }
