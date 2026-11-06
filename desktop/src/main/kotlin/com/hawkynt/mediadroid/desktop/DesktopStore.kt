@@ -11,9 +11,9 @@ import java.util.Properties
 
 /**
  * The desktop app's own state, `settings.json` in [folder] (the app-data folder, AppFolder): the library folder, the
- * household's picture, subtitle language and speed, the window, the network sources, and per video its resume point
- * and whether it was watched. Saved on every change, written aside and moved over the old file, so a crash midway
- * never leaves half a file. The `state.properties` of earlier versions is taken over once and moved aside.
+ * household's picture, sound, subtitle language and speed, the window, the network sources, and per video its resume
+ * point and whether it was watched. Saved on every change, written aside and moved over the old file, so a crash
+ * midway never leaves half a file. The `state.properties` of earlier versions is taken over once and moved aside.
  */
 class DesktopStore(private val folder: File) {
 
@@ -38,6 +38,11 @@ class DesktopStore(private val folder: File) {
     var speed: Float
         get() = settings.speed
         set(value) = change { copy(speed = value) }
+
+    /** The household's sound: the loudness gain, even loudness and the lip-sync delay of this machine's output. */
+    var sound: SoundSettings
+        get() = settings.sound
+        set(value) = change { copy(sound = value) }
 
     /** Where the window was and how large, as `x,y,width,height` in dp, and whether it was maximized. */
     var window: String?
@@ -105,6 +110,7 @@ internal data class DesktopSettings(
     val picture: PictureSettings = PictureSettings(),
     val subtitleLanguage: String = "",
     val speed: Float = 1f,
+    val sound: SoundSettings = SoundSettings(),
     val window: String? = null,
     val sources: List<Source> = emptyList(),
     /** Resume points in milliseconds, by video location. */
@@ -158,6 +164,18 @@ internal data class DesktopSettings(
         }
     }
 }
+
+/**
+ * The household's sound as kept, as Android's Settings and its gear keep it: the loudness gain in dB (-12..12),
+ * even loudness from file to file, and the audio delay in ms (positive: the sound later). Night mode is not kept: as on
+ * Android it is switched on for an evening, and the next player starts without it.
+ */
+@Serializable
+data class SoundSettings(
+    val loudnessDb: Float = 0f,
+    val evenLoudness: Boolean = false,
+    val audioDelayMs: Int = 0,
+)
 
 /**
  * The household's picture as kept: PictureAdjustment's fields the desktop offers — not the 3D eye, a choice for one

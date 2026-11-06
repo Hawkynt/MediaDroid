@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -60,10 +61,10 @@ fun trackName(track: Track, number: Int): String =
     track.label?.takeIf { it.isNotBlank() } ?: track.language?.let(Languages::label) ?: "Track $number"
 
 /**
- * The player's panel: the sound and subtitle [tracks] to pick from ([onPick] with null: subtitles off), then the
- * Android gear's picture controls, from the same domain (PictureControl, enums). A choice of deinterlacing, upscaling
- * or smooth motion is tried with [check] before it is taken, as on Android; one it refuses is not taken, and why shows
- * below its row.
+ * The player's panel: the sound and subtitle [tracks] to pick from ([onPick] with null: subtitles off), the sound
+ * settings of Android's Settings and gear ([sound], [nightMode]), then the Android gear's picture controls, from the
+ * same domain (PictureControl, enums). A choice of deinterlacing, upscaling or smooth motion is tried with [check]
+ * before it is taken, as on Android; one it refuses is not taken, and why shows below its row.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -76,6 +77,10 @@ fun PicturePanel(
     speed: Float = 1f,
     onSpeed: (Float) -> Unit = {},
     check: PictureTry = { _, _ -> PictureVerdict(true) },
+    sound: SoundSettings = SoundSettings(),
+    onSound: (SoundSettings) -> Unit = {},
+    nightMode: Boolean = false,
+    onNightMode: (Boolean) -> Unit = {},
 ) {
     Column(
         modifier.width(380.dp).fillMaxHeight().background(Color(0xF01A1A2E)).verticalScroll(rememberScrollState())
@@ -92,12 +97,12 @@ fun PicturePanel(
             value = PlaybackMath.speedPosition(speed),
             onValueChange = { onSpeed(PlaybackMath.speedAt(it)) },
         )
-        val sound = tracks.filter { it.kind == Track.Kind.AUDIO }
+        val soundTracks = tracks.filter { it.kind == Track.Kind.AUDIO }
         val subtitles = tracks.filter { it.kind == Track.Kind.TEXT }
-        if (sound.size > 1) {
-            Text("Sound", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text("Sound", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        if (soundTracks.size > 1) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                sound.forEachIndexed { i, track ->
+                soundTracks.forEachIndexed { i, track ->
                     FilterChip(
                         selected = track.selected,
                         onClick = { onPick(Track.Kind.AUDIO, track.id) },
@@ -106,6 +111,7 @@ fun PicturePanel(
                 }
             }
         }
+        SoundSettingsControls(sound, onSound, nightMode, onNightMode)
         if (subtitles.isNotEmpty()) {
             Text("Subtitles", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -311,5 +317,61 @@ private class Trial {
             color = if (trying == null && refused != null) MaterialTheme.colorScheme.error else Color.Gray,
             fontSize = 13.sp,
         )
+    }
+}
+
+/** Loudness, even loudness, night mode and the audio delay, worded as on Android. */
+@Composable
+private fun SoundSettingsControls(
+    sound: SoundSettings,
+    onSound: (SoundSettings) -> Unit,
+    nightMode: Boolean,
+    onNightMode: (Boolean) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text("Loudness", color = Color.White, modifier = Modifier.weight(1f))
+        Text("%+.0f dB".format(sound.loudnessDb), color = Color.Gray)
+    }
+    Slider(
+        value = sound.loudnessDb,
+        onValueChange = { onSound(sound.copy(loudnessDb = kotlin.math.round(it))) },
+        valueRange = -12f..12f,
+    )
+    SwitchRow(
+        "Even loudness",
+        "Every film and song plays about as loud as the last: by its ReplayGain tags where it has them, else " +
+            "measured as it plays (EBU R128).",
+        sound.evenLoudness,
+    ) { onSound(sound.copy(evenLoudness = it)) }
+    SwitchRow("Night mode", "Quiet dialogue comes up, loud scenes come down.", nightMode, onNightMode)
+    Text("Audio delay", color = Color.White, modifier = Modifier.padding(top = 8.dp))
+    fun nudge(steps: Int) = onSound(sound.copy(audioDelayMs = PlaybackMath.nudgeAudioDelay(sound.audioDelayMs, steps)))
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { nudge(-1) }) { Text("Sooner") }
+        Text(
+            if (sound.audioDelayMs == 0) "in sync" else "%+d ms".format(sound.audioDelayMs),
+            color = Color.White,
+        )
+        OutlinedButton(onClick = { nudge(1) }) { Text("Later") }
+        if (sound.audioDelayMs != 0) {
+            TextButton(onClick = { nudge(-sound.audioDelayMs / PlaybackMath.AUDIO_DELAY_STEP_MS) }) { Text("Reset") }
+        }
+    }
+    Text(
+        PlaybackMath.syncText("sound", sound.audioDelayMs).replaceFirstChar { it.uppercase() } +
+            ". Later when you hear a word before the lips move, sooner when after.",
+        color = Color.Gray,
+        fontSize = 13.sp,
+    )
+}
+
+@Composable
+private fun SwitchRow(label: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.weight(1f)) {
+            Text(label, color = Color.White)
+            Text(detail, color = Color.Gray, fontSize = 13.sp)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }

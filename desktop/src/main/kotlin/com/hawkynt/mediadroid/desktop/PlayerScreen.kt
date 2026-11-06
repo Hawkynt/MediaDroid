@@ -108,8 +108,17 @@ fun PlayerScreen(
 ) {
     var index by remember { mutableIntStateOf(startIndex) }
     val playing = queue[index]
+    // The sound settings the engine reads as it plays (PlaybackTuning): the household's, kept; night mode for this
+    // player only, as on Android.
+    var sound by remember { mutableStateOf(store.sound) }
+    var nightMode by remember { mutableStateOf(false) }
+    val tuning = remember { PlaybackTuning.Mutable() }
+    tuning.loudnessDb = sound.loudnessDb
+    tuning.normalizeLoudness = sound.evenLoudness
+    tuning.audioDelayMs = sound.audioDelayMs
+    tuning.nightMode = nightMode
     val engine = remember {
-        DesktopPlaybackEngine(PlaybackTuning.Mutable(), files = places::remoteFile).apply {
+        DesktopPlaybackEngine(tuning, files = places::remoteFile).apply {
             // MEDIADROID_MUTE=1: checks and documentation runs play silently.
             if (System.getenv("MEDIADROID_MUTE") == "1") volume = 0f
             speed = store.speed
@@ -412,6 +421,13 @@ fun PlayerScreen(
                 check = { candidate, say ->
                     withContext(Dispatchers.Default) { PictureTrial.check(candidate, trial, say) }
                 },
+                sound = sound,
+                onSound = {
+                    sound = it
+                    store.sound = it
+                },
+                nightMode = nightMode,
+                onNightMode = { nightMode = it },
             )
         }
         snapshotNote?.takeIf { now < snapshotNoteUntil }?.let { note ->
