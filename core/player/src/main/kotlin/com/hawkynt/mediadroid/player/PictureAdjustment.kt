@@ -44,6 +44,11 @@ data class PictureAdjustment(
      * nothing at all; the household default turns it on.
      */
     val cropBlackBars: Boolean = false,
+    /**
+     * The frame's shape where the file's own flag is wrong ([PictureShape]); a shape only, so the screen's layout
+     * gives it and no filter runs for it.
+     */
+    val aspect: AspectOverride = AspectOverride.AUTO,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)

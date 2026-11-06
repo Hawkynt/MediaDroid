@@ -115,6 +115,7 @@ fun main(args: Array<String>) = application {
                     queue = s.queue,
                     startIndex = s.index,
                     fullScreen = state.placement == WindowPlacement.Fullscreen,
+                    screen = { OutputScreen.of(window) },
                     onFullScreen = {
                         state.placement = if (state.placement == WindowPlacement.Fullscreen) {
                             WindowPlacement.Floating

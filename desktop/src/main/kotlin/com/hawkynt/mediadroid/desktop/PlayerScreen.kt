@@ -86,6 +86,7 @@ import com.hawkynt.mediadroid.player.ChapterSteps
 import com.hawkynt.mediadroid.player.FrameStep
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
+import com.hawkynt.mediadroid.player.PictureShape
 import com.hawkynt.mediadroid.player.PictureTrial
 import com.hawkynt.mediadroid.player.PlaybackMath
 import kotlinx.coroutines.Dispatchers
@@ -106,6 +107,7 @@ fun PlayerScreen(
     fullScreen: Boolean,
     onFullScreen: () -> Unit,
     onExit: () -> Unit,
+    screen: () -> OutputScreen = { OutputScreen.Unknown },
 ) {
     var index by remember { mutableIntStateOf(startIndex) }
     val playing = queue[index]
@@ -133,6 +135,10 @@ fun PlayerScreen(
     val neural = remember { com.hawkynt.mediadroid.engine.desktop.DesktopNeural(File(AppFolder.current(), "models")) }
     val trial = remember { DesktopTrial(store, neural) }
     var picture by remember { mutableStateOf(store.picture) }
+    // This video's shape where its file's flag is wrong, and the setup of the screen the window is on (a lens).
+    var aspect by remember { mutableStateOf(store.aspectOf(playing.video)) }
+    LaunchedEffect(index) { aspect = store.aspectOf(playing.video) }
+    var screenSetup by remember { mutableStateOf(store.screenSetup(screen().key)) }
     // MEDIADROID_SHOW=panel: the picture panel open from the start (documentation and checks).
     var panel by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "panel") }
     var canvas by remember { mutableStateOf(IntSize.Zero) }
@@ -270,18 +276,24 @@ fun PlayerScreen(
                     picture.isFieldRate -> moment.phase >= 0.5f
                     else -> null
                 }
-                val look = listOf(picture, canvas, part, timing)
+                // The screen the window is on now: a window moved onto a projector takes the projector's setup.
+                val shownOn = screen()
+                screenSetup = store.screenSetup(shownOn.key)
+                val widening = PictureShape.widening(shownOn.aspect, screenSetup.shape)
+                val pixelAspect = PictureShape.pixelAspect(raw.width, raw.height, engine.pixelAspect, aspect)
+                val look = listOf(picture, canvas, part, timing, pixelAspect, widening)
                 if (raw !== lastShown || look != lastLook) {
                     lastShown = raw
                     lastLook = look
-                    // Fitted by the picture's true shape: non-square pixels (PAL DV, anamorphic DVD) widened.
+                    // Fitted by the picture's true shape: non-square pixels (PAL DV, anamorphic DVD) widened, or the
+                    // shape set for a file whose flag is wrong; narrowed by what the screen widens (a lens).
                     val (w, h) = fitted(
-                        ((part?.width ?: raw.width) * engine.pixelAspect).toInt(),
+                        ((part?.width ?: raw.width) * pixelAspect / widening).toInt(),
                         part?.height ?: raw.height,
                         canvas,
                     )
-                    val throughStage = picture.hasFilters || engine.pixelAspect != 1f || raw.hdr != null ||
-                        engine.drawsSubtitles
+                    val throughStage = picture.hasFilters || pixelAspect != 1f || widening != 1f ||
+                        raw.hdr != null || engine.drawsSubtitles
                     staged = if (throughStage && stage.ready && w > 0 && h > 0) {
                         withContext(Dispatchers.Default) { stage.process(moment, picture, w, h, part) }
                     } else {
@@ -460,6 +472,17 @@ fun PlayerScreen(
                 },
                 nightMode = nightMode,
                 onNightMode = { nightMode = it },
+                aspect = aspect,
+                onAspect = {
+                    aspect = it
+                    store.setAspect(playing.video, it)
+                },
+                screenName = screen().name,
+                screenSetup = screenSetup,
+                onScreenSetup = {
+                    screenSetup = it
+                    store.setScreenSetup(screen().key, it)
+                },
             )
         }
         snapshotNote?.takeIf { now < snapshotNoteUntil }?.let { note ->

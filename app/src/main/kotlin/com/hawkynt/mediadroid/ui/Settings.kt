@@ -376,6 +376,9 @@ fun SettingsScreen(
         )
 
         Spacer(Modifier.height(16.dp))
+        ScreenSettings(store)
+
+        Spacer(Modifier.height(16.dp))
         Text("Languages", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = settings.subtitlesOn, onCheckedChange = { c -> update { it.subtitlesOn = c } })

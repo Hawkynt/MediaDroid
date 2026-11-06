@@ -1,8 +1,11 @@
 package com.hawkynt.mediadroid.desktop
 
 import com.hawkynt.mediadroid.library.Source
+import com.hawkynt.mediadroid.player.AspectOverride
 import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.PictureAdjustment
+import com.hawkynt.mediadroid.player.ScreenSetup
+import com.hawkynt.mediadroid.player.ScreenShape
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -79,6 +82,23 @@ class DesktopStore(private val folder: File) {
     val neuralEnlargers: Map<PictureAdjustment.Upscaler, NeuralInterpolation.Passed>
         get() = PictureAdjustment.Upscaler.entries.mapNotNull { u -> enlargerPassed(u)?.let { u to it } }.toMap()
 
+    /** The shape [video]'s frame is shown at where its file's flag is wrong; [AspectOverride.AUTO] until set. */
+    fun aspectOf(video: String): AspectOverride =
+        AspectOverride.entries.firstOrNull { it.name == settings.aspects[video] } ?: AspectOverride.AUTO
+
+    /** Keeps [aspect] for [video]; [AspectOverride.AUTO] drops its entry. */
+    fun setAspect(video: String, aspect: AspectOverride) = change {
+        copy(aspects = if (aspect == AspectOverride.AUTO) aspects - video else aspects + (video to aspect.name))
+    }
+
+    /** How the output screen [key] (a monitor, see Main) is set up; the default until it is set. */
+    fun screenSetup(key: String): ScreenSetup = settings.screens[key]?.toSetup() ?: ScreenSetup.Default
+
+    /** Keeps [setup] for the output screen [key]; the default drops its entry. */
+    fun setScreenSetup(key: String, setup: ScreenSetup) = change {
+        copy(screens = if (setup == ScreenSetup.Default) screens - key else screens + (key to ScreenKept.of(setup)))
+    }
+
     fun resumeMs(video: String): Long = settings.resume[video] ?: 0
 
     fun setResume(video: String, positionMs: Long) = change {
@@ -146,6 +166,10 @@ internal data class DesktopSettings(
     val neuralMotion: Map<String, String> = emptyMap(),
     /** Neural upscalers by name, once their self-test passed, the same way. */
     val neuralEnlargers: Map<String, String> = emptyMap(),
+    /** AspectOverride names by video location, where a file's flag is wrong. */
+    val aspects: Map<String, String> = emptyMap(),
+    /** Each output screen's setup by its key (a monitor's id). */
+    val screens: Map<String, ScreenKept> = emptyMap(),
 ) {
     companion object {
         private val json = Json {
@@ -191,6 +215,18 @@ internal data class DesktopSettings(
                     .map { it.removePrefix("watched.") }.toSet(),
             )
         }
+    }
+}
+
+/** One output screen's setup as kept (see ScreenSetup): its choices by name. */
+@Serializable
+internal data class ScreenKept(
+    val shape: String = ScreenShape.AUTO.name,
+) {
+    fun toSetup(): ScreenSetup = ScreenSetup.of(shape)
+
+    companion object {
+        fun of(setup: ScreenSetup) = ScreenKept(shape = setup.shape.name)
     }
 }
 
