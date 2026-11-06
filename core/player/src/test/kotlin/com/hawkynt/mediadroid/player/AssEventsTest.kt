@@ -19,6 +19,14 @@ class AssEventsTest {
     }
 
     @Test
+    fun `a file beside the video Media3 leaves unread is ASS by the type it keeps in codecs`() {
+        assertTrue(AssEvents.isAss("text/x-ssa", null))
+        assertTrue(AssEvents.isAss("text/x-unknown", "text/x-ssa"))
+        assertFalse(AssEvents.isAss("text/x-unknown", "application/x-subrip"))
+        assertFalse(AssEvents.isAss("application/x-media3-cues", "text/x-ssa"))
+    }
+
+    @Test
     fun `a Matroska sample as Media3 hands it gives its event and how long it shows`() {
         // MatroskaExtractor's SSA_PREFIX with the block's duration as the end ("%01d:%02d:%02d:%02d").
         val sample = "Dialogue: 0:00:00:00,0:01:02:35,7,0,Default,,0,0,0,,{\\an8}Hello".toByteArray()

@@ -337,6 +337,13 @@ class PlaybackChainTest {
     }
 
     @Test
+    fun `ASS drawn by libass names libass as parser and renderer`() {
+        val graph = PlaybackChain.of(facts.copy(subtitles = subtitles.copy(mimeType = "text/x-ssa", libass = true)))
+        assertEquals("SSA / ASS · German · libass", graph.detail(Lane.SUBTITLES, "Parser"))
+        assertEquals("libass, as authored, at the screen's size", graph.detail(Lane.SUBTITLES, "Renderer"))
+    }
+
+    @Test
     fun `a lane without a track is left out`() {
         val graph = PlaybackChain.of(facts.copy(video = null, subtitles = null))
         assertEquals(listOf(Lane.SOUND), graph.paths.map { it.lane })

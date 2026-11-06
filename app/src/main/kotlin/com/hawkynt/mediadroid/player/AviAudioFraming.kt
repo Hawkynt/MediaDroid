@@ -20,6 +20,8 @@ import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.avi.AviExtractor
 import androidx.media3.extractor.mp3.Mp3Extractor
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
+import androidx.media3.extractor.text.SubtitleParser
 import com.hawkynt.mediadroid.library.FsFile
 import java.io.EOFException
 
@@ -36,12 +38,16 @@ object AviAudioFraming {
      * The extractors to play local files with; FFmpeg's demuxers come last, for the containers none of
      * Media3's own recognises (see [FfmpegExtractor]).
      */
-    val extractors: ExtractorsFactory = object : ExtractorsFactory {
-        override fun createExtractors(): Array<Extractor> = wrap(DefaultExtractorsFactory().createExtractors(), null)
+    val extractors: ExtractorsFactory = extractors(DefaultSubtitleParserFactory())
+
+    /** [extractors] with the subtitles Media3 parses as it reads decided by [parsers] (see AssSubtitles). */
+    fun extractors(parsers: SubtitleParser.Factory): ExtractorsFactory = object : ExtractorsFactory {
+        private fun media3() = DefaultExtractorsFactory().setSubtitleParserFactory(parsers)
+
+        override fun createExtractors(): Array<Extractor> = wrap(media3().createExtractors(), null)
 
         override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> =
-            wrap(DefaultExtractorsFactory().createExtractors(uri, responseHeaders), uri) +
-                FfmpegExtractor(uri, remote)
+            wrap(media3().createExtractors(uri, responseHeaders), uri) + FfmpegExtractor(uri, remote)
     }
 
     /** The file behind a network location, for FFmpeg's demuxers; the app points this at its sources. */
