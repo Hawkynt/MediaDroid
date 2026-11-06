@@ -38,6 +38,13 @@
 //                                                           BT.709; <peak nits> the source's peak (0: nominal)
 //   shader_check peak <pq|hlg> <in16.ppm>                   glsl/video/peak.frag's blocks: prints the picture's
 //                                                           peak and average in PQ, before any smoothing
+//   shader_check dither <in16.ppm> <out.ppm> <bluenoise.txt>
+//                                                           glsl/video/dither-es3.frag: 16-bit RGB (held in 32-bit
+//                                                           floats) to 8 bits, the matrix's ranks as placebo_oracle
+//                                                           bluenoise prints them, packed as the stages pack them;
+//                                                           SHADER_CHECK_DITHER=half the picture held in half floats
+//                                                           (as the stages hold it), =es1 the GLSL ES 1.00 variant,
+//                                                           =top the picture's top row at v = 0
 //   shader_check compare <a.ppm> <b.ppm> <max> <mean> [border]
 //                                                           fails when they differ by more (in 8-bit steps), the
 //                                                           border's pixels on every side left out
@@ -762,6 +769,53 @@ void peak(const Picture16& in, const std::string& transfer) {
     else std::printf("%.9g %.9g\n", 1e-6f, 1e-6f);
 }
 
+// Dithering as the stages run it last (VideoFilterStage.output, GlStage): the picture at the screen's size in a float
+// frame, the blue-noise matrix as a 64 × 64 RGBA8 texture of ranks (high byte in red, low in green, as the stages pack
+// Dither.blueNoise), the frame's top row where v is 1, or (SHADER_CHECK_DITHER=top) at v = 0.
+Picture dither(const Picture16& in, const std::string& noisePath) {
+    const char* variant = std::getenv("SHADER_CHECK_DITHER");
+    const std::string mode = variant ? variant : "";
+    GLuint prog = mode == "es1" ? appProgram("video/dither.frag")
+                                : program(appShader("video/vertex-es3.vert"), appShader("video/dither-es3.frag"));
+    const bool top = mode == "top";
+    std::istringstream ranks(readFile(noisePath));
+    std::vector<uint8_t> noise(64 * 64 * 4, 0);
+    for (int i = 0; i < 64 * 64; i++) {
+        int rank = -1;
+        if (!(ranks >> rank) || rank < 0 || rank > 4095) fail("not 4096 ranks: " + noisePath);
+        noise[i * 4] = uint8_t(rank >> 8);
+        noise[i * 4 + 1] = uint8_t(rank & 0xFF);
+    }
+    GLuint noiseTexture = 0;
+    glGenTextures(1, &noiseTexture);
+    glBindTexture(GL_TEXTURE_2D, noiseTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, noise.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    std::vector<uint16_t> data = rgba16(in, top);
+    std::vector<float> values(data.size());
+    for (size_t i = 0; i < data.size(); i++) values[i] = data[i] / 65535.0f;
+    GLuint source = 0;
+    glGenTextures(1, &source);
+    glBindTexture(GL_TEXTURE_2D, source);
+    const GLenum format = mode == "half" ? GL_RGBA16F : GL_RGBA32F;
+    glTexImage2D(GL_TEXTURE_2D, 0, format, in.width, in.height, 0, GL_RGBA, GL_FLOAT, values.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    Target out = target(in.width, in.height);
+    glUseProgram(prog);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, noiseTexture);
+    glUniform1i(glGetUniformLocation(prog, "uNoise"), 1);
+    glUniform2f(glGetUniformLocation(prog, "uSize"), float(in.width), float(in.height));
+    glUniform2f(glGetUniformLocation(prog, "uRows"), top ? 0.0f : float(in.height), top ? 1.0f : -1.0f);
+    draw(prog, out, source);
+    glBindFramebuffer(GL_FRAMEBUFFER, out.framebuffer);
+    std::vector<uint8_t> pixels(size_t(out.width) * out.height * 4);
+    glReadPixels(0, 0, out.width, out.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    return fromRgba(pixels, out.width, out.height, top);
+}
+
 int compare(const Picture& a, const Picture& b, int maxAllowed, double meanAllowed, int border) {
     if (a.width != b.width || a.height != b.height) fail("the pictures differ in size");
     int worst = 0;
@@ -826,6 +880,7 @@ int main(int argc, char** argv) {
     else if (a.size() == 5 && a[0] == "tonemap")
         writePpm(a[2], tonemap(readPpm16(a[1]), a[3], std::stof(a[4])));
     else if (a.size() == 3 && a[0] == "peak") peak(readPpm16(a[2]), a[1]);
+    else if (a.size() == 4 && a[0] == "dither") writePpm(a[2], dither(readPpm16(a[1]), a[3]));
     else fail("usage: see the head of tools/shader-check/check.cpp");
     if (glGetError() != GL_NO_ERROR) fail("GL error");
     return 0;

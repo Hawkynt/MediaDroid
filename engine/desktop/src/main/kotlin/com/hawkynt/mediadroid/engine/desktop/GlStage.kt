@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.imaging.Xbrz
 import com.hawkynt.mediadroid.player.Deinterlacer
+import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.Ewa
 import com.hawkynt.mediadroid.player.MotionInterpolation
 import com.hawkynt.mediadroid.player.NeuralInterpolation
@@ -29,9 +30,9 @@ import kotlin.math.pow
  * its peak measured as it plays: PeakDetect), deinterlaced (Auto, Blend, Bob, YADIF, BWDIF, every field at field rate; Film is
  * the engine's, see Film), debanded, denoised, sharpened, blended into the next picture by the clock (Low, Medium,
  * High) or along the motion between them (Motion, with MotionSearch), enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K,
- * ACNet, xBRZ; the neural ones plain for now) at the strength chosen, colour-corrected. Each picture is filtered once
- * and kept while it is on screen or next. The passes and their uniforms are the Android stage's (VideoFilterStage),
- * the shaders those tools/shader-check holds to their originals.
+ * ACNet, xBRZ; the neural ones plain for now) at the strength chosen, colour-corrected, and dithered to 8 bits where
+ * it holds more (Dither). Each picture is filtered once and kept while it is on screen or next. The passes and their
+ * uniforms are the Android stage's (VideoFilterStage), the shaders those tools/shader-check holds to their originals.
  */
 class GlStage : AutoCloseable {
 
@@ -44,6 +45,10 @@ class GlStage : AutoCloseable {
     private var ewaTable = 0
     private var xbrzTable = 0
     private var obmcTable = 0
+    private var noiseTable = 0
+
+    // Whether this moment's passes draw into half floats for the last pass to dither (see run).
+    private var deep = false
 
     // Debanding's frame index, which seeds its random numbers: libplacebo's 8-bit counter.
     private var debandFrame = 0
@@ -64,14 +69,18 @@ class GlStage : AutoCloseable {
     private var vectorTexture = 0
     private var vectorsShown: MotionSearch.Vectors? = null
 
-    /** A texture with its framebuffer. */
-    private class Target(val texture: Int, val framebuffer: Int, val width: Int, val height: Int)
+    /** A texture with its framebuffer; [format] its internal format (GL_RGBA8, GL_RGBA16F, GL_RGBA16). */
+    private class Target(val texture: Int, val framebuffer: Int, val width: Int, val height: Int, val format: Int)
 
-    /** A picture held on the graphics card: which, its 3D eye or field, and when it was last used. */
+    /**
+     * A picture held on the graphics card: which, its 3D eye or field, whether in half floats, and when it was last
+     * used.
+     */
     private class Slot(val name: String) {
         var picture: MediaReader.Picture? = null
         var region = PictureCrop(0, 0, 0, 0)
         var second = false
+        var half = false
         var used = 0L
     }
 
@@ -120,6 +129,7 @@ class GlStage : AutoCloseable {
         ewaTable = ewaTable()
         xbrzTable = xbrzTable()
         obmcTable = obmcTable()
+        noiseTable = noiseTable()
         ready = true
     }
 
@@ -172,8 +182,12 @@ class GlStage : AutoCloseable {
 
     private fun run(m: Moment, a: PictureAdjustment, outW: Int, outH: Int, crop: PictureCrop?): MediaReader.Picture {
         this.crop = crop
-        // A change to the filters, or to the part shown, makes every kept picture stale.
-        val look = listOf(a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop)
+        // Where the picture holds more than the 8 bits it is read back in — HDR's tone-mapped floats, the colour
+        // correction's or debanding's results — every pass draws into half floats and the last one dithers (Dither);
+        // a plain 8-bit picture keeps its 8-bit frames, untouched.
+        deep = Dither.applies(if (m.shown.hdr != null) 16 else 8, SCREEN_BITS, a)
+        // A change to the filters, to the part shown, or to the frames' depth makes every kept picture stale.
+        val look = listOf(a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep)
         if (look != keptLook) {
             keptLook = look
             kept.forEach { it.picture = null }
@@ -196,14 +210,14 @@ class GlStage : AutoCloseable {
             source = upscale(a.upscaler, source, outW, outH)
             if (a.plainShare > 0f) {
                 val upscaled = source
-                source = pass("blend.frag", target("strength", outW, outH), plain.texture,
+                source = pass("blend.frag", target("strength", outW, outH, half = deep), plain.texture,
                     listOf(upscaled.texture to "uPrevious")) { p ->
                     glUniform1f(glGetUniformLocation(p, "uWeight"), a.plainShare)
                 }
             }
         }
         // To the shown size, colour-corrected.
-        val shown = target("shown", outW, outH)
+        val shown = target("shown", outW, outH, half = deep)
         val u = a.shaderUniforms()
         pass("adjust.frag", shown, source.texture) { p ->
             glUniform1f(glGetUniformLocation(p, "uBrightness"), u.brightness)
@@ -211,7 +225,16 @@ class GlStage : AutoCloseable {
             glUniform1f(glGetUniformLocation(p, "uSaturation"), u.saturation)
             glUniform1f(glGetUniformLocation(p, "uInverseGamma"), u.inverseGamma)
         }
-        return download(shown, m.shown.ptsMs)
+        if (!deep) return download(shown, m.shown.ptsMs)
+        // Dithered to 8 bits, the last pass before the picture is read back: libplacebo's blue noise
+        // (glsl/video/dither.glsl).
+        val dithered = pass(
+            "dither-es3.frag", target("dithered", outW, outH), shown.texture, listOf(noiseTable to "uNoise"),
+        ) { p ->
+            // The frame's top row is where v is 1 (see upload); libplacebo counts rows from the top.
+            glUniform2f(glGetUniformLocation(p, "uRows"), outH.toFloat(), -1f)
+        }
+        return download(dithered, m.shown.ptsMs)
     }
 
     /**
@@ -235,7 +258,7 @@ class GlStage : AutoCloseable {
             fun neighbour(p: MediaReader.Picture) = uploaded(p, region(p, crop, a.stereo))
             val prev = neighbour(before ?: picture).takeIf { it.width == w && it.height == h } ?: raw
             val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
-            source = pass("temporal.frag", target("deinterlaced", w, h), raw.texture,
+            source = pass("temporal.frag", target("deinterlaced", w, h, half = deep), raw.texture,
                 listOf(prev.texture to "uPrev", next.texture to "uNext"), nearest = true) { p ->
                 glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
                 glUniform1i(glGetUniformLocation(p, "uSecond"), if (second) 1 else 0)
@@ -246,7 +269,7 @@ class GlStage : AutoCloseable {
         } else if (a.deinterlace != PictureAdjustment.Deinterlace.OFF &&
             a.deinterlace != PictureAdjustment.Deinterlace.FILM
         ) {
-            source = pass("deinterlace.frag", target("deinterlaced", w, h), raw.texture) { p ->
+            source = pass("deinterlace.frag", target("deinterlaced", w, h, half = deep), raw.texture) { p ->
                 glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
                 glUniform1i(glGetUniformLocation(p, "uMode"), a.deinterlace.ordinal)
                 glUniform1f(glGetUniformLocation(p, "uHeight"), h.toFloat())
@@ -256,7 +279,7 @@ class GlStage : AutoCloseable {
         // 2. Deband, denoise and sharpen at the picture's own size.
         a.debandParams()?.let { d ->
             debandFrame = (debandFrame + 1) and 0xFF
-            source = pass("deband-es3.frag", target("debanded", w, h), source.texture) { p ->
+            source = pass("deband-es3.frag", target("debanded", w, h, half = deep), source.texture) { p ->
                 glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
                 // The picture's top row is where v is 1 (see upload); libplacebo counts rows from the top.
                 glUniform2f(glGetUniformLocation(p, "uRows"), h.toFloat(), -1f)
@@ -268,7 +291,7 @@ class GlStage : AutoCloseable {
             }
         }
         a.denoiseKernel()?.let { k ->
-            source = pass("denoise.frag", target("denoised", w, h), source.texture) { p ->
+            source = pass("denoise.frag", target("denoised", w, h, half = deep), source.texture) { p ->
                 glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
                 glUniform1f(glGetUniformLocation(p, "uRadius"), k.radius)
                 glUniform1f(glGetUniformLocation(p, "uSigmaS2"), 2f * k.radius * k.radius)
@@ -276,7 +299,7 @@ class GlStage : AutoCloseable {
             }
         }
         val slot = claim(kept, picture, region(picture, crop, a.stereo), second)
-        val into = target(slot.name, w, h)
+        val into = target(slot.name, w, h, half = deep)
         if (a.sharpness > 0f || a.clarity > 0f) {
             pass("sharpen.frag", into, source.texture) { p ->
                 glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
@@ -310,7 +333,7 @@ class GlStage : AutoCloseable {
             if (middle != null) {
                 val mix = NeuralInterpolation.mix(phase)
                 val (from, to) = if (mix.towardsMiddle) earlier to middle else middle to later
-                return pass("blend.frag", target("mixed", earlier.width, earlier.height), to.texture,
+                return pass("blend.frag", target("mixed", earlier.width, earlier.height, half = deep), to.texture,
                     listOf(from.texture to "uPrevious")) {
                     glUniform1f(glGetUniformLocation(it, "uWeight"), mix.weight)
                 }
@@ -332,7 +355,7 @@ class GlStage : AutoCloseable {
         if (weight >= 1f) return later
         val w = earlier.width
         val h = earlier.height
-        val into = target("mixed", w, h)
+        val into = target("mixed", w, h, half = deep)
         val along = vectors ?: return pass("blend.frag", into, later.texture, listOf(earlier.texture to "uPrevious")) {
             glUniform1f(glGetUniformLocation(it, "uWeight"), weight)
         }
@@ -352,11 +375,17 @@ class GlStage : AutoCloseable {
         }
     }
 
-    /** [picture]'s [region] on the graphics card, uploaded unless it is still there. */
+    /**
+     * [picture]'s [region] on the graphics card, uploaded unless it is still there: an HDR picture's tone-mapped floats
+     * in half floats where this moment is dithered; an 8-bit one has no more to keep.
+     */
     private fun uploaded(picture: MediaReader.Picture, region: PictureCrop): Target {
-        uploaded.firstOrNull { it.picture === picture && it.region == region }?.let { return slotTarget(it) }
+        val half = deep && picture.hdr != null
+        uploaded.firstOrNull { it.picture === picture && it.region == region && it.half == half }
+            ?.let { return slotTarget(it) }
         val slot = claim(uploaded, picture, region, false)
-        val into = target(slot.name, region.width, region.height)
+        slot.half = half
+        val into = target(slot.name, region.width, region.height, half = half)
         upload(into, picture, region)
         return into
     }
@@ -393,25 +422,26 @@ class GlStage : AutoCloseable {
         val midW = minOf(outW, w * 2)
         val midH = minOf(outH, h * 2)
         return when (upscaler) {
-            PictureAdjustment.Upscaler.LANCZOS -> pass("lanczos.frag", target("up", outW, outH), from.texture) { p ->
+            PictureAdjustment.Upscaler.LANCZOS -> pass("lanczos.frag", up(outW, outH), from.texture) { p ->
                 inSize(p)
                 glUniform1f(glGetUniformLocation(p, "uAntiring"), ANTIRING)
             }
-            PictureAdjustment.Upscaler.GSR -> pass("sgsr.frag", target("up", outW, outH), from.texture, body = inSize)
+            PictureAdjustment.Upscaler.GSR -> pass("sgsr.frag", up(outW, outH), from.texture, body = inSize)
             PictureAdjustment.Upscaler.FSR -> {
-                val easu = pass("fsr-easu-es3.frag", target("easu", outW, outH), from.texture, body = inSize)
-                pass("fsr-rcas-es3.frag", target("up", outW, outH), easu.texture) { p ->
+                val easu = pass("fsr-easu-es3.frag", target("easu", outW, outH, half = deep), from.texture,
+                    body = inSize)
+                pass("fsr-rcas-es3.frag", up(outW, outH), easu.texture) { p ->
                     glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / outW, 1f / outH)
                     glUniform1f(glGetUniformLocation(p, "uSharp"), 2f.pow(-0.2f))
                 }
             }
-            PictureAdjustment.Upscaler.EWA -> pass("ewa.frag", target("up", midW, midH), from.texture,
+            PictureAdjustment.Upscaler.EWA -> pass("ewa.frag", up(midW, midH), from.texture,
                 listOf(ewaTable to "uTable")) { p ->
                 inSize(p)
                 glUniform1f(glGetUniformLocation(p, "uRadius"), Ewa.RADIUS.toFloat())
                 glUniform1f(glGetUniformLocation(p, "uAntiring"), ANTIRING)
             }
-            PictureAdjustment.Upscaler.NIS -> pass("nis.frag", target("up", midW, midH), from.texture,
+            PictureAdjustment.Upscaler.NIS -> pass("nis.frag", up(midW, midH), from.texture,
                 listOf(nisTable to "uCoef")) { p ->
                 val c = Nis.Config(NIS_SHARPNESS)
                 inSize(p)
@@ -516,7 +546,7 @@ class GlStage : AutoCloseable {
         val rgb = net.run(picture, from.width, from.height)
         MemoryUtil.memFree(picture)
         rgb ?: return null
-        val into = target("up", from.width * net.scale, from.height * net.scale)
+        val into = up(from.width * net.scale, from.height * net.scale)
         uploadRgb(into, rgb)
         return into
     }
@@ -558,7 +588,7 @@ class GlStage : AutoCloseable {
             input = pass(shader, target(if (i % 2 == 0) "netA" else "netB", w, h, half = true), input.texture,
                 body = texel)
         }
-        return pass("anime4k/depth-to-space.frag", target("up", w * 2, h * 2), from.texture,
+        return pass("anime4k/depth-to-space.frag", up(w * 2, h * 2), from.texture,
             listOf(input.texture to "uLast")) { p ->
             glUniform2f(glGetUniformLocation(p, "uLastSize"), w.toFloat(), h.toFloat())
         }
@@ -585,7 +615,7 @@ class GlStage : AutoCloseable {
                 glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
             }
         }
-        return pass("acnet/pixel-shuffle.frag", target("up", w * 2, h * 2), from.texture,
+        return pass("acnet/pixel-shuffle.frag", up(w * 2, h * 2), from.texture,
             listOf(target(pairs[1][0], w, h, half = true).texture to "uLast")) { p ->
             glUniform2f(glGetUniformLocation(p, "uLastSize"), w.toFloat(), h.toFloat())
         }
@@ -602,12 +632,15 @@ class GlStage : AutoCloseable {
             body = size)
         val decisions = pass("xbrz/decisions.frag", target("xbrzDecisions", w, h), from.texture,
             listOf(corners.texture to "uCorners"), nearest = true, body = size)
-        return pass("xbrz/scale.frag", target("up", w * factor, h * factor), from.texture,
+        return pass("xbrz/scale.frag", up(w * factor, h * factor), from.texture,
             listOf(decisions.texture to "uDecisions", xbrzTable to "uTable"), nearest = true) { p ->
             size(p)
             glUniform1f(glGetUniformLocation(p, "uFactor"), factor.toFloat())
         }
     }
+
+    // The enlarged picture, in half floats where this moment is dithered.
+    private fun up(w: Int, h: Int): Target = target("up", w, h, half = deep)
 
     private fun pass(
         shader: String,
@@ -664,9 +697,11 @@ class GlStage : AutoCloseable {
         }
     }
 
-    // [half]: 16-bit floats, for a network's layers, whose values reach past 0..1; [deep]: 16-bit values, for HDR's.
+    // [half]: 16-bit floats, for a network's layers, whose values reach past 0..1, and for a picture to be dithered;
+    // [deep]: 16-bit values, for HDR's.
     private fun target(name: String, w: Int, h: Int, half: Boolean = false, deep: Boolean = false): Target {
-        targets[name]?.let { if (it.width == w && it.height == h) return it else free(it) }
+        val format = if (half) GL_RGBA16F else if (deep) GL_RGBA16 else GL_RGBA8
+        targets[name]?.let { if (it.width == w && it.height == h && it.format == format) return it else free(it) }
         val texture = glGenTextures()
         glBindTexture(GL_TEXTURE_2D, texture)
         if (half) {
@@ -683,7 +718,7 @@ class GlStage : AutoCloseable {
         val framebuffer = glGenFramebuffers()
         glBindFramebuffer(GL_FRAMEBUFFER, framebuffer)
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0)
-        return Target(texture, framebuffer, w, h).also { targets[name] = it }
+        return Target(texture, framebuffer, w, h, format).also { targets[name] = it }
     }
 
     private fun free(t: Target) {
@@ -816,6 +851,14 @@ class GlStage : AutoCloseable {
         return table(32, 32, bytes)
     }
 
+    // libplacebo's blue-noise matrix for the dither pass, its ranks over red and green (Dither.noiseRgba).
+    private fun noiseTable(): Int {
+        val rgba = Dither.noiseRgba()
+        val bytes = MemoryUtil.memAlloc(rgba.size)
+        bytes.put(rgba).flip()
+        return table(Dither.SIZE, Dither.SIZE, bytes)
+    }
+
     private fun table(w: Int, h: Int, bytes: ByteBuffer): Int {
         val texture = glGenTextures()
         glBindTexture(GL_TEXTURE_2D, texture)
@@ -846,6 +889,9 @@ class GlStage : AutoCloseable {
         const val NIS_SHARPNESS = 0.5f
         const val XBRZ_TABLE_WIDTH = 36
 
+        // What the stage hands on: 8-bit RGBA, read back for the screen.
+        const val SCREEN_BITS = 8
+
         // The pictures held: uploaded — the one on screen, the one before and two after, and one to spare — and
         // filtered — the one on screen and the next, both fields of one at field rate.
         const val UPLOADED = 6
@@ -856,6 +902,7 @@ class GlStage : AutoCloseable {
             "temporal.frag" to Shaders.VIDEO_TEMPORAL,
             "deinterlace.frag" to Shaders.VIDEO_DEINTERLACE,
             "deband-es3.frag" to Shaders.VIDEO_DEBAND_ES3,
+            "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
             "tonemap.frag" to Shaders.VIDEO_TONEMAP,
             "peak.frag" to Shaders.VIDEO_PEAK,
             "denoise.frag" to Shaders.VIDEO_DENOISE,

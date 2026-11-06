@@ -30,7 +30,8 @@ add_executable(shader_oracle oracle.cpp)
 target_include_directories(shader_oracle PRIVATE ${GL_INCLUDE_DIRS} "${ORACLE_DIR}")
 target_link_libraries(shader_oracle ${GL_LIBRARIES})
 
-# libplacebo's own debanding, tone mapping and peak detection, run by libplacebo on Mesa's OpenGL (placebo.cpp).
+# libplacebo's own debanding, tone mapping, peak detection and dithering, run by libplacebo on Mesa's OpenGL
+# (placebo.cpp).
 add_executable(placebo_oracle placebo.cpp)
 target_include_directories(placebo_oracle PRIVATE ${PLACEBO_INCLUDE_DIRS})
 target_link_libraries(placebo_oracle ${PLACEBO_LIBRARIES})

@@ -1111,6 +1111,7 @@ fun PlayerScreen(
             }
             active.filters = shownPicture
             active.hdr = transfer.takeIf { toneMapped }
+            active.sourceBits = player.videoFormat?.colorInfo?.lumaBitdepth?.takeIf { it > 0 } ?: 8
             active.downscaler = runCatching { com.hawkynt.mediadroid.player.Downscaler.valueOf(settings.downscaler) }
                 .getOrDefault(com.hawkynt.mediadroid.player.Downscaler.DEFAULT)
             active.setVideoSize(player.videoSize.width, player.videoSize.height)

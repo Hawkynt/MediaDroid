@@ -29,6 +29,8 @@ import kotlin.math.ceil
  * drawn into the [setOutput] surface (the player view's own TextureView), with the frame's own
  * presentation time. The player uses it while a filter is set, and for HDR on a screen without HDR, which it
  * tone-maps into the SDR picture the filters work on (see [hdr]); otherwise the decoder draws straight onto the view.
+ * Where the picture holds more than the screen's 8 bits — a 10-bit source, HDR tone-mapped, a colour correction's or
+ * debanding's float results — the frames hold half floats and the last pass dithers to 8 bits ([Dither]).
  */
 class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBufferRenderer {
 
@@ -310,6 +312,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     // Debanding's frame index, which seeds its random numbers with the pixel's position: libplacebo's 8-bit counter.
     private var debandFrame = 0
+
+    // Dithering to the screen's 8 bits (see Dither): the last pass, and libplacebo's blue-noise matrix as a texture
+    // (made on first use); whether the picture being drawn is dithered, its frames then held in half floats.
+    private var ditherProgram = 0
+    private var noiseTexture = 0
+    private var ditherNow = false
     private var sharpenProgram = 0
     private var lanczosProgram = 0
     private var gsrProgram = 0
@@ -338,7 +346,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val peakBufferSizes = IntArray(2)
     private val peakPending = IntArray(2)
     private var peakSlot = 0
-    private val frames = Array(CROP_SAMPLE + 1) { Frame() }
+    private val frames = Array(DITHER_INPUT + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -527,6 +535,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             field = value
             handler.post { peakDetect.reset() }
         }
+
+    /**
+     * The bits per value the video is coded with (its luma's bit depth: 10 for HEVC Main 10), for the last pass to
+     * dither a deeper picture to the screen's 8 bits ([Dither.applies]); FFmpeg's planes arrive in 8 bits whatever it.
+     */
+    @Volatile
+    var sourceBits: Int = 8
 
     /** How a picture larger than 1080p is brought down after deinterlacing (see [reduced]). */
     @Volatile
@@ -844,6 +859,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(debandProgram)
             GLES20.glDeleteProgram(tonemapProgram)
             GLES20.glDeleteProgram(peakProgram)
+            if (ditherProgram != 0) GLES20.glDeleteProgram(ditherProgram)
+            if (noiseTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(noiseTexture), 0)
             if (y2yProgram != 0) GLES20.glDeleteProgram(y2yProgram)
             if (peakBuffers[0] != 0) GLES20.glDeleteBuffers(2, peakBuffers, 0)
             GLES20.glDeleteProgram(sharpenProgram)
@@ -1008,6 +1025,17 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         if (!debandEs3) debandProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEBAND)
         tonemapProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TONEMAP)
         peakProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PEAK)
+        // Dithering reads its texels exactly with GLSL ES 3.00's texelFetch; the GLSL ES 1.00 pass reads their centres.
+        // Only chips that draw into half floats dither (the frames have to hold more than 8 bits), and those run ES 3.
+        if (halfTargets) {
+            val ditherEs3 = runCatching {
+                ditherProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_DITHER_ES3))
+            }.isSuccess
+            if (!ditherEs3) ditherProgram = runCatching { program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DITHER) }
+                .getOrDefault(0)
+            // The matrix takes some tens of milliseconds to make: on a thread of its own, ready before it is needed.
+            if (ditherProgram != 0) Thread { Dither.blueNoise }.apply { isDaemon = true }.start()
+        }
         // The decoder's 10-bit YUV read as it is, where the chip offers it; else samplerExternalOES's RGB.
         y2yProgram = if (es3 && "GL_EXT_YUV_target" in extensions) {
             runCatching { linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_COPY_Y2Y_ES3)) }.getOrDefault(0)
@@ -1111,11 +1139,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         deinterlaceLatencyMs = 0
         deinterlaceFrames = 0f
         shownAt = frameTimestamp
-        val copied = frames[0].ensure(width, height)
+        val half = deepInput(picture)
+        val copied = frames[0].ensure(width, height, half)
         copyInput(copied, measure = fresh)
         var source = copied
         if (picture.deinterlace != PictureAdjustment.Deinterlace.OFF) {
-            val woven = frames[2].ensure(width, height)
+            val woven = frames[2].ensure(width, height, half)
             woven.bind()
             run(deinterlaceProgram, GLES20.GL_TEXTURE_2D, copied.texture, identity) { p ->
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
@@ -1156,7 +1185,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val intervalMs = if (historyCount >= 2) frameIntervalNs / 1_000_000L else 0L
         deinterlaceLatencyMs = intervalMs.toInt().coerceIn(0, MAX_LATENCY_MS)
         deinterlaceFrames = if (historyCount >= 2) 1f else 0f
-        val woven = frames[2].ensure(width, height)
+        val woven = frames[2].ensure(width, height, deepInput(picture))
         rebuildField(woven, prev, cur, next, secondField, picture.deinterlace == PictureAdjustment.Deinterlace.BWDIF)
         val shrunk = reduced(woven)
         return denoised(picture, shrunk, shrunk.width, shrunk.height)
@@ -1489,7 +1518,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val scaler = downscaler
         val size = PictureSize(from.width, from.height).reduced(scaler)
         if (size.width == from.width && size.height == from.height) return from
-        val target = frames[REDUCED].ensure(size.width, size.height)
+        val target = frames[REDUCED].ensure(size.width, size.height, from.half)
         if (!scaler.separable) {
             val filter = if (scaler == Downscaler.NEAREST) GLES20.GL_NEAREST else GLES20.GL_LINEAR
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, from.texture)
@@ -1501,7 +1530,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
             return target
         }
-        val across = frames[REDUCED_ACROSS].ensure(size.width, from.height)
+        val across = frames[REDUCED_ACROSS].ensure(size.width, from.height, from.half)
         downscalePass(from, across, scaler, 1f, 0f, from.width.toFloat() / size.width)
         downscalePass(across, target, scaler, 0f, 1f, from.height.toFloat() / size.height)
         return target
@@ -1526,7 +1555,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private fun denoised(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
         var source = from
         picture.debandParams()?.let { deband ->
-            val debanded = frames[DEBANDED].ensure(width, height)
+            val debanded = frames[DEBANDED].ensure(width, height, deepInput(picture))
             debanded.bind()
             debandFrame = (debandFrame + 1) and 0xFF
             run(debandProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
@@ -1543,7 +1572,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }
         val kernel = picture.denoiseKernel()
         if (kernel != null) {
-            val denoised = frames[1].ensure(width, height)
+            val denoised = frames[1].ensure(width, height, deepInput(picture))
             denoised.bind()
             run(denoiseProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
                 GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
@@ -1798,8 +1827,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         grainToShow = filters.grain
         val outWidth = query(EGL14.EGL_WIDTH)
         val outHeight = query(EGL14.EGL_HEIGHT)
-        // The colour correction is the last pass: the rest is drawn at the screen's size into a frame of its own.
-        val adjusting = !picture.isColorNeutral
+        // The colour correction and the dithering are the last passes: the rest is drawn at the screen's size into a
+        // frame of its own — in half floats where the picture is dithered.
+        ditherNow = dithers(picture)
+        val adjusting = !picture.isColorNeutral || ditherNow
         val upscaling = picture.upscales && outWidth > width
         val sharpen: (Int) -> Unit = { p ->
             GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
@@ -1813,7 +1844,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         } else {
             // 4: sharpness and clarity at the picture's own size, then 5: enlarged onto the screen.
             if (picture.sharpness > 0f || picture.clarity > 0f) {
-                val sharpened = frames[3].ensure(width, height)
+                val sharpened = frames[3].ensure(width, height, deepInput(picture))
                 sharpened.bind()
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, sharpen)
                 source = sharpened
@@ -1836,7 +1867,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 // bilinear scaling for whatever is left.
                 val midWidth = minOf(outWidth, width * 2)
                 val midHeight = minOf(outHeight, height * 2)
-                val enlarged = frames[4].ensure(midWidth, midHeight)
+                val enlarged = frames[4].ensure(midWidth, midHeight, ditherNow)
                 enlarged.bind()
                 GLES20.glUseProgram(nisProgram)
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
@@ -1877,7 +1908,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 // own bilinear scaling for whatever is left.
                 val midWidth = minOf(outWidth, width * 2)
                 val midHeight = minOf(outHeight, height * 2)
-                val enlarged = frames[4].ensure(midWidth, midHeight)
+                val enlarged = frames[4].ensure(midWidth, midHeight, ditherNow)
                 enlarged.bind()
                 GLES20.glUseProgram(ewaProgram)
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
@@ -1907,7 +1938,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     }
                     input = target
                 }
-                val enlarged = frames[4].ensure(width * 2, height * 2)
+                val enlarged = frames[4].ensure(width * 2, height * 2, ditherNow)
                 enlarged.bind()
                 GLES20.glUseProgram(anime4kDepthToSpace)
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
@@ -1953,7 +1984,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                         GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPicture"), 2)
                     }
                 }
-                val enlarged = frames[4].ensure(width * 2, height * 2)
+                val enlarged = frames[4].ensure(width * 2, height * 2, ditherNow)
                 enlarged.bind()
                 GLES20.glUseProgram(acnetShuffle)
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
@@ -1979,7 +2010,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 }
                 val corners = frames[XBRZ_CORNERS].ensure(width + 1, height + 1)
                 val decisions = frames[XBRZ_DECISIONS].ensure(width, height)
-                val enlarged = frames[4].ensure(width * factor, height * factor)
+                val enlarged = frames[4].ensure(width * factor, height * factor, ditherNow)
                 exact(source.texture, corners.texture, decisions.texture) {
                     corners.bind()
                     run(xbrzPrograms[0], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
@@ -2038,7 +2069,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 }
             } else {
                 // FSR 1: edge-adaptive upscaling to the screen's size, then contrast-adaptive sharpening on it.
-                val enlarged = frames[4].ensure(outWidth, outHeight)
+                val enlarged = frames[4].ensure(outWidth, outHeight, ditherNow)
                 enlarged.bind()
                 run(easuProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
                 toScreen(outWidth, outHeight, adjusting)
@@ -2062,9 +2093,17 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glDisable(GLES20.GL_BLEND)
             }
         }
-        if (adjusting) {
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-            GLES20.glViewport(0, 0, outWidth, outHeight)
+        if (!adjusting) return
+        var last = frames[ADJUSTED]
+        if (!picture.isColorNeutral) {
+            // The colour correction: onto the screen, or into a half-float frame of its own for the dithering.
+            if (ditherNow) {
+                last = frames[DITHER_INPUT].ensure(outWidth, outHeight, half = true)
+                last.bind()
+            } else {
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+                GLES20.glViewport(0, 0, outWidth, outHeight)
+            }
             val u = picture.shaderUniforms()
             run(adjustProgram, GLES20.GL_TEXTURE_2D, frames[ADJUSTED].texture, identity) { p ->
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uBrightness"), u.brightness)
@@ -2072,6 +2111,47 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSaturation"), u.saturation)
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uInverseGamma"), u.inverseGamma)
             }
+        }
+        if (ditherNow) dither(last, outWidth, outHeight)
+    }
+
+    /**
+     * Whether [picture] is dithered to the screen's 8 bits as it goes on screen (see [Dither.applies]): where the chip
+     * can hold the frames in half floats and the picture holds more — a deeper source, HDR tone-mapped, a colour
+     * correction's or debanding's float results.
+     */
+    private fun dithers(picture: PictureAdjustment): Boolean {
+        if (ditherProgram == 0) return false
+        val bits = if (hdr != null) HDR_BITS else if (yuvInput) 8 else sourceBits
+        return Dither.applies(bits, SCREEN_BITS, picture)
+    }
+
+    /**
+     * Whether the frames before the enlarging hold half floats: where [picture] is dithered, unless its upscaler reads
+     * the picture back as bytes for a network on the processor (Real-ESRGAN, waifu2x, Real-CUGAN, RealSR).
+     */
+    private fun deepInput(picture: PictureAdjustment): Boolean {
+        val readsBack = picture.upscales &&
+            (picture.upscaler == PictureAdjustment.Upscaler.NEURAL || picture.upscaler.isEnlarger)
+        return dithers(picture) && !readsBack
+    }
+
+    /**
+     * The last pass: [from] (the picture at the screen's size, in half floats) dithered onto the screen with
+     * libplacebo's blue noise (glsl/video/dither.glsl).
+     */
+    private fun dither(from: Frame, width: Int, height: Int) {
+        if (noiseTexture == 0) noiseTexture = byteTexture(Dither.SIZE, Dither.SIZE, Dither.noiseRgba())
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        GLES20.glViewport(0, 0, width, height)
+        run(ditherProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, noiseTexture)
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uNoise"), 1)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
+            // The window's top row is where gl_FragCoord.y is the height; libplacebo counts rows from the top.
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uRows"), height.toFloat(), -1f)
         }
     }
 
@@ -2379,12 +2459,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
-     * Draws the picture at the screen's size from here on: onto the screen, or with a colour correction set
-     * ([adjusting]) into the frame it is corrected from (see output).
+     * Draws the picture at the screen's size from here on: onto the screen, or with a colour correction set or the
+     * picture to be dithered ([adjusting]) into the frame those last passes read (see output), in half floats for the
+     * dithering.
      */
     private fun toScreen(width: Int, height: Int, adjusting: Boolean) {
         onWindow(width, height)
-        if (adjusting) frames[ADJUSTED].ensure(width, height).bind()
+        if (adjusting) frames[ADJUSTED].ensure(width, height, ditherNow).bind()
     }
 
     /** Draws onto the screen from here on. */
@@ -2592,6 +2673,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** The picture drawn small, bars and all, for finding its black bars (see sampleForCrop). */
         private const val CROP_SAMPLE = HDR_BLOCKS + 1
+
+        /** The colour-corrected picture at the screen's size in half floats, for the dithering (see output). */
+        private const val DITHER_INPUT = CROP_SAMPLE + 1
+
+        /** The screen's bits per value: the window's EGL configuration is RGBA8888. */
+        private const val SCREEN_BITS = 8
+
+        /** What an HDR picture tone-mapped in the stage holds: HDR10's and HLG's 10 bits, mapped in floats. */
+        private const val HDR_BITS = 10
 
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()
