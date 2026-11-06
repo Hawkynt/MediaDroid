@@ -340,6 +340,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var mpvLumaProgram = 0
     private var mpvRecombineProgram = 0
     private var temporalDenoiseProgram = 0
+    private var dotCrawlProgram = 0
 
     // Debanding's frame index, which seeds its random numbers with the pixel's position: libplacebo's 8-bit counter.
     private var debandFrame = 0
@@ -381,7 +382,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val peakBufferSizes = IntArray(2)
     private val peakPending = IntArray(2)
     private var peakSlot = 0
-    private val frames = Array(TEMPORAL_DENOISED + 1) { Frame() }
+    private val frames = Array(DOT_CRAWL + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -1069,6 +1070,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             mpvPrograms.values.forEach { GLES20.glDeleteProgram(it) }
             mpvFrames.values.forEach { it.release() }
             GLES20.glDeleteProgram(temporalDenoiseProgram)
+            GLES20.glDeleteProgram(dotCrawlProgram)
             GLES20.glDeleteProgram(tonemapProgram)
             GLES20.glDeleteProgram(peakProgram)
             if (ditherProgram != 0) GLES20.glDeleteProgram(ditherProgram)
@@ -1261,6 +1263,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         mpvLumaProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_LUMA)
         mpvRecombineProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_RECOMBINE)
         temporalDenoiseProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TEMPORAL_DENOISE)
+        dotCrawlProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DOT_CRAWL)
         tonemapProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TONEMAP)
         peakProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PEAK)
         // Dithering reads its texels exactly with GLSL ES 3.00's texelFetch; the GLSL ES 1.00 pass reads their centres.
@@ -1374,7 +1377,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     ): Frame {
         grainNow = 0f
         EGL14.eglMakeCurrent(display, idle, idle, context)
-        if (picture.deinterlace.isTemporal || picture.temporalDenoiseParams() != null) {
+        if (picture.deinterlace.isTemporal || picture.temporalDenoiseParams() != null || picture.dotCrawl > 0f) {
             return temporal(picture, width, height, fresh, secondField)
         }
         historyCount = 0
@@ -1437,12 +1440,31 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         deinterlaceLatencyMs = intervalMs.toInt().coerceIn(0, MAX_LATENCY_MS)
         deinterlaceFrames = if (historyCount >= 2) 1f else 0f
         val woven = frames[2].ensure(width, height, deepInput(picture))
+        // Dot crawl and rainbows combed out of the frame shown, against its neighbours as decoded (DotCrawl).
+        val combed = DotCrawl.threshold(picture.dotCrawl)?.let { threshold ->
+            val into = frames[DOT_CRAWL].ensure(width, height, deepInput(picture))
+            exact(prev.texture, cur.texture, next.texture) {
+                into.bind()
+                run(dotCrawlProgram, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prev.texture)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrev"), 1)
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, next.texture)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uNext"), 2)
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
+                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uThreshold"), threshold)
+                }
+            }
+            into
+        } ?: cur
         // Temporal denoising on the frame shown, against its neighbours as decoded, before any deinterlacing.
         val shown = picture.temporalDenoiseParams()?.let { params ->
             val into = frames[TEMPORAL_DENOISED].ensure(width, height, deepInput(picture))
-            exact(prev.texture, cur.texture, next.texture) {
+            exact(prev.texture, combed.texture, next.texture) {
                 into.bind()
-                run(temporalDenoiseProgram, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
+                run(temporalDenoiseProgram, GLES20.GL_TEXTURE_2D, combed.texture, identity) { p ->
                     GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prev.texture)
                     GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrev"), 1)
@@ -1459,7 +1481,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 }
             }
             into
-        } ?: cur
+        } ?: combed
         val deinterlaced = when {
             picture.deinterlace.isTemporal -> {
                 val adaptiveWeave =
@@ -3333,6 +3355,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** The frame shown, denoised against the frames before and after it (see TemporalDenoise). */
         private const val TEMPORAL_DENOISED = MC_SHARPENED + 1
+
+        /** The frame shown with its dot crawl and rainbows combed out (see DotCrawl). */
+        private const val DOT_CRAWL = TEMPORAL_DENOISED + 1
 
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()

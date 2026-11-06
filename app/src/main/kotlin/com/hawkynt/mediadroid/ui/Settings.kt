@@ -402,6 +402,7 @@ fun SettingsScreen(
                     it.dering = defaultPicture.dering
                     it.shader = defaultPicture.shader
                     it.temporalDenoise = defaultPicture.temporalDenoise
+                    it.dotCrawl = defaultPicture.dotCrawl
                 }
             },
             check = pictureCheck(androidx.compose.ui.platform.LocalContext.current, store),

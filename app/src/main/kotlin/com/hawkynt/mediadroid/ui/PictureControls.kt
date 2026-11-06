@@ -101,6 +101,8 @@ fun PictureSliders(
             Triple("Deringing", picture.dering) { v: Float -> picture.copy(dering = v) },
             // Grain averaged with the frames before and after where nothing moves, see TemporalDenoise.
             Triple("Noise over time", picture.temporalDenoise) { v: Float -> picture.copy(temporalDenoise = v) },
+            // A composite capture's crawling dots and rainbows, cancelled where nothing moves, see DotCrawl.
+            Triple("Dot crawl", picture.dotCrawl) { v: Float -> picture.copy(dotCrawl = v) },
         ).forEach { (label, value, set) ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(label, fontSize = 16.sp, modifier = Modifier.weight(1f))

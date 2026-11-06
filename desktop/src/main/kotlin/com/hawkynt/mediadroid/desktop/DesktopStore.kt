@@ -332,6 +332,7 @@ internal data class PictureSettings(
     /** An mpv user shader's file name in the shaders folder (MpvShaders), or null. */
     val shader: String? = null,
     val temporalDenoise: Float = PictureAdjustment.Neutral.temporalDenoise,
+    val dotCrawl: Float = PictureAdjustment.Neutral.dotCrawl,
 ) {
     fun toAdjustment(): PictureAdjustment {
         val p = PictureAdjustment.Neutral
@@ -360,6 +361,7 @@ internal data class PictureSettings(
             dering = dering,
             shader = shader,
             temporalDenoise = temporalDenoise,
+            dotCrawl = dotCrawl,
         )
     }
 
@@ -387,6 +389,7 @@ internal data class PictureSettings(
             dering = p.dering,
             shader = p.shader,
             temporalDenoise = p.temporalDenoise,
+            dotCrawl = p.dotCrawl,
         )
     }
 }

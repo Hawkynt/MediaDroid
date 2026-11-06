@@ -75,6 +75,8 @@ data class PictureOverride(
     val shader: String? = null,
     /** Temporal denoising, 0 (off) .. 1. */
     val temporalDenoise: Float = 0f,
+    /** Dot crawl and rainbows combed out, 0 (off) .. 1. */
+    val dotCrawl: Float = 0f,
 )
 
 /** How one output screen is set up (see [com.hawkynt.mediadroid.player.ScreenSetup]); names, as kept. */
@@ -130,6 +132,7 @@ data class Settings(
     var shader: String? = null,               // an mpv user shader's file name in shaderFolder (MpvShaders)
     var shaderFolder: String = "",            // the folder of mpv user shaders, a document tree URI; "" none
     var temporalDenoise: Float = 0f,          // 0 (off) .. 1, grain averaged with the frames either side
+    var dotCrawl: Float = 0f,                 // 0 (off) .. 1, a composite capture's dots and rainbows combed out
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -332,6 +335,7 @@ class StateStore(context: Context) {
             dering = dering,
             shader = shader,
             temporalDenoise = temporalDenoise,
+            dotCrawl = dotCrawl,
         )
     }
 
@@ -386,6 +390,7 @@ class StateStore(context: Context) {
                 dering = it.dering,
                 shader = it.shader,
                 temporalDenoise = it.temporalDenoise,
+                dotCrawl = it.dotCrawl,
             )
         }
             ?: defaultPicture()
@@ -431,6 +436,7 @@ class StateStore(context: Context) {
                 dering = picture.dering,
                 shader = picture.shader,
                 temporalDenoise = picture.temporalDenoise,
+                dotCrawl = picture.dotCrawl,
             )
         }
         save()

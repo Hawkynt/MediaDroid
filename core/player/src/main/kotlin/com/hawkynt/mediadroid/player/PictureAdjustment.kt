@@ -87,6 +87,12 @@ data class PictureAdjustment(
      * FFmpeg's thresholds at a quarter, four times as tolerant at 1. On Android the picture then runs one frame behind.
      */
     val temporalDenoise: Float = 0f,
+    /**
+     * Dot crawl and rainbows, 0 (off) to 1: a composite capture's residue, which flips sign every frame, cancelled
+     * where the picture stands still (see [DotCrawl]); towards 1 more motion is taken for residue. On Android the
+     * picture then runs one frame behind.
+     */
+    val dotCrawl: Float = 0f,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
@@ -358,7 +364,7 @@ data class PictureAdjustment(
     val hasFilters: Boolean
         get() = sharpness > 0f || clarity > 0f || noise != 0f || deband > 0f || cropBlackBars || logo != null ||
             shader != null || deblock > 0f || dering > 0f ||
-            temporalDenoise > 0f ||
+            temporalDenoise > 0f || dotCrawl > 0f ||
             deinterlace != Deinterlace.OFF ||
             upscaler != Upscaler.STANDARD || interpolation != Interpolation.OFF || stereo != Stereo.OFF ||
             colorize != Colorize.OFF ||
