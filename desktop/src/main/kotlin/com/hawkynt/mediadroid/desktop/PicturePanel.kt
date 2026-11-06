@@ -94,6 +94,9 @@ fun PicturePanel(
     onPattern: (TestPattern?) -> Unit = {},
     histogramShown: Boolean = false,
     onHistogram: (Boolean) -> Unit = {},
+    folderName: String = "",
+    forFolder: Boolean = false,
+    onForFolder: (Boolean) -> Unit = {},
     aspect: AspectOverride = AspectOverride.AUTO,
     onAspect: (AspectOverride) -> Unit = {},
     screenName: String = "This screen",
@@ -213,6 +216,17 @@ fun PicturePanel(
                 valueRange = -1f..1f,
             )
         }
+        // The picture below for this folder alone (FolderDefaults): a folder of VHS rips starting deinterlaced.
+        SwitchRow(
+            "Only for this folder",
+            if (forFolder) {
+                "Videos in $folderName start with this picture; the others with the household's."
+            } else {
+                "The picture below is the household's, for every video. On: $folderName gets one of its own."
+            },
+            forFolder,
+            onForFolder,
+        )
         // The histogram beside the controls, to set brightness and contrast without clipping (Histogram).
         SwitchRow(
             "Histogram over the picture",

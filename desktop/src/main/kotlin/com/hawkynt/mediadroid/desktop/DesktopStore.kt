@@ -1,5 +1,7 @@
 package com.hawkynt.mediadroid.desktop
 
+import com.hawkynt.mediadroid.library.FolderDefaults
+import com.hawkynt.mediadroid.library.FolderPlace
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.player.AspectOverride
 import com.hawkynt.mediadroid.player.LogoMask
@@ -46,6 +48,39 @@ class DesktopStore(private val folder: File) {
     }
 
     private fun showOf(video: String): String = video.replace('\\', '/').substringBeforeLast('/', "")
+
+    /**
+     * The picture [video] starts with: its folder's — the nearest folder or share above it with a picture of its own
+     * (FolderDefaults) — else the household's — with its show's station logo hidden.
+     */
+    fun pictureFor(video: String): PictureAdjustment =
+        FolderDefaults.resolve(null, folderPicture(video)?.second, picture).copy(logo = logoFor(video))
+
+    /** The folder [video] lies in, as FolderDefaults keeps it. */
+    fun folderOf(video: String): FolderPlace = FolderDefaults.placeOf(sources, video)
+
+    /** The folder or share whose picture [video] takes, if any has one. */
+    fun pictureFolderOf(video: String): FolderPlace? = folderPicture(video)?.first
+
+    private fun folderPicture(video: String): Pair<FolderPlace, PictureAdjustment>? {
+        val kept = settings.folderPictures.mapNotNull { (key, p) -> FolderPlace.of(key)?.let { it to p } }.toMap()
+        return FolderDefaults.nearest(kept, folderOf(video))?.let { (place, p) -> place to p.toAdjustment() }
+    }
+
+    /** Every folder or share with a picture of its own. */
+    val folderPictures: Set<FolderPlace>
+        get() = settings.folderPictures.keys.mapNotNull(FolderPlace::of).toSet()
+
+    /** Keeps [picture] as the one every video in [place] starts with; null forgets it. */
+    fun setFolderPicture(place: FolderPlace, picture: PictureAdjustment?) = change {
+        copy(
+            folderPictures = if (picture == null) {
+                folderPictures - place.key
+            } else {
+                folderPictures + (place.key to PictureSettings.of(picture))
+            },
+        )
+    }
 
     /** The household's subtitle language (ISO 639-1), or empty for subtitles off: the last one picked. */
     var subtitleLanguage: String
@@ -207,6 +242,8 @@ internal data class DesktopSettings(
     val subtitleDelays: Map<String, Int> = emptyMap(),
     /** A station logo hidden, by the videos' folder (one show): LogoMask's corner, size and mode. */
     val logos: Map<String, LogoSettings> = emptyMap(),
+    /** Pictures per folder or share, by FolderPlace.key: what the videos in it start with. */
+    val folderPictures: Map<String, PictureSettings> = emptyMap(),
 ) {
     companion object {
         private val json = Json {

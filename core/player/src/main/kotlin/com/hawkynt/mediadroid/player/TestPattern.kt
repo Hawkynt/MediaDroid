@@ -94,7 +94,8 @@ enum class TestPattern(val label: String, val hint: String) {
         /**
          * The household's [picture] as the patterns are shown with it: its colour, sharpness, noise and debanding —
          * what the patterns are there to set — but nothing that would change the pattern itself: no deinterlacing
-         * (its lines would blend), no smooth motion, no cropping of its black, no 3D eye, the file's own shape.
+         * (its lines would blend), no smooth motion, no cropping of its black, no 3D eye, the file's own shape, no
+         * station logo hidden in a corner.
          */
         fun pictureFor(picture: PictureAdjustment): PictureAdjustment = picture.copy(
             deinterlace = PictureAdjustment.Deinterlace.OFF,
@@ -103,6 +104,7 @@ enum class TestPattern(val label: String, val hint: String) {
             cropBlackBars = false,
             stereo = PictureAdjustment.Stereo.OFF,
             aspect = AspectOverride.AUTO,
+            logo = null,
         )
 
         /** A grey of [percent] of the full range. */

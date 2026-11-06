@@ -121,8 +121,8 @@ fun PlaybackInfoDialog(
                 }
                 Text(
                     "How often each brightness and colour occurs on screen, to set brightness and contrast in the " +
-                        "gear without clipping: the darkest peak should sit just right of the left end, the brightest " +
-                        "just left of the right end.",
+                        "gear without clipping: the darkest peak should sit just right of the left end, the " +
+                        "brightest just left of the right end.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

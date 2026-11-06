@@ -236,20 +236,43 @@ class DesktopStoreTest {
     }
 
     @Test
+    fun `a folder's picture is what its videos start with, the nearest folder's first, else the household's`() {
+        val data = folder.newFolder("data")
+        DesktopStore(data).apply {
+            sources = listOf(nas)
+            picture = PictureAdjustment(brightness = 0.1f)
+            setFolderPicture(folderOf("smb://nas/media/VHS/a.mkv"), PictureAdjustment(
+                deinterlace = PictureAdjustment.Deinterlace.BWDIF, noise = -0.5f,
+            ))
+        }
+        val again = DesktopStore(data)
+        val vhs = again.pictureFor("smb://nas/media/VHS/1990/tape.mkv")
+        assertEquals(PictureAdjustment.Deinterlace.BWDIF, vhs.deinterlace)
+        assertEquals(-0.5f, vhs.noise)
+        assertEquals(com.hawkynt.mediadroid.library.FolderPlace("nas", "VHS"),
+            again.pictureFolderOf("smb://nas/media/VHS/1990/tape.mkv"))
+        // Beside it, the household's.
+        assertEquals(0.1f, again.pictureFor("smb://nas/media/VHS-rips/x.mkv").brightness)
+        assertNull(again.pictureFolderOf("/home/me/a.mkv"))
+        again.setFolderPicture(com.hawkynt.mediadroid.library.FolderPlace("nas", "VHS"), null)
+        assertEquals(0.1f, DesktopStore(data).pictureFor("smb://nas/media/VHS/1990/tape.mkv").brightness)
+    }
+
+    @Test
     fun `a video's shape and each screen's setup are kept, each for its own`() {
         val data = folder.newFolder("data")
         DesktopStore(data).apply {
             setAspect("/v/dvd.mkv", AspectOverride.SIXTEEN_NINE)
             setScreenSetup(
                 "projector",
-                ScreenSetup(ScreenShape.LENS_133, mirror = true, flip = true, keystoneVertical = 0.1f, burnInCare = true),
+                ScreenSetup(ScreenShape.LENS_133, true, true, keystoneVertical = 0.1f, burnInCare = true),
             )
         }
         val again = DesktopStore(data)
         assertEquals(AspectOverride.SIXTEEN_NINE, again.aspectOf("/v/dvd.mkv"))
         assertEquals(AspectOverride.AUTO, again.aspectOf("/v/other.mkv"))
         assertEquals(
-            ScreenSetup(ScreenShape.LENS_133, mirror = true, flip = true, keystoneVertical = 0.1f, burnInCare = true),
+            ScreenSetup(ScreenShape.LENS_133, true, true, keystoneVertical = 0.1f, burnInCare = true),
             again.screenSetup("projector"),
         )
         assertEquals(ScreenSetup.Default, again.screenSetup("monitor"))

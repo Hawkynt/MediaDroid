@@ -408,6 +408,30 @@ fun SettingsScreen(
             check = pictureCheck(androidx.compose.ui.platform.LocalContext.current, store),
         )
 
+        // Folders and shares with a picture of their own (set in the player's gear), nearest folder first.
+        val folders = store.folderPictures().keys.sortedBy { it.source + "|" + it.folder }
+        if (folders.isNotEmpty()) {
+            Text("Folders with their own picture", fontSize = 18.sp, modifier = Modifier.padding(top = 12.dp))
+            Text(
+                "Videos in these start with the folder's picture instead of the default; a video changed in the " +
+                    "gear keeps its own.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            folders.forEach { place ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        com.hawkynt.mediadroid.library.FolderDefaults.label(place, store.sources),
+                        fontSize = 16.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.TextButton(onClick = { store.saveFolderPicture(place, null) }) {
+                        Text("Forget", fontSize = 16.sp)
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(16.dp))
         ScreenSettings(store)
 

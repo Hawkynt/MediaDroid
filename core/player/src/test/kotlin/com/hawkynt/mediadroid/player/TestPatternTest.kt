@@ -138,6 +138,7 @@ class TestPatternTest {
             brightness = 0.1f, contrast = 1.2f, sharpness = 0.3f,
             deinterlace = PictureAdjustment.Deinterlace.BLEND, cropBlackBars = true,
             interpolation = PictureAdjustment.Interpolation.MEDIUM, aspect = AspectOverride.FOUR_THREE,
+            logo = LogoMask(LogoMask.Corner.TOP_RIGHT, 0.1f, LogoMask.Mode.BLUR),
         )
         val shown = TestPattern.pictureFor(household)
         assertEquals(0.1f, shown.brightness)
@@ -147,5 +148,6 @@ class TestPatternTest {
         assertFalse(shown.cropBlackBars)
         assertEquals(PictureAdjustment.Interpolation.OFF, shown.interpolation)
         assertEquals(AspectOverride.AUTO, shown.aspect)
+        assertEquals(null, shown.logo)
     }
 }

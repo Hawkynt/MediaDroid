@@ -1756,6 +1756,24 @@ fun PlayerScreen(
                     store.savePicture(queue[index].videoPath, null)
                     picture = store.pictureFor(queue[index].videoPath)
                 },
+                folder = com.hawkynt.mediadroid.library.FolderDefaults.label(
+                    store.folderOf(queue[index].videoPath), store.sources,
+                ),
+                pictureFolder = store.pictureFolderOf(queue[index].videoPath)?.let {
+                    com.hawkynt.mediadroid.library.FolderDefaults.label(it, store.sources)
+                },
+                onUseForFolder = {
+                    val video = queue[index].videoPath
+                    store.saveFolderPicture(store.folderOf(video), picture)
+                    // The video follows its folder's picture now, its 3D eye and shape kept as its own.
+                    store.savePicture(video, picture)
+                    picture = store.pictureFor(video)
+                },
+                onForgetFolder = {
+                    val video = queue[index].videoPath
+                    store.pictureFolderOf(video)?.let { store.saveFolderPicture(it, null) }
+                    picture = store.pictureFor(video)
+                },
                 onAudioTrack = { audioPicker = true },
                 onSubtitleTrack = { subtitlePicker = true },
                 onSecondSubtitleTrack = { secondPicker = true },
@@ -2258,6 +2276,11 @@ private fun PlayerPanel(
     modifier: Modifier = Modifier,
     sections: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
     afterPictureSize: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
+    /** The folder this video is in, and the one whose picture it starts with, if any has one (FolderDefaults). */
+    folder: String = "",
+    pictureFolder: String? = null,
+    onUseForFolder: () -> Unit = {},
+    onForgetFolder: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -2331,6 +2354,22 @@ private fun PlayerPanel(
         PictureSliders(
             picture, onChange = onPicture, onDone = onPictureDone, stereo = true, logo = true, check = check,
         )
+        // The picture for every video in the folder, as one: a folder of VHS rips starting deinterlaced.
+        OutlinedButton(onClick = onUseForFolder, modifier = Modifier.padding(top = 8.dp)) {
+            Text("Use for the whole folder", fontSize = 16.sp)
+        }
+        Text(
+            if (pictureFolder != null) {
+                "Videos in $pictureFolder start with that folder's picture; a video changed here keeps its own."
+            } else {
+                "Every video in $folder will start with this picture; each can still be changed on its own."
+            },
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (pictureFolder != null) {
+            TextButton(onClick = onForgetFolder) { Text("Forget the folder's picture", fontSize = 16.sp) }
+        }
 
         PanelTitle("Subtitles & sound")
         Row(verticalAlignment = Alignment.CenterVertically) {
