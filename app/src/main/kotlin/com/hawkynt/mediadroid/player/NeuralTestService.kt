@@ -59,8 +59,7 @@ class NeuralTestService : Service() {
             override fun timed(height: Int, ms: Double) = send(TIMED, height, ms)
         }
         val timing = if (upscaling) {
-            runCatching { PictureAdjustment.Upscaler.valueOf(name) }.getOrNull()
-                ?.let { NeuralEnlarger.selfTest(applicationContext, it, unit, progress) }
+            NeuralEnlarging.choice(name)?.let { NeuralEnlarger.selfTest(applicationContext, it, unit, progress) }
         } else {
             runCatching { PictureAdjustment.Interpolation.valueOf(name) }.getOrNull()
                 ?.let { NeuralInterpolator.selfTest(applicationContext, it, unit, progress) }
@@ -96,10 +95,10 @@ class NeuralTestService : Service() {
                 selfTest(context, network.name, upscaling = false, NeuralUpscaler.Unit.valueOf(unit), until)
             }
 
-        /** [upscaler]'s self-test (waifu2x, Real-CUGAN; see NeuralEnlarger.selfTest), the same way. */
-        fun selfTest(context: Context, upscaler: PictureAdjustment.Upscaler): NeuralSelfTest.Outcome =
+        /** [choice]'s self-test (a model of waifu2x, Real-CUGAN or RealSR; NeuralEnlarger.selfTest), the same way. */
+        fun selfTest(context: Context, choice: NeuralEnlarging.Choice): NeuralSelfTest.Outcome =
             NeuralSelfTest.across(NeuralEnlarging::fastEnough) { unit, until ->
-                selfTest(context, upscaler.name, upscaling = true, NeuralUpscaler.Unit.valueOf(unit), until)
+                selfTest(context, choice.key, upscaling = true, NeuralUpscaler.Unit.valueOf(unit), until)
             }
 
         /**

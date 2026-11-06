@@ -65,6 +65,8 @@ tasks.test {
         val library = rootProject.file("native/build/desktop/lib")
         inputs.dir(library)
         systemProperty("mediadroid.native", library.path)
+        // The upscalers' fetched models, kept between runs (NativeNeuralTest).
+        systemProperty("mediadroid.testModels", layout.buildDirectory.dir("test-models").get().asFile.path)
     } else {
         exclude("**/NativeNetworksTest*", "**/NativeNeuralTest*", "**/LibAssTest*", "**/LibAssEngineTest*")
     }

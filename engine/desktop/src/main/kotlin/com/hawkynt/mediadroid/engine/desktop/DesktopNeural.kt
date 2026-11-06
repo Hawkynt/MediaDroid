@@ -61,16 +61,16 @@ class DesktopNeural(val models: File) {
     }
 
     /**
-     * [upscaler] — waifu2x, Real-CUGAN, RealSR or Real-ESRGAN — on the GPU or the CPU ([gpu]), or null where it
-     * cannot run there or its files are not in place.
+     * [choice] — a model of waifu2x, Real-CUGAN, RealSR or Real-ESRGAN, once or eight ways — on the GPU or the CPU
+     * ([gpu]), or null where it cannot run there or its files are not in place.
      */
-    fun enlarger(upscaler: PictureAdjustment.Upscaler, gpu: Boolean): Enlarger? {
-        if (!onNcnn(upscaler) || !loaded || (gpu && !hasGpu)) return null
-        val files = NeuralModels.files(upscaler) ?: return null
+    fun enlarger(choice: NeuralEnlarging.Choice, gpu: Boolean): Enlarger? {
+        if (!onNcnn(choice.upscaler) || !loaded || (gpu && !hasGpu)) return null
+        val files = choice.model.files
         if (!ready(files)) return null
-        val kind = NativeInterpolation.enlargerKind(upscaler)
-        val handle = NativeInterpolation.openEnlarger(null, folder(files).path, kind, gpu)
-        return if (handle == 0L) null else Enlarger(handle, upscaler, gpu)
+        val handle = NativeInterpolation.openEnlarger(null, folder(files).path, choice, gpu)
+        val budget = if (gpu) NativeInterpolation.gpuHeapBudget() else 0
+        return if (handle == 0L) null else Enlarger(handle, choice, gpu, budget)
     }
 
     companion object {
@@ -118,25 +118,35 @@ class DesktopNeural(val models: File) {
         }
     }
 
-    /** An upscaler: an RGBA picture in, [scale] times its size as RGB bytes out. */
+    /**
+     * An upscaler: an RGBA picture in, [scale] times its size as RGB bytes out — whole, or in tiles where the GPU's
+     * memory for it ([budgetMb]) asks for them (NeuralEnlarging.tile).
+     */
     class Enlarger internal constructor(
         private var handle: Long,
-        val upscaler: PictureAdjustment.Upscaler,
+        val choice: NeuralEnlarging.Choice,
         val gpu: Boolean,
+        private val budgetMb: Int,
     ) : AutoCloseable {
         private var out: ByteBuffer = ByteBuffer.allocateDirect(0)
 
         /** How much larger it makes a picture. */
-        val scale: Int = NeuralEnlarging.scale(upscaler)
+        val scale: Int = choice.scale
 
         /**
          * The RGBA [picture] ([width] × [height], rows as stored) at [scale] times its size as RGB bytes in the same
-         * row order — valid until the next call; null where the network failed.
+         * row order — valid until the next call; null where the network failed. Whole, or in tiles of [tile] pixels a
+         * side: by default where the GPU's memory asks for them.
          */
-        fun run(picture: ByteBuffer, width: Int, height: Int): ByteBuffer? {
+        fun run(
+            picture: ByteBuffer,
+            width: Int,
+            height: Int,
+            tile: Int = NeuralEnlarging.tile(choice, budgetMb, width, height),
+        ): ByteBuffer? {
             val bytes = width * height * scale * scale * 3
             if (out.capacity() < bytes) out = ByteBuffer.allocateDirect(bytes)
-            val ran = NativeInterpolation.enlarge(handle, picture, width, height, out)
+            val ran = NativeInterpolation.enlarge(handle, picture, width, height, out, tile)
             return if (ran == 0) out.also { it.rewind() } else null
         }
 

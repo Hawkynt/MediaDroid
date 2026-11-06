@@ -1071,7 +1071,8 @@ fun PlayerScreen(
         val rifeSaved = it.interpolation.isNeural
         when {
             neuralSaved && !settings.neuralUpscaling ||
-                it.upscaler.isEnlarger && it.upscaler !in settings.neuralEnlargersOffered ->
+                it.upscaler.isEnlarger &&
+                    com.hawkynt.mediadroid.player.NeuralEnlarging.choice(it) !in settings.neuralEnlargersOffered ->
                 it.copy(upscaler = com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.STANDARD)
             else -> it
         }.let { p ->

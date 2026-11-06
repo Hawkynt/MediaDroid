@@ -5,6 +5,7 @@ import com.hawkynt.mediadroid.engine.desktop.GlStage
 import com.hawkynt.mediadroid.engine.desktop.NeuralTestProcess
 import com.hawkynt.mediadroid.engine.desktop.StageDryRun
 import com.hawkynt.mediadroid.player.ModelFolder
+import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.NeuralModels
 import com.hawkynt.mediadroid.player.NeuralSelfTest
@@ -30,16 +31,15 @@ class DesktopTrial(private val store: DesktopStore, private val neural: DesktopN
 
     // Real-ESRGAN runs on ncnn here, as the other upscalers do: tested and kept the same way.
     override val neuralUpscalingPassed: Boolean
-        get() = store.enlargerPassed(PictureAdjustment.Upscaler.NEURAL) != null
+        get() = store.enlargerPassed(realEsrgan) != null
 
     override fun testNeuralUpscaling(): NeuralSelfTest.Timing? =
-        (NeuralTestProcess.selfTest(neural.models, PictureAdjustment.Upscaler.NEURAL) as? NeuralSelfTest.Outcome.Ran)
-            ?.timings?.firstOrNull()
+        (NeuralTestProcess.selfTest(neural.models, realEsrgan) as? NeuralSelfTest.Outcome.Ran)?.timings?.firstOrNull()
 
     override fun keepNeuralUpscaling(best: NeuralSelfTest.Timing) =
-        store.keepEnlarger(PictureAdjustment.Upscaler.NEURAL, NeuralInterpolation.Passed(best.unit, best.msByHeight))
+        store.keepEnlarger(realEsrgan, NeuralInterpolation.Passed(best.unit, best.msByHeight))
 
-    override fun enlargerPassed(upscaler: PictureAdjustment.Upscaler) = store.enlargerPassed(upscaler)
+    override fun enlargerPassed(choice: NeuralEnlarging.Choice) = store.enlargerPassed(choice)
 
     override fun motionPassed(network: PictureAdjustment.Interpolation) = store.motionPassed(network)
 
@@ -48,12 +48,12 @@ class DesktopTrial(private val store: DesktopStore, private val neural: DesktopN
     override fun fetch(download: NeuralModels.Download, progress: (Float) -> Unit) =
         ModelFolder.fetch(neural.folder(download), download, progress)
 
-    override fun selfTest(upscaler: PictureAdjustment.Upscaler) = NeuralTestProcess.selfTest(neural.models, upscaler)
+    override fun selfTest(choice: NeuralEnlarging.Choice) = NeuralTestProcess.selfTest(neural.models, choice)
 
     override fun selfTest(network: PictureAdjustment.Interpolation) = NeuralTestProcess.selfTest(neural.models, network)
 
-    override fun keepEnlarger(upscaler: PictureAdjustment.Upscaler, passed: NeuralInterpolation.Passed) =
-        store.keepEnlarger(upscaler, passed)
+    override fun keepEnlarger(choice: NeuralEnlarging.Choice, passed: NeuralInterpolation.Passed) =
+        store.keepEnlarger(choice, passed)
 
     override fun keepMotion(network: PictureAdjustment.Interpolation, passed: NeuralInterpolation.Passed) =
         store.keepMotion(network, passed)
@@ -75,5 +75,8 @@ class DesktopTrial(private val store: DesktopStore, private val neural: DesktopN
 
     private companion object {
         const val DEFAULT_REFRESH_HZ = 60
+
+        // Real-ESRGAN's one model here, run once.
+        val realEsrgan = NeuralEnlarging.choice(PictureAdjustment(upscaler = PictureAdjustment.Upscaler.NEURAL))!!
     }
 }

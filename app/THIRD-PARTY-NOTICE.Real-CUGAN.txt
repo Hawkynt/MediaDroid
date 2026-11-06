@@ -2,9 +2,12 @@ Real-CUGAN, by bilibili (https://github.com/bilibili/ailab/tree/main/Real-CUGAN)
 realcugan-ncnn-vulkan, by nihui (https://github.com/nihui/realcugan-ncnn-vulkan).
 
 app/src/main/assets/models/realcugan-se holds realcugan-ncnn-vulkan's models-se/up2x-conservative (the SE model,
-conservative, twice the size), copied unchanged. native/src/enlarger.cpp runs it the way the port does on a
-whole picture: in RGB 0..1, its edges mirrored 18 around and to an even size, the output's top left the picture
-twice as large.
+conservative, twice the size), copied unchanged. Its other models — models-se at 2x (no denoise, denoise 1x to 3x),
+3x and 4x, and models-pro at 2x and 3x — are fetched when picked, unchanged, from the port's own repository at commit
+395302c5c70f1bff604c974e92e0a87e45c9f9ee, each file checked against its digest. native/src/enlarger.cpp runs them the
+way the port does: in RGB 0..1, the edges mirrored — at 2x 18 around and to an even size, at 3x 14 around and to a
+multiple of four, at 4x 19 around and to an even size, the network's output added to the picture's pixels repeated
+four times — the output's top left the picture enlarged; in tiles and eight ways (TTA) as the port does them.
 
 Real-CUGAN:
 

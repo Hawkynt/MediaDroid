@@ -15,7 +15,7 @@ class PictureTrialTest {
         var fetches: Boolean = true,
         var upscaling: NeuralSelfTest.Timing? = null,
     ) : PictureTrial.Device {
-        val enlargers = HashMap<PictureAdjustment.Upscaler, NeuralInterpolation.Passed>()
+        val enlargers = HashMap<NeuralEnlarging.Choice, NeuralInterpolation.Passed>()
         val motion = HashMap<PictureAdjustment.Interpolation, NeuralInterpolation.Passed>()
         var upscalingKept: NeuralSelfTest.Timing? = null
         val fetched = ArrayList<String>()
@@ -29,7 +29,7 @@ class PictureTrialTest {
             upscalingKept = best
         }
 
-        override fun enlargerPassed(upscaler: PictureAdjustment.Upscaler) = enlargers[upscaler]
+        override fun enlargerPassed(choice: NeuralEnlarging.Choice) = enlargers[choice]
         override fun motionPassed(network: PictureAdjustment.Interpolation) = motion[network]
         override fun modelsReady(download: NeuralModels.Download) = ready
         override fun fetch(download: NeuralModels.Download, progress: (Float) -> Unit): Boolean {
@@ -38,10 +38,10 @@ class PictureTrialTest {
             return fetches
         }
 
-        override fun selfTest(upscaler: PictureAdjustment.Upscaler) = outcome.also { tested += upscaler.name }
+        override fun selfTest(choice: NeuralEnlarging.Choice) = outcome.also { tested += choice.key }
         override fun selfTest(network: PictureAdjustment.Interpolation) = outcome.also { tested += network.name }
-        override fun keepEnlarger(upscaler: PictureAdjustment.Upscaler, passed: NeuralInterpolation.Passed) {
-            enlargers[upscaler] = passed
+        override fun keepEnlarger(choice: NeuralEnlarging.Choice, passed: NeuralInterpolation.Passed) {
+            enlargers[choice] = passed
         }
 
         override fun keepMotion(network: PictureAdjustment.Interpolation, passed: NeuralInterpolation.Passed) {
@@ -156,8 +156,26 @@ class PictureTrialTest {
         assertTrue(check(PictureAdjustment(upscaler = PictureAdjustment.Upscaler.WAIFU2X), fast).keepsUp)
         assertEquals(
             NeuralInterpolation.Passed("GPU", mapOf(576 to 25.0)),
-            fast.enlargers[PictureAdjustment.Upscaler.WAIFU2X],
+            fast.enlargers[NeuralEnlarging.choice("WAIFU2X")],
         )
+    }
+
+    @Test
+    fun `each model of an upscaler is fetched where not carried and tested on its own, eight ways apart`() {
+        val passed = NeuralSelfTest.Outcome.Ran(listOf(NeuralSelfTest.Timing("GPU", mapOf(576 to 25.0))))
+        val device = FakeDevice(outcome = passed, ready = false)
+        val noise3 = PictureAdjustment(upscaler = PictureAdjustment.Upscaler.WAIFU2X, upscalerModel = "noise3")
+        assertTrue(check(noise3, device).keepsUp)
+        assertEquals(listOf("waifu2x-cunet-noise3"), device.fetched)
+        assertEquals(listOf("WAIFU2X:noise3"), device.tested)
+        assertTrue("Testing waifu2x Noise 3 on this device…" in said)
+        // The same model eight ways is a choice of its own; once passed, neither is tested again.
+        assertTrue(check(noise3.copy(upscalerTta = true), device).keepsUp)
+        assertTrue(check(noise3, device).keepsUp)
+        assertEquals(listOf("WAIFU2X:noise3", "WAIFU2X:noise3+tta"), device.tested)
+        // The carried default needs no fetch.
+        assertTrue(check(PictureAdjustment(upscaler = PictureAdjustment.Upscaler.WAIFU2X), device).keepsUp)
+        assertEquals(listOf("waifu2x-cunet-noise3", "waifu2x-cunet-noise3"), device.fetched)
     }
 
     @Test

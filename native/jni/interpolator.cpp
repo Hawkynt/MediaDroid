@@ -88,16 +88,24 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_close(JNIEnv*, jobject, j
     delete reinterpret_cast<mediadroid::Interpolator*>(handle);
 }
 
-// [kind]: 0 waifu2x, 1 Real-CUGAN, 2 RealSR, 3 Real-ESRGAN (the desktop's; Android runs it on TFLite).
+// [kind]: 0 waifu2x, 1 Real-CUGAN, 2 RealSR, 3 Real-ESRGAN (the desktop's; Android runs it on TFLite); [model] the
+// structure and weights' name in [dir], [scale] how much larger it makes a picture, [tta] whether it runs eight ways.
 JNIEXPORT jlong JNICALL
 Java_com_hawkynt_mediadroid_player_NativeInterpolation_openEnlarger(
-    JNIEnv* env, jobject, jobject assets, jstring dir, jint kind, jboolean gpu) {
+    JNIEnv* env, jobject, jobject assets, jstring dir, jint kind, jstring model, jint scale, jboolean tta,
+    jboolean gpu) {
     auto load = mediadroid::platform::loader(env, assets, text(env, dir));
-    auto it = kind == 3   ? mediadroid::openRealEsrgan(load, gpu)
-              : kind == 2 ? mediadroid::openRealSr(load, gpu)
-              : kind == 1 ? mediadroid::openRealCugan(load, gpu)
-                          : mediadroid::openWaifu2x(load, gpu);
+    const std::string name = text(env, model);
+    auto it = kind == 3   ? mediadroid::openRealEsrgan(load, gpu, name.c_str(), tta)
+              : kind == 2 ? mediadroid::openRealSr(load, gpu, tta)
+              : kind == 1 ? mediadroid::openRealCugan(load, gpu, name.c_str(), scale, tta)
+                          : mediadroid::openWaifu2x(load, gpu, name.c_str(), tta);
     return reinterpret_cast<jlong>(it.release());
+}
+
+JNIEXPORT jint JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_gpuHeapBudget(JNIEnv*, jobject) {
+    return mediadroid::gpuHeapBudget();
 }
 
 JNIEXPORT jlong JNICALL
@@ -113,12 +121,12 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_openIfrnet(
 
 JNIEXPORT jint JNICALL
 Java_com_hawkynt_mediadroid_player_NativeInterpolation_enlarge(
-    JNIEnv* env, jobject, jlong handle, jobject picture, jint w, jint h, jobject out) {
+    JNIEnv* env, jobject, jlong handle, jobject picture, jint w, jint h, jobject out, jint tile) {
     auto* it = reinterpret_cast<mediadroid::Enlarger*>(handle);
     const auto* rgba = static_cast<const unsigned char*>(env->GetDirectBufferAddress(picture));
     auto* rgb = static_cast<unsigned char*>(env->GetDirectBufferAddress(out));
     if (it == nullptr || rgba == nullptr || rgb == nullptr) return -1;
-    return it->enlarge(rgba, w, h, rgb);
+    return it->enlarge(rgba, w, h, rgb, tile);
 }
 
 JNIEXPORT void JNICALL

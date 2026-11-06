@@ -32,10 +32,10 @@ object NeuralTestProcess {
             one(models, MOTION, network.name, unit, until, NeuralInterpolation.TEST_SIZES.first().height)
         }
 
-    /** [upscaler]'s self-test with the models in [models]; blocks. */
-    fun selfTest(models: File, upscaler: PictureAdjustment.Upscaler): NeuralSelfTest.Outcome =
+    /** [choice]'s self-test with the models in [models]; blocks. */
+    fun selfTest(models: File, choice: NeuralEnlarging.Choice): NeuralSelfTest.Outcome =
         NeuralSelfTest.across(NeuralEnlarging::fastEnough) { unit, until ->
-            one(models, UPSCALER, upscaler.name, unit, until, PictureCheck.HEIGHT)
+            one(models, UPSCALER, choice.key, unit, until, PictureCheck.HEIGHT)
         }
 
     /** The JVM a test runs in: this one's own `java`; null where the runtime carries none. */
@@ -138,8 +138,8 @@ object NeuralTestProcess {
         val neural = DesktopNeural(models)
         val gpu = unit == "GPU"
         return if (kind == UPSCALER) {
-            val upscaler = PictureAdjustment.Upscaler.valueOf(name)
-            neural.enlarger(upscaler, gpu)?.use { net ->
+            val choice = NeuralEnlarging.choice(name) ?: return null
+            neural.enlarger(choice, gpu)?.use { net ->
                 NeuralChecks.enlarger({ p, w, h -> net.run(p, w, h) }, net.scale, unit, progress)
             }
         } else {

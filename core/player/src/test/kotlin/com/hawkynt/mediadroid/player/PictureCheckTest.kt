@@ -29,6 +29,12 @@ class PictureCheckTest {
             PictureCheck.key(lanczos),
             PictureCheck.key(lanczos.copy(interpolation = PictureAdjustment.Interpolation.MOTION)),
         )
+        // A network's model and its eight-way run cost differently: each is a check of its own.
+        val waifu2x = PictureAdjustment(upscaler = PictureAdjustment.Upscaler.WAIFU2X)
+        assertNotEquals(PictureCheck.key(waifu2x), PictureCheck.key(waifu2x.copy(upscalerModel = "noise3")))
+        assertNotEquals(PictureCheck.key(waifu2x), PictureCheck.key(waifu2x.copy(upscalerTta = true)))
+        assertTrue(PictureCheck.needed(waifu2x, waifu2x.copy(upscalerTta = true)))
+        assertEquals(PictureCheck.key(lanczos), PictureCheck.key(lanczos.copy(upscalerModel = "noise3")))
     }
 
     @Test

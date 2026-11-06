@@ -59,6 +59,10 @@ data class PictureOverride(
     val aspect: String = "AUTO",
     /** PictureAdjustment.Chroma name: how the colour of a 4:2:0 picture is enlarged. */
     val chroma: String = "BILINEAR",
+    /** The upscaler's model by its id (NeuralEnlarging.models), empty for its default. */
+    val upscalerModel: String = "",
+    /** The upscaler's network run eight ways. */
+    val upscalerTta: Boolean = false,
 )
 
 /** How one output screen is set up (see [com.hawkynt.mediadroid.player.ScreenSetup]); names, as kept. */
@@ -105,6 +109,8 @@ data class Settings(
     var deband: Float = 0f,                   // 0 (off) .. 1, gradients' 8-bit steps smoothed
     var cropBlackBars: Boolean = true,        // letterbox and pillarbox bars found as it plays and cropped (AutoCrop)
     var chroma: String = "BILINEAR",          // PictureAdjustment.Chroma name, the colour's upscaling
+    var upscalerModel: String = "",           // the upscaler's model by its id (NeuralEnlarging.models), "" its default
+    var upscalerTta: Boolean = false,         // the upscaler's network run eight ways
     var subtitlesOn: Boolean = true,
     var subtitleLanguage: String = "",
     var subtitleSize: String = "NORMAL",       // SubtitleLook.Size name, the household default
@@ -120,7 +126,8 @@ data class Settings(
     // fastest and what an in-between took there per tested size ("GPU|480=12.5;576=…", see
     // NeuralInterpolation.Passed).
     var neuralMotion: Map<String, String> = emptyMap(),
-    // The upscalers on ncnn (waifu2x, Real-CUGAN) whose self-test passed, the same way: "GPU|576=…".
+    // The upscalers' models on ncnn whose self-test passed, by NeuralEnlarging.Choice.key ("WAIFU2X",
+    // "REALCUGAN:se-up4x-denoise3x+tta"), the same way: "GPU|576=…".
     var neuralEnlargers: Map<String, String> = emptyMap(),
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
@@ -140,16 +147,16 @@ data class Settings(
     ): com.hawkynt.mediadroid.player.NeuralInterpolation.Passed? =
         neuralMotion[network.name]?.let { com.hawkynt.mediadroid.player.NeuralInterpolation.Passed.decode(it) }
 
-    /** What [upscaler]'s self-test found where it passed (waifu2x, Real-CUGAN); null otherwise. */
+    /** What [choice]'s self-test found where it passed (a model of waifu2x, Real-CUGAN or RealSR); null otherwise. */
     fun neuralEnlargerPassed(
-        upscaler: com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler,
+        choice: com.hawkynt.mediadroid.player.NeuralEnlarging.Choice,
     ): com.hawkynt.mediadroid.player.NeuralInterpolation.Passed? =
-        neuralEnlargers[upscaler.name]?.let { com.hawkynt.mediadroid.player.NeuralInterpolation.Passed.decode(it) }
+        neuralEnlargers[choice.key]?.let { com.hawkynt.mediadroid.player.NeuralInterpolation.Passed.decode(it) }
 
-    /** The upscalers on ncnn this household's device passed. */
-    val neuralEnlargersOffered: Set<com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler>
-        get() = com.hawkynt.mediadroid.player.PictureAdjustment.Upscaler.entries
-            .filter { it.isEnlarger && neuralEnlargerPassed(it) != null }.toSet()
+    /** The upscalers' models on ncnn this household's device passed. */
+    val neuralEnlargersOffered: Set<com.hawkynt.mediadroid.player.NeuralEnlarging.Choice>
+        get() = neuralEnlargers.keys.mapNotNull { com.hawkynt.mediadroid.player.NeuralEnlarging.choice(it) }
+            .filter { it.upscaler.isEnlarger && neuralEnlargerPassed(it) != null }.toSet()
 
     /** The neural smooth-motion choices this household's device passed. */
     val neuralMotionOffered: Set<com.hawkynt.mediadroid.player.PictureAdjustment.Interpolation>
@@ -299,6 +306,8 @@ class StateStore(context: Context) {
             deband = deband,
             cropBlackBars = cropBlackBars,
             chroma = chromaOf(chroma),
+            upscalerModel = upscalerModel,
+            upscalerTta = upscalerTta,
         )
     }
 
@@ -335,6 +344,8 @@ class StateStore(context: Context) {
                 it.cropBlackBars,
                 AspectOverride.entries.firstOrNull { a -> a.name == it.aspect } ?: AspectOverride.AUTO,
                 chroma = chromaOf(it.chroma),
+                upscalerModel = it.upscalerModel,
+                upscalerTta = it.upscalerTta,
             )
         }
             ?: defaultPicture()
@@ -363,6 +374,8 @@ class StateStore(context: Context) {
                 picture.cropBlackBars,
                 picture.aspect.name,
                 chroma = picture.chroma.name,
+                upscalerModel = picture.upscalerModel,
+                upscalerTta = picture.upscalerTta,
             )
         }
         save()

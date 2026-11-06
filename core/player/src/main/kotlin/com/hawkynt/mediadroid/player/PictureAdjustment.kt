@@ -51,6 +51,13 @@ data class PictureAdjustment(
     val aspect: AspectOverride = AspectOverride.AUTO,
     /** How the colour of a 4:2:0 picture is enlarged to its brightness's size, see [ChromaUpscaling]. */
     val chroma: Chroma = Chroma.BILINEAR,
+    /**
+     * Which of the [upscaler]'s models runs, by its id (see NeuralEnlarging.models): a waifu2x noise level, a
+     * Real-CUGAN strength, scale or pro model; empty for the upscaler's default.
+     */
+    val upscalerModel: String = "",
+    /** The [upscaler]'s network run eight ways and averaged (test-time augmentation, see NeuralEnlarging.Choice). */
+    val upscalerTta: Boolean = false,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)

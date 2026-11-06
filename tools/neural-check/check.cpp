@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -165,7 +166,7 @@ void enlarge(const char* name, mediadroid::Enlarger& net, int w, int h) {
     }
     std::vector<unsigned char> rgb(static_cast<size_t>(w) * h * k * k * 3);
     const auto start = std::chrono::steady_clock::now();
-    const int ran = net.enlarge(small.data(), w, h, rgb.data());
+    const int ran = net.enlarge(small.data(), w, h, rgb.data(), 0);
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     if (ran != 0) {
         std::printf("%s %dx%d: failed (%d)\n", name, w, h, ran);
@@ -264,7 +265,7 @@ int main(int argc, char** argv) {
                 : network == "DAIN"                     ? argv[3]
                 : network == "XVFI"                     ? argv[4]
                                                         : extra;
-            auto net = (*open)(mediadroid::fileLoader(dir), onGpu);
+            auto net = open(mediadroid::fileLoader(dir), onGpu);
             if (!net) {
                 std::printf("%s on the %s: does not load\n", network.c_str(), unit);
                 continue;
@@ -280,14 +281,18 @@ int main(int argc, char** argv) {
         const char* unit = onGpu ? "GPU" : "CPU";
         const char* onlyUnit = std::getenv("NEURAL_CHECK_UNIT");
         if (onlyUnit != nullptr && std::string(onlyUnit) != unit) continue;
+        using Open = std::function<std::unique_ptr<mediadroid::Enlarger>(const mediadroid::Loader&, bool)>;
+        const Open waifu2x = [](const mediadroid::Loader& l, bool g) { return mediadroid::openWaifu2x(l, g); };
+        const Open cugan = [](const mediadroid::Loader& l, bool g) { return mediadroid::openRealCugan(l, g); };
+        const Open realsr = [](const mediadroid::Loader& l, bool g) { return mediadroid::openRealSr(l, g); };
         for (const auto& [network, open, env] : {
-                 std::make_tuple(std::string("waifu2x"), &mediadroid::openWaifu2x, "WAIFU2X_DIR"),
-                 std::make_tuple(std::string("Real-CUGAN"), &mediadroid::openRealCugan, "REALCUGAN_DIR"),
-                 std::make_tuple(std::string("RealSR"), &mediadroid::openRealSr, "REALSR_DIR")}) {
+                 std::make_tuple(std::string("waifu2x"), waifu2x, "WAIFU2X_DIR"),
+                 std::make_tuple(std::string("Real-CUGAN"), cugan, "REALCUGAN_DIR"),
+                 std::make_tuple(std::string("RealSR"), realsr, "REALSR_DIR")}) {
             const char* dir = std::getenv(env);
             const char* only = std::getenv("NEURAL_CHECK_NETWORK");
             if (dir == nullptr || (only != nullptr && network != only)) continue;
-            auto net = (*open)(mediadroid::fileLoader(dir), onGpu);
+            auto net = open(mediadroid::fileLoader(dir), onGpu);
             if (!net) {
                 std::printf("%s on the %s: does not load\n", network.c_str(), unit);
                 continue;

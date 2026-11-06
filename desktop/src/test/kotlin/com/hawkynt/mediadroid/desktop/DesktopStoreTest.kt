@@ -3,6 +3,7 @@ package com.hawkynt.mediadroid.desktop
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.player.AspectOverride
+import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.ScreenShape
@@ -81,16 +82,38 @@ class DesktopStoreTest {
     }
 
     @Test
+    fun `the upscaler's model and its eight-way run are kept with the picture`() {
+        val data = folder.newFolder("data")
+        DesktopStore(data).picture = PictureAdjustment(
+            upscaler = PictureAdjustment.Upscaler.WAIFU2X,
+            upscalerModel = "noise3",
+            upscalerTta = true,
+        )
+        val again = DesktopStore(data).picture
+        assertEquals("noise3", again.upscalerModel)
+        assertTrue(again.upscalerTta)
+    }
+
+    @Test
     fun `a network's passed self-test is kept, so it is not tested again`() {
         val data = folder.newFolder("data")
         val passed = com.hawkynt.mediadroid.player.NeuralInterpolation.Passed("GPU", mapOf(480 to 6.5, 720 to 14.0))
         DesktopStore(data).apply {
             keepMotion(PictureAdjustment.Interpolation.DAIN, passed)
-            keepEnlarger(PictureAdjustment.Upscaler.REALSR, passed)
+            keepEnlarger(NeuralEnlarging.choice("REALSR")!!, passed)
+            keepEnlarger(NeuralEnlarging.choice("REALCUGAN:se-up4x-denoise3x+tta")!!, passed)
         }
         val again = DesktopStore(data)
         assertEquals(passed, again.motionPassed(PictureAdjustment.Interpolation.DAIN))
-        assertEquals(mapOf(PictureAdjustment.Upscaler.REALSR to passed), again.neuralEnlargers)
+        // Each model of an upscaler, and each run eight ways, is kept on its own.
+        assertEquals(
+            mapOf(
+                NeuralEnlarging.choice("REALSR")!! to passed,
+                NeuralEnlarging.choice("REALCUGAN:se-up4x-denoise3x+tta")!! to passed,
+            ),
+            again.neuralEnlargers,
+        )
+        assertEquals(null, again.enlargerPassed(NeuralEnlarging.choice("REALCUGAN")!!))
         assertEquals(null, again.motionPassed(PictureAdjustment.Interpolation.RIFE))
     }
 

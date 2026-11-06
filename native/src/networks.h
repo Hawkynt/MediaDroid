@@ -52,25 +52,35 @@ std::unique_ptr<Interpolator> openDain(const Loader& load, bool gpu);
 std::unique_ptr<Interpolator> openXvfi(const Loader& load, bool gpu);
 
 // A network that enlarges an RGBA picture (w x h, rows as stored) to [scale] times its size as RGB bytes: waifu2x,
-// Real-CUGAN or RealSR (see enlarger.cpp).
+// Real-CUGAN, RealSR or Real-ESRGAN (see enlarger.cpp).
 struct Enlarger {
     virtual ~Enlarger() = default;
     // How much larger it makes a picture.
     int scale = 2;
-    virtual int enlarge(const unsigned char* rgba, int w, int h, unsigned char* rgb) = 0;
+    // The picture through the network whole ([tile] 0) or in tiles of about [tile] pixels a side.
+    virtual int enlarge(const unsigned char* rgba, int w, int h, unsigned char* rgb, int tile) = 0;
 };
 
-// waifu2x's CUnet (its "noise1_scale2.0x_model") and Real-CUGAN's SE model (its "up2x-conservative"), on the GPU or the
-// CPU; null where they do not load.
-std::unique_ptr<Enlarger> openWaifu2x(const Loader& load, bool gpu);
-std::unique_ptr<Enlarger> openRealCugan(const Loader& load, bool gpu);
+// What ncnn lets the GPU's networks take, in MB (its heap budget); 0 where there is no GPU.
+int gpuHeapBudget();
+
+// waifu2x's CUnet [model] (waifu2x-ncnn-vulkan's models-cunet: "noise1_scale2.0x_model" and the other noise levels,
+// twice the size), on the GPU or the CPU, once or eight ways ([tta]); null where it does not load.
+std::unique_ptr<Enlarger> openWaifu2x(const Loader& load, bool gpu, const char* model = "noise1_scale2.0x_model",
+                                      bool tta = false);
+
+// Real-CUGAN's SE or pro [model] (realcugan-ncnn-vulkan's "up2x-conservative" and the others) at [scale] 2, 3 or 4,
+// on the GPU or the CPU, once or eight ways; null where it does not load.
+std::unique_ptr<Enlarger> openRealCugan(const Loader& load, bool gpu, const char* model = "up2x-conservative",
+                                        int scale = 2, bool tta = false);
 
 // RealSR's DF2K_JPEG model (its "x4"), four times the size, on the GPU or the CPU; null where it does not load.
-std::unique_ptr<Enlarger> openRealSr(const Loader& load, bool gpu);
+std::unique_ptr<Enlarger> openRealSr(const Loader& load, bool gpu, bool tta = false);
 
-// Real-ESRGAN's compact video model (its "realesr-animevideov3-x4", as Real-ESRGAN-ncnn-vulkan ships it), four times
-// the size, on the GPU or the CPU; null where it does not load.
-std::unique_ptr<Enlarger> openRealEsrgan(const Loader& load, bool gpu);
+// Real-ESRGAN's [model] as Real-ESRGAN-ncnn-vulkan ships it (its compact video model "realesr-animevideov3-x4"), four
+// times the size, on the GPU or the CPU; null where it does not load.
+std::unique_ptr<Enlarger> openRealEsrgan(const Loader& load, bool gpu, const char* model = "realesr-animevideov3-x4",
+                                         bool tta = false);
 
 // CAIN (its "cain") and IFRNet (its "ifrnet"), two frames to the in-between, on the GPU or the CPU; null where they
 // do not load.

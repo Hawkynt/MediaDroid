@@ -2,9 +2,11 @@ waifu2x, by nagadomi (https://github.com/nagadomi/waifu2x), as ncnn runs it: wai
 (https://github.com/nihui/waifu2x-ncnn-vulkan).
 
 app/src/main/assets/models/waifu2x-cunet holds waifu2x-ncnn-vulkan's models-cunet/noise1_scale2.0x_model (the CUnet,
-light denoising, twice the size), copied unchanged. native/src/enlarger.cpp runs it the way the port does:
-the picture in RGB 0..1, its edge pixels repeated 18 around and to an even size, the output's top left the picture
-twice as large.
+light denoising, twice the size), copied unchanged. The other noise levels (scale2.0x_model and noise0, noise2 and
+noise3_scale2.0x_model) are fetched when picked, unchanged, from the port's own repository at commit
+64914665c45893135c9e50c1c296170a121b9f77, each file checked against its digest. native/src/enlarger.cpp runs them the
+way the port does: the picture in RGB 0..1, its edge pixels repeated 18 around and to an even size, the output's top
+left the picture twice as large; in tiles and eight ways (TTA) as the port does them.
 
 waifu2x:
 
