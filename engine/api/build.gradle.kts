@@ -3,6 +3,9 @@
 // support", AGENTS.md).
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    // The contract every engine passes and the fake engine that passes it (src/testFixtures), for the engines' and
+    // the screens' tests: testImplementation(testFixtures(project(":engine:api"))).
+    `java-test-fixtures`
 }
 
 kotlin {
@@ -10,5 +13,6 @@ kotlin {
 }
 
 dependencies {
+    testFixturesImplementation(libs.junit)
     testImplementation(libs.junit)
 }
