@@ -501,6 +501,14 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   and Later; all but night mode are kept for the next video. A sound set sooner than the picture holds that many more
   decoded pictures back, up to half a gigabyte of them; a sound set later is held that long before the sound output,
   so the reader runs ahead to the pictures due.
+- The sound goes out through Java Sound, the JVM's own output (ALSA — so PipeWire or PulseAudio — on Linux,
+  DirectSound on Windows), and the position it has played is the clock the pictures follow. Measured on Linux under
+  PipeWire, that position moves in 10.7 ms steps within 3 ms rms (5.4 ms at most) of a straight line against the wall
+  clock, a third of a 60 Hz refresh at worst, and stands still while paused
+  ([tools/sound-clock](tools/sound-clock/README.md)). miniaudio was weighed in its place and left out: it would add a
+  native sound path beside the JVM's for what the player does not use — exclusive mode, a lower latency the clock does
+  not need — and neither carries what would be worth one, the surround bitstream to a receiver that the phone's
+  passthrough sends.
 - Settings, watched state and secrets stay on the machine: in the user's application-data folder, the settings and
   watched marks as JSON (`settings.json`, taken over once from the `state.properties` of earlier builds), the passwords
   encrypted by the system (DPAPI on Windows, the Secret Service on Linux; where no Secret Service runs, in a file only
@@ -542,8 +550,8 @@ would for its menus.
 | `:stage` | in progress ([#284](https://github.com/Hawkynt/MediaDroid/issues/284)), the shaders so far: the picture stage's passes against an OpenGL ES interface, the shaders with it | everywhere (JVM) |
 | `native/` | built ([#285](https://github.com/Hawkynt/MediaDroid/issues/285)): the neural networks and their JNI surface as one CMake tree — `libmediadroid_neural.so` in the app, `libmediadroid.so` / `mediadroid.dll` on the desktop | Android, Windows, Linux |
 | `:ui` | planned ([#286](https://github.com/Hawkynt/MediaDroid/issues/286)): every screen, in Compose Multiplatform | Android, Windows, Linux |
-| `:engine:desktop` | in progress ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): FFmpeg, the stage on OpenGL 4.3, audio and sync, network sources | Windows, Linux |
-| `:desktop` | in progress ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): the desktop shell — window, menus, keyboard, file chooser | Windows, Linux |
+| `:engine:desktop` | built ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): FFmpeg with hardware decoding, the stage on OpenGL 4.3, audio and sync, network sources; presenting the stage in the window waits for [#287](https://github.com/Hawkynt/MediaDroid/issues/287) | Windows, Linux |
+| `:desktop` | built ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): the desktop shell — window, menus, keyboard, file chooser | Windows, Linux |
 
 The cores import no Android, so parsing, search, binge and the picture's rules are unit-tested in seconds without a
 device; shaders live in `stage/src/main/glsl`.
