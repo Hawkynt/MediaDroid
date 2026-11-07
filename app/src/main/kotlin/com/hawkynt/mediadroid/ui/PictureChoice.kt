@@ -89,7 +89,9 @@ private class AndroidTrial(private val context: Context, private val store: Stat
         settings.neuralColorizer = passed.encode()
     }
 
-    override fun refuseColorizer() = save { settings.neuralColorizerRefused = true }
+    override fun refuseColorizer() = save {
+        settings.neuralColorizerRefusedFor = Colorizing.refusalKey(appVersion(context))
+    }
 
     override fun dryRun(picture: PictureAdjustment): PictureCheck.DryRun? {
         val unit = if (settings.neuralUpscaling) {
@@ -106,12 +108,12 @@ private class AndroidTrial(private val context: Context, private val store: Stat
 /**
  * The colourisers a video's picture offers (Colorizing.offered): DDColor where its self-test passed here, its files are
  * on the device or they can be fetched — so its chip appears by itself once the files are published — but never on a
- * device its test found too slow or wrong for it.
+ * device its test found too slow or wrong for it, until the app or the model changes.
  */
 @androidx.compose.runtime.Composable
 fun rememberColorizers(context: Context, store: StateStore): List<PictureAdjustment.Colorize> {
     val settings = store.data.settings
-    val refused = settings.neuralColorizerRefused
+    val refused = Colorizing.refused(settings.neuralColorizerRefusedFor, appVersion(context))
     val passed = settings.colorizerPassed != null
     return androidx.compose.runtime.produceState(Colorizing.offered(passed && !refused), passed, refused) {
         value = if (refused) {
@@ -126,3 +128,9 @@ fun rememberColorizers(context: Context, store: StateStore): List<PictureAdjustm
         }
     }.value
 }
+
+/** This app's version code (the build's date, YYYYMMDD). */
+private fun appVersion(context: Context): Long =
+    androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(
+        context.packageManager.getPackageInfo(context.packageName, 0),
+    )
