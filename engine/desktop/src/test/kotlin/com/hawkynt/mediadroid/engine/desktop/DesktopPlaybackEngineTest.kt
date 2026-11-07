@@ -10,6 +10,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 import kotlin.math.pow
 
 class DesktopPlaybackEngineTest {
@@ -399,6 +401,33 @@ class DesktopPlaybackEngineTest {
             waitFor { sink.written > before + 4 * 48_000 / 10 }
             sink.playedMs = 600
             waitFor { (engine.picture()?.ptsMs ?: 0) >= 560 }
+        }
+    }
+
+    @Test
+    fun `while the sound is switched back and forth, the tracks never show two sounds picked`() {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(clip, audio = listOf(fixture("clip.en.ac3"))))
+            waitFor { engine.isPlaying }
+            val sound = engine.tracks.filter { it.kind == Track.Kind.AUDIO }.map { it.id }
+            val switching = AtomicBoolean(true)
+            val switcher = thread {
+                var next = 1
+                while (switching.get()) {
+                    engine.select(Track.Kind.AUDIO, sound[next])
+                    next = 1 - next
+                    Thread.sleep(1)
+                }
+            }
+            var most = 0
+            val until = System.currentTimeMillis() + 800
+            while (System.currentTimeMillis() < until && most < 2) {
+                most = maxOf(most, engine.tracks.count { it.kind == Track.Kind.AUDIO && it.selected })
+            }
+            switching.set(false)
+            switcher.join()
+            assertEquals(1, most)
         }
     }
 
