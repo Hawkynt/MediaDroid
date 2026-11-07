@@ -13,26 +13,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -71,9 +62,9 @@ import com.hawkynt.mediadroid.ui.SubtitleLookRows
 import com.hawkynt.mediadroid.ui.StatisticsOverlay
 import com.hawkynt.mediadroid.ui.playbackFacts
 import com.hawkynt.mediadroid.ui.sleepNote
-import androidx.compose.material.icons.filled.Info
 import com.hawkynt.mediadroid.ui.Playable
 import com.hawkynt.mediadroid.ui.PlayerSession
+import com.hawkynt.mediadroid.ui.PlayerTopBar
 import com.hawkynt.mediadroid.ui.RepeatChoice
 import androidx.compose.material3.Button
 import com.hawkynt.mediadroid.ui.TrackDialog
@@ -92,20 +83,16 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.engine.MediaRequest
-import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.engine.Tracks
 import com.hawkynt.mediadroid.engine.desktop.DesktopPlaybackEngine
 import com.hawkynt.mediadroid.engine.desktop.MediaReader
-import com.hawkynt.mediadroid.library.Chapter
 import com.hawkynt.mediadroid.library.Chapters
 import com.hawkynt.mediadroid.library.Sidecars
-import com.hawkynt.mediadroid.player.AbLoop
 import com.hawkynt.mediadroid.player.AssPicture
 import com.hawkynt.mediadroid.player.AutoCrop
 import com.hawkynt.mediadroid.player.ChapterSteps
-import com.hawkynt.mediadroid.player.FrameStep
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.library.FolderDefaults
 import com.hawkynt.mediadroid.player.BurnInDrift
@@ -1066,23 +1053,24 @@ fun PlayerScreen(
                 modifier = Modifier.align(Alignment.Center).padding(32.dp))
         }
         if (controlsShown) {
-            Row(
-                Modifier.fillMaxWidth().align(Alignment.TopStart)
-                    .background(Brush.verticalGradient(listOf(Color(0xCC000000), Color.Transparent))).padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onExit) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
-                Text(
-                    playing.title + (playing.subtitle?.let { "  ·  $it" } ?: ""),
-                    color = Color.White,
-                    fontSize = 20.sp,
-                )
-                ChapterSteps.current(chapters, position)?.let {
-                    Text("  ·  " + ChapterSteps.name(chapters, it), color = Color.White, fontSize = 16.sp)
-                }
-                Spacer(Modifier.weight(1f))
-                sleepNote(session)?.let { Text(it, color = Color.White, fontSize = 15.sp, maxLines = 1) }
-            }
+            // The phone's top bar: back, what plays (and the chapter it is in), the sleep timer, frame steps while
+            // paused, repeating a part, the chapters, a snapshot, what is playing and the gear.
+            PlayerTopBar(
+                title = playing.title + (playing.subtitle?.let { "  ·  $it" } ?: "") +
+                    (ChapterSteps.current(chapters, position)?.let { "  ·  " + ChapterSteps.name(chapters, it) } ?: ""),
+                note = sleepNote(session),
+                paused = !isPlaying,
+                abLoop = abLoop,
+                hasChapters = chapters.isNotEmpty(),
+                onBack = onExit,
+                onStepFrame = ::stepFrame,
+                onRepeat = { show(session.markRepeat()) },
+                onChapters = { chapterPicker = true },
+                onSnapshot = ::snapshot,
+                onInfo = { infoOpen = true },
+                onGear = { panel = !panel },
+                modifier = Modifier.align(Alignment.TopStart),
+            )
             Column(
                 Modifier.fillMaxWidth().align(Alignment.BottomStart)
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))).padding(16.dp),
@@ -1103,44 +1091,8 @@ fun PlayerScreen(
                     if (index + 1 < queue.size) {
                         IconButton(onClick = { next() }) { Icon(Icons.Default.SkipNext, "Next", tint = Color.White) }
                     }
-                    if (!isPlaying) {
-                        IconButton(onClick = { stepFrame(false) }) {
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "One frame back", tint = Color.White)
-                        }
-                        IconButton(onClick = { stepFrame(true) }) {
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "One frame forward", tint = Color.White)
-                        }
-                    }
                     Text("${clock(position)} · ${clock(duration)}", color = Color.White, fontSize = 15.sp)
                     Spacer(Modifier.weight(1f))
-                    IconButton(onClick = { snapshot() }) {
-                        Icon(Icons.Default.PhotoCamera, "Take a picture", tint = Color.White)
-                    }
-                    // L: one press marks the start, the next the end, the third stops repeating.
-                    TextButton(onClick = { show(session.markRepeat()) }) {
-                        val a = abLoop.a
-                        val b = abLoop.b
-                        Text(
-                            when {
-                                a != null && b != null -> "Repeating ${clock(a)} – ${clock(b)}"
-                                a != null -> "Repeat from ${clock(a)} — mark the end"
-                                else -> "Repeat a part"
-                            },
-                            color = if (a != null) MaterialTheme.colorScheme.primary else Color.White,
-                            fontSize = 15.sp,
-                        )
-                    }
-                    if (chapters.isNotEmpty()) {
-                        IconButton(onClick = { chapterPicker = true }) {
-                            Icon(Icons.AutoMirrored.Filled.List, "Chapters", tint = Color.White)
-                        }
-                    }
-                    IconButton(onClick = { infoOpen = true }) {
-                        Icon(Icons.Default.Info, "What is playing", tint = Color.White)
-                    }
-                    IconButton(onClick = { panel = !panel }) {
-                        Icon(Icons.Default.Tune, "Picture", tint = Color.White)
-                    }
                     IconButton(onClick = onFullScreen) {
                         Icon(if (fullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
                             "Full screen", tint = Color.White)
