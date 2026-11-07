@@ -2,7 +2,9 @@ package com.hawkynt.mediadroid.data
 
 import android.content.Context
 import androidx.media3.common.C
+import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.nfo.StreamDetails
+import com.hawkynt.mediadroid.player.AndroidPlaybackEngine
 import com.hawkynt.mediadroid.ui.describe
 import com.hawkynt.mediadroid.ui.platform.MediaArt
 import kotlinx.coroutines.Dispatchers
@@ -24,12 +26,14 @@ class AndroidMediaArt(context: Context) : MediaArt {
 
     // As the player's extractors see the file (FileReport), each track named by its codec (describe).
     override suspend fun tracks(location: String): List<String>? = FileReport.tracks(context, location)?.map { track ->
-        val kind = when (track.type) {
-            C.TRACK_TYPE_VIDEO -> "Video"
-            C.TRACK_TYPE_AUDIO -> "Audio"
-            C.TRACK_TYPE_TEXT -> "Subtitles"
-            else -> "Other"
+        val (label, kind) = when (track.type) {
+            C.TRACK_TYPE_VIDEO -> "Video" to Track.Kind.VIDEO
+            C.TRACK_TYPE_AUDIO -> "Audio" to Track.Kind.AUDIO
+            C.TRACK_TYPE_TEXT -> "Subtitles" to Track.Kind.TEXT
+            else -> "Other" to Track.Kind.VIDEO
         }
-        "$kind: ${describe(track.format)}"
+        val format = track.format
+        val engineFormat = AndroidPlaybackEngine.formatOf(format, kind)
+        "$label: ${describe(Track("", kind, format.language, format.label, format = engineFormat))}"
     }
 }

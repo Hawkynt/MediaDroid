@@ -3,6 +3,7 @@ package com.hawkynt.mediadroid.engine
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -187,6 +188,25 @@ abstract class PlaybackEngineContract {
         val format = engine.videoFormat!!
         assertTrue(format.height > 0 && format.pixelAspect > 0f && format.frameRate > 0f)
         assertEquals(VideoFormat.Transfer.SDR, format.transfer)
+    }
+
+    @Test
+    fun `how it plays is reported once it plays, and the tracks carry their formats`() {
+        assertNull(engine.report)
+        engine.videoOutput = output()
+        openPaused()
+        waitFor("a report with picture and sound") { engine.report?.let { it.video != null && it.audio != null } == true }
+        val report = engine.report!!
+        assertEquals(media.path, report.inputs.first().path)
+        assertEquals(1 + media.subtitles.size + media.audio.size, report.inputs.size)
+        val video = report.video!!
+        assertTrue(video.width > 0 && video.height > 0 && video.pixelAspect > 0f)
+        val audio = report.audio!!
+        assertTrue(audio.sampleRate > 0 && audio.channels > 0)
+        assertTrue(report.player.isNotEmpty())
+        val pictures = Tracks.of(engine.tracks, Track.Kind.VIDEO).first().format!!
+        assertTrue(pictures.width > 0 && pictures.height > 0)
+        assertNotNull(Tracks.of(engine.tracks, Track.Kind.AUDIO).first { it.source == 0 }.format?.mimeType)
     }
 
     @Test
