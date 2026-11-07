@@ -32,7 +32,9 @@ import kotlin.math.roundToInt
  *
  * Bobbed to its fields ([applyPalFields]), a PAL or PAL-M capture shows each field as a picture, the fields of a frame
  * on lines of their own: the comb reads the same field's pictures only, two frames (four pictures) apart for the
- * opposite residue.
+ * opposite residue. NTSC bobbed to its 59.94 fields ([applyNtscFields]) the same way: its fields lie 262.5 lines apart,
+ * three quarters of a subcarrier cycle from each other, so the pictures either side are no help; the same field one
+ * frame (two pictures) back carries the opposite residue.
  *
  * Written from the standards' subcarrier relations (AGENTS.md rung 3); DScaler's comb filtering (GPL-2.0, its help and
  * plug-ins) described the feature, no code of it is taken. Held to simulated composite pictures by `DotCrawlTest`; the
@@ -56,17 +58,25 @@ object DotCrawl {
          * on, so the comb reads the pictures two, four and six back ([applyPalFields]).
          */
         PAL_FIELDS,
+
+        /**
+         * NTSC bobbed to a picture a field: the same field's residue is opposite one frame (two pictures) on, so the
+         * comb reads the pictures two, four and six back ([applyNtscFields]).
+         */
+        NTSC_FIELDS,
         ;
+
+        /** Whether the comb reads the same field's pictures back to six before the one shown. */
+        val perField: Boolean get() = this == PAL_FIELDS || this == NTSC_FIELDS
 
         companion object {
             /**
              * The standard of a capture showing a picture every [intervalMs], in [system] as the household chose it,
              * [palColour] whether its container or decoder tags name PAL's colour (BT.470 System B/G primaries or
              * transfer). By hand it is what was chosen, at frame rate or (a picture every 25 ms or less: bobbed) per
-             * field — NTSC's per frame either way. Automatic: 25 frames a second is PAL and 50 PAL bobbed; at any
-             * other rate NTSC, unless the tags say PAL colour, which at NTSC's rate and line count is PAL-M (Brazil) —
-             * the rate and the line count alone cannot tell the two apart (24 and 23.976 are film, no composite
-             * capture).
+             * field. Automatic: 25 frames a second is PAL and 50 PAL bobbed; at any other rate NTSC (59.94 NTSC
+             * bobbed), unless the tags say PAL colour, which at NTSC's rate and line count is PAL-M (Brazil) — the
+             * rate and the line count alone cannot tell the two apart (24 and 23.976 are film, no composite capture).
              */
             fun of(intervalMs: Float, system: PictureAdjustment.ColourSystem, palColour: Boolean): Standard {
                 val fields = intervalMs > 0f && intervalMs <= 25f
@@ -76,7 +86,10 @@ object DotCrawl {
                     PictureAdjustment.ColourSystem.AUTO ->
                         intervalMs in 38.5f..41f || intervalMs in 19.25f..20.5f || palColour
                 }
-                return if (!pal) NTSC else if (fields) PAL_FIELDS else PAL
+                return when {
+                    fields -> if (pal) PAL_FIELDS else NTSC_FIELDS
+                    else -> if (pal) PAL else NTSC
+                }
             }
         }
     }
@@ -143,6 +156,23 @@ object DotCrawl {
         height: Int,
         threshold: Float,
     ): ByteArray = applyPal(fourBack, twoBack, current, sixBack, width, height, threshold)
+
+    /**
+     * The picture [current] of an NTSC capture bobbed to its fields (8-bit RGB, rows from the top, [width] × [height])
+     * combed with the pictures of the same field before it: [twoBack] (a frame back, its residue opposite), [fourBack]
+     * and [sixBack]. [twoBack] and [current] cancel the residue as [fourBack] and [sixBack] do, so half the difference
+     * of their sums is motion and ([twoBack] + [current]) / 2 the comb — [applyPal]'s with these pictures, all before
+     * the one shown as [applyPalFields]'s.
+     */
+    fun applyNtscFields(
+        sixBack: ByteArray,
+        fourBack: ByteArray,
+        twoBack: ByteArray,
+        current: ByteArray,
+        width: Int,
+        height: Int,
+        threshold: Float,
+    ): ByteArray = applyPal(twoBack, fourBack, current, sixBack, width, height, threshold)
 
     private fun v(frame: ByteArray, i: Int) = frame[i].toInt() and 0xFF
 

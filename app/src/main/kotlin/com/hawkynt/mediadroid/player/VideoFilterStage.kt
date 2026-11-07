@@ -405,10 +405,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val history = intArrayOf(8, 9, 10)
 
     // The frames before the oldest of those, newest first (frames[EARLIEST] on, or ones of [8] to [10], taking turns
-    // with them), for the dot-crawl comb (DotCrawl): PAL's reads the frame two before the one shown, the first; its
-    // comb per field, for a capture bobbed to its fields, the same field's back to six before, all [OLDER] — which
-    // take turns only while it runs ([olderUsed]), so the frames for them are drawn into only then. [olderCount] of
-    // them hold frames of this stretch of playback.
+    // with them), for the dot-crawl comb (DotCrawl): PAL's reads the frame two before the one shown, the first; the
+    // comb per field, for a PAL or NTSC capture bobbed to its fields, the same field's back to six before, all [OLDER]
+    // — which take turns only while it runs ([olderUsed]), so the frames for them are drawn into only then.
+    // [olderCount] of them hold frames of this stretch of playback.
     private val older = IntArray(OLDER) { EARLIEST + it }
     private var olderUsed = 1
     private var olderCount = 0
@@ -1367,7 +1367,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         secondField: Boolean,
     ): Frame {
         // The frames before the history take turns back to six before only while the comb runs per field.
-        olderUsed = if (picture.dotCrawl > 0f && dotCrawlStandard(picture) == DotCrawl.Standard.PAL_FIELDS) OLDER else 1
+        olderUsed = if (picture.dotCrawl > 0f && dotCrawlStandard(picture).perField) OLDER else 1
         if (fresh || historyCount == 0) {
             val afresh = remember(width, height)
             if (framesToJudge > 0) judge(width, height)
@@ -1399,7 +1399,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         // standard from the rate and the household's choice (Media3 tells BT.470 B/G's colour tags from NTSC's no
         // more than the rate does, so PAL-M is chosen by hand here): NTSC's against the frames either side, PAL's and
         // PAL-M's against the frame two before as well, per field (a capture bobbed to its fields) against the same
-        // field's frames two, four and six before (DotCrawl.applyPalFields).
+        // field's frames two, four and six before (DotCrawl.applyPalFields, applyNtscFields).
         val combed = DotCrawl.threshold(picture.dotCrawl)?.let { threshold ->
             val into = frames[DOT_CRAWL].ensure(width, height, deepInput(picture))
             fun before(k: Int) = if (olderCount > k) frames[older[k]] else null
@@ -1408,6 +1408,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 DotCrawl.Standard.PAL -> restoration.dotCrawl(cur, prev, next, before(0) ?: prev, into, threshold)
                 DotCrawl.Standard.PAL_FIELDS -> restoration.dotCrawl(
                     cur, before(0) ?: cur, before(4) ?: cur, before(2) ?: cur, into, threshold,
+                )
+                DotCrawl.Standard.NTSC_FIELDS -> restoration.dotCrawl(
+                    cur, before(2) ?: cur, before(4) ?: cur, before(0) ?: cur, into, threshold,
                 )
             }
             into

@@ -770,6 +770,36 @@ class GlStageTest {
     }
 
     @Test
+    fun `an NTSC capture bobbed to its fields is combed per field as the reference combs it`() {
+        val w = 48
+        val h = 32
+        // 59.94 pictures a second, the residue turned over every two (the same field a frame later); a stripe lit in
+        // the last picture only, which the comb must leave.
+        val pictures = (0..6).map { k ->
+            MediaReader.Picture(k * 1001L / 60, w, h, ByteArray(w * h * 4) { i ->
+                val x = i / 4 % w
+                val y = i / 4 / w
+                val residue = if ((x + y + k / 2) % 2 == 0) 10 else -10
+                if (i % 4 == 3) -1 else (120 + x + residue + if (x in 20..23 && k == 6) 60 else 0).toByte()
+            })
+        }
+        val moment = Moment(
+            pictures[6], pictures[5], null, earlier = pictures[4],
+            older = listOf(pictures[3], pictures[2], pictures[1], pictures[0]),
+        )
+        val threshold = requireNotNull(DotCrawl.threshold(0.5f))
+        val expected = DotCrawl.applyNtscFields(
+            rgbOf(pictures[0]), rgbOf(pictures[2]), rgbOf(pictures[4]), rgbOf(pictures[6]), w, h, threshold,
+        )
+        assertTrue(!expected.contentEquals(rgbOf(pictures[6])))
+        // Told by its rate, and chosen by hand at any field rate.
+        for (system in listOf(PictureAdjustment.ColourSystem.AUTO, PictureAdjustment.ColourSystem.NTSC)) {
+            val out = stage.process(moment, PictureAdjustment(dotCrawl = 0.5f, colourSystem = system), w, h)
+            assertTrue("$system: off by ${worst(out, expected)}", worst(out, expected) <= 1)
+        }
+    }
+
+    @Test
     fun `temporal denoising moves the pictures either side along the motion, as the reference does`() {
         val w = 256
         val h = 192
