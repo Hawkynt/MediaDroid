@@ -81,6 +81,8 @@ data class PictureOverride(
     val dotCrawl: Float = 0f,
     /** PictureAdjustment.Colorize name: colour for a black-and-white video, kept per video or folder only. */
     val colorize: String = "OFF",
+    /** PictureAdjustment.ColourSystem name: a composite capture's colour system, kept per video or folder only. */
+    val colourSystem: String = "AUTO",
 )
 
 /** How one output screen is set up (see [com.hawkynt.mediadroid.player.ScreenSetup]); names, as kept. */
@@ -446,6 +448,8 @@ class StateStore(context: Context) {
         dotCrawl = it.dotCrawl,
         colorize = runCatching { PictureAdjustment.Colorize.valueOf(it.colorize) }
             .getOrDefault(PictureAdjustment.Colorize.OFF),
+        colourSystem = runCatching { PictureAdjustment.ColourSystem.valueOf(it.colourSystem) }
+            .getOrDefault(PictureAdjustment.ColourSystem.AUTO),
     )
 
     private fun overrideOf(picture: PictureAdjustment): PictureOverride = PictureOverride(
@@ -475,6 +479,7 @@ class StateStore(context: Context) {
         temporalDenoise = picture.temporalDenoise,
         dotCrawl = picture.dotCrawl,
         colorize = picture.colorize.name,
+        colourSystem = picture.colourSystem.name,
     )
 
     /**

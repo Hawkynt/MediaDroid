@@ -54,6 +54,19 @@ class MediaReaderTest {
             assertEquals(1000L, first.ptsMs)
         }
 
+    @Test
+    fun `PAL's colour tags at NTSC's rate are read, for PAL-M's dot crawl`() {
+        // pal-m.mkv and ntsc.mkv: FFmpeg's test pattern, 64 × 48 at 29.97 (FFV1), tagged by its setparams filter with
+        // BT.470 System B/G's primaries and transfer, and with SMPTE 170M's.
+        fun read(name: String) = MediaReader(File(requireNotNull(javaClass.getResource(name)).toURI()).path).use {
+            assertEquals(29.97f, it.frameRate, 0.01f)
+            it.palColour to pictures(it).first().palColour
+        }
+        assertEquals(true to true, read("/pal-m.mkv"))
+        assertEquals(false to false, read("/ntsc.mkv"))
+        MediaReader(clip).use { assertTrue(!it.palColour) }
+    }
+
     private fun pictures(reader: MediaReader): List<MediaReader.Picture> =
         generateSequence { reader.read() }.filterIsInstance<MediaReader.Picture>().toList()
 

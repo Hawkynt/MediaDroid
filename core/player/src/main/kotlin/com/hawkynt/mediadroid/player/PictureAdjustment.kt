@@ -90,10 +90,13 @@ data class PictureAdjustment(
     val temporalDenoise: Float = 0f,
     /**
      * Dot crawl and rainbows, 0 (off) to 1: a composite capture's residue, which flips sign every frame (NTSC) or
-     * every two (PAL, told by its 25 frames a second), cancelled where the picture stands still (see [DotCrawl]);
-     * towards 1 more motion is taken for residue. On Android the picture then runs one frame behind.
+     * every two (PAL and PAL-M, per field where the capture was bobbed to its fields), cancelled where the picture
+     * stands still (see [DotCrawl]); towards 1 more motion is taken for residue. On Android the picture then runs one
+     * frame behind.
      */
     val dotCrawl: Float = 0f,
+    /** The colour system of a composite capture, which the dot-crawl comb follows ([ColourSystem]): this video's. */
+    val colourSystem: ColourSystem = ColourSystem.AUTO,
 ) {
     /** The share of plain scaling mixed over the [upscaler]'s picture: 0 at full strength, 1 with it off. */
     val plainShare: Float get() = 1f - upscalerStrength.coerceIn(0f, 1f)
@@ -250,6 +253,18 @@ data class PictureAdjustment(
      * decoder hands over RGB its driver made) and every picture the desktop decodes. [BILINEAR] blends the nearest
      * four; [SPLINE36] weighs six by six, sharper; [KRIG] is KrigBilateral: the colour follows the brightness's edges.
      */
+    /**
+     * The colour system a composite capture was recorded in, for the dot-crawl comb (DotCrawl.Standard): [AUTO] from
+     * the frame rate and the file's colour tags; by hand where a capture carries no tags — PAL-M (Brazil) cannot be
+     * told from NTSC by its rate and line count.
+     */
+    enum class ColourSystem(val label: String, val description: String) {
+        AUTO("Auto", "From the frame rate and the file's colour tags."),
+        NTSC("NTSC", "North America, Japan: 30 frames a second."),
+        PAL("PAL", "Europe, Australia: 25 frames a second."),
+        PAL_M("PAL-M", "Brazil: PAL's colour at 30 frames a second."),
+    }
+
     enum class Chroma(val label: String, val description: String) {
         BILINEAR("Bilinear", "The colour's nearest four samples blended: soft colour edges, the lightest."),
         SPLINE36("Spline36", "Six by six samples weighed (libplacebo's spline36): crisper colour edges."),

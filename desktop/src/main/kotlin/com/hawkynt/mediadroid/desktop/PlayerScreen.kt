@@ -774,18 +774,22 @@ fun PlayerScreen(
                 picture,
                 onChange = {
                     picture = it
-                    // The logo is the show's, kept for its folder; the rest goes to the folder with a picture of its
-                    // own, else to the household.
+                    // The logo is the show's, kept for its folder, the colour system the video's own; the rest goes
+                    // to the folder with a picture of its own, else to the household.
                     store.saveLogo(playing.video, it.logo)
+                    store.saveColourSystem(playing.video, it.colourSystem)
                     val place = pictureFolder
-                    val kept = it.copy(logo = null)
+                    val kept = it.copy(logo = null, colourSystem = PictureAdjustment.ColourSystem.AUTO)
                     if (place != null) store.setFolderPicture(place, kept) else store.picture = kept
                 },
                 folderName = FolderDefaults.label(pictureFolder ?: store.folderOf(playing.video), store.sources),
                 forFolder = pictureFolder != null,
                 onForFolder = { own ->
                     if (own) {
-                        store.setFolderPicture(store.folderOf(playing.video), picture.copy(logo = null))
+                        store.setFolderPicture(
+                            store.folderOf(playing.video),
+                            picture.copy(logo = null, colourSystem = PictureAdjustment.ColourSystem.AUTO),
+                        )
                     } else {
                         pictureFolder?.let { store.setFolderPicture(it, null) }
                         picture = store.pictureFor(playing.video)

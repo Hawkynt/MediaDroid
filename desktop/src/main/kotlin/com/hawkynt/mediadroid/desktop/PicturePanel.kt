@@ -259,6 +259,21 @@ fun PicturePanel(
             }
             Slider(value = value, onValueChange = { onChange(set(it)) })
         }
+        // Only while dot crawl is combed out: the capture's colour system, where its rate and tags do not tell it
+        // (PAL-M; DotCrawl.Standard), kept for this video.
+        if (picture.dotCrawl > 0f) {
+            Text("Colour system", color = Color.White)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                PictureAdjustment.ColourSystem.entries.forEach { system ->
+                    FilterChip(
+                        selected = picture.colourSystem == system,
+                        onClick = { onChange(picture.copy(colourSystem = system)) },
+                        label = { Text(system.label) },
+                    )
+                }
+            }
+            Text(picture.colourSystem.description, color = Color.Gray)
+        }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("Noise", color = Color.White, modifier = Modifier.weight(1f))
             Text(

@@ -417,7 +417,7 @@ class GlStage(
         val look = listOf(
             a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep, a.chroma, a.colorize,
             a.logo, a.deblock, a.dering,
-            a.temporalDenoise, a.dotCrawl, planeHooked, lumaPlanes,
+            a.temporalDenoise, a.dotCrawl, a.colourSystem, planeHooked, lumaPlanes,
         )
         // Another chroma upscaler, or another shader hooking the planes, makes every picture uploaded from its planes
         // stale.
@@ -447,7 +447,7 @@ class GlStage(
             (!a.interpolation.isNeural || interpolator(a.interpolation) != null)
         // At field rate the second half of a picture's time shows its other field.
         val second = a.isFieldRate && !blending && next != null && m.phase >= 0.5f
-        var source = filtered(m.shown, m.previous, next, a, second, m.after, m.earlier)
+        var source = filtered(m.shown, m.previous, next, a, second, m.after, m.earlier, m.older)
         if (blending && next != null) {
             val later = filtered(next, m.shown, m.after, a, false, earlier = m.previous)
             source = mixed(m, next, source, later, a)
@@ -539,7 +539,7 @@ class GlStage(
      * [picture] (its 3D eye) deinterlaced — a temporal deinterlacer reading [before] and [after] where known, its
      * [second] field rebuilt at field rate (MC Smooth reads [beyond], the picture after [after], too) — debanded,
      * denoised and sharpened at its own size; kept while it is used. PAL's dot-crawl comb reads [earlier], the picture
-     * before [before].
+     * before [before], and per field [older], the pictures before that, newest first.
      */
     private fun filtered(
         picture: MediaReader.Picture,
@@ -549,6 +549,7 @@ class GlStage(
         second: Boolean,
         beyond: MediaReader.Picture? = null,
         earlier: MediaReader.Picture? = null,
+        older: List<MediaReader.Picture> = emptyList(),
     ): Target {
         kept.firstOrNull { it.picture === picture && it.second == second }?.let {
             if (!it.unsettled) return slotTarget(it)
@@ -561,15 +562,23 @@ class GlStage(
         var source = raw
         fun neighbour(p: MediaReader.Picture) = uploaded(p, region(p, crop, a.stereo))
         // 0. Dot crawl and rainbows combed out, then temporal denoising: the picture against the pictures before and
-        // after it, as decoded.
-        // A PAL capture (a picture every 40 ms) is combed with the picture two before as well.
+        // after it, as decoded. The standard (DotCrawl.Standard) from the rate, the file's colour tags and the
+        // household's choice: NTSC's comb reads the pictures either side; PAL's (and PAL-M's) the picture two before
+        // as well; per field, for a capture bobbed to its fields, the same field's pictures two, four and six before.
         val combed = DotCrawl.threshold(a.dotCrawl)?.let { threshold ->
-            val prev = neighbour(before ?: picture).takeIf { it.width == w && it.height == h } ?: raw
-            val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
+            fun near(p: MediaReader.Picture?) = p?.let(::neighbour)?.takeIf { it.width == w && it.height == h } ?: raw
             val intervalMs = before?.let { picture.ptsMs - it.ptsMs } ?: after?.let { it.ptsMs - picture.ptsMs } ?: 0L
-            val pal = DotCrawl.Standard.forInterval(intervalMs.toFloat()) == DotCrawl.Standard.PAL
-            val two = if (pal) neighbour(earlier ?: picture).takeIf { it.width == w && it.height == h } ?: raw else null
-            restoration.dotCrawl(raw, prev, next, two, target("combed", w, h, half = deep), threshold) as Target
+            val into = target("combed", w, h, half = deep)
+            when (DotCrawl.Standard.of(intervalMs.toFloat(), a.colourSystem, picture.palColour)) {
+                DotCrawl.Standard.NTSC -> restoration.dotCrawl(raw, near(before), near(after), null, into, threshold)
+                DotCrawl.Standard.PAL ->
+                    restoration.dotCrawl(raw, near(before), near(after), near(earlier), into, threshold)
+                // DotCrawl.applyPalFields: PAL's comb with the six before for the frame after, the four before for
+                // the two before.
+                DotCrawl.Standard.PAL_FIELDS -> restoration.dotCrawl(
+                    raw, near(earlier), near(older.getOrNull(3)), near(older.getOrNull(1)), into, threshold,
+                )
+            } as Target
         } ?: raw
         // The pictures either side moved onto it along the motion between them once the search has it — until then
         // read as they are, and filtered again.

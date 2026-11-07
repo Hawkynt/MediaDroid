@@ -69,6 +69,9 @@ class DesktopPlaybackEngine(
     @Volatile private var shown: MediaReader.Picture? = null
     @Volatile private var shownBefore: MediaReader.Picture? = null
     @Volatile private var shownEarlier: MediaReader.Picture? = null
+
+    // The pictures shown before [shownEarlier], newest first (Moment.older).
+    @Volatile private var shownOlder: List<MediaReader.Picture> = emptyList()
     @Volatile private var filmChanged = false
     // The subtitle track to read from the file next: a track id, "" for none of the file's own.
     @Volatile private var pendingText: String? = null
@@ -130,6 +133,7 @@ class DesktopPlaybackEngine(
         shown = null
         shownBefore = null
         shownEarlier = null
+        shownOlder = emptyList()
         filmChanged = true
         pictures.clear()
         if (request.startMs > 0) {
@@ -185,6 +189,7 @@ class DesktopPlaybackEngine(
                     shown = null
                     shownBefore = null
                     shownEarlier = null
+                    shownOlder = emptyList()
                     tempo.reset()
                     clockSpeed = tempo.speed
                     source.seek(target)
@@ -443,6 +448,7 @@ class DesktopPlaybackEngine(
             if (next.ptsMs > now) break
             val taken = pictures.pollFirst() ?: break
             if (shown != null) {
+                shownOlder = (listOfNotNull(shownEarlier) + shownOlder).take(Moment.OLDER)
                 shownEarlier = shownBefore
                 shownBefore = shown
             }
@@ -453,7 +459,7 @@ class DesktopPlaybackEngine(
         val ahead = pictures.iterator()
         val next = if (ahead.hasNext()) ahead.next() else null
         val after = if (ahead.hasNext()) ahead.next() else null
-        return Moment(current, shownBefore, next, after, Moment.phase(current, next, now), shownEarlier)
+        return Moment(current, shownBefore, next, after, Moment.phase(current, next, now), shownEarlier, shownOlder)
     }
 
     /**
@@ -781,6 +787,7 @@ class DesktopPlaybackEngine(
         shown = null
         shownBefore = null
         shownEarlier = null
+        shownOlder = emptyList()
     }
 
     override fun close() = stop()

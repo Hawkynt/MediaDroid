@@ -25,29 +25,59 @@ import kotlin.math.roundToInt
  * share of the frame shown any residue-free mean of these four frames can keep, and it needs no frame later than the
  * one after.
  *
+ * PAL-M (Brazil; ITU-R BT.1700's System M with PAL colour): the subcarrier runs at 227.25 times the line rate, 525
+ * lines a frame at 29.97 frames a second, so its phase moves on by a quarter cycle a frame and the V switch flips with
+ * the odd line count: two frames apart the residue is opposite, as PAL's, and PAL's comb clears it. Its rate and line
+ * count are NTSC's, so only the container's or decoder's colour tags, or the household's choice, tell it ([Standard]).
+ *
+ * Bobbed to its fields ([applyPalFields]), a PAL or PAL-M capture shows each field as a picture, the fields of a frame
+ * on lines of their own: the comb reads the same field's pictures only, two frames (four pictures) apart for the
+ * opposite residue.
+ *
  * Written from the standards' subcarrier relations (AGENTS.md rung 3); DScaler's comb filtering (GPL-2.0, its help and
  * plug-ins) described the feature, no code of it is taken. Held to simulated composite pictures by `DotCrawlTest`; the
  * GL passes (glsl/video/dot-crawl.frag, dot-crawl-pal.frag) are written from it.
  */
 object DotCrawl {
 
-    /** The colour standard whose subcarrier a capture carries, which decides the frames the comb reads. */
+    /** The relation between the residues of a capture's pictures, which decides the pictures the comb reads. */
     enum class Standard {
-        /** The subcarrier's phase turns over every frame: the frames before and after. */
+        /** The subcarrier's phase turns over every frame: the frames before and after ([apply]). */
         NTSC,
 
-        /** The phase comes back every four frames: the frame two before, and the frames either side. */
+        /**
+         * The residue is opposite two frames on, and opposite between the frames either side: PAL, and PAL-M, whose
+         * phase turns a quarter cycle a frame and whose V switch flips with its odd line count ([applyPal]).
+         */
         PAL,
+
+        /**
+         * PAL or PAL-M bobbed to a picture a field: the same field's residue is opposite two frames (four pictures)
+         * on, so the comb reads the pictures two, four and six back ([applyPalFields]).
+         */
+        PAL_FIELDS,
         ;
 
         companion object {
             /**
-             * The standard of a capture showing a frame every [intervalMs]: PAL at 25 frames a second, NTSC at any
-             * other rate (29.97; 24 and 23.976, 41.7 ms apart, are film, no composite capture). PAL-M's 29.97
-             * (Brazil) is taken for NTSC, and a PAL capture at 50 frames a second (its fields bobbed) is not combed
-             * as PAL.
+             * The standard of a capture showing a picture every [intervalMs], in [system] as the household chose it,
+             * [palColour] whether its container or decoder tags name PAL's colour (BT.470 System B/G primaries or
+             * transfer). By hand it is what was chosen, at frame rate or (a picture every 25 ms or less: bobbed) per
+             * field — NTSC's per frame either way. Automatic: 25 frames a second is PAL and 50 PAL bobbed; at any
+             * other rate NTSC, unless the tags say PAL colour, which at NTSC's rate and line count is PAL-M (Brazil) —
+             * the rate and the line count alone cannot tell the two apart (24 and 23.976 are film, no composite
+             * capture).
              */
-            fun forInterval(intervalMs: Float): Standard = if (intervalMs in 38.5f..41f) PAL else NTSC
+            fun of(intervalMs: Float, system: PictureAdjustment.ColourSystem, palColour: Boolean): Standard {
+                val fields = intervalMs > 0f && intervalMs <= 25f
+                val pal = when (system) {
+                    PictureAdjustment.ColourSystem.NTSC -> false
+                    PictureAdjustment.ColourSystem.PAL, PictureAdjustment.ColourSystem.PAL_M -> true
+                    PictureAdjustment.ColourSystem.AUTO ->
+                        intervalMs in 38.5f..41f || intervalMs in 19.25f..20.5f || palColour
+                }
+                return if (!pal) NTSC else if (fields) PAL_FIELDS else PAL
+            }
         }
     }
 
@@ -96,6 +126,23 @@ object DotCrawl {
         val motion = { i: Int -> abs(v(earlier, i) + v(current, i) - v(before, i) - v(after, i)) / 2f }
         return combed(current, width, height, threshold, motion) { i, shown -> (v(earlier, i) + shown) / 2f }
     }
+
+    /**
+     * The picture [current] of a PAL capture bobbed to its fields (8-bit RGB, rows from the top, [width] × [height])
+     * combed with the pictures of the same field before it: [twoBack], [fourBack] (two frames back, its residue
+     * opposite) and [sixBack]. As [applyPal] with the same field's pictures for its frames — [fourBack] and [current]
+     * cancel the residue as [twoBack] and [sixBack] do, so half the difference of their sums is motion — but all of
+     * them before the one shown, which as on Android has only the next picture decoded ahead.
+     */
+    fun applyPalFields(
+        sixBack: ByteArray,
+        fourBack: ByteArray,
+        twoBack: ByteArray,
+        current: ByteArray,
+        width: Int,
+        height: Int,
+        threshold: Float,
+    ): ByteArray = applyPal(fourBack, twoBack, current, sixBack, width, height, threshold)
 
     private fun v(frame: ByteArray, i: Int) = frame[i].toInt() and 0xFF
 

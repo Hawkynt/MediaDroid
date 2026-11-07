@@ -54,7 +54,24 @@ class DesktopStore(private val folder: File) {
      * (FolderDefaults) — else the household's — with its show's station logo hidden.
      */
     fun pictureFor(video: String): PictureAdjustment =
-        FolderDefaults.resolve(null, folderPicture(video)?.second, picture).copy(logo = logoFor(video))
+        FolderDefaults.resolve(null, folderPicture(video)?.second, picture)
+            .copy(logo = logoFor(video), colourSystem = colourSystemFor(video))
+
+    /** The colour system chosen for [video], a composite capture (the dot-crawl comb's), or AUTO. */
+    fun colourSystemFor(video: String): PictureAdjustment.ColourSystem =
+        settings.colourSystems[video]?.let { runCatching { PictureAdjustment.ColourSystem.valueOf(it) }.getOrNull() }
+            ?: PictureAdjustment.ColourSystem.AUTO
+
+    /** Remembers [system] for [video]; AUTO forgets it. */
+    fun saveColourSystem(video: String, system: PictureAdjustment.ColourSystem) = change {
+        copy(
+            colourSystems = if (system == PictureAdjustment.ColourSystem.AUTO) {
+                colourSystems - video
+            } else {
+                colourSystems + (video to system.name)
+            },
+        )
+    }
 
     /** The folder [video] lies in, as FolderDefaults keeps it. */
     fun folderOf(video: String): FolderPlace = FolderDefaults.placeOf(sources, video)
@@ -245,6 +262,8 @@ internal data class DesktopSettings(
     val neuralColorizer: String? = null,
     /** Subtitle delays in milliseconds, by video location; a video in sync has none. */
     val subtitleDelays: Map<String, Int> = emptyMap(),
+    /** PictureAdjustment.ColourSystem names, by video location: a composite capture's, chosen by hand. */
+    val colourSystems: Map<String, String> = emptyMap(),
     /** A station logo hidden, by the videos' folder (one show): LogoMask's corner, size and mode. */
     val logos: Map<String, LogoSettings> = emptyMap(),
     /** Pictures per folder or share, by FolderPlace.key: what the videos in it start with. */

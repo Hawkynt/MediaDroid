@@ -119,6 +119,28 @@ fun PictureSliders(
             }
             Slider(value = value, onValueChange = { onChange(set(it)) }, onValueChangeFinished = onDone)
         }
+        // Only while dot crawl is combed out: the capture's colour system, where its rate does not tell it (PAL-M;
+        // DotCrawl.Standard), kept for this video.
+        if (picture.dotCrawl > 0f) {
+            Text("Colour system", fontSize = 16.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                PictureAdjustment.ColourSystem.entries.forEach { system ->
+                    FilterChip(
+                        selected = picture.colourSystem == system,
+                        onClick = {
+                            onChange(picture.copy(colourSystem = system))
+                            onDone()
+                        },
+                        label = { Text(system.label, fontSize = 15.sp) },
+                    )
+                }
+            }
+            Text(
+                picture.colourSystem.description,
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         // One slider for noise: left removes it, right adds film grain, the middle leaves it alone.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("Noise", fontSize = 16.sp, modifier = Modifier.weight(1f))
