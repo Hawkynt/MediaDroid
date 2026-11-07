@@ -80,8 +80,6 @@ fun Sidebar(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
     resume: ResumeSpot? = null,
-    /** Whether the Files browser is offered; a platform without it yet leaves it out. */
-    files: Boolean = true,
 ) {
     val width by animateDpAsState(if (expanded) ExpandedWidth else CollapsedWidth, label = "sidebar-width")
     Column(modifier = modifier.width(width).background(MaterialTheme.colorScheme.surface)) {
@@ -143,15 +141,13 @@ fun Sidebar(
                     onClick = { onNavigate(Screen.Places(PlaceKind.YEARS)) },
                 )
 
-                if (files) {
-                    SidebarItem(
-                        painter = painterResource(Res.drawable.ic_folder_open),
-                        label = "Files",
-                        expanded = expanded,
-                        selected = current is Screen.Files,
-                        onClick = { onNavigate(Screen.Files()) },
-                    )
-                }
+                SidebarItem(
+                    painter = painterResource(Res.drawable.ic_folder_open),
+                    label = "Files",
+                    expanded = expanded,
+                    selected = current is Screen.Files,
+                    onClick = { onNavigate(Screen.Files()) },
+                )
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline)
 
