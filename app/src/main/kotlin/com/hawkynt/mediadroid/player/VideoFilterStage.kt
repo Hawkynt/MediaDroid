@@ -17,6 +17,7 @@ import android.view.Surface
 import androidx.media3.decoder.VideoDecoderOutputBuffer
 import com.hawkynt.mediadroid.shaders.Shaders
 import com.hawkynt.mediadroid.stage.Colouring
+import com.hawkynt.mediadroid.stage.Deinterlacing
 import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Passes
 import com.hawkynt.mediadroid.stage.Restoration
@@ -91,6 +92,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // deringing, the logo, debanding, denoising, sharpening; whether debanding runs GLSL ES 3.00's pass, and whether
     // deblocking's and deringing's (GLSL ES 3.00 only) built.
     private val restoration = Restoration(gl, passes)
+
+    // The deinterlacers' passes (Deinterlacing).
+    private val deinterlacing = Deinterlacing(passes)
     private var debandEs3 = false
     private var deblockReady = false
 
@@ -350,7 +354,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     private var copyProgram = 0
     private var adjustProgram = 0
-    private var deinterlaceProgram = 0
 
     // Deblocking's pass and deringing's two (GLSL ES 3.00; without, neither runs).
     private var mpvLumaProgram = 0
@@ -368,11 +371,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var sharpenProgram = 0
     private var downscaleProgram = 0
     private var blendProgram = 0
-    private var temporalProgram = 0
 
     // MC Smooth (see TemporalSmoothing): the averaging along the motion, and the contra-sharpening and repair after it.
-    private var mcSmoothProgram = 0
-    private var mcSharpenProgram = 0
     private var weaveProgram = 0
     private var packProgram = 0
 
@@ -1094,7 +1094,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             enlarger?.close()
             enlarger = null
             if (enlargerTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(enlargerTexture), 0)
-            GLES20.glDeleteProgram(deinterlaceProgram)
             GLES20.glDeleteProgram(mpvLumaProgram)
             GLES20.glDeleteProgram(mpvRecombineProgram)
             GLES20.glDeleteProgram(mpvChromaProgram)
@@ -1121,10 +1120,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             cropWorker.shutdownNow()
             GLES20.glDeleteTextures(3, intArrayOf(vectorTextures[0], vectorTextures[1], obmcTexture), 0)
             motionSearch.shutdownNow()
-            GLES20.glDeleteProgram(temporalProgram)
             GLES20.glDeleteProgram(weaveProgram)
-            GLES20.glDeleteProgram(mcSmoothProgram)
-            GLES20.glDeleteProgram(mcSharpenProgram)
             filmWorker.shutdownNow()
             handler.removeCallbacksAndMessages(filmToken)
             handler.removeCallbacks(secondField)
@@ -1250,7 +1246,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         copyProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_COPY)
         adjustProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_ADJUST)
-        deinterlaceProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEINTERLACE)
+        deinterlacing.build()
         sharpenProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_SHARPEN)
         upscalers.build(PictureAdjustment.Upscaler.LANCZOS)
         upscalers.build(PictureAdjustment.Upscaler.GSR)
@@ -1301,10 +1297,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         obmcTexture = byteTexture(
             32, 32, ByteArray(32 * 32 * 4) { if (it % 4 == 0) MotionInterpolation.obmcWeight(it / 4).toByte() else 0 },
         )
-        temporalProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TEMPORAL)
         weaveProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_WEAVE)
-        mcSmoothProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MC_SMOOTH)
-        mcSharpenProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MC_SHARPEN)
     }
 
     private fun releaseWindow() {
@@ -1401,17 +1394,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         var source = copied
         if (picture.deinterlace != PictureAdjustment.Deinterlace.OFF) {
             val woven = frames[2].ensure(width, height, half)
-            woven.bind()
-            run(deinterlaceProgram, GLES20.GL_TEXTURE_2D, copied.texture, identity) { p ->
-                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMode"), picture.deinterlace.ordinal)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uHeight"), height.toFloat())
-                // The first field stays, the second is rebuilt: the field order decides which rows those are.
-                GLES20.glUniform1f(
-                    GLES20.glGetUniformLocation(p, "uParity"),
-                    Deinterlacer.rebuiltParity(false, fieldOrder.topFieldFirst).toFloat(),
-                )
-            }
+            deinterlacing.spatial(copied, woven, picture.deinterlace, fieldOrder.topFieldFirst)
             source = woven
         }
         source = reduced(source)
@@ -1520,16 +1503,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             }
             picture.deinterlace != PictureAdjustment.Deinterlace.OFF &&
                 picture.deinterlace != PictureAdjustment.Deinterlace.FILM -> {
-                woven.bind()
-                run(deinterlaceProgram, GLES20.GL_TEXTURE_2D, shown.texture, identity) { p ->
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMode"), picture.deinterlace.ordinal)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uHeight"), height.toFloat())
-                    GLES20.glUniform1f(
-                        GLES20.glGetUniformLocation(p, "uParity"),
-                        Deinterlacer.rebuiltParity(false, fieldOrder.topFieldFirst).toFloat(),
-                    )
-                }
+                deinterlacing.spatial(shown, woven, picture.deinterlace, fieldOrder.topFieldFirst)
                 woven
             }
             else -> shown
@@ -1576,48 +1550,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     ): Frame {
         val w = base.width
         val h = base.height
-        val bwdif = Deinterlacer.shaderMethod(Deinterlacer.Method.BWDIF)
         val earlier = frames[MC_EARLIER].ensure(w, h, half)
         val later = frames[MC_LATER].ensure(w, h, half)
-        if (second) {
-            rebuildField(earlier, prev, cur, next, false, bwdif)
-            rebuildField(later, cur, next, next, false, bwdif)
-        } else {
-            rebuildField(earlier, prev, prev, cur, true, bwdif)
-            rebuildField(later, prev, cur, next, true, bwdif)
-        }
         val smoothed = frames[MC_SMOOTHED].ensure(w, h, half)
-        exact(base.texture, earlier.texture, later.texture) {
-            smoothed.bind()
-            GLES20.glUseProgram(mcSmoothProgram)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, earlier.texture)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(mcSmoothProgram, "uEarlier"), 1)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, later.texture)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(mcSmoothProgram, "uLater"), 2)
-            run(mcSmoothProgram, GLES20.GL_TEXTURE_2D, base.texture, identity) { p ->
-                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-            }
-        }
         val out = frames[MC_SHARPENED].ensure(w, h, half)
-        exact(smoothed.texture, base.texture, cur.texture) {
-            out.bind()
-            GLES20.glUseProgram(mcSharpenProgram)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, base.texture)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(mcSharpenProgram, "uBase"), 1)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, cur.texture)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(mcSharpenProgram, "uSource"), 2)
-            run(mcSharpenProgram, GLES20.GL_TEXTURE_2D, smoothed.texture, identity) { p ->
-                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-                GLES20.glUniform1f(
-                    GLES20.glGetUniformLocation(p, "uParity"),
-                    Deinterlacer.rebuiltParity(second, fieldOrder.topFieldFirst).toFloat(),
-                )
-            }
-        }
+        deinterlacing.smoothAlongMotion(
+            base, prev, cur, next, next, second, earlier, later, smoothed, out, fieldOrder.topFieldFirst,
+        )
         return out
     }
 
@@ -1633,26 +1572,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         secondField: Boolean,
         method: Int,
         average: Boolean = false,
-    ) = exact(prev.texture, cur.texture, next.texture) {
-        target.bind()
-        GLES20.glUseProgram(temporalProgram)
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prev.texture)
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(temporalProgram, "uPrev"), 1)
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, next.texture)
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(temporalProgram, "uNext"), 2)
-        run(temporalProgram, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), target.width.toFloat(), target.height.toFloat())
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSecond"), if (secondField) 1 else 0)
-            GLES20.glUniform1f(
-                GLES20.glGetUniformLocation(p, "uParity"),
-                Deinterlacer.rebuiltParity(secondField, fieldOrder.topFieldFirst).toFloat(),
-            )
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMethod"), method)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uAverage"), if (average) 1 else 0)
-        }
-    }
+    ) = deinterlacing.field(prev, cur, next, target, secondField, method, fieldOrder.topFieldFirst, average)
 
     /**
      * Film: a decoded frame joins the history, and the one before it is judged with its neighbours (see

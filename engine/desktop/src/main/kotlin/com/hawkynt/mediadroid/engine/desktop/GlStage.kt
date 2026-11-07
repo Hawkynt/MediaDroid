@@ -19,6 +19,7 @@ import com.hawkynt.mediadroid.player.TemporalDenoise
 import com.hawkynt.mediadroid.player.ToneMap
 import com.hawkynt.mediadroid.shaders.Shaders
 import com.hawkynt.mediadroid.stage.Colouring
+import com.hawkynt.mediadroid.stage.Deinterlacing
 import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Passes
 import com.hawkynt.mediadroid.stage.Restoration
@@ -63,6 +64,7 @@ class GlStage(
     private val upscaling = Upscaling(passes)
     private val colouring = Colouring(gl, passes)
     private val restoration = Restoration(gl, passes)
+    private val deinterlacing = Deinterlacing(passes)
     private var obmcTable = 0
     private var noiseTable = 0
 
@@ -509,34 +511,11 @@ class GlStage(
     ): Target {
         val w = base.width
         val h = base.height
-        val half = deep
-        fun bwdif(into: String, a: Target, b: Target, c: Target, s: Boolean) =
-            pass("temporal.frag", target(into, w, h, half = half), b.texture,
-                listOf(a.texture to "uPrev", c.texture to "uNext"), nearest = true) { p ->
-                glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-                glUniform1i(glGetUniformLocation(p, "uSecond"), if (s) 1 else 0)
-                glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(s, true).toFloat())
-                glUniform1i(glGetUniformLocation(p, "uMethod"), Deinterlacer.shaderMethod(Deinterlacer.Method.BWDIF))
-            }
-        val earlier = if (second) {
-            bwdif("mc-earlier", prev, cur, next, false)
-        } else {
-            bwdif("mc-earlier", prev, prev, cur, true)
-        }
-        val later = if (second) {
-            bwdif("mc-later", cur, next, further, false)
-        } else {
-            bwdif("mc-later", prev, cur, next, true)
-        }
-        val smoothed = pass("mc-smooth.frag", target("mc-smoothed", w, h, half = half), base.texture,
-            listOf(earlier.texture to "uEarlier", later.texture to "uLater"), nearest = true) { p ->
-            glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-        }
-        return pass("mc-sharpen.frag", target("mc-sharpened", w, h, half = half), smoothed.texture,
-            listOf(base.texture to "uBase", cur.texture to "uSource"), nearest = true) { p ->
-            glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-            glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(second, true).toFloat())
-        }
+        return deinterlacing.smoothAlongMotion(
+            base, prev, cur, next, further, second,
+            target("mc-earlier", w, h, half = deep), target("mc-later", w, h, half = deep),
+            target("mc-smoothed", w, h, half = deep), target("mc-sharpened", w, h, half = deep),
+        ) as Target
     }
 
     /**
@@ -615,21 +594,14 @@ class GlStage(
         if (a.deinterlace.isTemporal) {
             val prev = neighbour(before ?: picture).takeIf { it.width == w && it.height == h } ?: raw
             val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
-            source = pass("temporal.frag", target("deinterlaced", w, h, half = deep), shown.texture,
-                listOf(prev.texture to "uPrev", next.texture to "uNext"), nearest = true) { p ->
-                glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-                glUniform1i(glGetUniformLocation(p, "uSecond"), if (second) 1 else 0)
-                glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(second, true).toFloat())
-                val method = when {
-                    a.deinterlace == PictureAdjustment.Deinterlace.OLD_CONSOLE -> Deinterlacer.OLD_CONSOLE
-                    a.deinterlace == PictureAdjustment.Deinterlace.ADAPTIVE && motionAdaptive.weave ->
-                        Deinterlacer.WEAVE
-                    else -> Deinterlacer.shaderMethod(a.deinterlace.method ?: Deinterlacer.Method.YADIF)
-                }
-                glUniform1i(glGetUniformLocation(p, "uMethod"), method)
-                val average = method == Deinterlacer.OLD_CONSOLE && consoleAverages(picture, before, second)
-                glUniform1i(glGetUniformLocation(p, "uAverage"), if (average) 1 else 0)
+            val method = when {
+                a.deinterlace == PictureAdjustment.Deinterlace.OLD_CONSOLE -> Deinterlacer.OLD_CONSOLE
+                a.deinterlace == PictureAdjustment.Deinterlace.ADAPTIVE && motionAdaptive.weave -> Deinterlacer.WEAVE
+                else -> Deinterlacer.shaderMethod(a.deinterlace.method ?: Deinterlacer.Method.YADIF)
             }
+            val average = method == Deinterlacer.OLD_CONSOLE && consoleAverages(picture, before, second)
+            source = deinterlacing.field(prev, shown, next, target("deinterlaced", w, h, half = deep), second, method,
+                average = average) as Target
             if (a.deinterlace == PictureAdjustment.Deinterlace.SMOOTH_MC) {
                 val further = neighbour(beyond ?: after ?: picture).takeIf { it.width == w && it.height == h } ?: next
                 source = smoothAlongMotion(source, prev, shown, next, further, second)
@@ -637,12 +609,7 @@ class GlStage(
         } else if (a.deinterlace != PictureAdjustment.Deinterlace.OFF &&
             a.deinterlace != PictureAdjustment.Deinterlace.FILM
         ) {
-            source = pass("deinterlace.frag", target("deinterlaced", w, h, half = deep), shown.texture) { p ->
-                glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
-                glUniform1i(glGetUniformLocation(p, "uMode"), a.deinterlace.ordinal)
-                glUniform1f(glGetUniformLocation(p, "uHeight"), h.toFloat())
-                glUniform1f(glGetUniformLocation(p, "uParity"), Deinterlacer.rebuiltParity(false, true).toFloat())
-            }
+            source = deinterlacing.spatial(shown, target("deinterlaced", w, h, half = deep), a.deinterlace) as Target
         }
         // 1b. Deblocking and deringing, on the decoded picture's own block grid, which the part shown (its bars, its
         // 3D eye) may have cut into — before anything else changes the picture.
@@ -1564,23 +1531,10 @@ class GlStage(
         const val UPLOADED = 6
         const val KEPT = 4
         val SHADERS = mapOf(
-            "temporal.frag" to Shaders.VIDEO_TEMPORAL,
-            "mc-smooth.frag" to Shaders.VIDEO_MC_SMOOTH,
-            "mc-sharpen.frag" to Shaders.VIDEO_MC_SHARPEN,
-            "colorize.frag" to Shaders.VIDEO_COLORIZE,
-            "deinterlace.frag" to Shaders.VIDEO_DEINTERLACE,
-            "deband-es3.frag" to Shaders.VIDEO_DEBAND_ES3,
-            "logo-mask.frag" to Shaders.VIDEO_LOGO_MASK,
-            "deblock-es3.frag" to Shaders.VIDEO_DEBLOCK_ES3,
-            "cdef-direction-es3.frag" to Shaders.VIDEO_CDEF_DIRECTION_ES3,
-            "cdef-es3.frag" to Shaders.VIDEO_CDEF_ES3,
             "mpv-luma.frag" to Shaders.VIDEO_MPV_LUMA,
             "mpv-recombine.frag" to Shaders.VIDEO_MPV_RECOMBINE,
             "mpv-chroma.frag" to Shaders.VIDEO_MPV_CHROMA,
             "mpv-chroma-rgb.frag" to Shaders.VIDEO_MPV_CHROMA_RGB,
-            "temporal-denoise.frag" to Shaders.VIDEO_TEMPORAL_DENOISE,
-            "dot-crawl.frag" to Shaders.VIDEO_DOT_CRAWL,
-            "dot-crawl-pal.frag" to Shaders.VIDEO_DOT_CRAWL_PAL,
             "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
             "yuv-spline.frag" to Shaders.VIDEO_YUV_SPLINE,
             "chroma-krig-1.frag" to Shaders.VIDEO_CHROMA_KRIG_1,
@@ -1588,8 +1542,6 @@ class GlStage(
             "chroma-krig-3.frag" to Shaders.VIDEO_CHROMA_KRIG_3,
             "tonemap.frag" to Shaders.VIDEO_TONEMAP,
             "peak.frag" to Shaders.VIDEO_PEAK,
-            "denoise.frag" to Shaders.VIDEO_DENOISE,
-            "sharpen.frag" to Shaders.VIDEO_SHARPEN,
             "adjust.frag" to Shaders.VIDEO_ADJUST,
             "blend.frag" to Shaders.VIDEO_BLEND,
             "motion.frag" to Shaders.VIDEO_MOTION,
