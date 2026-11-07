@@ -252,7 +252,9 @@ tasks.register<Zip>("windowsZip") {
         } else {
             dependsOn(windowsJreUnpack, tasks.named("jar"))
             into("runtime") { from(windowsJreUnpack) }
+            // Two jars of one name would leave one out unnoticed: that fails the build instead.
             into("lib") {
+                duplicatesStrategy = DuplicatesStrategy.FAIL
                 from(tasks.named("jar"))
                 from(configurations.named("runtimeClasspath"))
             }
