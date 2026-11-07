@@ -368,6 +368,21 @@ class DesktopPlaybackEngineTest {
         }
     }
 
+    // two-languages.mkv: one second of 64 × 36 testsrc and two AAC sounds tagged eng and deu, made with ffmpeg's lavfi.
+    @Test
+    fun `a video starts in the household's audio language where it has a track in it, as Media3 picks it`() {
+        fun soundOf(language: String): String? =
+            DesktopPlaybackEngine(PlaybackTuning.Mutable()) { ManualSink() }.use { engine ->
+                engine.open(MediaRequest(fixture("two-languages.mkv"), audioLanguage = language), autoPlay = false)
+                Tracks.of(engine.tracks, Track.Kind.AUDIO).single { it.selected }.language
+            }
+        assertEquals("eng", soundOf(""))
+        assertEquals("deu", soundOf("de"))
+        assertEquals("deu", soundOf("deu"))
+        // None in it: the file's own default.
+        assertEquals("eng", soundOf("fr"))
+    }
+
     @Test
     fun `a sound file beside the video is a track, and once picked its sound plays with the pictures`() {
         val sink = ManualSink()

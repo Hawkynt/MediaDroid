@@ -18,15 +18,23 @@ class DesktopSettingsTest {
     @Test
     fun `Settings shows only the platform rows the desktop player acts on`() {
         assertEquals(
-            setOf(PlatformSetting.SHADER_FOLDER, PlatformSetting.BINGE_WATCHING, PlatformSetting.SKIP_INTRO_CREDITS),
+            setOf(
+                PlatformSetting.SHADER_FOLDER,
+                PlatformSetting.BINGE_WATCHING,
+                PlatformSetting.SKIP_INTRO_CREDITS,
+                PlatformSetting.EVEN_FRAMES,
+                PlatformSetting.SUBTITLE_LOOK,
+                PlatformSetting.AUDIO_LANGUAGE,
+            ),
             DesktopSettingsPlatform.OFFERED,
         )
-        // Not acted on here yet: a switch for them would change nothing.
+        // Nothing on a desktop for them to change (DesktopSettingsPlatform says why).
         listOf(
             PlatformSetting.MATCH_REFRESH_RATE,
             PlatformSetting.AUDIO_PASSTHROUGH,
+            PlatformSetting.HDR_TONE_MAPPING,
+            PlatformSetting.LARGE_VIDEO,
             PlatformSetting.DECODED_BUFFER,
-            PlatformSetting.AUDIO_LANGUAGE,
         ).forEach { assertFalse(it.name, it in DesktopSettingsPlatform.OFFERED) }
     }
 

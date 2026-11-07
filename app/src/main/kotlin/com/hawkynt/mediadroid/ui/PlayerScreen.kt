@@ -1707,76 +1707,17 @@ fun PlayerScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
 
-                    PanelTitle("Subtitles")
-                    fun changeLook(look: com.hawkynt.mediadroid.player.SubtitleLook) {
-                        subtitleLook = look
-                        store.saveSubtitleLook(queue[index].videoPath, look)
-                    }
-                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                    androidx.compose.foundation.layout.FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        itemVerticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("Delay", fontSize = 16.sp, modifier = Modifier.widthIn(min = 56.dp))
-                        androidx.compose.material3.OutlinedButton(
-                            onClick = { changeLook(subtitleLook.nudgeDelay(-1)) },
-                        ) {
-                            Text("Sooner", fontSize = 16.sp)
-                        }
-                        Text(
-                            if (subtitleLook.delayMs == 0) {
-                                "in sync"
-                            } else {
-                                "%+.1f s".format(subtitleLook.delayMs / 1000f)
-                            },
-                            fontSize = 18.sp,
-                            modifier = Modifier.widthIn(min = 80.dp),
-                        )
-                        androidx.compose.material3.OutlinedButton(
-                            onClick = { changeLook(subtitleLook.nudgeDelay(1)) },
-                        ) {
-                            Text("Later", fontSize = 16.sp)
-                        }
-                    }
-                    Text(
-                        PlaybackMath.syncText("subtitles", subtitleLook.delayMs).replaceFirstChar { it.uppercase() } +
-                            ". Later when a line shows before it is spoken, sooner when after.",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                    androidx.compose.foundation.layout.FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.padding(top = 6.dp),
-                    ) {
-                        com.hawkynt.mediadroid.player.SubtitleLook.Size.entries.forEach { size ->
-                            FilterChip(
-                                selected = subtitleLook.size == size,
-                                onClick = { changeLook(subtitleLook.copy(size = size)) },
-                                label = { Text(size.label, fontSize = 16.sp) },
-                            )
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Raised above burned-in text", fontSize = 16.sp, modifier = Modifier.weight(1f))
-                        androidx.compose.material3.Switch(
-                            checked = subtitleLook.raised,
-                            onCheckedChange = { changeLook(subtitleLook.copy(raised = it)) },
-                        )
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Dark box behind the text", fontSize = 16.sp, modifier = Modifier.weight(1f))
-                        androidx.compose.material3.Switch(
-                            checked = subtitleLook.box,
-                            onCheckedChange = { changeLook(subtitleLook.copy(box = it)) },
-                        )
-                    }
-                    androidx.compose.material3.TextButton(
-                        onClick = {
+                    SubtitleLookRows(
+                        subtitleLook,
+                        onLook = { look ->
+                            subtitleLook = look
+                            store.saveSubtitleLook(queue[index].videoPath, look)
+                        },
+                        onReset = {
                             store.saveSubtitleLook(queue[index].videoPath, null)
                             subtitleLook = store.subtitleLookFor(queue[index].videoPath)
                         },
-                    ) { Text("Back to the household's look") }
+                    )
 
                     if (spatializerAvailable) {
                         PanelTitle("Spatial audio")

@@ -148,6 +148,11 @@ class DesktopPlaybackEngine(
         soundFiles = request.audio
         openedRequest = request
         selectedSound = opened.tracks.firstOrNull { it.kind == Track.Kind.AUDIO && it.selected }?.id
+        // The household's audio language (Settings), where the file has a sound in it — as Media3 picks it on the phone.
+        preferredSound(opened.tracks, request.audioLanguage)?.takeIf { it.id != selectedSound }?.let {
+            opened.selectAudio(it.id.toInt())
+            selectedSound = it.id
+        }
         // Subtitle files beside the video, read whole now: they are small.
         sidecars = request.subtitles.mapIndexedNotNull { i, file ->
             runCatching {
@@ -980,3 +985,17 @@ class DesktopPlaybackEngine(
 /** The demuxer a file beside the video is read by, as the report names it: FFmpeg's, by the file's extension. */
 private fun sidecarDemuxer(path: String): String? =
     path.substringAfterLast('/').substringAfterLast('.', "").lowercase().ifEmpty { null }?.let { "ffmpeg:$it" }
+
+/**
+ * The file's first sound in [language] (Settings → audio language, ISO 639-1 or -2, empty for the file's own
+ * default), the codes compared as languages (`de` is `deu` and `ger`); null where it has none.
+ */
+internal fun preferredSound(tracks: List<Track>, language: String): Track? {
+    if (language.isBlank()) return null
+    val wanted = com.hawkynt.mediadroid.library.Languages.twoLetter(language) ?: language.trim().lowercase()
+    return tracks.firstOrNull { track ->
+        track.kind == Track.Kind.AUDIO && track.language?.let {
+            (com.hawkynt.mediadroid.library.Languages.twoLetter(it) ?: it.trim().lowercase()) == wanted
+        } == true
+    }
+}

@@ -28,13 +28,12 @@ import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PlaybackMath
 import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.ScreenShape
-import com.hawkynt.mediadroid.player.SubtitleLook
 import com.hawkynt.mediadroid.ui.PanelTitle
 import kotlin.math.roundToInt
 
-// The desktop's own rows in the player's gear (GearPanel's slots): the sound of this computer's output, the subtitle
-// delay, the decoder, this monitor's setup and its test patterns, the histogram. Everything else in the gear is the
-// phone's, from the same domain.
+// The desktop's own rows in the player's gear (GearPanel's slots): the sound of this computer's output, the decoder,
+// this monitor's setup and its test patterns, the histogram. Everything else in the gear is the phone's, from the same
+// domain.
 
 /** Which upscalers offer their networks' models on the desktop: every one on ncnn there (DesktopNeural.onNcnn). */
 val DesktopNeuralModels: (PictureAdjustment.Upscaler) -> Boolean = DesktopNeural::onNcnn
@@ -96,28 +95,6 @@ fun ColumnScope.DesktopHistogramRow(shown: Boolean, onShown: (Boolean) -> Unit) 
         shown,
         Modifier.padding(top = 12.dp),
         onShown,
-    )
-}
-
-/** The subtitle delay in tenths of a second with Sooner and Later, worded as in Android's gear; kept per video. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun ColumnScope.DesktopSubtitleDelayRow(delayMs: Int, onDelay: (Int) -> Unit) {
-    fun nudge(steps: Int) = onDelay(SubtitleLook(delayMs = delayMs).nudgeDelay(steps).delayMs)
-    FlowRow(
-        itemVerticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.padding(top = 12.dp),
-    ) {
-        Text("Delay", fontSize = 16.sp)
-        OutlinedButton(onClick = { nudge(-1) }) { Text("Sooner", fontSize = 16.sp) }
-        Text(if (delayMs == 0) "in sync" else "%+.1f s".format(delayMs / 1000f), fontSize = 18.sp)
-        OutlinedButton(onClick = { nudge(1) }) { Text("Later", fontSize = 16.sp) }
-        if (delayMs != 0) TextButton(onClick = { onDelay(0) }) { Text("Reset") }
-    }
-    Hint(
-        PlaybackMath.syncText("subtitles", delayMs).replaceFirstChar { it.uppercase() } +
-            ". Later when a line shows before it is spoken, sooner when after. Kept for this video.",
     )
 }
 
