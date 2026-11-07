@@ -74,10 +74,16 @@ fun main(args: Array<String>) = application {
     val files = remember { DesktopMediaFiles(places, probe) }
     // The walls' pictures: this computer's as they are, the network sources' copied once into the app-data folder.
     val art = remember { DesktopMediaArt(places, File(folder, "art"), probe) }
+    // The monitors' display modes (Windows, X11), for matching the refresh rate; whatever was switched is put back
+    // when the app closes or is stopped.
+    val displays = remember { DisplaySystem.forThisSystem() }
+    val refreshMatcher = remember {
+        displays.takeIf { it.unavailable == null }?.let { RefreshMatcher(it).restoreAtExit() }
+    }
     // What Settings shows here, and the mpv shaders its default picture offers, read once now.
     val settings = remember {
         ShaderFolder.load(ShaderFolder.of(store.state.data.settings.shaderFolder, folder))
-        DesktopSettingsPlatform(store, folder)
+        DesktopSettingsPlatform(store, folder, displays)
     }
     // The media keys and the system's now-playing panel, for the app's whole life (MPRIS, SMTC).
     val mediaKeys = remember { MediaKeys() }
@@ -99,6 +105,7 @@ fun main(args: Array<String>) = application {
     val close = {
         describe(state)?.let { store.window = it }
         mediaKeys.close()
+        refreshMatcher?.restore()
         exitApplication()
     }
     Window(onCloseRequest = close, title = "MediaDroid", state = state, icon = icon) {
@@ -145,6 +152,7 @@ fun main(args: Array<String>) = application {
                                 screen = Screen.Library
                             },
                             native = native,
+                            refreshMatcher = refreshMatcher,
                         )
                     }
                     // The picture shown by the stage in a window of its own inside this one, the player's controls in

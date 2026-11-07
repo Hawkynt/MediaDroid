@@ -18,9 +18,11 @@ import javax.swing.JFileChooser
  * the phone), even frames (EvenFrames: at the monitor's refresh as it is), the subtitles' look (the player sizes,
  * raises and boxes its lines by it) and the audio language (the engine starts a video in it).
  *
+ * Match the refresh rate shows where the system lets the app switch a monitor's mode ([displays]: Windows, X11 with
+ * xrandr — RefreshMatcher); under Wayland it stays hidden, the compositor keeping the outputs' modes to itself, and
+ * Even frames keeps the frames even at the mode the monitor has.
+ *
  * Not shown, because on a desktop they would change nothing:
- * - Match the refresh rate: the desktop leaves a monitor's mode alone — switching it blanks every window on that
- *   monitor, there is no API for it under Wayland — and Even frames keeps the frames even at the mode it has.
  * - Audio passthrough: the sound goes out as PCM through the system's mixer (AudioSink); handing AC-3 or DTS untouched
  *   to a receiver needs an exclusive digital output (IEC 61937), which the system's sound API in use does not offer.
  * - HDR tone mapping: the desktop shows SDR, so the stage always brings HDR down; there is no HDR screen to leave it
@@ -34,8 +36,13 @@ import javax.swing.JFileChooser
  * attached now (OutputScreen), each under the key the player keeps its setup by; the test patterns are in the
  * player's gear, over the video.
  */
-class DesktopSettingsPlatform(private val store: DesktopStore, private val folder: File) : SettingsPlatform {
-    override val offered: Set<PlatformSetting> = OFFERED
+class DesktopSettingsPlatform(
+    private val store: DesktopStore,
+    private val folder: File,
+    displays: DisplaySystem,
+) : SettingsPlatform {
+    override val offered: Set<PlatformSetting> =
+        if (displays.unavailable == null) OFFERED + PlatformSetting.MATCH_REFRESH_RATE else OFFERED
 
     private val trial by lazy { DesktopTrial(store, DesktopNeural(File(folder, "models"))) }
 
@@ -65,7 +72,7 @@ class DesktopSettingsPlatform(private val store: DesktopStore, private val folde
     override fun screens(): List<SetupScreen> = OutputScreen.all().map { SetupScreen(it.key, it.name) }
 
     companion object {
-        /** The rows only some platforms act on that the desktop player does. */
+        /** The rows only some platforms act on that the desktop player does wherever it runs. */
         val OFFERED: Set<PlatformSetting> = setOf(
             PlatformSetting.SHADER_FOLDER,
             PlatformSetting.BINGE_WATCHING,

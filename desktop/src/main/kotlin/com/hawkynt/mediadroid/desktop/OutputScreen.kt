@@ -5,9 +5,18 @@ import java.awt.GraphicsEnvironment
 
 /**
  * The monitor a window shows on: [key], what its setup is kept under (DesktopStore.screenSetup), a [name] to show,
- * the panel's [aspect] — its width over its height — and its [height] in pixels.
+ * the panel's [aspect] — its width over its height — its [height] in pixels, and where it starts on the desktop ([x],
+ * [y], as the window system places it) with the system's zoom ([scale]), for its display modes (RefreshMatcher).
  */
-data class OutputScreen(val key: String, val name: String, val aspect: Float, val height: Int = 1080) {
+data class OutputScreen(
+    val key: String,
+    val name: String,
+    val aspect: Float,
+    val height: Int = 1080,
+    val x: Int = 0,
+    val y: Int = 0,
+    val scale: Double = 1.0,
+) {
     companion object {
         /** A screen when the window's is unknown: no setup of its own, 16:9. */
         val Unknown = OutputScreen("default", "This screen", 16f / 9f)
@@ -36,6 +45,7 @@ data class OutputScreen(val key: String, val name: String, val aspect: Float, va
             val pixels = (bounds.height * configuration.defaultTransform.scaleY).toInt()
             return OutputScreen(
                 id, "Screen ${bounds.width} × ${bounds.height}", bounds.width.toFloat() / bounds.height, pixels,
+                bounds.x, bounds.y, configuration.defaultTransform.scaleX,
             )
         }
     }

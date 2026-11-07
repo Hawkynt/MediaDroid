@@ -121,6 +121,8 @@ fun DesktopPlayer(
     onExit: () -> Unit,
     screen: () -> OutputScreen = { OutputScreen.Unknown },
     native: NativePicture? = null,
+    /** Switches the monitor to the film's rate family where Settings ask for it (Match the refresh rate). */
+    refreshMatcher: RefreshMatcher? = null,
 ) {
     // The sound settings the engine reads as it plays (PlaybackTuning): the household's, kept; night mode for this
     // player only, as on Android.
@@ -281,7 +283,9 @@ fun DesktopPlayer(
     // The screen's refresh, measured from the frames asked for back to back (the frame loop below), and Even frames
     // over it (Settings): the film run a little faster or slower so every frame stays on screen equally long.
     val refresh = remember { RefreshPeriod() }
-    val evenFrames = remember { EvenFrames(store.state.data.settings) }
+    val evenFrames = remember { EvenFrames(store.state.data.settings, refreshMatcher) }
+    // The monitor's own mode back once the player closes.
+    DisposableEffect(refreshMatcher) { onDispose { refreshMatcher?.restore() } }
     LaunchedEffect(Unit) {
         var lastShown: Any? = null
         var lastLook: Any? = null
@@ -609,7 +613,15 @@ fun DesktopPlayer(
     // Every few seconds, and at once for a new speed: the film's rate, the speed and the screen's refresh again.
     LaunchedEffect(state.speed) {
         while (true) {
-            evenFrames.plan(engine.frameRate, state.speed, refresh.periodNs)
+            // Off the window's thread: asking the system for its monitors' modes and switching one take their time.
+            val shownOn = screen()
+            withContext(Dispatchers.IO) {
+                evenFrames.plan(engine.frameRate, state.speed, refresh.periodNs) {
+                    refreshMatcher?.let { matcher ->
+                        RefreshMatcher.outputAt(matcher.outputs(), shownOn.x, shownOn.y, shownOn.scale)
+                    }
+                }
+            }
             engine.speed = state.speed * evenFrames.speedFactor
             delay(EVEN_FRAMES_MS)
         }

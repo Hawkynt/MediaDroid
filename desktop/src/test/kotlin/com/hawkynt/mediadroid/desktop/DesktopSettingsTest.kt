@@ -30,12 +30,24 @@ class DesktopSettingsTest {
         )
         // Nothing on a desktop for them to change (DesktopSettingsPlatform says why).
         listOf(
-            PlatformSetting.MATCH_REFRESH_RATE,
             PlatformSetting.AUDIO_PASSTHROUGH,
             PlatformSetting.HDR_TONE_MAPPING,
             PlatformSetting.LARGE_VIDEO,
             PlatformSetting.DECODED_BUFFER,
         ).forEach { assertFalse(it.name, it in DesktopSettingsPlatform.OFFERED) }
+    }
+
+    @Test
+    fun `matching the refresh rate shows where the system lets the monitor's mode be switched`() {
+        val store = DesktopStore(temp.newFolder("data"))
+        val switching = object : DisplaySystem {
+            override val unavailable: String? = null
+            override fun outputs() = emptyList<DisplayOutput>()
+            override fun switch(output: String, mode: DisplayMode) = false
+        }
+        assertTrue(PlatformSetting.MATCH_REFRESH_RATE in DesktopSettingsPlatform(store, temp.root, switching).offered)
+        val wayland = FixedDisplays("Under Wayland the desktop keeps the screen's mode to itself.")
+        assertFalse(PlatformSetting.MATCH_REFRESH_RATE in DesktopSettingsPlatform(store, temp.root, wayland).offered)
     }
 
     @Test
