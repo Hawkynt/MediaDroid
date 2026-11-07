@@ -374,12 +374,15 @@ fun PlayerScreen(
     // Small in the corner (#417) the player is what picture in picture makes it: the picture alone, no controls.
     val inPip = PlayerWindow.inPictureInPicture || small
 
-    var index by remember { mutableStateOf(startIndex) }
+    // The queue, where each video starts and what comes after it, as both players play it (PlayerSession).
+    val session = remember {
+        PlayerSession(queue, startIndex, store, engine, autoAdvance, skipping = settings.skipIntroCredits)
+    }
+    val index = session.index
     // The current video's subtitle and audio files, with their locations, in the order they are merged in.
     var sidecars by remember {
         mutableStateOf(emptyList<Pair<com.hawkynt.mediadroid.library.Sidecars.Sidecar, String>>())
     }
-    var finished by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf<String?>(null) }
     var speed by remember { mutableStateOf(settings.defaultSpeed) }
     // Checked again when the speed changes and every few seconds: a new video, a switched mode, a second screen.
@@ -418,8 +421,6 @@ fun PlayerScreen(
     var audioPicker by remember { mutableStateOf(false) }
     var subtitlePicker by remember { mutableStateOf(false) }
     var secondPicker by remember { mutableStateOf(false) }
-    // Once the household picks a track by hand, the settings language steps back.
-    var manualTrackPick by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(false) }
     var panelOpen by remember { mutableStateOf(false) }
     // Per video: its own picture if one was saved, else the household default.
@@ -531,44 +532,15 @@ fun PlayerScreen(
     DisposableEffect(seekPreviews) { onDispose { seekPreviews?.close() } }
 
     // The file's own chapters (Chapters), listed and stepped through; the part repeated between two marks (AbLoop).
-    var chapters by remember { mutableStateOf(emptyList<com.hawkynt.mediadroid.library.Chapter>()) }
+    val chapters = session.chapters
     var chapterPicker by remember { mutableStateOf(false) }
-    var abLoop by remember { mutableStateOf(com.hawkynt.mediadroid.player.AbLoop.OFF) }
+    val abLoop = session.abLoop
     fun jumpChapter(forward: Boolean) {
-        val position = engine.positionMs
-        val target = if (forward) {
-            com.hawkynt.mediadroid.player.ChapterSteps.next(chapters, position)
-        } else {
-            com.hawkynt.mediadroid.player.ChapterSteps.previous(chapters, position)
-        } ?: return
-        engine.seekTo(target)
-        com.hawkynt.mediadroid.player.ChapterSteps.current(chapters, target)?.let {
-            show(com.hawkynt.mediadroid.player.ChapterSteps.name(chapters, it))
-        }
+        session.jumpChapter(forward)?.let { show(it) }
     }
     // One picture on or back, paused there (as mpv's frame steps pause).
-    fun stepFrame(forward: Boolean) {
-        if (engine.isPlaying) engine.pause()
-        engine.seekTo(
-            com.hawkynt.mediadroid.player.FrameStep.target(
-                engine.positionMs,
-                engine.frameRate,
-                forward,
-                engine.durationMs,
-            ),
-        )
-    }
-    fun markRepeat() {
-        abLoop = abLoop.mark(engine.positionMs)
-        val (a, b) = abLoop.a to abLoop.b
-        show(
-            when {
-                a != null && b != null -> "Repeating ${clock(a)} – ${clock(b)}"
-                a != null -> "Repeat from ${clock(a)} — press again where it should end"
-                else -> "Repeat off"
-            },
-        )
-    }
+    fun stepFrame(forward: Boolean) = session.stepFrame(forward)
+    fun markRepeat() = show(session.markRepeat())
     val externalDisplay = rememberExternalDisplay()
     var onSecondScreen by remember { mutableStateOf(false) }
     var presentation by remember { mutableStateOf<VideoPresentation?>(null) }
@@ -623,25 +595,20 @@ fun PlayerScreen(
     // Intro/credits for the current item: the file's own chapters first, the `.edl` beside it as fallback
     // (see SkipRules). Skipped only while the household has skipping switched on; the credits
     // count towards "watched" either way.
-    val skipping = settings.skipIntroCredits
-    var introSpanMs by remember { mutableStateOf<LongRange?>(null) }
-    var creditsStartMs by remember { mutableStateOf<Long?>(null) }
+    val skipping = session.skipping
 
     // Preferred languages steer automatic selection for each new item. The
     // global preferred language covers audio; the subtitle language is applied
     // as an override once the item's tracks are known (see the listener).
     LaunchedEffect(index) {
         val playable = queue[index]
-        manualTrackPick = false
         picture = store.pictureFor(playable.videoPath)
         if (!demo && store.data.lastPlayed != playable.videoPath) {
             store.data.lastPlayed = playable.videoPath
             store.save()
         }
         subtitleLook = store.subtitleLookFor(playable.videoPath)
-        abLoop = com.hawkynt.mediadroid.player.AbLoop.OFF
-        chapters = emptyList()
-        chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             // Chapters mark intros and credits for videos on network sources as for local ones.
             com.hawkynt.mediadroid.data.SourceAccess.resolve(context, playable.videoPath)
                 ?.let { com.hawkynt.mediadroid.library.Chapters.read(it) }
@@ -655,16 +622,13 @@ fun PlayerScreen(
             com.hawkynt.mediadroid.library.Sidecars.of(video?.name.orEmpty(), names)
                 .map { it to folder!!.child(it.name).path }
         }
-        introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, playable.intro) else null
-        creditsStartMs = SkipRules.creditsStartMs(chapters, playable.credits)
         // Back on the main thread before touching the player: ExoPlayer only answers the thread it was built on.
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
             val (subtitleFiles, audioFiles) = sidecars.partition { (sidecar, _) ->
                 sidecar.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.SUBTITLES
             }
-            val resumePos = store.resumeFor(playable.videoPath)?.positionMs ?: 0
             // Resume where you left off — but never back into a known intro.
-            val startPos = SkipRules.skipTarget(resumePos, introSpanMs) ?: resumePos
+            val startPos = session.begin(chapters)
             engine.open(
                 com.hawkynt.mediadroid.engine.MediaRequest(
                     path = playable.videoPath,
@@ -693,52 +657,28 @@ fun PlayerScreen(
     }
 
     // The time the current item has actually played this time — not where it stands — for whether it is worth a
-    // resume point at all (StateStore.saveResume): counted while it plays, at its speed, from nothing for each item.
-    var playedMs by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(index) { playedMs = 0L }
+    // resume point at all (StateStore.saveResume): counted while it plays, at its speed.
     LaunchedEffect(engine) {
         var last = System.currentTimeMillis()
         while (true) {
             delay(1_000)
             val now = System.currentTimeMillis()
-            if (engine.isPlaying) playedMs += ((now - last) * speed).toLong()
+            session.countPlayed(now - last, speed)
             last = now
         }
     }
 
     /** Remembers how far the current item got: watched once only its tail or credits are left. */
-    fun saveProgress(position: Long = engine.positionMs, duration: Long = engine.durationMs) {
-        if (duration <= 0 || position <= 0) return
-        val path = queue[index].videoPath
-        // Right after Next/Previous the player still holds the last file: its position is not ours.
-        if (engine.openedPath != path) return
-        if (PlaybackMath.isWatched(position, duration, creditsStartMs)) {
-            store.markWatched(path)
-        } else {
-            store.saveResume(path, position, duration, playedMs)
-        }
-    }
+    fun saveProgress(position: Long = engine.positionMs, duration: Long = engine.durationMs) =
+        session.saveProgress(position, duration)
 
     // Next and Previous on the controls move through the queue (see QueuePlayer).
     val queuePlayer = remember {
         PlaybackQueue(
             engine,
-            hasNext = { index + 1 < queue.size },
-            onNext = {
-                if (index + 1 < queue.size) {
-                    saveProgress()
-                    index++
-                }
-            },
-            onPrevious = {
-                when (val previous = PlaybackMath.previous(engine.positionMs, index)) {
-                    PlaybackMath.Previous.Restart -> engine.seekTo(0)
-                    is PlaybackMath.Previous.GoTo -> {
-                        saveProgress()
-                        index = previous.index
-                    }
-                }
-            },
+            hasNext = { session.hasNext },
+            onNext = { session.next() },
+            onPrevious = { session.previous() },
         )
     }
 
@@ -770,21 +710,19 @@ fun PlayerScreen(
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP),
                 android.app.PendingIntent.FLAG_IMMUTABLE,
             ),
-            title = { queue[index].title },
-            subtitle = { queue[index].subtitle },
-            posterPath = { queue[index].posterPath },
+            title = { session.current.title },
+            subtitle = { session.current.subtitle },
+            posterPath = { session.current.posterPath },
             onPosted = { com.hawkynt.mediadroid.player.PlaybackService.latest = it },
         )
         onDispose { controls.close() }
     }
 
-    var repeat by remember { mutableStateOf(PlaybackMath.Repeat.OFF) }
     // Child lock: while locked every touch and key but volume is ignored; holding the lock symbol unlocks.
     var locked by remember { mutableStateOf(false) }
     var lockHintStamp by remember { mutableIntStateOf(0) }
     // Sleep timer: a moment on the clock (elapsedRealtime) or "at the end of this video"; never kept.
     var sleepAt by remember { mutableStateOf<Long?>(null) }
-    var sleepAtEnd by remember { mutableStateOf(false) }
     var sleepLeftMs by remember { mutableStateOf(0L) }
     var sleepChoice by remember { mutableStateOf<Int?>(null) }
     // A device decoder that cannot attach to the picture's surface gets a fresh one, once per item until a
@@ -792,23 +730,7 @@ fun PlayerScreen(
     val freshSurface = remember { arrayOfNulls<() -> Unit>(1) }
     val freshSurfaceFor = remember { arrayOfNulls<String>(1) }
 
-    fun finishCurrent() {
-        store.markWatched(queue[index].videoPath)
-        if (sleepAtEnd) {
-            sleepAtEnd = false
-            finished = true
-            return
-        }
-        when (val next = PlaybackMath.afterEnd(index, queue.size, autoAdvance, repeat)) {
-            null -> finished = true
-            index -> {
-                // The same video again: the index does not change, so start it over by hand.
-                engine.seekTo(0)
-                engine.play()
-            }
-            else -> index = next
-        }
-    }
+    fun finishCurrent() = session.finishCurrent()
 
     DisposableEffect(engine) {
         val listener = object : PlaybackEngine.Listener {
@@ -846,12 +768,8 @@ fun PlayerScreen(
                 freshSurfaceFor[0] = null
             }
 
-            override fun onTracksChanged(tracks: List<Track>) {
-                if (manualTrackPick) return
-                val wanted = com.hawkynt.mediadroid.engine.Tracks.preferredText(tracks, settings.subtitleLanguage)
-                    ?: return
-                engine.select(Track.Kind.TEXT, wanted.id)
-            }
+            override fun onTracksChanged(tracks: List<Track>) =
+                session.tracksChanged(tracks, settings.subtitleLanguage)
         }
         engine.addListener(listener)
         onDispose {
@@ -861,29 +779,11 @@ fun PlayerScreen(
         }
     }
 
+    // Intros skipped, the credits ending the video, the progress kept (PlayerSession.tick).
     LaunchedEffect(engine) {
-        var tick = 0
         while (true) {
             delay(500)
-            if (!engine.isPlaying) continue
-            val position = engine.positionMs
-            // A part repeating is the viewer's choice: no intro or credits jump takes it away.
-            if (abLoop.a != null) {
-                if (++tick % 6 == 0) saveProgress(position)
-                continue
-            }
-            // Inside a known intro (also one after a cold open): jump to its end.
-            SkipRules.skipTarget(position, introSpanMs)?.let {
-                engine.seekTo(it)
-                continue
-            }
-            val credits = creditsStartMs
-            if (skipping && credits != null && position >= credits) {
-                // The credits have begun: end the episode, binge mode takes it from there (once its end is known).
-                engine.durationMs.takeIf { it > 0 }?.let { engine.seekTo(it) }
-                continue
-            }
-            if (++tick % 6 == 0) saveProgress(position)
+            session.tick()
         }
     }
 
@@ -892,7 +792,7 @@ fun PlayerScreen(
         if (!abLoop.repeating) return@LaunchedEffect
         while (true) {
             delay(AB_CHECK_MS)
-            if (engine.isPlaying) abLoop.jumpFrom(engine.positionMs)?.let { engine.seekTo(it) }
+            session.keepRepeating()
         }
     }
     // The chapters marked on the time bar.
@@ -1090,8 +990,8 @@ fun PlayerScreen(
         }
     }
     // In the corner there is no "All done" to press: the queue's end ends it; an error is shown full screen.
-    LaunchedEffect(small, finished) {
-        if (small && finished) {
+    LaunchedEffect(small, session.finished) {
+        if (small && session.finished) {
             leavePlayer()
             onExit()
         }
@@ -1563,7 +1463,7 @@ fun PlayerScreen(
                         modifier = Modifier.weight(1f),
                     )
                     val sleepNote = when {
-                        sleepAtEnd -> "Sleep at the end"
+                        session.sleepAtEnd -> "Sleep at the end"
                         sleepAt != null -> "Sleep in ${PlaybackMath.sleepMinutesLeft(sleepLeftMs)} min"
                         else -> null
                     }
@@ -1935,10 +1835,10 @@ fun PlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         FilterChip(
-                            selected = sleepAt == null && !sleepAtEnd,
+                            selected = sleepAt == null && !session.sleepAtEnd,
                             onClick = {
                                 sleepAt = null
-                                sleepAtEnd = false
+                                session.sleepAtEnd = false
                             },
                             label = { Text("Off", fontSize = 16.sp) },
                         )
@@ -1946,7 +1846,7 @@ fun PlayerScreen(
                             FilterChip(
                                 selected = sleepAt != null && sleepChoice == minutes,
                                 onClick = {
-                                    sleepAtEnd = false
+                                    session.sleepAtEnd = false
                                     sleepChoice = minutes
                                     sleepLeftMs = minutes * 60_000L
                                     sleepAt = android.os.SystemClock.elapsedRealtime() + minutes * 60_000L
@@ -1955,25 +1855,16 @@ fun PlayerScreen(
                             )
                         }
                         FilterChip(
-                            selected = sleepAtEnd,
+                            selected = session.sleepAtEnd,
                             onClick = {
                                 sleepAt = null
-                                sleepAtEnd = true
+                                session.sleepAtEnd = true
                             },
                             label = { Text("End of this video", fontSize = 16.sp) },
                         )
                     }
 
-                    PanelTitle("Repeat")
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        PlaybackMath.Repeat.entries.forEach { option ->
-                            FilterChip(
-                                selected = repeat == option,
-                                onClick = { repeat = option },
-                                label = { Text(option.label, fontSize = 16.sp) },
-                            )
-                        }
-                    }
+                    RepeatChoice(session.repeat) { session.repeat = it }
                 },
                 modifier = Modifier.align(Alignment.CenterEnd).then(safeArea),
             )
@@ -2064,7 +1955,7 @@ fun PlayerScreen(
                 },
                 onDismiss = { audioPicker = false },
                 onPick = { picked ->
-                    manualTrackPick = true
+                    session.manualTrackPick = true
                     engine.select(com.hawkynt.mediadroid.engine.Track.Kind.AUDIO, picked?.id)
                     audioPicker = false
                 },
@@ -2090,7 +1981,7 @@ fun PlayerScreen(
                 kind = com.hawkynt.mediadroid.engine.Track.Kind.TEXT,
                 onDismiss = { subtitlePicker = false },
                 onPick = { picked ->
-                    manualTrackPick = true
+                    session.manualTrackPick = true
                     subtitlesOn = picked != null || subtitlesOn
                     engine.subtitlesOn = true
                     engine.select(com.hawkynt.mediadroid.engine.Track.Kind.TEXT, picked?.id)
@@ -2099,7 +1990,7 @@ fun PlayerScreen(
             )
         }
         // Not over the open panel: the household is still choosing there; the prompt shows once it is closed.
-        if (finished && !panelOpen && !small) {
+        if (session.finished && !panelOpen && !small) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Button(onClick = { leavePlayer(); onExit() }) {
                     Text("All done — back to the library", fontSize = 22.sp)

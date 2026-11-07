@@ -42,6 +42,10 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
+        // The engine that decodes nothing, for the player's session (PlayerSessionTest).
+        getByName("desktopTest").dependencies {
+            implementation(project.dependencies.testFixtures(project(":engine:api")))
+        }
     }
 }
 

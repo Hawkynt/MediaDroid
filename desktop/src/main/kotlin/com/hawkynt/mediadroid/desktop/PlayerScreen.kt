@@ -62,6 +62,10 @@ import androidx.compose.ui.input.key.Key
 import com.hawkynt.mediadroid.ui.PlayerCommand
 import com.hawkynt.mediadroid.ui.PlayerKeys
 import com.hawkynt.mediadroid.ui.GearPanel
+import com.hawkynt.mediadroid.ui.Playable
+import com.hawkynt.mediadroid.ui.PlayerSession
+import com.hawkynt.mediadroid.ui.RepeatChoice
+import androidx.compose.material3.Button
 import com.hawkynt.mediadroid.ui.TrackDialog
 import com.hawkynt.mediadroid.ui.clock
 import androidx.compose.ui.input.key.KeyEventType
@@ -123,16 +127,16 @@ fun PlayerScreen(
     store: DesktopStore,
     places: DesktopLibrary,
     mediaKeys: MediaKeys,
-    queue: List<Playing>,
+    queue: List<Playable>,
     startIndex: Int,
+    /** The next video starts when one ends: a film's parts always, episodes with binge-watching on. */
+    autoAdvance: Boolean,
     fullScreen: Boolean,
     onFullScreen: () -> Unit,
     onExit: () -> Unit,
     screen: () -> OutputScreen = { OutputScreen.Unknown },
     native: NativePicture? = null,
 ) {
-    var index by remember { mutableIntStateOf(startIndex) }
-    val playing = queue[index]
     // The sound settings the engine reads as it plays (PlaybackTuning): the household's, kept; night mode for this
     // player only, as on Android.
     var sound by remember { mutableStateOf(store.sound) }
@@ -143,9 +147,6 @@ fun PlayerScreen(
     tuning.normalizeLoudness = sound.evenLoudness
     tuning.audioDelayMs = sound.audioDelayMs
     tuning.nightMode = nightMode
-    // The subtitle delay each video keeps, as on Android.
-    var subtitleDelayMs by remember(index) { mutableIntStateOf(store.subtitleDelayMs(playing.video)) }
-    tuning.subtitleDelayMs = subtitleDelayMs
     val engine = remember {
         DesktopPlaybackEngine(tuning, files = places::remoteFile).apply {
             // MEDIADROID_MUTE=1: checks and documentation runs play silently.
@@ -154,6 +155,19 @@ fun PlayerScreen(
             softwareDecoding = store.softwareDecoding
         }
     }
+    // The queue, where each video starts and what comes after it, as the phone plays it (PlayerSession): binge-
+    // watching, intros skipped and credits ending a video as Settings say, resume points, repeats.
+    val session = remember {
+        PlayerSession(
+            queue, startIndex, store.state, engine, autoAdvance,
+            skipping = store.state.data.settings.skipIntroCredits,
+        )
+    }
+    val index = session.index
+    val playing = session.current
+    // The subtitle delay each video keeps, as on Android.
+    var subtitleDelayMs by remember(index) { mutableIntStateOf(store.subtitleDelayMs(playing.videoPath)) }
+    tuning.subtitleDelayMs = subtitleDelayMs
     val bitmap = remember { PictureBitmap() }
     // The picture stage (deinterlacing, upscalers, colour) on the graphics card, made once per player.
     val stage = remember { com.hawkynt.mediadroid.engine.desktop.GlStage() }
@@ -185,12 +199,12 @@ fun PlayerScreen(
     remember { ShaderFolder.load(ShaderFolder.of(store.state.data.settings.shaderFolder, AppFolder.current())) }
     // The picture this video plays with: its own (its shape and colour system with it), else its folder's, else the
     // household's (FolderDefaults), as on the phone.
-    var picture by remember { mutableStateOf(store.pictureFor(playing.video)) }
+    var picture by remember { mutableStateOf(store.pictureFor(playing.videoPath)) }
     // The folder or share whose picture that is, if any has one.
-    var pictureFolder by remember { mutableStateOf(store.pictureFolderOf(playing.video)) }
+    var pictureFolder by remember { mutableStateOf(store.pictureFolderOf(playing.videoPath)) }
     LaunchedEffect(index) {
-        picture = store.pictureFor(playing.video)
-        pictureFolder = store.pictureFolderOf(playing.video)
+        picture = store.pictureFor(playing.videoPath)
+        pictureFolder = store.pictureFolderOf(playing.videoPath)
     }
     // The setup of the screen the window is on (a lens, a projector).
     var screenSetup by remember { mutableStateOf(store.screenSetup(screen().key)) }
@@ -255,7 +269,7 @@ fun PlayerScreen(
     // A sound file's track named as the picker shows a sidecar: `EN`, `DE · commentary`.
     var trackPicker by remember { mutableStateOf<TrackPicker?>(null) }
     val soundNames = remember(index) {
-        sidecarsOf(places, playing.video).filter { it.kind == Sidecars.Kind.AUDIO }
+        sidecarsOf(places, playing.videoPath).filter { it.kind == Sidecars.Kind.AUDIO }
             .associate { it.name to it.describe() }
     }
     var subtitle by remember { mutableStateOf<String?>(null) }
@@ -263,49 +277,38 @@ fun PlayerScreen(
     var secondLine by remember { mutableStateOf<String?>(null) }
     var controlsUntil by remember { mutableLongStateOf(System.currentTimeMillis() + CONTROLS_MS) }
     // The file's own chapters, and the part repeated between two marks — as on the phone.
-    var chapters by remember { mutableStateOf(emptyList<Chapter>()) }
+    val chapters = session.chapters
     var chapterMenu by remember { mutableStateOf(false) }
-    var abLoop by remember { mutableStateOf(AbLoop.OFF) }
+    val abLoop = session.abLoop
     val focus = remember { FocusRequester() }
 
-    fun saveProgress() {
-        val d = engine.durationMs
-        val p = engine.positionMs
-        if (d <= 0 || p <= 0 || engine.openedPath != playing.video) return
-        if (PlaybackMath.isWatched(p, d, null)) {
-            store.markWatched(playing.video)
-        } else {
-            store.setResume(playing.video, p, d)
-        }
-    }
+    fun next() = session.next()
 
-    fun next() {
-        saveProgress()
-        if (index + 1 < queue.size) index++ else onExit()
-    }
-
-    // The video before in the queue; on the first, its start again.
-    fun previous() {
-        saveProgress()
-        if (index > 0) index-- else engine.seekTo(0)
-    }
+    // The video before in the queue; a few seconds in, or on the first, its start again.
+    fun previous() = session.previous()
 
     DisposableEffect(Unit) {
-        val listener = object : PlaybackEngine.Listener {
-            override fun onEnded() {
-                store.markWatched(engine.openedPath ?: return)
-            }
-        }
-        engine.addListener(listener)
         onDispose {
-            saveProgress()
-            engine.removeListener(listener)
+            session.saveProgress()
             engine.close()
             stage.close()
         }
     }
+    // Intros skipped, the credits ending the video, the progress kept (PlayerSession.tick); the time played counted,
+    // for whether a video is worth a resume point.
+    LaunchedEffect(Unit) {
+        var last = System.currentTimeMillis()
+        while (true) {
+            delay(500)
+            val now = System.currentTimeMillis()
+            session.countPlayed(now - last, engine.speed)
+            last = now
+            session.tick()
+        }
+    }
     // A subtitle picked becomes the household's language for the next videos; off stays off.
-    fun pick(kind: Track.Kind, id: String?) {
+    fun pick(kind: Track.Kind, id: String?, byHand: Boolean = true) {
+        if (byHand) session.manualTrackPick = true
         engine.select(kind, id)
         if (kind == Track.Kind.TEXT) {
             store.subtitleLanguage = engine.tracks.firstOrNull { it.id == id }?.language.orEmpty()
@@ -318,14 +321,14 @@ fun PlayerScreen(
         frame = null
         shownPicture[0] = null
         openedAnew[0] = true
-        abLoop = AbLoop.OFF
-        chapters = emptyList()
-        chapters = withContext(Dispatchers.IO) { runCatching { Chapters.read(places.file(playing.video)) }.getOrNull() }
-            .orEmpty()
+        val read = withContext(Dispatchers.IO) {
+            runCatching { Chapters.read(places.file(playing.videoPath)) }.getOrNull()
+        }.orEmpty()
+        // Where it was left, never back into a known intro.
+        val startMs = session.begin(read)
         // Off the window's thread: on a network source, finding the files beside it and opening it take round trips.
         runCatching {
-            val startMs = store.resumeMs(playing.video)
-            withContext(Dispatchers.IO) { engine.open(requestFor(places, playing.video, startMs)) }
+            withContext(Dispatchers.IO) { engine.open(requestFor(places, playing.videoPath, startMs)) }
         }
             .onFailure { error = it.message ?: it.toString() }
     }
@@ -621,16 +624,17 @@ fun PlayerScreen(
             }
             position = engine.positionMs
             duration = engine.durationMs
-            if (engine.isPlaying) abLoop.jumpFrom(position)?.let { engine.seekTo(it) }
+            session.keepRepeating()
             val wereEmpty = tracks.none { it.kind == Track.Kind.TEXT }
             tracks = engine.tracks
             // A video's subtitles start in the household's language, as on the phone.
-            if (wereEmpty) Tracks.preferredText(tracks, store.subtitleLanguage)?.let { pick(Track.Kind.TEXT, it.id) }
+            if (wereEmpty) session.tracksChanged(tracks, store.subtitleLanguage)
             subtitle = engine.subtitle()
             secondLine = engine.secondSubtitleLine()
             val wasPlaying = isPlaying
             isPlaying = engine.isPlaying
-            if (wasPlaying && !isPlaying && duration > 0 && position >= duration - 100) next()
+            // At its end: the next one, the same again, or the queue is over (PlayerSession.finishCurrent).
+            if (wasPlaying && !isPlaying && duration > 0 && position >= duration - 100) session.finishCurrent()
             // Done well within a refresh: the next frame is asked for at once, so the gap to it is one refresh.
             if (System.nanoTime() - began < refresh.periodNs / 2) refresh.askedAgain()
         }
@@ -669,7 +673,7 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(index, isPlaying, duration) {
-        mediaKeys.show(NowPlaying(playing.title, isPlaying, index > 0, index + 1 < queue.size, duration))
+        mediaKeys.show(NowPlaying(playing.title, isPlaying, index > 0, session.hasNext, duration))
     }
 
     var speed by remember { mutableStateOf(store.speed) }
@@ -686,14 +690,10 @@ fun PlayerScreen(
     }
 
     // , and . : one picture back or on, paused there; Page Up and Down: the next and the previous chapter (mpv's keys).
-    fun stepFrame(forward: Boolean) {
-        if (engine.isPlaying) engine.pause()
-        engine.seekTo(FrameStep.target(engine.positionMs, engine.frameRate, forward, engine.durationMs))
-    }
+    fun stepFrame(forward: Boolean) = session.stepFrame(forward)
 
     fun jumpChapter(forward: Boolean) {
-        val at = engine.positionMs
-        (if (forward) ChapterSteps.next(chapters, at) else ChapterSteps.previous(chapters, at))?.let(engine::seekTo)
+        session.jumpChapter(forward)
     }
 
     // S: the next subtitle track, after the last one off again.
@@ -727,7 +727,7 @@ fun PlayerScreen(
                     PlayerCommand.FRAME_FORWARD -> stepFrame(true)
                     PlayerCommand.CHAPTER_NEXT -> jumpChapter(true)
                     PlayerCommand.CHAPTER_BACK -> jumpChapter(false)
-                    PlayerCommand.REPEAT -> abLoop = abLoop.mark(engine.positionMs)
+                    PlayerCommand.REPEAT -> session.markRepeat()
                     PlayerCommand.SLOWER -> changeSpeed(speed - SPEED_STEP)
                     PlayerCommand.FASTER -> changeSpeed(speed + SPEED_STEP)
                     PlayerCommand.LEAVE -> if (fullScreen) onFullScreen() else onExit()
@@ -777,7 +777,7 @@ fun PlayerScreen(
         if (panel) {
             // Clicking beside the panel closes it, as on the phone.
             Box(Modifier.fillMaxSize().clickable(interactionSource = null, indication = null) { panel = false })
-            val video = playing.video
+            val video = playing.videoPath
             GearPanel(
                 speed = speed,
                 onSpeed = ::changeSpeed,
@@ -845,6 +845,7 @@ fun PlayerScreen(
                         subtitleDelayMs = it
                         store.setSubtitleDelay(video, it)
                     }
+                    RepeatChoice(session.repeat) { session.repeat = it }
                     DesktopDecodingRows(
                         softwareDecoding,
                         onSoftware = {
@@ -913,6 +914,12 @@ fun PlayerScreen(
                     .background(Color(0xCC000000), MaterialTheme.shapes.small).padding(12.dp),
             )
         }
+        // The queue is over, as on the phone.
+        if (session.finished) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Button(onClick = onExit) { Text("All done — back to the library", fontSize = 22.sp) }
+            }
+        }
         error?.let {
             Text("This video cannot be played: $it", color = Color.White, fontSize = 20.sp,
                 modifier = Modifier.align(Alignment.Center).padding(32.dp))
@@ -924,7 +931,11 @@ fun PlayerScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onExit) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
-                Text(playing.title, color = Color.White, fontSize = 20.sp)
+                Text(
+                    playing.title + (playing.subtitle?.let { "  ·  $it" } ?: ""),
+                    color = Color.White,
+                    fontSize = 20.sp,
+                )
                 ChapterSteps.current(chapters, position)?.let {
                     Text("  ·  " + ChapterSteps.name(chapters, it), color = Color.White, fontSize = 16.sp)
                 }
@@ -963,7 +974,7 @@ fun PlayerScreen(
                         Icon(Icons.Default.PhotoCamera, "Take a picture", tint = Color.White)
                     }
                     // L: one press marks the start, the next the end, the third stops repeating.
-                    TextButton(onClick = { abLoop = abLoop.mark(engine.positionMs) }) {
+                    TextButton(onClick = { session.markRepeat() }) {
                         val a = abLoop.a
                         val b = abLoop.b
                         Text(

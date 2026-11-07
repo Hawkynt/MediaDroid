@@ -17,7 +17,10 @@ class DesktopSettingsTest {
 
     @Test
     fun `Settings shows only the platform rows the desktop player acts on`() {
-        assertEquals(setOf(PlatformSetting.SHADER_FOLDER), DesktopSettingsPlatform.OFFERED)
+        assertEquals(
+            setOf(PlatformSetting.SHADER_FOLDER, PlatformSetting.BINGE_WATCHING, PlatformSetting.SKIP_INTRO_CREDITS),
+            DesktopSettingsPlatform.OFFERED,
+        )
         // Not acted on here yet: a switch for them would change nothing.
         listOf(
             PlatformSetting.MATCH_REFRESH_RATE,

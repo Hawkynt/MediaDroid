@@ -179,6 +179,24 @@ fun GearPanel(
     }
 }
 
+/** What plays again once a video ends: nothing, this video, or the whole queue (PlayerSession.repeat). */
+@Composable
+fun RepeatChoice(
+    repeat: com.hawkynt.mediadroid.player.PlaybackMath.Repeat,
+    onRepeat: (com.hawkynt.mediadroid.player.PlaybackMath.Repeat) -> Unit,
+) {
+    PanelTitle("Repeat")
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        com.hawkynt.mediadroid.player.PlaybackMath.Repeat.entries.forEach { option ->
+            FilterChip(
+                selected = repeat == option,
+                onClick = { onRepeat(option) },
+                label = { Text(option.label, fontSize = 16.sp) },
+            )
+        }
+    }
+}
+
 @Composable
 fun PanelTitle(text: String) {
     Text(text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
