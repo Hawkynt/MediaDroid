@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -92,6 +93,8 @@ import com.hawkynt.mediadroid.player.Histogram
 import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.PictureFit
 import com.hawkynt.mediadroid.player.PictureLayout
+import com.hawkynt.mediadroid.player.PicturePlacement
+import com.hawkynt.mediadroid.player.ReadBackDemand
 import com.hawkynt.mediadroid.player.PictureShape
 import com.hawkynt.mediadroid.player.ScreenRect
 import com.hawkynt.mediadroid.player.ScreenWarp
@@ -120,6 +123,7 @@ fun PlayerScreen(
     onFullScreen: () -> Unit,
     onExit: () -> Unit,
     screen: () -> OutputScreen = { OutputScreen.Unknown },
+    native: NativePicture? = null,
 ) {
     var index by remember { mutableIntStateOf(startIndex) }
     val playing = queue[index]
@@ -147,6 +151,13 @@ fun PlayerScreen(
     val bitmap = remember { PictureBitmap() }
     // The picture stage (deinterlacing, upscalers, colour) on the graphics card, made once per player.
     val stage = remember { com.hawkynt.mediadroid.engine.desktop.GlStage() }
+    // Where the picture is shown by the stage itself (NativePicture, Presentation.NATIVE): its window under this
+    // screen's see-through one, nothing read back but what a snapshot or the histogram asks for (ReadBackDemand).
+    // Null where this window draws the picture read back, as before.
+    val pictureWindow = remember { native?.attach(stage) }
+    val demand = remember { ReadBackDemand(HISTOGRAM_MS) }
+    // Another video opened: the stage's window shows nothing of the last one.
+    val openedAnew = remember { BooleanArray(1) }
     // The neural networks, their files in the app-data folder's models/ (DesktopNeural), and what a choice is tried
     // with before it is taken (PictureTrial, as on Android).
     val neural = remember { com.hawkynt.mediadroid.engine.desktop.DesktopNeural(File(AppFolder.current(), "models")) }
@@ -218,6 +229,23 @@ fun PlayerScreen(
     // What the last snapshot became — its file, or why there is none — shown for a few seconds.
     var snapshotNote by remember { mutableStateOf<String?>(null) }
     var snapshotNoteUntil by remember { mutableLongStateOf(0L) }
+    // For the frame loop, which outlives each composition: the title and the drift as they are now.
+    val currentTitle by rememberUpdatedState(playing.title)
+    val currentDrift by rememberUpdatedState(drift)
+
+    // The picture on screen saved as a PNG in the Pictures folder, its file named on screen.
+    val scope = rememberCoroutineScope()
+    fun saveSnapshot(shown: MediaReader.Picture) {
+        // A copy: the decoder's picture is not ours to keep while the file is written.
+        val still = MediaReader.Picture(shown.ptsMs, shown.width, shown.height, shown.rgba.copyOf())
+        val title = currentTitle
+        scope.launch {
+            snapshotNote = runCatching {
+                withContext(Dispatchers.IO) { FrameSnapshot.save(still, title, PicturesFolder.current()) }
+            }.fold({ "Picture saved: ${it.path}" }, { "The picture could not be saved: ${it.message ?: it}" })
+            snapshotNoteUntil = System.currentTimeMillis() + SNAPSHOT_NOTE_MS
+        }
+    }
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -283,6 +311,7 @@ fun PlayerScreen(
         tracks = emptyList()
         frame = null
         shownPicture[0] = null
+        openedAnew[0] = true
         abLoop = AbLoop.OFF
         chapters = emptyList()
         chapters = withContext(Dispatchers.IO) { runCatching { Chapters.read(places.file(playing.video)) }.getOrNull() }
@@ -342,16 +371,24 @@ fun PlayerScreen(
         var stillOf: TestPattern? = null
         // The screen's refresh, measured from the frames asked for back to back: each picture is picked for the
         // middle of the refresh it shows at (DesktopPlaybackEngine.moment) — a refresh later where the stage hands
-        // its pictures out one call late (Presentation.PBO_LAGGED) and the last one went through it.
+        // its pictures out one call late (Presentation.PBO_LAGGED, which NATIVE reads back by in this window) and the
+        // last one went through it. Shown by the stage itself, a picture is swapped in at the next refresh.
         val refresh = RefreshPeriod()
-        val lagged = com.hawkynt.mediadroid.engine.desktop.Presentation.chosen() ==
+        val lagged = pictureWindow == null && com.hawkynt.mediadroid.engine.desktop.Presentation.chosen().readBack ==
             com.hawkynt.mediadroid.engine.desktop.Presentation.PBO_LAGGED
         var staging = false
+        // What the stage's own window was last told to show (Presentation.NATIVE).
+        var sceneShown: List<Any>? = null
         while (true) {
             refresh.refreshed(withFrameNanos { it })
             val began = System.nanoTime()
             // Another video opened (its frame cleared): nothing of the last one is drawn again.
-            if (frame == null) staged = null
+            if (pictureWindow == null && frame == null || openedAnew[0]) {
+                staged = null
+                openedAnew[0] = false
+                pictureWindow?.scene(null)
+                sceneShown = null
+            }
             var changed = false
             val aheadMs = (refresh.periodNs / 2 + if (lagged && staging) refresh.periodNs else 0) / 1_000_000
             // A test pattern instead of the video: through the stage with the household's picture and the screen's
@@ -372,7 +409,12 @@ fun PlayerScreen(
                     stillOf = showing
                     staged = withContext(Dispatchers.Default) {
                         val shownWith = TestPattern.pictureFor(pictureNow)
-                        stage.process(shownPattern, shownWith, w, h, warp = ScreenWarp.of(setup))
+                        if (pictureWindow != null) {
+                            stage.processTexture(shownPattern, shownWith, w, h, warp = ScreenWarp.of(setup))
+                            MediaReader.Picture(0, w, h, SHOWN_BY_STAGE)
+                        } else {
+                            stage.process(shownPattern, shownWith, w, h, warp = ScreenWarp.of(setup))
+                        }
                     }
                     shownSize = canvas
                     drawn = AssPicture.EMPTY
@@ -460,7 +502,17 @@ fun PlayerScreen(
                     val throughStage = picture.hasFilters || pixelAspect != 1f || widening != 1f ||
                         !warp.isIdentity || raw.hdr != null || engine.drawsSubtitles || raw.planes != null
                     staging = throughStage && stage.ready && outW > 0 && outH > 0
-                    staged = if (staging) {
+                    // Shown by the stage itself, every picture goes through it: it is the one that draws.
+                    staged = if (pictureWindow != null) {
+                        if (outW > 0 && outH > 0) {
+                            withContext(Dispatchers.Default) {
+                                stage.processTexture(moment, picture, outW, outH, part, warp)
+                            }
+                            MediaReader.Picture(raw.ptsMs, outW, outH, SHOWN_BY_STAGE)
+                        } else {
+                            staged
+                        }
+                    } else if (staging) {
                         withContext(Dispatchers.Default) { stage.process(moment, picture, outW, outH, part, warp) }
                     } else {
                         raw.eightBit()
@@ -501,7 +553,7 @@ fun PlayerScreen(
                     drawnSecond = it
                     changed = true
                 }
-                if (changed) {
+                if (changed || pictureWindow != null) {
                     val warp = if (showing == null) shownWarp else ScreenWarp.None
                     val key = listOf(drawn, drawnSecond, warp, base.width, base.height)
                     if (key != bentFor) {
@@ -509,6 +561,39 @@ fun PlayerScreen(
                         bent = drawn.bent(warp, base.width, base.height)
                         bentSecond = drawnSecond.bent(warp, base.width, base.height)
                     }
+                }
+                if (pictureWindow != null) {
+                    // Placed as this window would draw it, the subtitles over it in the stage's window; what changed
+                    // only, sent on.
+                    val place = PicturePlacement.shown(
+                        canvas.width, canvas.height, shownSize.width, shownSize.height, base.width, base.height,
+                        currentDrift.first, currentDrift.second,
+                    )
+                    val scene = listOf(place.toList(), base.width, base.height, bent, bentSecond)
+                    if (scene != sceneShown) {
+                        sceneShown = scene
+                        pictureWindow.scene(
+                            com.hawkynt.mediadroid.engine.desktop.PictureWindow.Scene(
+                                place, base.width, base.height, listOf(bent, bentSecond),
+                            ),
+                        )
+                    }
+                    // Its pixels read back only for what asks for them: a snapshot, the histogram twice a second.
+                    val wanted = demand.wanted(System.currentTimeMillis(), histogramShown)
+                    if (wanted.any) {
+                        withContext(Dispatchers.Default) { stage.readBackShown() }?.let { read ->
+                            bent.blendInto(read.rgba, read.width, read.height)
+                            bentSecond.blendInto(read.rgba, read.width, read.height)
+                            shownPicture[0] = read
+                            if (wanted.snapshot) saveSnapshot(read)
+                            if (wanted.histogram) {
+                                histogram = withContext(Dispatchers.Default) {
+                                    Histogram.of(read.rgba, read.width, read.height)
+                                }
+                            }
+                        }
+                    }
+                } else if (changed) {
                     val shown = if (bent.isEmpty && bentSecond.isEmpty) {
                         base
                     } else {
@@ -591,19 +676,9 @@ fun PlayerScreen(
         store.speed = clamped
     }
 
-    // The picture on screen saved as a PNG in the Pictures folder, its file named on screen.
-    val scope = rememberCoroutineScope()
+    // The picture on screen saved as a PNG; shown by the stage itself, it is read back for that at the next frame.
     fun snapshot() {
-        val shown = shownPicture[0] ?: return
-        // A copy: the decoder's picture is not ours to keep while the file is written.
-        val still = MediaReader.Picture(shown.ptsMs, shown.width, shown.height, shown.rgba.copyOf())
-        val title = playing.title
-        scope.launch {
-            snapshotNote = runCatching {
-                withContext(Dispatchers.IO) { FrameSnapshot.save(still, title, PicturesFolder.current()) }
-            }.fold({ "Picture saved: ${it.path}" }, { "The picture could not be saved: ${it.message ?: it}" })
-            snapshotNoteUntil = System.currentTimeMillis() + SNAPSHOT_NOTE_MS
-        }
+        if (pictureWindow != null) demand.askSnapshot() else shownPicture[0]?.let(::saveSnapshot)
     }
 
     // , and . : one picture back or on, paused there; Page Up and Down: the next and the previous chapter (mpv's keys).
@@ -625,7 +700,9 @@ fun PlayerScreen(
     }
 
     Box(
-        Modifier.fillMaxSize().background(Color.Black)
+        // Over the stage's own window the screen is see-through — all but invisibly tinted, so a window system that
+        // passes clicks through clear pixels (Win32's layered windows) still hands them to the controls.
+        Modifier.fillMaxSize().background(if (pictureWindow != null) SEE_THROUGH else Color.Black)
             .focusRequester(focus).focusable()
             .onPointerEvent(PointerEventType.Move) { controlsUntil = System.currentTimeMillis() + CONTROLS_MS }
             .onKeyEvent { event ->
@@ -902,16 +979,13 @@ private fun SubtitleLine(text: String, modifier: Modifier) {
 /**
  * [image] centred at [shown], the size the picture size gave it (PictureLayout) — larger than the canvas for Fill, its
  * overhang cut; before that is known, as large as the canvas allows, its shape kept. Moved by [drift] (BurnInDrift).
+ * Placed as the stage's own window places it (PicturePlacement).
  */
 private fun DrawScope.drawShown(image: ImageBitmap, shown: IntSize, drift: IntOffset = IntOffset.Zero) {
-    val scale = minOf(size.width / image.width, size.height / image.height)
-    val w = if (shown.width > 0) shown.width.toFloat() else image.width * scale
-    val h = if (shown.height > 0) shown.height.toFloat() else image.height * scale
-    drawImage(
-        image,
-        dstOffset = IntOffset(((size.width - w) / 2).toInt(), ((size.height - h) / 2).toInt()) + drift,
-        dstSize = IntSize(w.toInt(), h.toInt()),
+    val at = PicturePlacement.shown(
+        size.width.toInt(), size.height.toInt(), shown.width, shown.height, image.width, image.height, drift.x, drift.y,
     )
+    drawImage(image, dstOffset = IntOffset(at[0], at[1]), dstSize = IntSize(at[2], at[3]))
 }
 
 private fun clock(ms: Long): String {
@@ -946,3 +1020,9 @@ private const val SNAPSHOT_NOTE_MS = 5_000L
 
 /** How much [ and ] change the speed. */
 private const val SPEED_STEP = 0.05f
+
+/** The player's background over the stage's own window: black at the least alpha there is. */
+private val SEE_THROUGH = Color(0x01000000)
+
+/** The pixels of a picture the stage shows itself (Presentation.NATIVE): none here, its size alone. */
+private val SHOWN_BY_STAGE = ByteArray(0)

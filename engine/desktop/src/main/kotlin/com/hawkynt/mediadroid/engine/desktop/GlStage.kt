@@ -79,7 +79,7 @@ class GlStage(
     // bytes it holds, its fence and what is being read into it; the picture handed out last.
     private val readbackRing = ReadbackRing(
         PBO_BUFFERS,
-        if (presentation == Presentation.PBO_LAGGED) 1 else 0,
+        if (presentation.readBack == Presentation.PBO_LAGGED) 1 else 0,
     )
     private val pbos = IntArray(PBO_BUFFERS)
     private val pboBytes = IntArray(PBO_BUFFERS)
@@ -87,10 +87,17 @@ class GlStage(
     private val pboPictures = arrayOfNulls<LongArray>(PBO_BUFFERS)
     private var handedOut: MediaReader.Picture? = null
 
-    // The textures processTexture hands to the window in turn, and each one's size.
+    // The textures processTexture hands to the window in turn, each one's size and picture's time; the one written
+    // last; the framebuffer it is read back through when asked (readBackShown).
     private val shared = IntArray(SHARED_TEXTURES)
     private val sharedSizes = arrayOfNulls<IntArray>(SHARED_TEXTURES)
+    private val sharedPts = LongArray(SHARED_TEXTURES)
     private var sharedNext = 0
+    private var sharedLast = -1
+    private var sharedRead = 0
+
+    // The window the stage shows its pictures in itself (Presentation.NATIVE), once opened.
+    @Volatile private var pictureWindow: PictureWindow? = null
 
     // The pictures uploaded (their 3D eye) and the pictures filtered at their own size, each by the picture it holds.
     private val uploaded = Array(UPLOADED) { Slot("raw$it") }
@@ -227,7 +234,7 @@ class GlStage(
     }
 
     /** Whether a picture drawn is still being read back (Presentation.PBO_LAGGED): [latest] hands it out. */
-    val behind: Boolean get() = presentation == Presentation.PBO_LAGGED && readbackRing.inFlight > 0
+    val behind: Boolean get() = presentation.readBack == Presentation.PBO_LAGGED && readbackRing.inFlight > 0
 
     /**
      * The newest picture read back: under Presentation.PBO_LAGGED the one the last [process] drew, collected now (for a
@@ -244,18 +251,99 @@ class GlStage(
 
     /**
      * A picture as [process] draws it, left on the graphics card for a window whose context shares the stage's
-     * ([shareWith]): one of [SHARED_TEXTURES] textures in turn, RGBA8, its bottom row the picture's top, and the fence
-     * the window waits on (glWaitSync) before drawing it.
+     * ([shareWith]) or for the stage's own [openWindow], which then shows it: one of [SHARED_TEXTURES] textures in
+     * turn, RGBA8 with the picture's top in its last row (as OpenGL counts them), and the fence a sharing window waits
+     * on (glWaitSync) before drawing it — the window opened waits on it itself.
      */
-    fun processTexture(moment: Moment, adjustment: PictureAdjustment, width: Int, height: Int): SharedPicture? =
-        if (!ready || shareWith == 0L) {
-            null
-        } else {
-            thread.submit<SharedPicture> { share(run(moment, adjustment, width, height, null, ScreenWarp.None)) }.get()
-        }
+    fun processTexture(
+        moment: Moment,
+        adjustment: PictureAdjustment,
+        width: Int,
+        height: Int,
+        crop: PictureCrop? = null,
+        warp: ScreenWarp = ScreenWarp.None,
+    ): SharedPicture? = if (!ready || (shareWith == 0L && pictureWindow == null)) {
+        null
+    } else {
+        thread.submit<SharedPicture> {
+            share(run(moment, adjustment, width, height, crop, warp), moment.shown.ptsMs)
+        }.get()
+    }
+
+    /** [picture] alone through [processTexture]: a still, a test pattern. */
+    fun processTexture(
+        picture: MediaReader.Picture,
+        adjustment: PictureAdjustment,
+        width: Int,
+        height: Int,
+        crop: PictureCrop? = null,
+        warp: ScreenWarp = ScreenWarp.None,
+    ): SharedPicture? = processTexture(Moment(picture), adjustment, width, height, crop, warp)
 
     /** A texture the stage drew into for a sharing window ([processTexture]); [slot] which of them. */
-    class SharedPicture(val slot: Int, val texture: Int, val width: Int, val height: Int, val fence: Long)
+    class SharedPicture(
+        val slot: Int,
+        val texture: Int,
+        val width: Int,
+        val height: Int,
+        val fence: Long,
+        /** The time of the picture in it. */
+        val ptsMs: Long = 0L,
+    )
+
+    /**
+     * A window of the stage's own showing each picture [processTexture] draws (PictureWindow, Presentation.NATIVE),
+     * swapped at the screen's refresh when [vsync]; hidden until shown. Null where none comes up. One at a time:
+     * opening another closes the one before.
+     */
+    fun openWindow(vsync: Boolean = true): PictureWindow? = if (!ready) {
+        null
+    } else {
+        thread.submit<PictureWindow?> {
+            pictureWindow?.close()
+            pictureWindow = null
+            // Made on a thread of its own, which Win32 wants pumping its messages; the stage's context let go
+            // meanwhile, as sharing a context current on another thread is not allowed everywhere.
+            GLFW.glfwMakeContextCurrent(0)
+            val opened = runCatching { PictureWindow(window, vsync) }.getOrNull()
+            GLFW.glfwMakeContextCurrent(window)
+            if (opened?.ready == true) {
+                sharedLast = -1
+                pictureWindow = opened
+                opened
+            } else {
+                opened?.close()
+                null
+            }
+        }.get()
+    }
+
+    /** The window [openWindow] opened closed again: [processTexture] hands its pictures to nobody but a sharer. */
+    fun closeWindow() {
+        if (!ready || thread.isShutdown) return
+        thread.submit {
+            pictureWindow?.close()
+            pictureWindow = null
+        }.get()
+    }
+
+    /**
+     * The picture [processTexture] drew last — on screen in the window the stage shows it in — read back now, rows from
+     * the top: for a snapshot or the histogram, which want its pixels. Null before any.
+     */
+    fun readBackShown(): MediaReader.Picture? = if (!ready) {
+        null
+    } else {
+        thread.submit<MediaReader.Picture?> {
+            val slot = sharedLast
+            val size = sharedSizes.getOrNull(slot)
+            if (slot < 0 || shared[slot] == 0 || size == null) return@submit null
+            if (sharedRead == 0) sharedRead = glGenFramebuffers()
+            glBindFramebuffer(GL_FRAMEBUFFER, sharedRead)
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, shared[slot], 0)
+            download(Target(shared[slot], sharedRead, size[0], size[1], GL_RGBA8), sharedPts[slot])
+        }.get()
+    }
 
     // The part of [picture] the stage works on: inside the [crop] where it fits the picture, of that the [stereo] eye.
     private fun region(
@@ -1419,7 +1507,7 @@ class GlStage(
         val began = System.nanoTime()
         val picture = when (presentation) {
             Presentation.SYNC -> download(from, ptsMs)
-            Presentation.PBO, Presentation.PBO_LAGGED -> throughBuffers(from, ptsMs)
+            Presentation.PBO, Presentation.PBO_LAGGED, Presentation.NATIVE -> throughBuffers(from, ptsMs)
         }
         presentNanos = System.nanoTime() - began
         return picture
@@ -1469,10 +1557,14 @@ class GlStage(
         handedOut = MediaReader.Picture(ptsMs, w, h, rgba)
     }
 
-    /** [from] copied into the next of the textures shared with the window, fenced. */
-    private fun share(from: Target): SharedPicture {
-        val slot = sharedNext
-        sharedNext = (sharedNext + 1) % SHARED_TEXTURES
+    /**
+     * [from] copied into the next of the textures shared with the window, fenced; posted to the stage's own window
+     * where one is open, once the graphics card is done with that window's last draw from the texture.
+     */
+    private fun share(from: Target, ptsMs: Long): SharedPicture {
+        val shownIn = pictureWindow
+        val slot = shownIn?.queue?.writeSlot() ?: sharedNext.also { sharedNext = (it + 1) % SHARED_TEXTURES }
+        shownIn?.beforeWrite(slot)
         val size = sharedSizes[slot]
         if (shared[slot] == 0 || size == null || size[0] != from.width || size[1] != from.height) {
             if (shared[slot] != 0) glDeleteTextures(shared[slot])
@@ -1490,7 +1582,9 @@ class GlStage(
         val fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
         glFlush()
         presentNanos = System.nanoTime() - began
-        return SharedPicture(slot, shared[slot], from.width, from.height, fence)
+        sharedPts[slot] = ptsMs
+        sharedLast = slot
+        return SharedPicture(slot, shared[slot], from.width, from.height, fence, ptsMs).also { shownIn?.post(it) }
     }
 
     private fun download(from: Target, ptsMs: Long): MediaReader.Picture {
@@ -1517,10 +1611,14 @@ class GlStage(
             interpolatorOpen?.close()
             enlargerOpen?.close()
             colouring.close()
-            // The buffers and shared textures outlive this context where a window shares its objects.
+            // The window showing the shared textures goes first; they outlive this context where a window shares its
+            // objects.
+            pictureWindow?.close()
+            pictureWindow = null
             if (ready) {
                 pbos.filter { it != 0 }.forEach(::glDeleteBuffers)
                 shared.filter { it != 0 }.forEach(::glDeleteTextures)
+                if (sharedRead != 0) glDeleteFramebuffers(sharedRead)
             }
             if (window != 0L) GLFW.glfwDestroyWindow(window)
             out?.let(MemoryUtil::memFree)
@@ -1538,7 +1636,7 @@ class GlStage(
         const val FENCE_WAIT_NANOS = 100_000_000L
 
         /** How many textures a sharing window is handed in turn: one drawn, one shown, one spare. */
-        const val SHARED_TEXTURES = 3
+        const val SHARED_TEXTURES = PictureWindow.SLOTS
 
         /** Every how many columns Adaptive and Old console weigh a picture's luma, as on Android. */
         const val ADAPTIVE_COLUMN_STEP = 4

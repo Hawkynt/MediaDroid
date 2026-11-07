@@ -811,6 +811,79 @@ class GlStageTest {
         }
     }
 
+    @Test
+    fun `the stage's own window shows each picture it draws, read back only when asked`() {
+        val w = 320
+        val h = 180
+        val pictures = listOf(TestPattern.BARS_HD, TestPattern.LEVELS, TestPattern.BARS_HD)
+            .mapIndexed { i, pattern -> MediaReader.Picture(i * 40L, w, h, pattern.render(w, h)) }
+        val expected = GlStage(Presentation.SYNC).use { sync ->
+            pictures.map { sync.process(it, PictureAdjustment.Neutral, w, h).rgba }
+        }
+        GlStage(Presentation.NATIVE).use { native ->
+            // Nothing drawn yet: nothing to read back, nothing to hand to a window that is not there.
+            assertEquals(null, native.readBackShown())
+            assertEquals(null, native.processTexture(pictures[0], PictureAdjustment.Neutral, w, h))
+            val window = checkNotNull(native.openWindow(vsync = false)) { "no picture window" }
+            assertTrue(window.handle != 0L)
+            val presented = java.util.concurrent.LinkedBlockingQueue<Long>()
+            window.onPresented = { ptsMs, _, _ -> presented.add(ptsMs) }
+            window.resize(w, h)
+            window.scene(PictureWindow.Scene(intArrayOf(0, 0, w, h), w, h))
+            for ((i, picture) in pictures.withIndex()) {
+                checkNotNull(native.processTexture(picture, PictureAdjustment.Neutral, w, h))
+                assertTrue(expected[i].contentEquals(native.readBackShown()!!.rgba))
+                // The window draws it: each picture's time comes back once it was swapped.
+                var shown: Long?
+                do {
+                    shown = presented.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+                } while (shown != null && shown != picture.ptsMs)
+                assertEquals(picture.ptsMs, shown)
+            }
+        }
+    }
+
+    @Test
+    fun `the stage's own window draws the picture at its place and libass's subtitles over it`() {
+        val colour = byteArrayOf(40, 80, 120, -1)
+        val flat = MediaReader.Picture(0, 100, 50, ByteArray(100 * 50 * 4) { colour[it % 4] })
+        // Half-transparent red, 20 × 10 at 10, 10 of the picture.
+        val sign = com.hawkynt.mediadroid.player.AssPicture(10, 10, 20, 10, IntArray(200) { 0x80FF0000.toInt() })
+        GlStage(Presentation.NATIVE).use { native ->
+            val window = checkNotNull(native.openWindow(vsync = false)) { "no picture window" }
+            val frames = java.util.concurrent.LinkedBlockingQueue<Triple<ByteArray, Int, Int>>()
+            window.onDrawn = { rgba, w, h -> frames.add(Triple(rgba, w, h)) }
+            val scene = PictureWindow.Scene(intArrayOf(50, 25, 100, 50), 100, 50, listOf(sign))
+            window.resize(200, 100)
+            window.scene(scene)
+            native.processTexture(flat, PictureAdjustment.Neutral, 100, 50)
+            // A pixel of the window, counted from its top left.
+            fun Triple<ByteArray, Int, Int>.at(x: Int, y: Int, c: Int) = first[((third - 1 - y) * second + x) * 4 + c]
+                .toInt() and 255
+            val blended = intArrayOf((255 * 128 + 40 * 127) / 255, 80 * 127 / 255, 120 * 127 / 255)
+            // What is wrong with a frame: black around the picture, the picture's colour inside it, the subtitle at
+            // the picture's 10, 10 — the window's 60, 35 — blended by its alpha. Null for a frame that is right.
+            fun Triple<ByteArray, Int, Int>.wrong(): String? = when {
+                second != 200 || third != 100 -> "a frame of $second × $third"
+                (0..2).any { at(10, 10, it) != 0 } -> "not black around the picture: ${(0..2).map { at(10, 10, it) }}"
+                (0..2).any { abs(at(140, 70, it) - (colour[it].toInt() and 255)) > 1 } ->
+                    "the picture's colour: ${(0..2).map { at(140, 70, it) }}"
+                (0..2).any { abs(at(70, 40, it) - blended[it]) > 2 } ->
+                    "the subtitle: ${(0..2).map { at(70, 40, it) }}, not ${blended.toList()}"
+                else -> null
+            }
+            // A window just resized may draw a frame or two into its buffer of before (Mesa takes the new size on
+            // its next frame): drawn again until one is right, or ten seconds have gone.
+            val until = System.nanoTime() + 10_000_000_000L
+            var last: String? = "the window never drew"
+            while (last != null && System.nanoTime() < until) {
+                val frame = frames.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS)
+                if (frame == null) window.scene(scene) else last = frame.wrong()
+            }
+            assertEquals(null, last)
+        }
+    }
+
     companion object {
         private lateinit var stage: GlStage
 
