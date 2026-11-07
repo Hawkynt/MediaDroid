@@ -36,9 +36,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hawkynt.mediadroid.data.Settings
+import com.hawkynt.mediadroid.state.Settings
 import kotlinx.coroutines.launch
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 
 /** The four digits spoken as words — a child who cannot read cannot enter them. */
 private val DigitWords = listOf("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")

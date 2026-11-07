@@ -24,6 +24,8 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation(project(":core:player"))
+            // The household's memory, one model on every platform; the screens read and change it.
+            api(project(":core:state"))
         }
     }
 }

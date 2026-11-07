@@ -27,7 +27,7 @@ class DesktopLibraryTest {
         val again = DesktopLibrary(DesktopStore(data), secrets)
         assertEquals(listOf(nas), again.networkSources)
         assertEquals("secret", secrets.secretFor("nas"))
-        assertEquals(false, File(data, "settings.json").readText().contains("secret"))
+        assertEquals(false, File(data, "state.json").readText().contains("secret"))
         again.remove(nas)
         assertEquals(emptyList<Source>(), DesktopLibrary(DesktopStore(data), secrets).networkSources)
         assertNull(secrets.secretFor("nas"))

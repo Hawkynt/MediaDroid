@@ -101,6 +101,7 @@ dependencies {
     implementation(project(":core:library"))
     implementation(project(":core:player"))
     implementation(project(":core:sources"))
+    implementation(project(":core:state"))
     implementation(project(":engine:api"))
     implementation(project(":engine:android"))
     implementation(project(":ui"))

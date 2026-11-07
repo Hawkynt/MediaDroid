@@ -88,7 +88,7 @@ import com.hawkynt.mediadroid.player.AndroidPlaybackEngine
 import com.hawkynt.mediadroid.player.PlaybackQueue
 import com.hawkynt.mediadroid.player.PlayerPanel
 import com.hawkynt.mediadroid.player.PlayerWindow
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.data.screenKey
 import com.hawkynt.mediadroid.player.PictureFit
 import com.hawkynt.mediadroid.player.PictureLayout

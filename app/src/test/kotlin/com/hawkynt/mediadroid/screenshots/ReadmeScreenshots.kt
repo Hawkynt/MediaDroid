@@ -13,8 +13,9 @@ import androidx.test.core.app.ApplicationProvider
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import com.github.takahirom.roborazzi.captureRoboImage
-import com.hawkynt.mediadroid.data.ResumeInfo
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.ResumeInfo
+import com.hawkynt.mediadroid.data.stateStoreOf
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.ui.MediaDroidApp
 import com.hawkynt.mediadroid.ui.theme.MediaDroidTheme
 import java.io.File
@@ -52,7 +53,7 @@ class ReadmeScreenshots {
         // Pictures load on the test thread, so a capture never catches them half-way.
         SingletonImageLoader.setUnsafe(ImageLoader.Builder(context).coroutineContext(Dispatchers.Unconfined).build())
 
-        store = StateStore(context)
+        store = stateStoreOf(context)
         store.data.rootPath = root.absolutePath
         store.data.sidebarExpanded = false
         // Something to continue: one film half-way, one episode just begun.

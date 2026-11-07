@@ -482,7 +482,7 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   phone's setting does, for a video the chip plays with errors, and says which decoder plays the picture.
 - The neural networks run on the same native tree as on the phone (`libmediadroid.so` / `mediadroid.dll`): ncnn on
   Vulkan where the machine has a Vulkan device, else on the CPU. Their files live in the app-data folder's `models/`,
-  a folder per network beside `settings.json`: RIFE, IFRNet, waifu2x, Real-CUGAN and Real-ESRGAN come inside the app
+  a folder per network beside `state.json`: RIFE, IFRNet, waifu2x, Real-CUGAN and Real-ESRGAN come inside the app
   and are unpacked there on first use, every file checked against its SHA-256 (and put back if it no longer
   matches); DAIN, XVFI, FLAVR, CAIN and RealSR are fetched there when picked, checked the same way. A self-test runs each unit
   in a Java process of its own, so a network or a graphics driver that takes the process down takes only the test —
@@ -565,6 +565,7 @@ would for its menus.
 | `:core:player` | the binge queue, the picture's rules (deinterlacing, scaling, smooth motion, the checks), the models catalogue | everywhere (JVM) |
 | `:core:imaging` | decoders for TIFF, TGA and PCX art | everywhere (JVM) |
 | `:core:sources` | SMB, NFS, FTP/SFTP and WebDAV | everywhere (JVM) |
+| `:core:state` | the household's memory, one model on every platform — watched marks and resume points, the pictures per video, folder and household, the sources, the settings; each app keeps it as `state.json` in its own data folder | everywhere (JVM) |
 | `:engine:api` | built ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): the playback engine the screens talk to — commands, tracks, state, the picture's output and the events; its test fixtures carry the contract every engine passes and a fake engine that passes it, for the screens' tests | everywhere (JVM) |
 | `:engine:android` | built ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): [Media3](https://github.com/androidx/media) behind that engine — ExoPlayer as the app builds it, FFmpeg's extension, libass, second subtitles, teletext, loudness, sidecar audio and network sources; the player panel with Media3's controls, the media session and notification; the contract runs on the real ExoPlayer under Robolectric | Android |
 | `:stage` | built ([#284](https://github.com/Hawkynt/MediaDroid/issues/284)): the picture stage's passes against an OpenGL ES interface (`Gles`: android.opengl on Android, LWJGL on the desktop), the shaders with them — how a pass runs and its frames, the upscalers, restoration, deinterlacers, HDR's tone mapping, chroma upscaling, blending and Motion, the colour correction and dither, the mpv user shaders' runner, colouring, and the dry run's test pictures; each platform keeps only what feeds it and reads it back (Android's decoder surfaces, Film and luma read-backs; the desktop's uploads and presentation). tools/shader-check draws with the real stage beside its own harness | everywhere (JVM) |
