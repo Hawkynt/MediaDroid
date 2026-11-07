@@ -1741,9 +1741,11 @@ fun PlayerScreen(
 
 
                     PanelTitle("Audio delay · ${audioOutput.name}")
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                    // Wraps rather than squeezes: a button pressed narrower than its word shows it a letter a line.
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically,
                     ) {
                         fun nudge(steps: Int) {
                             audioDelayMs = PlaybackMath.nudgeAudioDelay(audioDelayMs, steps)
@@ -1781,9 +1783,10 @@ fun PlayerScreen(
                         subtitleLook = look
                         store.saveSubtitleLook(queue[index].videoPath, look)
                     }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text("Delay", fontSize = 16.sp, modifier = Modifier.widthIn(min = 56.dp))
                         androidx.compose.material3.OutlinedButton(
@@ -2042,7 +2045,8 @@ fun PlayerScreen(
                 },
             )
         }
-        if (finished) {
+        // Not over the open panel: the household is still choosing there; the prompt shows once it is closed.
+        if (finished && !panelOpen) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Button(onClick = { leavePlayer(); onExit() }) {
                     Text("All done — back to the library", fontSize = 22.sp)
