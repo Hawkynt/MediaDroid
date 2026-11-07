@@ -57,7 +57,7 @@ interface Gles {
     /** [texture] as the bound framebuffer's colour. */
     fun framebufferTexture2D(texture: Int)
 
-    /** The bound framebuffer's [width] × [height] pixels from (0, 0) as RGBA bytes into [into], the bottom row first. */
+    /** The bound framebuffer's [width] × [height] pixels from (0, 0) as RGBA bytes into [into], bottom row first. */
     fun readPixels(width: Int, height: Int, into: ByteBuffer)
     fun viewport(x: Int, y: Int, width: Int, height: Int)
 

@@ -19,6 +19,14 @@ class WindowTarget(override val width: Int, override val height: Int) : DrawTarg
 }
 
 /**
+ * A texture of [width] × [height] made elsewhere (a network's output, a frame of the platform's), as a pass reads it;
+ * never drawn into.
+ */
+class SampledTexture(override val texture: Int, override val width: Int, override val height: Int) : DrawTarget {
+    override val framebuffer: Int get() = 0
+}
+
+/**
  * The picture stage's way of running a pass, on any platform's [gl]: a fragment shader of :stage's (Shaders) drawn
  * over the whole of a target, reading textures. Each fragment shader's program is built once, beside the stage's
  * vertex shader of its GLSL version. Every pass is handed the film grain [grain] and its [seed] (glsl/video's
