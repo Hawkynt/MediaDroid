@@ -707,10 +707,14 @@ class DesktopPlaybackEngine(
             val files = soundFiles.mapIndexed { i, path ->
                 Track("$SOUND_FILE$i", Track.Kind.AUDIO, null, java.io.File(path).name, source = i + 1)
             }
+            // What is picked, read once: the reader thread may switch it meanwhile, and the list is one moment's.
+            val sound = selectedSound
+            val text = selectedText
+            val second = secondText
             return (own + files + sidecars.map { it.track }).map {
                 when (it.kind) {
-                    Track.Kind.TEXT -> it.copy(selected = it.id == selectedText, second = it.id == secondText)
-                    Track.Kind.AUDIO -> it.copy(selected = it.id == selectedSound)
+                    Track.Kind.TEXT -> it.copy(selected = it.id == text, second = it.id == second)
+                    Track.Kind.AUDIO -> it.copy(selected = it.id == sound)
                     Track.Kind.VIDEO -> it
                 }
             }
