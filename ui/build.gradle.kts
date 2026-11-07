@@ -14,6 +14,8 @@ kotlin {
         namespace = "com.hawkynt.mediadroid.ui"
         compileSdk = 37
         minSdk = 26
+        // The drawables (composeResources) travel with the library.
+        androidResources { enable = true }
     }
 
     jvm("desktop")
@@ -23,9 +25,20 @@ kotlin {
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)
+            // Res.drawable.* for both apps; the apps draw them too, so the resources reach them.
+            api(compose.components.resources)
+            implementation(libs.compose.mp.material.icons)
+            // The art on the walls, from files the platform hands over (MediaArt).
+            implementation(libs.coil.compose)
             implementation(project(":core:player"))
             // The household's memory, one model on every platform; the screens read and change it.
             api(project(":core:state"))
         }
     }
+}
+
+// The drawables both apps show (the sidebar's, the onboarding's, the Files browser's), as Res.drawable.*.
+compose.resources {
+    publicResClass = true
+    packageOfResClass = "com.hawkynt.mediadroid.ui.resources"
 }

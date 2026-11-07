@@ -62,11 +62,9 @@ fun main(args: Array<String>) = application {
     val folder = remember { AppFolder.current() }
     val store = remember { DesktopStore(folder) }
     // The places media lives — this computer's folder and the network sources — and the files behind them.
-    val places = remember {
-        DesktopLibrary(store, DesktopSecrets.forThisSystem(folder)).also { places ->
-            Art.reader = { location -> places.file(location).open().use { it.readBytes() } }
-        }
-    }
+    val places = remember { DesktopLibrary(store, DesktopSecrets.forThisSystem(folder)) }
+    // The walls' pictures: this computer's as they are, the network sources' copied once into the app-data folder.
+    val art = remember { DesktopMediaArt(places, File(folder, "art")) }
     // The media keys and the system's now-playing panel, for the app's whole life (MPRIS, SMTC).
     val mediaKeys = remember { MediaKeys() }
     val state = remember { windowState(store.window) }
@@ -99,6 +97,7 @@ fun main(args: Array<String>) = application {
                 Screen.Library -> LibraryScreen(
                     store = store,
                     places = places,
+                    art = art,
                     library = library,
                     onLibrary = { library = it },
                     onPlay = { queue, index -> screen = Screen.Player(queue, index) },

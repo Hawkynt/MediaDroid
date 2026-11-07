@@ -42,12 +42,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hawkynt.mediadroid.R
+import com.hawkynt.mediadroid.ui.resources.Res
+import com.hawkynt.mediadroid.ui.resources.ic_folder_open
+import org.jetbrains.compose.resources.painterResource
 import com.hawkynt.mediadroid.data.QualityStore
 import com.hawkynt.mediadroid.data.SourceAccess
 import com.hawkynt.mediadroid.state.StateStore
@@ -214,7 +215,7 @@ private fun RootRow(root: StorageRoot, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         modifier = rowModifier(onClick).padding(14.dp),
     ) {
-        Icon(painterResource(R.drawable.ic_folder_open), contentDescription = null, modifier = Modifier.size(32.dp))
+        Icon(painterResource(Res.drawable.ic_folder_open), contentDescription = null, modifier = Modifier.size(32.dp))
         Spacer(Modifier.width(14.dp))
         Column {
             Text(root.label, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
@@ -236,7 +237,7 @@ private fun FolderRow(folder: FolderEntry, onClick: () -> Unit, onPlay: () -> Un
             if (folder.coverPath != null) {
                 PosterImage(folder.coverPath, contentScale = ContentScale.Crop)
             } else {
-                Icon(painterResource(R.drawable.ic_folder_open), contentDescription = null)
+                Icon(painterResource(Res.drawable.ic_folder_open), contentDescription = null)
             }
         }
         Spacer(Modifier.width(14.dp))
