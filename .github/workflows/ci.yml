@@ -66,6 +66,10 @@ jobs:
       # this gate can stop a merge whose screens no longer reach what the pictures show.
       - name: README screenshots render
         run: ./gradlew :app:recordRoborazziDebug -Pscreenshots --no-daemon
+      # The Android engine under Robolectric — the contract on the real ExoPlayer, the subtitle routings — the same
+      # slow tier as the screenshots, left out of `./gradlew test`.
+      - name: Android engine tests (Robolectric)
+        run: ./gradlew :engine:android:testDebugUnitTest -Pscreenshots --no-daemon
       - name: Assemble every shipping artifact
         run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon
       - name: Check the repository README

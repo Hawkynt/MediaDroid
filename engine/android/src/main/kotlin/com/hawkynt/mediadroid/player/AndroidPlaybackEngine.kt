@@ -10,28 +10,36 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.DefaultAudioSink
-import com.hawkynt.mediadroid.data.Settings
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackState
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.engine.VideoOutput
+import com.hawkynt.mediadroid.library.FsFile
 
 /**
  * The Android playback engine: Media3's ExoPlayer, built as the player has always built it — the bundled FFmpeg
  * preferred for audio and the fallback for video (first with software decoding), FFmpeg's video renderer keeping as
- * many pictures ahead as Settings asks, loudness, night mode and even loudness on the decoded sound, the sound waiting
+ * many pictures ahead as [options] ask, loudness, night mode and even loudness on the decoded sound, the sound waiting
  * for a filtered picture, sidecar audio merged in, network sources streamed, ASS/SSA subtitles drawn by libass where
  * the native library carries it ([assSubtitles]) — behind [PlaybackEngine]. Its picture outputs are a [SurfaceOutput]
- * and a [SurfaceViewOutput].
+ * and a [SurfaceViewOutput]. What it needs of the app comes in: the household's [options], the [files] behind a
+ * network source's location and how late the picture stage shows a picture ([pictureLatencyMs]).
  *
  * [exo] stays reachable while the player screen moves over to the engine's own commands (#283).
  */
 class AndroidPlaybackEngine(
     context: Context,
-    private val settings: Settings,
+    private val options: Options,
     override val tuning: PlaybackTuning,
+    /** The file behind a location: a device path's or a network source's (SourceAccess), null where none is. */
+    private val files: (String) -> FsFile?,
+    /**
+     * How long the picture stage holds a picture back at the video's [frame rate][Float] (-1 while unknown), in
+     * milliseconds: the sound waits as long. Asked on the audio thread, as often as it plays.
+     */
+    private val pictureLatencyMs: (Float) -> Int = { 0 },
     /**
      * The demo library's placeholder videos (README screenshots): what is opened is set and its start shown on the
      * controls, never loaded — a placeholder is no video to play.
@@ -39,10 +47,20 @@ class AndroidPlaybackEngine(
     private val placeholders: Boolean = false,
 ) : PlaybackEngine {
 
+    /**
+     * The household's choices the engine is built with (Settings): FFmpeg's video decoder before the device's
+     * ([softwareVideoDecoding]), compressed surround to an AV receiver ([audioPassthrough]), and how many decoded
+     * pictures are kept ahead ([bufferUnit], a DecodedBuffer.Unit name, and [bufferValue]).
+     */
+    data class Options(
+        val softwareVideoDecoding: Boolean = false,
+        val audioPassthrough: Boolean = false,
+        val bufferUnit: String = DecodedBuffer.Unit.SECONDS.name,
+        val bufferValue: Float = 5f,
+    )
+
     /** The video's frame rate, for the sound's wait behind a filtered picture; kept current by the player screen. */
     val videoFrameRate = floatArrayOf(-1f)
-
-    private val appContext = context.applicationContext
 
     /** ASS/SSA subtitles as libass draws them: the renderer feeds them, an [AssOverlayView] puts them up. */
     val assSubtitles = AssSubtitles({ attachedFonts(openedPath) }, { location -> wholeFile(location) })
@@ -70,7 +88,7 @@ class AndroidPlaybackEngine(
                 }
             }
         } else {
-            val file = com.hawkynt.mediadroid.data.SourceAccess.resolve(appContext, path) ?: return emptyList()
+            val file = files(path) ?: return emptyList()
             MatroskaFonts.read(file.length()) { at, count -> file.open(at).use { readUpTo(it, count) } }
         }
         fontsRead = path to fonts
@@ -81,7 +99,7 @@ class AndroidPlaybackEngine(
     private fun wholeFile(location: String): ByteArray? = if (location.startsWith("/")) {
         java.io.File(location).readBytes()
     } else {
-        com.hawkynt.mediadroid.data.SourceAccess.resolve(appContext, location)?.let { file ->
+        files(location)?.let { file ->
             file.open(0).use { readUpTo(it, file.length().coerceAtMost(MAX_SUBTITLE_FILE).toInt()) }
         }
     }
@@ -139,7 +157,7 @@ class AndroidPlaybackEngine(
                     ) {
                         super.buildVideoRenderers(
                             context,
-                            if (settings.softwareVideoDecoding) {
+                            if (options.softwareVideoDecoding) {
                                 EXTENSION_RENDERER_MODE_PREFER
                             } else {
                                 EXTENSION_RENDERER_MODE_ON
@@ -159,9 +177,9 @@ class AndroidPlaybackEngine(
                             context.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memory)
                             val buffer = DecodedBuffer(
                                 runCatching {
-                                    DecodedBuffer.Unit.valueOf(settings.bufferUnit)
+                                    DecodedBuffer.Unit.valueOf(options.bufferUnit)
                                 }.getOrDefault(DecodedBuffer.Unit.SECONDS),
-                                settings.bufferValue,
+                                options.bufferValue,
                             )
                             val frames = buffer.decoderFrames(
                                 DecodedBuffer.decoderCeilingBytes(
@@ -198,7 +216,7 @@ class AndroidPlaybackEngine(
                         out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
                     ) = super.buildAudioRenderers(
                         context,
-                        if (settings.audioPassthrough) EXTENSION_RENDERER_MODE_ON else extensionRendererMode,
+                        if (options.audioPassthrough) EXTENSION_RENDERER_MODE_ON else extensionRendererMode,
                         mediaCodecSelector,
                         enableDecoderFallback,
                         audioSink,
@@ -227,14 +245,8 @@ class AndroidPlaybackEngine(
                             )
                             .build(),
                         // A filtered picture can run a few frames behind; the sound waits as long, counted by the
-                        // video's own frame rate (see VideoFilterStage.latencyFrames).
-                        {
-                            tuning.audioDelayMs + PlaybackMath.pictureLatencyMs(
-                                VideoFilterStage.latencyFrames,
-                                videoFrameRate[0],
-                                VideoFilterStage.latencyMs,
-                            )
-                        },
+                        // video's own frame rate ([pictureLatencyMs]).
+                        { tuning.audioDelayMs + pictureLatencyMs(videoFrameRate[0]) },
                     )
                 }
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
@@ -243,7 +255,7 @@ class AndroidPlaybackEngine(
                 // Videos on a network source stream through it; local ones as before. Audio files beside
                 // the video are merged in (see SidecarAudio).
                 SourceDataSource.Factory(context) {
-                    com.hawkynt.mediadroid.data.SourceAccess.resolve(context, it)
+                    files(it)
                 }.let { files ->
                     SidecarAudioSourceFactory(
                         // SSA left unparsed where libass draws it (AssSubtitles.parsers), in the file and beside it.
