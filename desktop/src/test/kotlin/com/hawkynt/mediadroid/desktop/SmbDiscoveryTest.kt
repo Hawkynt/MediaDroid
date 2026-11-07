@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.desktop
 
+import com.hawkynt.mediadroid.ui.platform.LanServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

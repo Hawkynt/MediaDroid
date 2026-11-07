@@ -74,10 +74,14 @@ private val LocalStorageAuthorities = setOf(
  */
 @Composable
 fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
-    // The shared screens' pictures and facts, read the Android way.
+    // The shared screens' pictures and facts, and the sources' keeping, the Android way.
     val context = LocalContext.current
     val art = remember { com.hawkynt.mediadroid.data.AndroidMediaArt(context) }
-    CompositionLocalProvider(com.hawkynt.mediadroid.ui.platform.LocalMediaArt provides art) {
+    val keeper = remember { com.hawkynt.mediadroid.data.AndroidSourceKeeper(context) }
+    CompositionLocalProvider(
+        com.hawkynt.mediadroid.ui.platform.LocalMediaArt provides art,
+        com.hawkynt.mediadroid.ui.platform.LocalSourceKeeper provides keeper,
+    ) {
         AppShell(store, demo)
     }
 }

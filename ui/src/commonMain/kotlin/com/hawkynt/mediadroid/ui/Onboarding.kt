@@ -43,8 +43,8 @@ import org.jetbrains.compose.resources.painterResource
 
 /**
  * First start, and whenever the media folder is missing or being changed: grant file access, then
- * choose the folder with Android's own picker. A typed path stays available for TV boxes that ship
- * no picker.
+ * choose the folder with the platform's own picker. A typed path stays available for TV boxes that ship
+ * no picker; with [onNetworkSource], a network source can be added instead.
  */
 @Composable
 fun OnboardingScreen(
@@ -57,6 +57,7 @@ fun OnboardingScreen(
     onPickFolder: () -> Unit,
     onUsePath: (String) -> Unit,
     onCancel: () -> Unit,
+    onNetworkSource: (() -> Unit)? = null,
 ) {
     var typing by remember { mutableStateOf(false) }
     var typed by remember { mutableStateOf(currentPath) }
@@ -136,6 +137,9 @@ fun OnboardingScreen(
                 ) { Text("Use this folder", fontSize = 18.sp) }
             } else {
                 TextButton(onClick = { typing = true }) { Text("Type a path instead", fontSize = 16.sp) }
+            }
+            onNetworkSource?.let {
+                TextButton(onClick = it) { Text("Or add a network source", fontSize = 16.sp) }
             }
 
             scanError?.let {

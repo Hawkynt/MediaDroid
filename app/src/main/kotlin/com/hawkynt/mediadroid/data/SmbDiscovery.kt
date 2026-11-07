@@ -10,10 +10,8 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import com.hawkynt.mediadroid.ui.platform.LanServer
 import java.util.concurrent.Executors
-
-/** An SMB server announced on the local network: its name, and the address to connect to. */
-data class LanServer(val name: String, val host: String)
 
 /**
  * The SMB servers announcing themselves on the local network over mDNS (`_smb._tcp`) — Samba with

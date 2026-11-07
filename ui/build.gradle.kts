@@ -33,6 +33,8 @@ kotlin {
             implementation(project(":core:player"))
             // The household's memory, one model on every platform; the screens read and change it.
             api(project(":core:state"))
+            // A network source tried from its dialog before it is kept.
+            implementation(project(":core:sources"))
         }
     }
 }
