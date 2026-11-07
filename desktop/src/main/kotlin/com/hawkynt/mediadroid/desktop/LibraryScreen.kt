@@ -47,6 +47,9 @@ import com.hawkynt.mediadroid.ui.OnboardingScreen
 import com.hawkynt.mediadroid.ui.PlacesScreen
 import com.hawkynt.mediadroid.ui.SearchScreen
 import com.hawkynt.mediadroid.ui.SourcesSection
+import com.hawkynt.mediadroid.ui.SettingsScreen
+import com.hawkynt.mediadroid.ui.platform.LocalSettingsPlatform
+import com.hawkynt.mediadroid.ui.platform.SettingsPlatform
 import com.hawkynt.mediadroid.ui.Sidebar
 import com.hawkynt.mediadroid.ui.platform.LocalMediaArt
 import com.hawkynt.mediadroid.ui.platform.LocalMediaFiles
@@ -75,6 +78,7 @@ fun LibraryScreen(
     art: MediaArt,
     keeper: SourceKeeper,
     files: MediaFiles,
+    settings: SettingsPlatform,
     library: Library?,
     onLibrary: (Library) -> Unit,
     onPlay: (List<Playing>, Int) -> Unit,
@@ -83,6 +87,7 @@ fun LibraryScreen(
         LocalMediaArt provides art,
         LocalSourceKeeper provides keeper,
         LocalMediaFiles provides files,
+        LocalSettingsPlatform provides settings,
     ) {
         Library(store, places, library, onLibrary, onPlay)
     }
@@ -178,7 +183,11 @@ private fun Walls(
     onFolder: () -> Unit,
 ) {
     val state = store.state
-    var screen by remember { mutableStateOf<Shown>(Shown.Browse(LibrarySection.MOVIES)) }
+    // MEDIADROID_SHOW=settings: Settings open from the start, past its gate (documentation and checks).
+    val settingsShown = remember { System.getenv("MEDIADROID_SHOW") == "settings" }
+    var screen by remember {
+        mutableStateOf<Shown>(if (settingsShown) Shown.Settings else Shown.Browse(LibrarySection.MOVIES))
+    }
     // A title's details over the walls, as on Android; Back returns to where it was opened.
     var details by remember { mutableStateOf<MediaItem?>(null) }
     var filter by remember { mutableStateOf(BrowseFilter()) }
@@ -300,11 +309,13 @@ private fun Walls(
                         state.saveSort(section, order)
                     },
                 )
-                Shown.Settings -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
-                    Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(16.dp))
-                    Sources(store, onFolder = onFolder, onChanged = onRefresh)
-                }
+                Shown.Settings -> SettingsScreen(
+                    store = state,
+                    onChangeFolder = onFolder,
+                    onAddDeviceFolder = { addDeviceFolder(store, onRefresh) },
+                    onSourcesChanged = onRefresh,
+                    unlockedAtStart = settingsShown,
+                )
                 else -> Unit
             }
         }
@@ -321,18 +332,21 @@ private fun Sources(store: DesktopStore, onFolder: () -> Unit, onChanged: () -> 
         store = store.state,
         unreachable = emptySet(),
         onChangeMainFolder = onFolder,
-        onAddDeviceFolder = {
-            chooseFolder()?.let { path ->
-                val state = store.state
-                if (state.sources.none { it.kind == SourceKind.LOCAL && it.path == path }) {
-                    val name = File(path).name.ifEmpty { path }
-                    state.saveSources(state.sources + Source.local(UUID.randomUUID().toString(), name, path))
-                    onChanged()
-                }
-            }
-        },
+        onAddDeviceFolder = { addDeviceFolder(store, onChanged) },
         onChanged = onChanged,
     )
+}
+
+/** A further folder of this computer, chosen now, added beside the media folder unless it is there already. */
+private fun addDeviceFolder(store: DesktopStore, onChanged: () -> Unit) {
+    chooseFolder()?.let { path ->
+        val state = store.state
+        if (state.sources.none { it.kind == SourceKind.LOCAL && it.path == path }) {
+            val name = File(path).name.ifEmpty { path }
+            state.saveSources(state.sources + Source.local(UUID.randomUUID().toString(), name, path))
+            onChanged()
+        }
+    }
 }
 
 /**

@@ -37,8 +37,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.state.Settings
-import kotlinx.coroutines.launch
 import com.hawkynt.mediadroid.state.StateStore
+import com.hawkynt.mediadroid.ui.platform.LocalSettingsPlatform
+import com.hawkynt.mediadroid.ui.platform.PlatformSetting
 
 /** The four digits spoken as words — a child who cannot read cannot enter them. */
 private val DigitWords = listOf("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
@@ -156,24 +157,28 @@ private val SHORT_SCREEN = 560.dp
 
 /**
  * The guarded settings: playback defaults, picture and sound, languages, and
- * the maximum age for the library. Every change is saved straight away.
+ * the maximum age for the library. Every change is saved straight away. A row only some platforms act on shows
+ * where this one does (LocalSettingsPlatform).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     store: StateStore,
-    rootPath: String,
     onChangeFolder: () -> Unit,
     unreachable: Set<String> = emptySet(),
     onAddDeviceFolder: () -> Unit = {},
     onSourcesChanged: () -> Unit = {},
+    /** Past the parent gate from the start: for documentation and checks only. */
+    unlockedAtStart: Boolean = false,
 ) {
-    var unlocked by remember { mutableStateOf(false) }
+    var unlocked by remember { mutableStateOf(unlockedAtStart) }
     if (!unlocked) {
         PinGate(onUnlocked = { unlocked = true })
         return
     }
 
+    val platform = LocalSettingsPlatform.current
+    fun offers(setting: PlatformSetting) = setting in platform.offered
     val settings = store.data.settings
     var defaultPicture by remember { mutableStateOf(store.defaultPicture()) }
     fun update(block: (Settings) -> Unit) {
@@ -198,62 +203,46 @@ fun SettingsScreen(
 
         Text("Playback", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
-        SwitchRow(
-            label = "Binge-watch shows",
-            detail = "When an episode ends, the next one starts.",
-            checked = settings.bingeWatching,
-            onChange = { c -> update { it.bingeWatching = c } },
-        )
-        SwitchRow(
-            label = "Skip intros and credits",
-            detail = "Jumps over intros and ends an episode at its credits, " +
-                "where its chapters or its .edl file mark them.",
-            checked = settings.skipIntroCredits,
-            onChange = { c -> update { it.skipIntroCredits = c } },
-        )
-        Spacer(Modifier.height(8.dp))
-        Text("TV and AV receiver", fontSize = 18.sp)
-        SwitchRow(
-            label = "Match the refresh rate",
-            detail = "The TV switches to the film's frame rate (or a multiple), so camera pans do not judder.",
-            checked = settings.matchRefreshRate,
-            onChange = { c -> update { it.matchRefreshRate = c } },
-        )
-        Text("Even frames", fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
-        Text(
-            "Where the screen cannot switch, the film runs a little faster or slower so every frame stays " +
-                "on screen equally long — 24 fps on 120 Hz, 30 or 20 fps on 60 Hz. The sound keeps its pitch.",
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf(0 to "Off", 5 to "Slight, up to 5 %", 25 to "Strong, up to 25 %").forEach { (percent, label) ->
-                FilterChip(
-                    selected = settings.judderLimitPercent == percent,
-                    onClick = { update { it.judderLimitPercent = percent } },
-                    label = { Text(label, fontSize = 16.sp) },
-                )
-            }
+        if (offers(PlatformSetting.BINGE_WATCHING)) {
+            SwitchRow(
+                label = "Binge-watch shows",
+                detail = "When an episode ends, the next one starts.",
+                checked = settings.bingeWatching,
+                onChange = { c -> update { it.bingeWatching = c } },
+            )
         }
-        if (settings.judderLimitPercent > 0) {
-            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                com.hawkynt.mediadroid.player.PlaybackMath.JudderDirection.entries.forEach { direction ->
-                    FilterChip(
-                        selected = settings.judderDirection == direction.name,
-                        onClick = { update { it.judderDirection = direction.name } },
-                        label = { Text(direction.label, fontSize = 16.sp) },
-                    )
-                }
-            }
+        if (offers(PlatformSetting.SKIP_INTRO_CREDITS)) {
+            SwitchRow(
+                label = "Skip intros and credits",
+                detail = "Jumps over intros and ends an episode at its credits, " +
+                    "where its chapters or its .edl file mark them.",
+                checked = settings.skipIntroCredits,
+                onChange = { c -> update { it.skipIntroCredits = c } },
+            )
         }
-        SwitchRow(
-            label = "Audio passthrough",
-            detail = "Surround sound goes untouched to an AV receiver over HDMI, where the device supports it.",
-            checked = settings.audioPassthrough,
-            onChange = { c -> update { it.audioPassthrough = c } },
-        )
+        if (offers(PlatformSetting.MATCH_REFRESH_RATE) || offers(PlatformSetting.EVEN_FRAMES) ||
+            offers(PlatformSetting.AUDIO_PASSTHROUGH)
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Text("TV and AV receiver", fontSize = 18.sp)
+        }
+        if (offers(PlatformSetting.MATCH_REFRESH_RATE)) {
+            SwitchRow(
+                label = "Match the refresh rate",
+                detail = "The TV switches to the film's frame rate (or a multiple), so camera pans do not judder.",
+                checked = settings.matchRefreshRate,
+                onChange = { c -> update { it.matchRefreshRate = c } },
+            )
+        }
+        if (offers(PlatformSetting.EVEN_FRAMES)) EvenFrames(settings, ::update)
+        if (offers(PlatformSetting.AUDIO_PASSTHROUGH)) {
+            SwitchRow(
+                label = "Audio passthrough",
+                detail = "Surround sound goes untouched to an AV receiver over HDMI, where the device supports it.",
+                checked = settings.audioPassthrough,
+                onChange = { c -> update { it.audioPassthrough = c } },
+            )
+        }
         Spacer(Modifier.height(8.dp))
         Text("Video decoding", fontSize = 18.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -283,48 +272,37 @@ fun SettingsScreen(
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
         )
-        SwitchRow(
-            label = "HDR on this screen",
-            detail = if (settings.hdrToneMapping) {
-                "Where the screen cannot show HDR, MediaDroid brings it down itself (BT.2390, measured scene by " +
-                    "scene), so HDR videos look the same on every device and the picture filters work on them too."
-            } else {
-                "Where the screen cannot show HDR, the device brings it down — however its decoder does; the " +
-                    "picture filters skip HDR videos."
-            },
-            checked = settings.hdrToneMapping,
-            onChange = { c -> update { it.hdrToneMapping = c } },
-        )
-        Spacer(Modifier.height(8.dp))
-        Text("Large video", fontSize = 18.sp)
-        Text(
-            "Before the picture filters work on a video larger than 1080p, it is brought down to fit 1920 × 1080 — " +
-                "after the 3D eye and deinterlacing. Bilinear is quick; Bicubic, Lanczos and Area are sharper.",
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            com.hawkynt.mediadroid.player.Downscaler.entries.forEach { method ->
-                FilterChip(
-                    selected = settings.downscaler == method.name,
-                    onClick = { update { it.downscaler = method.name } },
-                    label = { Text(method.label, fontSize = 16.sp) },
-                )
-            }
+        if (offers(PlatformSetting.HDR_TONE_MAPPING)) {
+            SwitchRow(
+                label = "HDR on this screen",
+                detail = if (settings.hdrToneMapping) {
+                    "Where the screen cannot show HDR, MediaDroid brings it down itself (BT.2390, measured scene " +
+                        "by scene), so HDR videos look the same on every device and the picture filters work on " +
+                        "them too."
+                } else {
+                    "Where the screen cannot show HDR, the device brings it down — however its decoder does; the " +
+                        "picture filters skip HDR videos."
+                },
+                checked = settings.hdrToneMapping,
+                onChange = { c -> update { it.hdrToneMapping = c } },
+            )
         }
-        Spacer(Modifier.height(8.dp))
-        DecodedBufferSetting(
-            unit = runCatching { DecodedBuffer.Unit.valueOf(settings.bufferUnit) }
-                .getOrDefault(DecodedBuffer.Unit.SECONDS),
-            value = settings.bufferValue,
-            onChange = { unit, value ->
-                update {
-                    it.bufferUnit = unit.name
-                    it.bufferValue = value
-                }
-            },
-        )
+        if (offers(PlatformSetting.LARGE_VIDEO)) LargeVideo(settings, ::update)
+        if (offers(PlatformSetting.DECODED_BUFFER)) {
+            Spacer(Modifier.height(8.dp))
+            DecodedBufferSetting(
+                unit = runCatching { DecodedBuffer.Unit.valueOf(settings.bufferUnit) }
+                    .getOrDefault(DecodedBuffer.Unit.SECONDS),
+                value = settings.bufferValue,
+                ceiling = DecodedBuffer.ceilingBytes(platform.memoryBytes),
+                onChange = { unit, value ->
+                    update {
+                        it.bufferUnit = unit.name
+                        it.bufferValue = value
+                    }
+                },
+            )
+        }
         Spacer(Modifier.height(8.dp))
         Text("Default speed", fontSize = 18.sp)
         SpeedSlider(settings.defaultSpeed, { s -> update { it.defaultSpeed = s } }, Modifier.fillMaxWidth())
@@ -342,7 +320,6 @@ fun SettingsScreen(
             checked = settings.evenLoudness,
             onChange = { c -> update { it.evenLoudness = c } },
         )
-
         Spacer(Modifier.height(16.dp))
         Text("Default picture", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(
@@ -350,30 +327,20 @@ fun SettingsScreen(
             fontSize = 15.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        // The folder of mpv user shaders (.glsl): picked once, its permission kept, its shaders offered below.
-        val context = androidx.compose.ui.platform.LocalContext.current
-        var shaderCount by remember { mutableStateOf(com.hawkynt.mediadroid.player.MpvShaders.choices.size) }
-        val pickShaders = androidx.activity.compose.rememberLauncherForActivityResult(
-            androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
-        ) { uri: android.net.Uri? ->
-            uri ?: return@rememberLauncherForActivityResult
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
+        // The folder of mpv user shaders (.glsl): picked once and kept, or the platform's own; its shaders offered below.
+        if (offers(PlatformSetting.SHADER_FOLDER)) {
+            var shaderCount by remember { mutableStateOf(com.hawkynt.mediadroid.player.MpvShaders.choices.size) }
+            val shaderFolder = platform.rememberShaderFolder {
+                shaderCount = com.hawkynt.mediadroid.player.MpvShaders.choices.size
             }
-            update { it.shaderFolder = uri.toString() }
-            com.hawkynt.mediadroid.data.MpvShaderFolder.load(context, uri.toString())
-            shaderCount = com.hawkynt.mediadroid.player.MpvShaders.choices.size
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-            Text(
-                if (settings.shaderFolder.isEmpty()) "No folder of mpv shaders" else "mpv shaders found: $shaderCount",
-                fontSize = 16.sp,
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedButton(onClick = { pickShaders.launch(null) }) { Text("Shader folder…", fontSize = 16.sp) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
+                Text(
+                    if (!platform.hasShaderFolder) "No folder of mpv shaders" else "mpv shaders found: $shaderCount",
+                    fontSize = 16.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedButton(onClick = shaderFolder) { Text("Shader folder…", fontSize = 16.sp) }
+            }
         }
         PictureSliders(
             picture = defaultPicture,
@@ -405,7 +372,7 @@ fun SettingsScreen(
                     it.dotCrawl = defaultPicture.dotCrawl
                 }
             },
-            check = pictureCheck(androidx.compose.ui.platform.LocalContext.current, store),
+            check = platform.pictureCheck,
         )
 
         // Folders and shares with a picture of their own (set in the player's gear), nearest folder first.
@@ -442,36 +409,40 @@ fun SettingsScreen(
             Spacer(Modifier.width(12.dp))
             Text("Subtitles on by default", fontSize = 18.sp)
         }
-        Text("Subtitle size", fontSize = 18.sp)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            com.hawkynt.mediadroid.player.SubtitleLook.Size.entries.forEach { size ->
-                FilterChip(
-                    selected = settings.subtitleSize == size.name,
-                    onClick = { update { it.subtitleSize = size.name } },
-                    label = { Text(size.label, fontSize = 16.sp) },
-                )
+        if (offers(PlatformSetting.SUBTITLE_LOOK)) {
+            Text("Subtitle size", fontSize = 18.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                com.hawkynt.mediadroid.player.SubtitleLook.Size.entries.forEach { size ->
+                    FilterChip(
+                        selected = settings.subtitleSize == size.name,
+                        onClick = { update { it.subtitleSize = size.name } },
+                        label = { Text(size.label, fontSize = 16.sp) },
+                    )
+                }
             }
+            SwitchRow(
+                label = "Subtitles raised",
+                detail = "Above burned-in text at the bottom of the picture.",
+                checked = settings.subtitleRaised,
+                onChange = { c -> update { it.subtitleRaised = c } },
+            )
+            SwitchRow(
+                label = "Dark box behind subtitles",
+                detail = "Easier to read on bright pictures.",
+                checked = settings.subtitleBox,
+                onChange = { c -> update { it.subtitleBox = c } },
+            )
         }
-        SwitchRow(
-            label = "Subtitles raised",
-            detail = "Above burned-in text at the bottom of the picture.",
-            checked = settings.subtitleRaised,
-            onChange = { c -> update { it.subtitleRaised = c } },
-        )
-        SwitchRow(
-            label = "Dark box behind subtitles",
-            detail = "Easier to read on bright pictures.",
-            checked = settings.subtitleBox,
-            onChange = { c -> update { it.subtitleBox = c } },
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = settings.audioLanguage,
-            onValueChange = { t -> update { it.audioLanguage = t.trim().lowercase() } },
-            label = { Text("Preferred audio language (e.g. en, de)" ) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (offers(PlatformSetting.AUDIO_LANGUAGE)) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = settings.audioLanguage,
+                onValueChange = { t -> update { it.audioLanguage = t.trim().lowercase() } },
+                label = { Text("Preferred audio language (e.g. en, de)" ) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = settings.subtitleLanguage,
@@ -510,6 +481,65 @@ fun SettingsScreen(
     }
 }
 
+/**
+ * Even frames: where the screen cannot switch to the film's rate, how far the film may run faster or slower so every
+ * frame stays on screen equally long, and which way.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EvenFrames(settings: Settings, update: ((Settings) -> Unit) -> Unit) {
+    Text("Even frames", fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
+    Text(
+        "Where the screen cannot switch, the film runs a little faster or slower so every frame stays " +
+            "on screen equally long — 24 fps on 120 Hz, 30 or 20 fps on 60 Hz. The sound keeps its pitch.",
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf(0 to "Off", 5 to "Slight, up to 5 %", 25 to "Strong, up to 25 %").forEach { (percent, label) ->
+            FilterChip(
+                selected = settings.judderLimitPercent == percent,
+                onClick = { update { it.judderLimitPercent = percent } },
+                label = { Text(label, fontSize = 16.sp) },
+            )
+        }
+    }
+    if (settings.judderLimitPercent > 0) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            com.hawkynt.mediadroid.player.PlaybackMath.JudderDirection.entries.forEach { direction ->
+                FilterChip(
+                    selected = settings.judderDirection == direction.name,
+                    onClick = { update { it.judderDirection = direction.name } },
+                    label = { Text(direction.label, fontSize = 16.sp) },
+                )
+            }
+        }
+    }
+}
+
+/** How a video larger than 1080p is brought down before the picture filters work on it. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LargeVideo(settings: Settings, update: ((Settings) -> Unit) -> Unit) {
+    Spacer(Modifier.height(8.dp))
+    Text("Large video", fontSize = 18.sp)
+    Text(
+        "Before the picture filters work on a video larger than 1080p, it is brought down to fit 1920 × 1080 — " +
+            "after the 3D eye and deinterlacing. Bilinear is quick; Bicubic, Lanczos and Area are sharper.",
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        com.hawkynt.mediadroid.player.Downscaler.entries.forEach { method ->
+            FilterChip(
+                selected = settings.downscaler == method.name,
+                onClick = { update { it.downscaler = method.name } },
+                label = { Text(method.label, fontSize = 16.sp) },
+            )
+        }
+    }
+}
+
 @Composable
 private fun SwitchRow(label: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
@@ -524,21 +554,16 @@ private fun SwitchRow(label: String, detail: String, checked: Boolean, onChange:
 
 /**
  * How far ahead decoded pictures are kept: the unit, the amount, and the other two units beside it for a 1080p film
- * at 25 fps on this device. Switching the unit keeps the amount the buffer comes to.
+ * at 25 fps on this device, whose memory allows at most [ceiling] bytes. Switching the unit keeps the amount the buffer comes to.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun DecodedBufferSetting(
     unit: DecodedBuffer.Unit,
     value: Float,
+    ceiling: Long,
     onChange: (DecodedBuffer.Unit, Float) -> Unit,
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val ceiling = remember(context) {
-        val memory = android.app.ActivityManager.MemoryInfo()
-        context.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memory)
-        DecodedBuffer.ceilingBytes(memory.totalMem)
-    }
     val example = PictureSize(1920, 1080)
     val exampleRate = 25f
     val buffer = DecodedBuffer(unit, value)

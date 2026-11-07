@@ -174,13 +174,9 @@ fun PlayerScreen(
         value = com.hawkynt.mediadroid.player.Colorizing.offered(available)
     }
     val trial = remember { DesktopTrial(store, neural) }
-    // The mpv user shaders the household put in the app-data folder's shaders/ (MpvShaders), read as the player opens.
-    remember {
-        val folder = File(AppFolder.current(), "shaders").apply { mkdirs() }
-        com.hawkynt.mediadroid.player.MpvShaders.load(
-            folder.listFiles().orEmpty().filter { it.isFile }.associate { it.name to it.readText() },
-        )
-    }
+    // The mpv user shaders in the folder picked in Settings, else the app-data folder's shaders/ (ShaderFolder), read
+    // as the player opens.
+    remember { ShaderFolder.load(ShaderFolder.of(store.state.data.settings.shaderFolder, AppFolder.current())) }
     // The picture this video starts with: its folder's, else the household's (FolderDefaults).
     var picture by remember { mutableStateOf(store.pictureFor(playing.video)) }
     // The folder or share whose picture that is, if any has one.

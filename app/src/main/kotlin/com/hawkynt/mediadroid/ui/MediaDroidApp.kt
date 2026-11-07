@@ -86,10 +86,12 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     val art = remember { com.hawkynt.mediadroid.data.AndroidMediaArt(context) }
     val keeper = remember { com.hawkynt.mediadroid.data.AndroidSourceKeeper(context) }
     val files = remember { com.hawkynt.mediadroid.data.AndroidMediaFiles(context) }
+    val settings = remember { AndroidSettingsPlatform(context, store) }
     CompositionLocalProvider(
         com.hawkynt.mediadroid.ui.platform.LocalMediaArt provides art,
         com.hawkynt.mediadroid.ui.platform.LocalSourceKeeper provides keeper,
         com.hawkynt.mediadroid.ui.platform.LocalMediaFiles provides files,
+        com.hawkynt.mediadroid.ui.platform.LocalSettingsPlatform provides settings,
     ) {
         AppShell(store, demo)
     }
@@ -530,7 +532,6 @@ private fun AppShell(store: StateStore, demo: Boolean) {
                             )
                             Screen.Settings -> SettingsScreen(
                                 store,
-                                rootPath = rootPath,
                                 onChangeFolder = ::launchPicker,
                                 unreachable = unreachable,
                                 onAddDeviceFolder = { addFolder.launch(null) },
