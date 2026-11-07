@@ -392,7 +392,7 @@ fun PicturePanel(
         Text("mpv shaders", color = Color.White, modifier = Modifier.padding(top = 8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             (listOf<String?>(null) + MpvShaders.choices).forEach { name ->
-                val label = name?.removeSuffix(".glsl") ?: "Off"
+                val label = name?.let(MpvShaders::label) ?: "Off"
                 FilterChip(
                     selected = picture.shader == name,
                     enabled = shaders.trying == null,

@@ -84,10 +84,8 @@ class MpvShaderTest {
     }
 
     @Test
-    fun `compute passes and embedded textures are not run, parameters become defines`() {
-        assertFalse(MpvShader.parse("//!HOOK MAIN\n//!COMPUTE 16 16\nvoid hook() {}").supported)
-        val textured = "//!TEXTURE LUT\n//!SIZE 4 4\nffff\n//!HOOK MAIN\nvec4 hook() { return vec4(0); }"
-        assertFalse(MpvShader.parse(textured).supported)
+    fun `storage buffers are not run, parameters become defines`() {
+        assertFalse(MpvShader.parse("//!BUFFER data\n//!VAR float x\n//!HOOK MAIN\nvoid hook() {}").supported)
         assertFalse(MpvShader.parse("// nothing to run").supported)
         val parameter = "//!PARAM strength\n//!TYPE float\n0.5\n"
         val tuned = MpvShader.parse(parameter + "//!HOOK MAIN\nvec4 hook() { return vec4(strength); }")
@@ -95,17 +93,130 @@ class MpvShaderTest {
         assertTrue("#define strength (0.5)" in tuned.planned("MAIN")[0].source("MAIN"))
     }
 
+    // A pass reading a 2 × 1 lookup table of half floats (1.0, 0.5, 0.0, 1.0 and 0.25, 0.0, 1.0, -2.0, little-endian).
+    private val textured = """
+        //!HOOK LUMA
+        //!BIND HOOKED
+        //!BIND LUT
+        vec4 hook() { return HOOKED_tex(HOOKED_pos) * texture(LUT, vec2(0.25, 0.5)) + LUT_tex(vec2(0.75, 0.5)); }
+
+        //!TEXTURE LUT
+        //!SIZE 2 1
+        //!FORMAT rgba16hf
+        //!FILTER LINEAR
+        //!BORDER REPEAT
+        003c00380000003c00340000003c00c0
+    """.trimIndent()
+
     @Test
-    fun `the library offers the files the stages can run, by name`() {
+    fun `embedded textures are read with their size, format, filter, border and data`() {
+        val shader = MpvShader.parse(textured)
+        assertTrue(shader.unsupported, shader.supported)
+        val lut = shader.textures.single()
+        assertEquals("LUT", lut.name)
+        assertEquals(2, lut.width)
+        assertEquals(1, lut.height)
+        assertEquals(0, lut.depth)
+        assertEquals(MpvShader.Format(4, 16, float = true), lut.format)
+        // libplacebo's OpenGL formats: rgba16f is given as full floats, held as half floats.
+        val ones = textured.replace("rgba16hf", "rgba16f")
+            .replace("003c00380000003c00340000003c00c0", "0000803f".repeat(8))
+        val floats = MpvShader.parse(ones)
+        assertEquals(MpvShader.Format(4, 32, float = true, heldBits = 16), floats.textures.single().format)
+        assertTrue(lut.linear)
+        assertEquals(MpvShader.Border.REPEAT, lut.border)
+        assertEquals(16, lut.data.size)
+        assertEquals(0x3c, lut.data[1].toInt())
+        assertEquals(0xc0, lut.data[15].toInt() and 0xFF)
+        val nearest = MpvShader.parse("//!TEXTURE T\n//!SIZE 1 1 2\n//!FORMAT r8\n0aff\n//!HOOK MAIN\nvoid hook() {}")
+        val volume = nearest.textures.single()
+        assertEquals(2, volume.depth)
+        assertFalse(volume.linear)
+        assertEquals(MpvShader.Border.CLAMP, volume.border)
+        assertEquals(MpvShader.Format(1, 8, float = false), volume.format)
+    }
+
+    @Test
+    fun `textures the stages cannot hold refuse the shader`() {
+        fun refused(texture: String) =
+            !MpvShader.parse("$texture\n//!HOOK MAIN\nvec4 hook() { return vec4(0); }").supported
+        assertTrue("one dimension", refused("//!TEXTURE T\n//!SIZE 4\n//!FORMAT r8\n00010203"))
+        assertTrue("too few bytes", refused("//!TEXTURE T\n//!SIZE 2 2\n//!FORMAT r8\n000102"))
+        assertTrue("not hex", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r8\nzz"))
+        assertTrue("no format", refused("//!TEXTURE T\n//!SIZE 1 1\n00"))
+        assertTrue("16-bit integers", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r16\n0000"))
+        assertTrue("storage", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r8\n//!STORAGE\n00"))
+        assertFalse("32-bit floats", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT rg32f\n0000000000000000"))
+        assertTrue("r16f given as half floats", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r16f\n0000"))
+    }
+
+    @Test
+    fun `a texture a pass binds is a sampler of its own name, not one of mpv's hooked textures`() {
+        val planned = MpvShader.parse(textured).planned("LUMA").single()
+        assertEquals(listOf("LUMA"), planned.textures("LUMA"))
+        assertEquals(listOf("LUT"), planned.userTextures().map { it.name })
+        val source = planned.source("LUMA")
+        assertTrue("uniform highp sampler2D LUT;" in source)
+        assertTrue("#define LUT_tex(pos) (textureLod(LUT, pos, 0.0))" in source)
+        val volume = MpvShader.parse("//!TEXTURE V\n//!SIZE 1 1 1\n//!FORMAT r8\n00\n//!HOOK MAIN\n//!BIND V\n" +
+            "vec4 hook() { return texture(V, vec3(0.5)); }")
+        assertTrue("uniform highp sampler3D V;" in volume.planned("MAIN").single().source("MAIN"))
+    }
+
+    @Test
+    fun `a compute pass runs its blocks with its threads, writing out_image`() {
+        val shader = MpvShader.parse(
+            "//!HOOK LUMA\n//!BIND HOOKED\n//!COMPUTE 64 16 32 8\nvoid hook() {\n" +
+                "imageStore(out_image, ivec2(gl_GlobalInvocationID), HOOKED_tex(HOOKED_pos)); }",
+        )
+        assertTrue(shader.supported)
+        assertTrue(shader.usesCompute)
+        assertEquals(MpvShader.Compute(64, 16, 32, 8), shader.passes.single().compute)
+        val source = shader.planned("LUMA").single().source("LUMA")
+        assertTrue(source.startsWith("#version 310 es\n"))
+        assertTrue("layout(local_size_x = 32, local_size_y = 8) in;" in source)
+        assertTrue("layout(rgba16f, binding = 0) writeonly uniform highp image2D out_image;" in source)
+        assertTrue("#define LUMA_pos ((vec2(gl_GlobalInvocationID.xy) + vec2(0.5)) / mpvTarget)" in source)
+        assertFalse("out vec4 mpvOutput;" in source)
+        assertTrue(source.trimEnd().endsWith("void main() { hook(); }"))
+        val square = MpvShader.parse("//!HOOK MAIN\n//!COMPUTE 16 8\nvoid hook() {}").passes.single().compute
+        assertEquals(MpvShader.Compute(16, 8, 16, 8), square)
+        assertFalse(MpvShader.parse(twoPasses).usesCompute)
+    }
+
+    @Test
+    fun `passes hooking the chroma are planned for the chroma`() {
+        val krig = MpvShader.parse(
+            "//!HOOK CHROMA\n//!BIND HOOKED\n//!BIND LUMA\n//!WIDTH LUMA.w\n//!HEIGHT LUMA.h\n" +
+                "vec4 hook() { return HOOKED_tex(HOOKED_pos); }",
+        )
+        assertTrue(krig.supported)
+        assertTrue(krig.hooksChroma)
+        assertEquals(listOf("CHROMA", "LUMA"), krig.planned("CHROMA").single().textures("CHROMA"))
+        assertFalse(MpvShader.parse(twoPasses).hooksChroma)
+    }
+
+    @Test
+    fun `the library offers the files the stages can run, by name, compute where the stage has it`() {
         MpvShaders.load(
             mapOf(
                 "b.glsl" to "//!HOOK MAIN\nvec4 hook() { return vec4(1); }",
+                "d.hook" to "//!HOOK LUMA\nvec4 hook() { return vec4(1); }",
                 "a.GLSL" to "//!HOOK MAIN\n//!COMPUTE 8 8\nvoid hook() {}",
+                "c.glsl" to "//!TEXTURE T\n//!SIZE 2\n//!FORMAT r8\n0000\n" +
+                    "//!HOOK MAIN\nvec4 hook() { return vec4(1); }",
                 "notes.txt" to "//!HOOK MAIN",
             ),
         )
-        assertEquals(listOf("b.glsl"), MpvShaders.choices)
-        assertEquals(setOf("a.GLSL", "b.glsl"), MpvShaders.library.keys)
-        MpvShaders.load(emptyMap())
+        try {
+            MpvShaders.compute = false
+            assertEquals(listOf("b.glsl", "d.hook"), MpvShaders.choices)
+            MpvShaders.compute = true
+            assertEquals(listOf("a.GLSL", "b.glsl", "d.hook"), MpvShaders.choices)
+            assertEquals(setOf("a.GLSL", "b.glsl", "c.glsl", "d.hook"), MpvShaders.library.keys)
+        } finally {
+            MpvShaders.compute = false
+            MpvShaders.load(emptyMap())
+        }
     }
 }

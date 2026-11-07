@@ -32,7 +32,7 @@ object MpvShaderFolder {
             )?.use { cursor ->
                 while (cursor.moveToNext()) {
                     val name = cursor.getString(1) ?: continue
-                    if (!name.endsWith(".glsl", ignoreCase = true)) continue
+                    if (!MpvShaders.isShader(name)) continue
                     val document = DocumentsContract.buildDocumentUriUsingTree(root, cursor.getString(0))
                     context.contentResolver.openInputStream(document)?.use { found[name] = String(it.readBytes()) }
                 }

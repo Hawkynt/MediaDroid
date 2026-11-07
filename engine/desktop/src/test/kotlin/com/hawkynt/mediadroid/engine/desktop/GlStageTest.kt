@@ -20,6 +20,7 @@ import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.player.TemporalDenoise
 import com.hawkynt.mediadroid.player.TestPattern
 import com.hawkynt.mediadroid.player.ToneMap
+import com.hawkynt.mediadroid.player.YuvMatrix
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -411,6 +412,44 @@ class GlStageTest {
     @Test
     fun `an mpv shader hooking LUMA runs as libplacebo runs it, the colour following`() =
         checkMpv("FSRCNNX_x2_8-0-4-1.glsl", "grey.ppm", "fsrcnnx.ppm", 2, 0.1)
+
+    @Test
+    fun `an mpv shader's embedded lookup table is read as libplacebo reads it`() =
+        checkMpv("ravu-lite-ar-r2.hook", "grey.ppm", "ravu.ppm", 2, 0.1)
+
+    @Test
+    fun `an mpv shader's compute pass runs as libplacebo runs it`() {
+        assertTrue(MpvShaders.compute)
+        checkMpv("ravu-lite-ar-r2-compute.hook", "grey.ppm", "ravu-compute.ppm", 2, 0.1)
+    }
+
+    @Test
+    fun `an mpv shader hooking CHROMA runs on the planes as libplacebo runs it`() {
+        val w = 64
+        val h = 48
+        val yuv = requireNotNull(javaClass.getResourceAsStream("/mpv/chroma.yuv")).use { it.readBytes() }
+        val c = w / 2 * (h / 2)
+        val planes = MediaReader.Planes(
+            yuv.copyOfRange(0, w * h), yuv.copyOfRange(w * h, w * h + c), yuv.copyOfRange(w * h + c, w * h + 2 * c),
+            YuvMatrix.BT709, fullRange = true,
+        )
+        // The RGBA a decoder would hand over beside the planes: not what the stage reads where it reads the planes.
+        val picture = MediaReader.Picture(0, w, h, ByteArray(w * h * 4) { if (it % 4 == 3) -1 else 0 }, planes = planes)
+        val shader = "KrigBilateral.glsl"
+        MpvShaders.load(mapOf(shader to requireNotNull(javaClass.getResourceAsStream("/mpv/$shader")).use {
+            String(it.readBytes())
+        }))
+        val theirs = mpvPicture("krig.ppm")
+        val out = stage.process(picture, PictureAdjustment(shader = shader), w, h)
+        val spline = stage.process(picture, PictureAdjustment(chroma = PictureAdjustment.Chroma.SPLINE36), w, h)
+        val d = out.rgba.indices.filter { it % 4 != 3 }
+            .map { abs((out.rgba[it].toInt() and 255) - (theirs.rgba[it].toInt() and 255)) }
+        // KrigBilateral solves a nearly singular system at colour corners, which float rounding in another order moves:
+        // tools/shader-check finds the stage's own Krig passes as far from libplacebo (mean 0.17 on this frame).
+        assertTrue("off by ${d.max()} at worst", d.max() <= 2)
+        assertTrue("off by ${d.average()} on average", d.average() <= 0.2)
+        assertTrue("same as spline36", out.rgba.indices.any { abs(out.rgba[it] - spline.rgba[it]) > 2 })
+    }
 
     @Test
     fun `chroma enlarged from the planes agrees with the reference, spline36 and KrigBilateral alike`() {
