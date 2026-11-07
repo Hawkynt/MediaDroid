@@ -150,4 +150,17 @@ class TestPatternTest {
         assertEquals(AspectOverride.AUTO, shown.aspect)
         assertEquals(null, shown.logo)
     }
+
+    @Test
+    fun `a pattern is a still picture, so nothing that weighs frames before or after it, nothing that colours it in`() {
+        val household = PictureAdjustment(
+            temporalDenoise = 0.6f,
+            dotCrawl = 0.8f,
+            colorize = PictureAdjustment.Colorize.entries.last(),
+        )
+        val shown = TestPattern.pictureFor(household)
+        assertEquals(0f, shown.temporalDenoise)
+        assertEquals(0f, shown.dotCrawl)
+        assertEquals(PictureAdjustment.Colorize.OFF, shown.colorize)
+    }
 }
