@@ -38,6 +38,16 @@ object Colorizing {
     fun rightEnough(error: Double): Boolean = error <= MAX_ERROR
 
     /**
+     * What a refusal (the self-test found the device too slow or wrong for DDColor) is kept under: the app's version
+     * [appVersion] and the model's files' digests ([model]) — an update to either tries the device afresh.
+     */
+    fun refusalKey(appVersion: Long, model: NeuralModels.Download = NeuralModels.DDCOLOR): String =
+        "$appVersion|" + model.files.joinToString(",") { it.sha256 }
+
+    /** Whether the refusal kept as [kept] (empty: none) still holds for this app version [appVersion]. */
+    fun refused(kept: String, appVersion: Long): Boolean = kept.isNotEmpty() && kept == refusalKey(appVersion)
+
+    /**
      * The colourisers the household is offered: DDColor where its files can be had ([available]: in place already, or
      * reachable in the model repository, see ModelFolder.reachable), else none — so its chip appears by itself once
      * the files are published.

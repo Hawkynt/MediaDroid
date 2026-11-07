@@ -155,10 +155,11 @@ data class Settings(
     // The upscalers' models on ncnn whose self-test passed, by NeuralEnlarging.Choice.key ("WAIFU2X",
     // "REALCUGAN:se-up4x-denoise3x+tta"), the same way: "GPU|576=…".
     var neuralEnlargers: Map<String, String> = emptyMap(),
-    // DDColor's self-test where it passed, the same way ("GPU|256=…"); null before. Refused once as too slow or wrong
-    // on this device, colour is no longer offered.
+    // DDColor's self-test where it passed, the same way ("GPU|256=…"); null before. Refused as too slow or wrong on
+    // this device, colour is not offered again until the app or the model changes: the refusal is kept under
+    // Colorizing.refusalKey, "" while there is none.
     var neuralColorizer: String? = null,
-    var neuralColorizerRefused: Boolean = false,
+    var neuralColorizerRefusedFor: String = "",
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
     var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout

@@ -58,6 +58,20 @@ class ColorizingTest {
     }
 
     @Test
+    fun `a refusal holds for one app version and one model only`() {
+        val key = Colorizing.refusalKey(20261107)
+        assertEquals(key, Colorizing.refusalKey(20261107))
+        assertTrue(key != Colorizing.refusalKey(20261108))
+        val other = NeuralModels.DDCOLOR.copy(
+            files = NeuralModels.DDCOLOR.files.map { it.copy(sha256 = "0".repeat(64)) },
+        )
+        assertTrue(key != Colorizing.refusalKey(20261107, other))
+        assertFalse(Colorizing.refused("", 20261107))
+        assertTrue(Colorizing.refused(key, 20261107))
+        assertFalse(Colorizing.refused(key, 20261108))
+    }
+
+    @Test
     fun `a picture is offered colour where it is grey already`() {
         val grey = picture(64, 48) { x, y -> ((x + y) * 2).let { it shl 16 or (it shl 8) or it } }
         assertTrue(Colorizing.isGrey(grey, 64, 48))
