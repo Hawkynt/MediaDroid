@@ -53,6 +53,8 @@ internal class LwjglGles(private val quad: () -> Int) : Gles {
         type: Int,
         pixels: ByteBuffer,
     ) = glTexImage3D(GL_TEXTURE_3D, 0, internalFormat, width, height, depth, 0, format, type, pixels)
+    override fun texStorage2D(internalFormat: Int, width: Int, height: Int) =
+        glTexStorage2D(GL_TEXTURE_2D, 1, internalFormat, width, height)
     override fun dispatchCompute(x: Int, y: Int, z: Int) = glDispatchCompute(x, y, z)
     override fun bindImageTexture(unit: Int, texture: Int, format: Int) =
         glBindImageTexture(unit, texture, 0, false, 0, GL_WRITE_ONLY, format)
