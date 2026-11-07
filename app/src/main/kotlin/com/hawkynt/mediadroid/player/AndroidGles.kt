@@ -77,6 +77,24 @@ internal class AndroidGles : Gles {
         unit, texture, 0, false, 0, android.opengl.GLES31.GL_WRITE_ONLY, format,
     )
     override fun memoryBarrier(bits: Int) = android.opengl.GLES31.glMemoryBarrier(bits)
+    override fun genBuffer(): Int {
+        GLES20.glGenBuffers(1, one, 0)
+        return one[0]
+    }
+    override fun deleteBuffer(buffer: Int) = GLES20.glDeleteBuffers(1, intArrayOf(buffer), 0)
+    override fun bufferData(target: Int, buffer: Int, data: ByteBuffer) {
+        GLES20.glBindBuffer(target, buffer)
+        GLES20.glBufferData(target, data.remaining(), data, GLES20.GL_DYNAMIC_DRAW)
+        GLES20.glBindBuffer(target, 0)
+    }
+    override fun bindBufferBase(target: Int, index: Int, buffer: Int) =
+        android.opengl.GLES30.glBindBufferBase(target, index, buffer)
+    override fun uniformBlockBinding(program: Int, name: String, binding: Int) {
+        val index = android.opengl.GLES30.glGetUniformBlockIndex(program, name)
+        if (index != android.opengl.GLES30.GL_INVALID_INDEX) {
+            android.opengl.GLES30.glUniformBlockBinding(program, index, binding)
+        }
+    }
     override fun genFramebuffer(): Int {
         GLES20.glGenFramebuffers(1, one, 0)
         return one[0]

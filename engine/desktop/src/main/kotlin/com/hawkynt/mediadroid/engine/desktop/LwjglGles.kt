@@ -59,6 +59,18 @@ internal class LwjglGles(private val quad: () -> Int) : Gles {
     override fun bindImageTexture(unit: Int, texture: Int, format: Int) =
         glBindImageTexture(unit, texture, 0, false, 0, GL_WRITE_ONLY, format)
     override fun memoryBarrier(bits: Int) = glMemoryBarrier(bits)
+    override fun genBuffer() = glGenBuffers()
+    override fun deleteBuffer(buffer: Int) = glDeleteBuffers(buffer)
+    override fun bufferData(target: Int, buffer: Int, data: ByteBuffer) {
+        glBindBuffer(target, buffer)
+        glBufferData(target, data, GL_DYNAMIC_DRAW)
+        glBindBuffer(target, 0)
+    }
+    override fun bindBufferBase(target: Int, index: Int, buffer: Int) = glBindBufferBase(target, index, buffer)
+    override fun uniformBlockBinding(program: Int, name: String, binding: Int) {
+        val index = glGetUniformBlockIndex(program, name)
+        if (index != GL_INVALID_INDEX) glUniformBlockBinding(program, index, binding)
+    }
     override fun genFramebuffer() = glGenFramebuffers()
     override fun deleteFramebuffer(framebuffer: Int) = glDeleteFramebuffers(framebuffer)
     override fun framebufferTexture2D(texture: Int) =

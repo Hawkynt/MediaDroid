@@ -29,6 +29,10 @@
 //                     shown at <width> x <height> (bilinear where the shader leaves scaling to do); with [yuv] the
 //                     picture is handed over as full-range BT.709 YCbCr planes, so the shader's LUMA hooks run; with
 //                     [compute] libplacebo may use compute shaders, which a shader's //!COMPUTE passes need
+//   placebo_oracle planes <in.yuv> <width> <height> <shader.glsl> <out.ppm> <out width> <out height> [compute]
+//                     a yuv420p frame as a decoder hands it over (limited range BT.709, chroma sited at the centre)
+//                     through an mpv user shader in libplacebo's renderer, its LUMA and CHROMA hooks on the planes
+//                     themselves; out in 8-bit RGB at <out width> x <out height>, bilinear wherever scaling is left
 //
 // The picture as one RGBA texture (8 or 16 bits), top row first, as libplacebo's own frames are.
 #include <EGL/egl.h>
@@ -410,6 +414,67 @@ int chroma(char** argv) {
     return 0;
 }
 
+// An mpv user shader through libplacebo's renderer on a decoder's yuv420p frame (limited range BT.709, the chroma
+// sited at the centre), out in RGB at the size asked for: the planes hooked as mpv hooks them.
+int planes(char** argv) {
+    const int w = std::atoi(argv[1]);
+    const int h = std::atoi(argv[2]);
+    const int cw = (w + 1) / 2;
+    const int ch = (h + 1) / 2;
+    const int ow = std::atoi(argv[5]);
+    const int oh = std::atoi(argv[6]);
+    const std::string data = readFile(argv[0]);
+    if (data.size() != size_t(w) * h + 2 * size_t(cw) * ch) fail("not a yuv420p frame of that size");
+    const auto* bytes = reinterpret_cast<const uint8_t*>(data.data());
+    pl_tex planes[3] = {
+        planeTexture(w, h, bytes),
+        planeTexture(cw, ch, bytes + size_t(w) * h),
+        planeTexture(cw, ch, bytes + size_t(w) * h + size_t(cw) * ch),
+    };
+    pl_frame image{};
+    image.num_planes = 3;
+    for (int i = 0; i < 3; i++) {
+        image.planes[i].texture = planes[i];
+        image.planes[i].components = 1;
+        image.planes[i].component_mapping[0] = i;
+    }
+    image.repr.sys = PL_COLOR_SYSTEM_BT_709;
+    image.repr.levels = PL_COLOR_LEVELS_LIMITED;
+    // 8-bit samples: the offsets are 16/255 and 128/255, as FFmpeg's 8-bit frames hold them.
+    image.repr.bits.sample_depth = 8;
+    image.repr.bits.color_depth = 8;
+    image.color = pl_color_space_bt709;
+    pl_frame_set_chroma_location(&image, PL_CHROMA_CENTER);
+    pl_tex out = texture(ow, oh, "rgba8", nullptr, true);
+    pl_frame target{};
+    target.num_planes = 1;
+    target.planes[0].texture = out;
+    target.planes[0].components = 3;
+    for (int i = 0; i < 3; i++) target.planes[0].component_mapping[i] = i;
+    target.repr = pl_color_repr_rgb;
+    target.color = pl_color_space_bt709;
+    const std::string shader = readFile(argv[3]);
+    const pl_hook* hook = pl_mpv_user_shader_parse(gpu, shader.data(), shader.size());
+    if (!hook) fail(std::string("libplacebo cannot read ") + argv[3]);
+    pl_render_params params{};
+    params.color_map_params = &pl_color_map_default_params;
+    params.color_adjustment = &pl_color_adjustment_neutral;
+    params.upscaler = &pl_filter_bilinear;
+    params.downscaler = &pl_filter_bilinear;
+    params.plane_upscaler = &pl_filter_bilinear;
+    params.disable_linear_scaling = true;
+    params.hooks = &hook;
+    params.num_hooks = 1;
+    pl_renderer renderer = pl_renderer_create(logger, gpu);
+    if (!pl_render_image(renderer, &image, &target, &params)) fail("the render failed");
+    writePpm(argv[4], readBack(out, ow, oh));
+    pl_mpv_user_shader_destroy(&hook);
+    pl_renderer_destroy(&renderer);
+    pl_tex_destroy(gpu, &out);
+    for (pl_tex& t : planes) pl_tex_destroy(gpu, &t);
+    return 0;
+}
+
 // An mpv user shader through libplacebo's renderer, the picture as RGB or as full-range BT.709 YCbCr planes.
 int hook(char** argv, bool yuv) {
     Picture in = readPpm(argv[0]);
@@ -493,6 +558,10 @@ int main(int argc, char** argv) {
         else if (word == "compute") compute = true;
         else words = false;
     }
+    if (mode == "planes" && argc == 10) {
+        if (std::string(argv[9]) == "compute") compute = true;
+        else words = false;
+    }
     startPlacebo(compute);
     int result = 0;
     if (mode == "deband" && argc == 9) result = deband(argv + 2);
@@ -503,6 +572,8 @@ int main(int argc, char** argv) {
         result = chroma(argv + 2);
     else if (mode == "hook" && argc >= 7 && argc <= 9 && words)
         result = hook(argv + 2, yuv);
+    else if (mode == "planes" && (argc == 9 || argc == 10) && words)
+        result = planes(argv + 2);
     else fail("usage: see the head of tools/shader-check/placebo.cpp");
     pl_opengl_destroy(&gl);
     pl_log_destroy(&logger);

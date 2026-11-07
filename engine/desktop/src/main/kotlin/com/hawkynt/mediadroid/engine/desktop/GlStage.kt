@@ -37,6 +37,7 @@ import org.lwjgl.opengl.GL43.*
 import org.lwjgl.system.MemoryUtil
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 /** The stage's frames: :stage's (StageFrame), each by its name. */
 private typealias Target = StageFrame
@@ -380,9 +381,10 @@ class GlStage(
     private var chroma = PictureAdjustment.Chroma.BILINEAR
     private val planeTextures = IntArray(3)
 
-    // The mpv user shader whose CHROMA hooks the pictures are uploaded with (from their planes), and the size shown,
-    // which its passes' sizes may read.
-    private var chromaShader: MpvShader? = null
+    // The mpv user shader whose plane hooks the pictures are uploaded with (from their planes: CHROMA, and LUMA where
+    // [lumaOnPlanes]), and the size shown, which its passes' sizes may read.
+    private var planeShader: MpvShader? = null
+    private var lumaOnPlanes = false
     private var hookOutW = 0
     private var hookOutH = 0
 
@@ -399,7 +401,14 @@ class GlStage(
         hookOutH = outH
         // The mpv user shader chosen, where the stage can run it (MpvShader).
         val user = a.shader?.let { MpvShaders.library[it] }?.takeIf { MpvShaders.runnable(it) }
-        val chromaHooked = user?.takeIf { it.hooksChroma }
+        val planeHooked = user?.takeIf { it.hooksPlanes }
+        // LUMA on the decoded Y plane, as mpv runs it, where the picture comes with its planes — but where the shader
+        // enlarges the Y plane, only while nothing between the upload and the hooks needs the picture at its decoded
+        // size (fields, codec blocks, the composite's dot pattern, motion searched on the decoded pictures); there, as
+        // without planes, on the RGB picture's brightness (MpvHooks.run).
+        val decoded = MpvShader.Size(m.shown.width, m.shown.height)
+        val lumaPlanes = planeHooked != null && planeHooked.planned("LUMA").isNotEmpty() && (!atDecodedSize(a) ||
+            mpvHooks.lumaSize(planeHooked, decoded.width, decoded.height, MpvHooks.Sizes(outW, outH, 0, 0)) == decoded)
         // Where the picture holds more than the 8 bits it is read back in — HDR's tone-mapped floats, the colour
         // correction's or debanding's results — every pass draws into half floats and the last one dithers (Dither);
         // a plain 8-bit picture keeps its 8-bit frames, untouched.
@@ -408,13 +417,14 @@ class GlStage(
         val look = listOf(
             a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep, a.chroma, a.colorize,
             a.logo, a.deblock, a.dering,
-            a.temporalDenoise, a.dotCrawl, chromaHooked,
+            a.temporalDenoise, a.dotCrawl, planeHooked, lumaPlanes,
         )
-        // Another chroma upscaler, or another shader hooking the chroma, makes every picture uploaded from its planes
+        // Another chroma upscaler, or another shader hooking the planes, makes every picture uploaded from its planes
         // stale.
-        if (a.chroma != chroma || chromaHooked !== chromaShader) {
+        if (a.chroma != chroma || planeHooked !== planeShader || lumaPlanes != lumaOnPlanes) {
             chroma = a.chroma
-            chromaShader = chromaHooked
+            planeShader = planeHooked
+            lumaOnPlanes = lumaPlanes
             uploaded.forEach { it.picture = null }
         }
         if (look != keptLook) {
@@ -442,9 +452,12 @@ class GlStage(
             val later = filtered(next, m.shown, m.after, a, false, earlier = m.previous)
             source = mixed(m, next, source, later, a)
         }
-        // The mpv user shader's hooks before the picture is enlarged (its CHROMA ones ran as it was uploaded).
+        // The mpv user shader's hooks before the picture is enlarged (its CHROMA ones, and LUMA ones where the picture
+        // came with its planes, ran as it was uploaded).
         if (user != null) {
-            source = userHooks(user, source, MpvShader.BEFORE_SCALING, outW, outH, m.shown.width, m.shown.height)
+            val lumaRan = lumaOnPlanes && fromPlanes(m.shown)
+            val stages = if (lumaRan) MpvShader.BEFORE_SCALING - "LUMA" else MpvShader.BEFORE_SCALING
+            source = userHooks(user, source, stages, outW, outH, m.shown.width, m.shown.height)
         }
         // Enlarging to the shown size (at most twice where the upscaler is made for that, the rest bilinear), at the
         // strength chosen: below full strength the plain picture laid over it by that share.
@@ -752,10 +765,34 @@ class GlStage(
             ?.let { return slotTarget(it) }
         val slot = claim(uploaded, picture, region, false)
         slot.half = half
+        if (fromPlanes(picture)) {
+            // The whole picture from its planes (larger where a LUMA hook enlarged its Y plane), then the region out
+            // of it, at that scale.
+            val whole = chromaUpscaled(picture, picture.planes!!)
+            val sx = whole.width.toFloat() / picture.width
+            val sy = whole.height.toFloat() / picture.height
+            val into = target(slot.name, (region.width * sx).roundToInt(), (region.height * sy).roundToInt())
+            copyRegion(whole, into, picture, region)
+            return into
+        }
         val into = target(slot.name, region.width, region.height, half = half)
         upload(into, picture, region)
         return into
     }
+
+    /** Whether [picture] is uploaded from its planes: an SDR picture that has them, where the stage reads them. */
+    private fun fromPlanes(picture: MediaReader.Picture): Boolean = picture.hdr == null && picture.planes != null &&
+        (chroma != PictureAdjustment.Chroma.BILINEAR || planeShader?.hooksChroma == true || lumaOnPlanes)
+
+    /**
+     * Whether a pass of [a] between the upload and the user shader's hooks needs the picture at its decoded size:
+     * fields (deinterlacing), codec blocks (deblocking, deringing), the composite's dot pattern, motion searched on the
+     * decoded pictures (temporal denoising, interpolation).
+     */
+    private fun atDecodedSize(a: PictureAdjustment): Boolean =
+        a.deinterlace != PictureAdjustment.Deinterlace.OFF || a.deblock > 0f || a.dering > 0f ||
+            DotCrawl.threshold(a.dotCrawl) != null || a.temporalDenoise > 0f ||
+            a.interpolation != PictureAdjustment.Interpolation.OFF
 
     /** The least recently used of [slots], now holding [picture]. */
     private fun claim(
@@ -942,29 +979,26 @@ class GlStage(
     // only those of [region] (inside the black bars, the 3D eye), which [into] is the size of — so the peak below is
     // measured on the picture alone too. An HDR picture goes into a 16-bit frame of its own, its peak is measured,
     // and it is tone-mapped into [into].
+    // [region] of [picture] out of [whole], the picture drawn from its planes (its top row where v is 1), into [into].
+    private fun copyRegion(whole: Target, into: Target, picture: MediaReader.Picture, region: PictureCrop) {
+        val pw = picture.width.toFloat()
+        val ph = picture.height.toFloat()
+        val within = floatArrayOf(
+            region.width / pw, 0f, 0f, 0f,
+            0f, region.height / ph, 0f, 0f,
+            0f, 0f, 1f, 0f,
+            region.left / pw, 1f - (region.top + region.height) / ph, 0f, 1f,
+        )
+        // A copy: the blend's other input is the same picture (see copy).
+        finishing.copy(whole, into, within)
+    }
+
     private fun upload(into: Target, picture: MediaReader.Picture, region: PictureCrop) {
         val w = into.width
         val h = into.height
         val left = region.left
         val top = region.top
         val transfer = picture.hdr
-        val planes = picture.planes
-        val fromPlanes = chroma != PictureAdjustment.Chroma.BILINEAR || chromaShader != null
-        if (transfer == null && planes != null && fromPlanes) {
-            // The whole picture from its planes, then the region out of it (its top row where v is 1).
-            val whole = chromaUpscaled(picture, planes)
-            val pw = picture.width.toFloat()
-            val ph = picture.height.toFloat()
-            val within = floatArrayOf(
-                w / pw, 0f, 0f, 0f,
-                0f, h / ph, 0f, 0f,
-                0f, 0f, 1f, 0f,
-                left / pw, 1f - (top + h) / ph, 0f, 1f,
-            )
-            // A copy: the blend's other input is the same picture (see copy).
-            finishing.copy(whole, into, within)
-            return
-        }
         val bytes = if (transfer == null) 4 else 8
         val buffer = MemoryUtil.memAlloc(w * h * bytes)
         for (y in 0 until h) buffer.put(picture.rgba, ((top + h - 1 - y) * picture.width + left) * bytes, w * bytes)
@@ -1030,33 +1064,34 @@ class GlStage(
         val yuv = Conversion.Planes(
             planeTextures[0], planeTextures[1], planeTextures[2], w, h, w, cw, colour, foot, flip,
         )
+        val hooked = planeShader?.takeIf { it.hooksChroma || lumaOnPlanes }
+        if (hooked != null) return planesHooked(hooked, w, h, flip, colour, foot)
         val whole = target("chroma-whole", w, h)
-        chromaShader?.let { return chromaHooked(it, planes, whole, flip, colour) }
         if (chroma == PictureAdjustment.Chroma.SPLINE36) return conversion.spline(yuv, whole) as Target
         val low = target("chroma-low", w, ch, half = true)
         return conversion.krig(yuv, low, target("chroma-lower", cw, ch, half = true), whole) as Target
     }
 
     /**
-     * The planes just uploaded through [shader]'s CHROMA hooks, as mpv runs them: `CHROMA` the Cb and Cr planes as
-     * one texture at their own size, `LUMA` the Y plane, both rows from the top as mpv holds them; then the Y plane
-     * and the hooked chroma — read bilinearly where the passes left it smaller than the picture — to RGB by [colour]
-     * into [whole], its top row where v is 1 ([flip]) as uploaded pictures are held.
+     * The [w] × [h] planes just uploaded through [shader]'s plane hooks, as mpv runs them (MpvHooks.planes): `LUMA` on
+     * the Y plane where [lumaOnPlanes], `CHROMA` on the Cb and Cr planes as one texture at their own size, both rows
+     * from the top as mpv holds them; then the hooked Y and chroma (the chroma read bilinearly where the passes left
+     * it smaller) to RGB by [colour] and [foot] at the hooked Y's size, its top row where v is 1 ([flip]) as uploaded
+     * pictures are held.
      */
-    private fun chromaHooked(
+    private fun planesHooked(
         shader: MpvShader,
-        planes: MediaReader.Planes,
-        whole: Target,
+        w: Int,
+        h: Int,
         flip: FloatArray,
         colour: FloatArray,
+        foot: Float,
     ): Target {
-        val w = whole.width
-        val h = whole.height
         val luma = SampledTexture(planeTextures[0], w, h)
-        return mpvHooks.chroma(
+        return mpvHooks.planes(
             shader, luma, planeTextures[1], planeTextures[2], Passes.IDENTITY, MpvHooks.Sizes(hookOutW, hookOutH, w, h),
-            whole, colour, if (planes.fullRange) 0f else 16f / 255f, flip,
-        ) as Target
+            lumaOnPlanes, colour, foot, flip,
+        ) { width, height -> target("chroma-whole", width, height) } as Target
     }
 
     /** [from] read back for the window as [presentation] says, timed into [presentNanos]. */
