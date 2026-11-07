@@ -67,6 +67,7 @@ import com.hawkynt.mediadroid.ui.GearPanel
 import com.hawkynt.mediadroid.ui.HistogramOverlay
 import com.hawkynt.mediadroid.ui.PlaybackInfoDialog
 import com.hawkynt.mediadroid.ui.SleepChoice
+import com.hawkynt.mediadroid.ui.SubtitleLookRows
 import com.hawkynt.mediadroid.ui.StatisticsOverlay
 import com.hawkynt.mediadroid.ui.playbackFacts
 import com.hawkynt.mediadroid.ui.sleepNote
@@ -175,8 +176,9 @@ fun PlayerScreen(
     val index = session.index
     val playing = session.current
     // The subtitle delay each video keeps, as on Android.
-    var subtitleDelayMs by remember(index) { mutableIntStateOf(store.subtitleDelayMs(playing.videoPath)) }
-    tuning.subtitleDelayMs = subtitleDelayMs
+    // How each video's subtitles look — delay, size, raised, a box behind them — its own, else the household's (Settings).
+    var subtitleLook by remember(index) { mutableStateOf(store.state.subtitleLookFor(playing.videoPath)) }
+    tuning.subtitleDelayMs = subtitleLook.delayMs
     val bitmap = remember { PictureBitmap() }
     // The picture stage (deinterlacing, upscalers, colour) on the graphics card, made once per player.
     val stage = remember { com.hawkynt.mediadroid.engine.desktop.GlStage() }
@@ -371,7 +373,7 @@ fun PlayerScreen(
         val startMs = session.begin(read)
         // Off the window's thread: on a network source, finding the files beside it and opening it take round trips.
         runCatching {
-            withContext(Dispatchers.IO) { engine.open(requestFor(places, playing.videoPath, startMs)) }
+            withContext(Dispatchers.IO) { engine.open(requestFor(places, playing.videoPath, startMs, store.state.data.settings.audioLanguage)) }
         }
             .onFailure { error = it.message ?: it.toString() }
     }
@@ -393,6 +395,10 @@ fun PlayerScreen(
     // which the stage tone-maps, or libass draws its subtitles, which want the size it is shown at — the subtitles
     // libass draws laid over it, the clock, the end. Smooth motion draws anew at every refresh, field rate at the
     // middle of each picture's time.
+    // The screen's refresh, measured from the frames asked for back to back (the frame loop below), and Even frames
+    // over it (Settings): the film run a little faster or slower so every frame stays on screen equally long.
+    val refresh = remember { RefreshPeriod() }
+    val evenFrames = remember { EvenFrames(store.state.data.settings) }
     LaunchedEffect(Unit) {
         var lastShown: Any? = null
         var lastLook: Any? = null
@@ -423,7 +429,6 @@ fun PlayerScreen(
         // middle of the refresh it shows at (DesktopPlaybackEngine.moment) — a refresh later where the stage hands
         // its pictures out one call late (Presentation.PBO_LAGGED, which NATIVE reads back by in this window) and the
         // last one went through it. Shown by the stage itself, a picture is swapped in at the next refresh.
-        val refresh = RefreshPeriod()
         val lagged = pictureWindow == null && com.hawkynt.mediadroid.engine.desktop.Presentation.chosen().readBack ==
             com.hawkynt.mediadroid.engine.desktop.Presentation.PBO_LAGGED
         var staging = false
@@ -471,6 +476,8 @@ fun PlayerScreen(
                     changed = true
                 }
             } else engine.moment(aheadMs)?.let { moment ->
+                // The picture as shown: smoothed where Even frames finds no even rate (EvenFrames).
+                val picture = evenFrames.shown(picture)
                 val raw = moment.shown
                 val nowMs = System.currentTimeMillis()
                 if (engine.openedPath != cropVideo || !picture.cropBlackBars || !stage.ready) {
@@ -728,8 +735,16 @@ fun PlayerScreen(
     fun changeSpeed(value: Float) {
         val clamped = (kotlin.math.round(value * 20f) / 20f).coerceIn(PlaybackMath.SPEED_MIN, PlaybackMath.SPEED_MAX)
         speed = clamped
-        engine.speed = clamped
+        engine.speed = clamped * evenFrames.speedFactor
         store.speed = clamped
+    }
+    // Every few seconds, and at once for a new speed: the film's rate, the speed and the screen's refresh again.
+    LaunchedEffect(speed) {
+        while (true) {
+            evenFrames.plan(engine.frameRate, speed, refresh.periodNs)
+            engine.speed = speed * evenFrames.speedFactor
+            delay(EVEN_FRAMES_MS)
+        }
     }
 
     // The picture on screen saved as a PNG; shown by the stage itself, it is read back for that at the next frame.
@@ -802,16 +817,24 @@ fun PlayerScreen(
                 drawContext.canvas.restore()
             },
         ) {
+            // Sized and raised by the window's height as the phone sizes them by its screen's (SubtitleLook).
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            val textSize = with(density) { (subtitleLook.textSizeFraction * canvas.height).toSp() }
+            val above = with(density) { (subtitleLook.bottomPaddingFraction * canvas.height).toDp() }
             subtitle?.let { line ->
                 SubtitleLine(
                     line,
+                    subtitleLook,
+                    textSize,
                     Modifier.align(Alignment.BottomCenter).then(drifted).padding(start = 48.dp, end = 48.dp,
-                        bottom = if (controlsShown) 120.dp else 40.dp),
+                        bottom = if (controlsShown) maxOf(120.dp, above) else above),
                 )
             }
             secondLine?.let { line ->
                 SubtitleLine(
                     line,
+                    subtitleLook,
+                    textSize,
                     Modifier.align(Alignment.TopCenter).then(drifted)
                         .padding(start = 48.dp, end = 48.dp, top = 40.dp),
                 )
@@ -898,10 +921,17 @@ fun PlayerScreen(
                     }
                 },
                 end = {
-                    DesktopSubtitleDelayRow(subtitleDelayMs) {
-                        subtitleDelayMs = it
-                        store.setSubtitleDelay(video, it)
-                    }
+                    SubtitleLookRows(
+                        subtitleLook,
+                        onLook = {
+                            subtitleLook = it
+                            store.state.saveSubtitleLook(video, it)
+                        },
+                        onReset = {
+                            store.state.saveSubtitleLook(video, null)
+                            subtitleLook = store.state.subtitleLookFor(video)
+                        },
+                    )
                     SleepChoice(session) { System.nanoTime() / 1_000_000 }
                     RepeatChoice(session.repeat) { session.repeat = it }
                     DesktopDecodingRows(
@@ -966,7 +996,7 @@ fun PlayerScreen(
                         delayMs = sound.audioDelayMs,
                         spatial = false,
                         device = "this computer's output",
-                        subtitleDelayMs = subtitleDelayMs,
+                        subtitleDelayMs = subtitleLook.delayMs,
                     ),
                 ),
                 statisticsShown = statisticsShown,
@@ -1130,8 +1160,11 @@ private fun sidecarsOf(places: DesktopLibrary, video: String): List<Sidecars.Sid
     return Sidecars.of(file.name, file.parentFile?.listFiles()?.map { it.name }.orEmpty())
 }
 
-/** What to open for [video]: from [startMs], with the subtitle and sound files beside it. */
-private fun requestFor(places: DesktopLibrary, video: String, startMs: Long): MediaRequest {
+/**
+ * What to open for [video]: from [startMs], with the subtitle and sound files beside it, starting in the household's
+ * [audioLanguage] where it has a sound in it.
+ */
+private fun requestFor(places: DesktopLibrary, video: String, startMs: Long, audioLanguage: String): MediaRequest {
     val folder = places.file(video).parentFile
     fun pathOf(name: String) = folder?.child(name)?.path ?: name
     val sidecars = sidecarsOf(places, video)
@@ -1139,14 +1172,23 @@ private fun requestFor(places: DesktopLibrary, video: String, startMs: Long): Me
         MediaRequest.SubtitleFile(pathOf(it.name), it.mimeType, it.language, it.describe(), it.forced)
     }
     val audio = sidecars.filter { it.kind == Sidecars.Kind.AUDIO }.map { pathOf(it.name) }
-    return MediaRequest(video, subtitles = subtitles, audio = audio, startMs = startMs)
+    return MediaRequest(video, subtitles = subtitles, audio = audio, startMs = startMs, audioLanguage = audioLanguage)
 }
 
-/** A subtitle line: white, with a dark outline that keeps it readable over any picture. */
+/**
+ * A subtitle line: white, with a dark outline that keeps it readable over any picture, at [size]; on a dark box where
+ * the [look] asks for one.
+ */
 @Composable
-private fun SubtitleLine(text: String, modifier: Modifier) {
-    Box(modifier) {
-        val style = TextStyle(fontSize = 30.sp, textAlign = TextAlign.Center, lineHeight = 38.sp)
+private fun SubtitleLine(
+    text: String,
+    look: com.hawkynt.mediadroid.player.SubtitleLook,
+    size: androidx.compose.ui.unit.TextUnit,
+    modifier: Modifier,
+) {
+    val boxed = if (look.box) Modifier.background(Color(0xB3000000)).padding(horizontal = 8.dp) else Modifier
+    Box(modifier.then(boxed)) {
+        val style = TextStyle(fontSize = size, textAlign = TextAlign.Center, lineHeight = size * 1.25f)
         Text(text, style = style.copy(color = Color.Black, drawStyle = Stroke(width = 6f, join = StrokeJoin.Round)))
         Text(text, style = style.copy(color = Color.White))
     }
@@ -1188,6 +1230,9 @@ private const val HISTOGRAM_MS = 500L
 
 /** How long a snapshot's file stays named on screen. */
 private const val SNAPSHOT_NOTE_MS = 5_000L
+
+/** How often Even frames looks at the film's rate, the speed and the screen's refresh again. */
+private const val EVEN_FRAMES_MS = 3_000L
 
 /** How long a confirmation stays over the picture. */
 private const val FEEDBACK_MS = 800L

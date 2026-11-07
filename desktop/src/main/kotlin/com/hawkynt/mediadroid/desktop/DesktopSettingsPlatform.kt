@@ -15,8 +15,21 @@ import javax.swing.JFileChooser
 /**
  * Settings on this computer. The rows only some platforms act on show where the desktop player does: the folder of
  * mpv shaders (ShaderFolder), binge-watching and skipping intros and credits (the player's PlayerSession, shared with
- * the phone). Refresh-rate matching, even frames, passthrough, HDR tone mapping, large-video scaling, the decoded
- * buffer, the subtitles' look and the audio language are the Android player's alone so far, and so are not shown.
+ * the phone), even frames (EvenFrames: at the monitor's refresh as it is), the subtitles' look (the player sizes,
+ * raises and boxes its lines by it) and the audio language (the engine starts a video in it).
+ *
+ * Not shown, because on a desktop they would change nothing:
+ * - Match the refresh rate: the desktop leaves a monitor's mode alone — switching it blanks every window on that
+ *   monitor, there is no API for it under Wayland — and Even frames keeps the frames even at the mode it has.
+ * - Audio passthrough: the sound goes out as PCM through the system's mixer (AudioSink); handing AC-3 or DTS untouched
+ *   to a receiver needs an exclusive digital output (IEC 61937), which the system's sound API in use does not offer.
+ * - HDR tone mapping: the desktop shows SDR, so the stage always brings HDR down; there is no HDR screen to leave it
+ *   to, and a switch to leave it alone would only wash the picture out.
+ * - Large videos: the desktop's stage filters a picture at its own size on a graphics card that keeps up with it; the
+ *   dry run refuses a choice that does not.
+ * - The decoded buffer: the desktop sizes its queue of decoded pictures itself, by the sound's delay, within a memory
+ *   ceiling of its own (DesktopPlaybackEngine.PICTURE_BYTES_AHEAD).
+ *
  * The default picture's choices are tried as the player tries them (DesktopTrial), the screens are the monitors
  * attached now (OutputScreen), each under the key the player keeps its setup by; the test patterns are in the
  * player's gear, over the video.
@@ -57,6 +70,9 @@ class DesktopSettingsPlatform(private val store: DesktopStore, private val folde
             PlatformSetting.SHADER_FOLDER,
             PlatformSetting.BINGE_WATCHING,
             PlatformSetting.SKIP_INTRO_CREDITS,
+            PlatformSetting.EVEN_FRAMES,
+            PlatformSetting.SUBTITLE_LOOK,
+            PlatformSetting.AUDIO_LANGUAGE,
         )
     }
 }

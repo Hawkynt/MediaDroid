@@ -218,6 +218,81 @@ fun sleepNote(session: PlayerSession): String? = when {
     else -> null
 }
 
+/**
+ * How this video's subtitles look ([look], kept with it): their delay, size, raised above burned-in text, a dark box
+ * behind them; [onReset] takes the household's look again.
+ */
+@Composable
+fun SubtitleLookRows(
+    look: com.hawkynt.mediadroid.player.SubtitleLook,
+    onLook: (com.hawkynt.mediadroid.player.SubtitleLook) -> Unit,
+    onReset: () -> Unit,
+) {
+    PanelTitle("Subtitles")
+    fun changeLook(changed: com.hawkynt.mediadroid.player.SubtitleLook) = onLook(changed)
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        itemVerticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Delay", fontSize = 16.sp, modifier = Modifier.widthIn(min = 56.dp))
+        androidx.compose.material3.OutlinedButton(
+            onClick = { changeLook(look.nudgeDelay(-1)) },
+        ) {
+            Text("Sooner", fontSize = 16.sp)
+        }
+        Text(
+            if (look.delayMs == 0) {
+                "in sync"
+            } else {
+                "%+.1f s".format(look.delayMs / 1000f)
+            },
+            fontSize = 18.sp,
+            modifier = Modifier.widthIn(min = 80.dp),
+        )
+        androidx.compose.material3.OutlinedButton(
+            onClick = { changeLook(look.nudgeDelay(1)) },
+        ) {
+            Text("Later", fontSize = 16.sp)
+        }
+    }
+    Text(
+        com.hawkynt.mediadroid.player.PlaybackMath.syncText("subtitles", look.delayMs)
+            .replaceFirstChar { it.uppercase() } +
+            ". Later when a line shows before it is spoken, sooner when after.",
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.padding(top = 6.dp),
+    ) {
+        com.hawkynt.mediadroid.player.SubtitleLook.Size.entries.forEach { size ->
+            FilterChip(
+                selected = look.size == size,
+                onClick = { changeLook(look.copy(size = size)) },
+                label = { Text(size.label, fontSize = 16.sp) },
+            )
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Raised above burned-in text", fontSize = 16.sp, modifier = Modifier.weight(1f))
+        androidx.compose.material3.Switch(
+            checked = look.raised,
+            onCheckedChange = { changeLook(look.copy(raised = it)) },
+        )
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Dark box behind the text", fontSize = 16.sp, modifier = Modifier.weight(1f))
+        androidx.compose.material3.Switch(
+            checked = look.box,
+            onCheckedChange = { changeLook(look.copy(box = it)) },
+        )
+    }
+    androidx.compose.material3.TextButton(onClick = onReset) { Text("Back to the household's look") }
+}
+
 /** What plays again once a video ends: nothing, this video, or the whole queue (PlayerSession.repeat). */
 @Composable
 fun RepeatChoice(
