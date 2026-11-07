@@ -66,10 +66,12 @@ fun main(args: Array<String>) = application {
     val places = remember { DesktopLibrary(store, secrets) }
     // The sources' passwords, connections and the SMB servers on the local network, for the shared sources section.
     val keeper = remember { DesktopSourceKeeper(places, secrets) }
+    // The videos' lengths, tracks and stills, read by FFmpeg once and kept in the app-data folder.
+    val probe = remember { DesktopMediaProbe(places, folder) }
     // The Files browser's folders, this computer's and the network sources'.
-    val files = remember { DesktopMediaFiles(places) }
+    val files = remember { DesktopMediaFiles(places, probe) }
     // The walls' pictures: this computer's as they are, the network sources' copied once into the app-data folder.
-    val art = remember { DesktopMediaArt(places, File(folder, "art")) }
+    val art = remember { DesktopMediaArt(places, File(folder, "art"), probe) }
     // The media keys and the system's now-playing panel, for the app's whole life (MPRIS, SMTC).
     val mediaKeys = remember { MediaKeys() }
     val state = remember { windowState(store.window) }
