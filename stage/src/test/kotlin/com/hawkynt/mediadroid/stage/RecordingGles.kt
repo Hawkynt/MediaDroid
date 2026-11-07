@@ -71,6 +71,12 @@ class RecordingGles(private val failing: String? = null) : Gles {
     override fun dispatchCompute(x: Int, y: Int, z: Int) = log("dispatch $x $y $z")
     override fun bindImageTexture(unit: Int, texture: Int, format: Int) = log("image $unit $texture")
     override fun memoryBarrier(bits: Int) = log("barrier $bits")
+    override fun genBuffer() = next++.also { log("genBuffer $it") }
+    override fun deleteBuffer(buffer: Int) = log("deleteBuffer $buffer")
+    override fun bufferData(target: Int, buffer: Int, data: ByteBuffer) =
+        log("bufferData $target $buffer ${data.remaining()}")
+    override fun bindBufferBase(target: Int, index: Int, buffer: Int) = log("bindBufferBase $target $index $buffer")
+    override fun uniformBlockBinding(program: Int, name: String, binding: Int) = log("blockBinding $name $binding")
     override fun genFramebuffer() = next++.also { log("genFramebuffer $it") }
     override fun deleteFramebuffer(framebuffer: Int) = log("deleteFramebuffer $framebuffer")
     override fun framebufferTexture2D(texture: Int) = log("attach $texture")

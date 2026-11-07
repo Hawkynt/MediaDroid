@@ -389,7 +389,7 @@ class GlStageTest {
         return MediaReader.Picture(0, w, h, ByteArray(w * h * 4) { if (it % 4 == 3) -1 else rgb[it / 4 * 3 + it % 4] })
     }
 
-    /** [shader] (`resources/mpv/`) run by the stage on [input] at twice its size, against libplacebo's [expected]. */
+    /** [shader] (`resources/mpv/`) run by the stage on [input] at libplacebo's [expected] size, against it. */
     private fun checkMpv(shader: String, input: String, expected: String, max: Int, mean: Double) {
         val text = requireNotNull(javaClass.getResourceAsStream("/mpv/$shader")).use { String(it.readBytes()) }
         MpvShaders.load(mapOf(shader to text))
@@ -449,6 +449,57 @@ class GlStageTest {
         assertTrue("off by ${d.max()} at worst", d.max() <= 2)
         assertTrue("off by ${d.average()} on average", d.average() <= 0.2)
         assertTrue("same as spline36", out.rgba.indices.any { abs(out.rgba[it] - spline.rgba[it]) > 2 })
+    }
+
+    /** `resources/mpv/planes.yuv`: picture.ppm's planes as a decoder hands them over (limited range BT.709). */
+    private fun decodedPlanes(): MediaReader.Picture {
+        val w = 64
+        val h = 48
+        val yuv = requireNotNull(javaClass.getResourceAsStream("/mpv/planes.yuv")).use { it.readBytes() }
+        val c = w / 2 * (h / 2)
+        val planes = MediaReader.Planes(
+            yuv.copyOfRange(0, w * h), yuv.copyOfRange(w * h, w * h + c), yuv.copyOfRange(w * h + c, w * h + 2 * c),
+            YuvMatrix.BT709, fullRange = false,
+        )
+        // The RGBA a decoder would hand over beside the planes, as the stage reads it without them.
+        val rgb = mpvPicture("picture.ppm")
+        return MediaReader.Picture(0, w, h, rgb.rgba, planes = planes)
+    }
+
+    @Test
+    fun `an mpv shader hooking LUMA runs on the decoded Y plane as libplacebo runs it`() {
+        val shader = "FSRCNNX_x2_8-0-4-1.glsl"
+        MpvShaders.load(mapOf(shader to requireNotNull(javaClass.getResourceAsStream("/mpv/$shader")).use {
+            String(it.readBytes())
+        }))
+        val theirs = mpvPicture("fsrcnnx-planes.ppm")
+        val picture = decodedPlanes()
+        fun off(out: MediaReader.Picture) = out.rgba.indices.filter { it % 4 != 3 }
+            .map { abs((out.rgba[it].toInt() and 255) - (theirs.rgba[it].toInt() and 255)) }
+        val out = stage.process(picture, PictureAdjustment(shader = shader), 128, 96)
+        val d = off(out)
+        // libplacebo's own conversion of these planes lies 0.56 from an exact one on average (max 2), the stage's 0.12
+        // (max 1), with a LUMA hook that leaves the Y plane as it is: the most of what is left here is libplacebo's.
+        assertTrue("off by ${d.max()} at worst", d.max() <= 3)
+        assertTrue("off by ${d.average()} on average", d.average() <= 0.45)
+        // On the RGB picture's brightness (no planes: a hardware decoder's frames) it is much further from mpv's.
+        val withoutPlanes = MediaReader.Picture(0, 64, 48, picture.rgba)
+        val rgb = off(stage.process(withoutPlanes, PictureAdjustment(shader = shader), 128, 96))
+        assertTrue("RGB's ${rgb.average()} against the planes' ${d.average()}", rgb.average() > 4 * d.average())
+        // An enlarging LUMA hook runs on the RGB brightness where a pass needs the picture at its decoded size.
+        val dering = PictureAdjustment(shader = shader, dering = 0.5f)
+        val fallback = stage.process(withoutPlanes, dering, 128, 96)
+        assertTrue(stage.process(picture, dering, 128, 96).rgba.contentEquals(fallback.rgba))
+    }
+
+    @Test
+    fun `an mpv shader's one-dimensional integer and 16-bit textures and its uniform buffer read as libplacebo's`() =
+        checkMpv("lookup-1d.glsl", "picture.ppm", "lookup-1d.ppm", 1, 0.05)
+
+    @Test
+    fun `an mpv shader's storage buffer keeps what its compute pass stores, as libplacebo's does`() {
+        assertTrue(MpvShaders.compute)
+        checkMpv("st2094-10.glsl", "picture.ppm", "st2094-10.ppm", 2, 0.1)
     }
 
     @Test

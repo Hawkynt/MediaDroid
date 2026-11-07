@@ -68,6 +68,19 @@ interface Gles {
     /** Waits until what the passes before wrote is seen by the reads [bits] name (OpenGL ES 3.1). */
     fun memoryBarrier(bits: Int)
 
+    /** A new buffer object's name (an mpv user shader's `//!BUFFER`). */
+    fun genBuffer(): Int
+    fun deleteBuffer(buffer: Int)
+
+    /** [buffer] bound to [target] (UNIFORM_BUFFER, SHADER_STORAGE_BUFFER), holding [data] from now on. */
+    fun bufferData(target: Int, buffer: Int, data: ByteBuffer)
+
+    /** [buffer] as binding point [index] of [target] (OpenGL ES 3.0; storage buffers 3.1). */
+    fun bindBufferBase(target: Int, index: Int, buffer: Int)
+
+    /** [program]'s uniform block [name] read from uniform buffer binding point [binding] (OpenGL ES 3.0). */
+    fun uniformBlockBinding(program: Int, name: String, binding: Int)
+
     /** The bound 2D texture's texels from (0, 0) to [width] × [height] replaced by [pixels], from the bottom row. */
     fun texSubImage2D(width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer)
     fun pixelStorei(name: Int, value: Int)
@@ -133,5 +146,22 @@ interface Gles {
         const val TEXTURE_FETCH_BARRIER_BIT = 0x00000008
         const val SHADER_IMAGE_ACCESS_BARRIER_BIT = 0x00000020
         const val FRAMEBUFFER_BARRIER_BIT = 0x00000400
+        const val UNIFORM_BARRIER_BIT = 0x00000004
+        const val BUFFER_UPDATE_BARRIER_BIT = 0x00000200
+        const val SHADER_STORAGE_BARRIER_BIT = 0x00002000
+        const val UNIFORM_BUFFER = 0x8A11
+        const val SHADER_STORAGE_BUFFER = 0x90D2
+        const val R8UI = 0x8232
+        const val RG8UI = 0x8238
+        const val RGB8UI = 0x8D7D
+        const val RGBA8UI = 0x8D7C
+        const val R16UI = 0x8234
+        const val RG16UI = 0x823A
+        const val RGB16UI = 0x8D77
+        const val RGBA16UI = 0x8D76
+        const val RED_INTEGER = 0x8D94
+        const val RG_INTEGER = 0x8228
+        const val RGB_INTEGER = 0x8D98
+        const val RGBA_INTEGER = 0x8D99
     }
 }

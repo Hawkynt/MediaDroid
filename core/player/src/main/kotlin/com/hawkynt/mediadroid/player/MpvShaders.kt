@@ -38,6 +38,10 @@ object MpvShaders {
     /** The names a picture may choose: the shaders the stages can run. */
     val choices: List<String> get() = library.filterValues { runnable(it) }.keys.toList()
 
-    /** Whether the stage can run [shader]: it is [MpvShader.supported], and has compute where it needs it. */
-    fun runnable(shader: MpvShader): Boolean = shader.supported && (compute || !shader.usesCompute)
+    /**
+     * Whether the stage can run [shader]: it is [MpvShader.supported], and has compute where it needs it — for its
+     * compute passes or its storage buffers.
+     */
+    fun runnable(shader: MpvShader): Boolean =
+        shader.supported && (compute || !shader.usesCompute && !shader.usesStorage)
 }

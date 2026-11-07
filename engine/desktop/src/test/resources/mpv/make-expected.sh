@@ -2,11 +2,14 @@
 # Makes the fixtures for the stage's mpv user shaders (GlStageTest): mpv shaders fetched at fixed revisions —
 # bloc97's Anime4K_Upscale_CNN_x2_S.glsl (MIT, hooks MAIN), igv's FSRCNNX_x2_8-0-4-1.glsl (LGPL-3.0-or-later, hooks
 # LUMA), bjin's ravu-lite-ar-r2.hook and its compute variant (LGPL-3.0-or-later, hook LUMA, embed a lookup table as a
-# //!TEXTURE; the compute one runs as a //!COMPUTE pass) and Shiandow's KrigBilateral.glsl (LGPL-3.0-or-later, hooks
-# CHROMA) — the pictures written by make-input.py (and core/player's chroma/make-input.py for the 4:2:0 frame), and
-# libplacebo 7.360's own renderer running each shader on them, on Mesa's OpenGL (llvmpipe), through
+# //!TEXTURE; the compute one runs as a //!COMPUTE pass), Shiandow's KrigBilateral.glsl (LGPL-3.0-or-later, hooks
+# CHROMA) and hdr-toys' st2094-10.glsl (MIT, hooks OUTPUT, keeps the picture's average in a //!BUFFER storage block a
+# compute pass writes) — with lookup-1d.glsl, the app's own (one-dimensional 16-bit integer and normalised textures, a
+# uniform //!BUFFER) — the pictures written by make-input.py (and core/player's chroma/make-input.py for the 4:2:0
+# frame), and libplacebo 7.360's own renderer running each shader on them, on Mesa's OpenGL (llvmpipe), through
 # tools/shader-check/placebo.cpp: <shader>.ppm at twice the picture's size; FSRCNNX and RAVU on the grey picture,
-# handed over as YCbCr planes so their LUMA hooks run; KrigBilateral on chroma.yuv, its RGB at the picture's size.
+# handed over as YCbCr planes so their LUMA hooks run, and FSRCNNX once more on planes.yuv (a decoder's limited-range
+# planes, its LUMA hooks on the Y plane); KrigBilateral on chroma.yuv and lookup-1d on the picture, at its size.
 # Needs libplacebo's and Mesa's EGL development files.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
@@ -22,6 +25,9 @@ prescalers=https://raw.githubusercontent.com/bjin/mpv-prescalers/b3f0a59d68f33b7
 curl -fsSL -o "$here/ravu-lite-ar-r2.hook" "$prescalers/ravu-lite-ar-r2.hook"
 curl -fsSL -o "$here/ravu-lite-ar-r2-compute.hook" "$prescalers/compute/ravu-lite-ar-r2.hook"
 curl -fsSL -o "$here/KrigBilateral.glsl" "$(cat "$tools/krig-url.txt")"
+hdrtoys=https://raw.githubusercontent.com/natural-harmonia-gropius/hdr-toys/db16b9fb2837f267ded1b683ad84fb3dc84d179b
+curl -fsSL -o "$here/st2094-10.glsl" "$hdrtoys/shaders/hdr-toys/tone-mapping/st2094-10.glsl"
+curl -fsSL -o "$here/LICENSE.hdr-toys.txt" "$hdrtoys/LICENSE"
 python3 -I "$here/make-input.py" "$here"
 python3 -I "$here/../../../../../../core/player/src/test/resources/chroma/make-input.py" "$here/chroma.yuv"
 export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json LIBGL_ALWAYS_SOFTWARE=1
@@ -31,3 +37,6 @@ export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 "$work/placebo_oracle" hook "$here/grey.ppm" "$here/ravu-lite-ar-r2-compute.hook" "$here/ravu-compute.ppm" 128 96 \
   yuv compute
 "$work/placebo_oracle" chroma "$here/chroma.yuv" 64 48 "$here/KrigBilateral.glsl" "$here/krig.ppm" rgb
+"$work/placebo_oracle" planes "$here/planes.yuv" 64 48 "$here/FSRCNNX_x2_8-0-4-1.glsl" "$here/fsrcnnx-planes.ppm" 128 96
+"$work/placebo_oracle" hook "$here/picture.ppm" "$here/lookup-1d.glsl" "$here/lookup-1d.ppm" 64 48
+"$work/placebo_oracle" hook "$here/picture.ppm" "$here/st2094-10.glsl" "$here/st2094-10.ppm" 128 96 compute

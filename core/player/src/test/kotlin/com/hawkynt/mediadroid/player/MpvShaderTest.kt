@@ -55,6 +55,13 @@ class MpvShaderTest {
         assertEquals(1.0, MpvShader.evaluate("LUMA.height 400 <", sizes)!!, 0.0)
         assertNull(MpvShader.evaluate("CHROMA.w", sizes))
         assertNull(MpvShader.evaluate("2 *", sizes))
+        // libplacebo's further operator, and a shader's parameters by name (its lookup_var).
+        assertEquals(1.0, MpvShader.evaluate("7 3 %", sizes)!!, 0.0)
+        assertEquals(1.0, MpvShader.evaluate("avg 0 = LUMA.w 640 = *", sizes, mapOf("avg" to 0.0))!!, 0.0)
+        assertNull(MpvShader.evaluate("avg 0 =", sizes))
+        val tuned = "//!PARAM avg\n//!TYPE float\n%s\n//!HOOK MAIN\n//!WHEN avg 0 =\nvec4 hook() { return vec4(1); }"
+        assertTrue(MpvShader.parse(tuned.format("0.0")).planned("MAIN").single().runs(sizes))
+        assertFalse(MpvShader.parse(tuned.format("0.5")).planned("MAIN").single().runs(sizes))
     }
 
     @Test
@@ -84,8 +91,7 @@ class MpvShaderTest {
     }
 
     @Test
-    fun `storage buffers are not run, parameters become defines`() {
-        assertFalse(MpvShader.parse("//!BUFFER data\n//!VAR float x\n//!HOOK MAIN\nvoid hook() {}").supported)
+    fun `parameters become defines`() {
         assertFalse(MpvShader.parse("// nothing to run").supported)
         val parameter = "//!PARAM strength\n//!TYPE float\n0.5\n"
         val tuned = MpvShader.parse(parameter + "//!HOOK MAIN\nvec4 hook() { return vec4(strength); }")
@@ -140,11 +146,15 @@ class MpvShaderTest {
     fun `textures the stages cannot hold refuse the shader`() {
         fun refused(texture: String) =
             !MpvShader.parse("$texture\n//!HOOK MAIN\nvec4 hook() { return vec4(0); }").supported
-        assertTrue("one dimension", refused("//!TEXTURE T\n//!SIZE 4\n//!FORMAT r8\n00010203"))
+        assertFalse("one dimension", refused("//!TEXTURE T\n//!SIZE 4\n//!FORMAT r8\n00010203"))
+        assertTrue("four dimensions", refused("//!TEXTURE T\n//!SIZE 1 1 1 1\n//!FORMAT r8\n00"))
         assertTrue("too few bytes", refused("//!TEXTURE T\n//!SIZE 2 2\n//!FORMAT r8\n000102"))
         assertTrue("not hex", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r8\nzz"))
         assertTrue("no format", refused("//!TEXTURE T\n//!SIZE 1 1\n00"))
-        assertTrue("16-bit integers", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r16\n0000"))
+        assertFalse("16-bit normalised", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r16\n0000"))
+        assertFalse("16-bit integers", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT rg16u\n00000000"))
+        assertTrue("integers read linearly", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r8u\n//!FILTER LINEAR\n00"))
+        assertTrue("signed integers", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r16i\n0000"))
         assertTrue("storage", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r8\n//!STORAGE\n00"))
         assertFalse("32-bit floats", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT rg32f\n0000000000000000"))
         assertTrue("r16f given as half floats", refused("//!TEXTURE T\n//!SIZE 1 1\n//!FORMAT r16f\n0000"))
@@ -197,13 +207,121 @@ class MpvShaderTest {
     }
 
     @Test
+    fun `one-dimensional textures are held as a row and read through their own functions`() {
+        val shader = MpvShader.parse(
+            "//!TEXTURE CURVE\n//!SIZE 4\n//!FORMAT r16u\n0000ff00ff0fffff\n" +
+                "//!HOOK MAIN\n//!BIND HOOKED\n//!BIND CURVE\nvec4 hook() {\n" +
+                "    int n = textureSize(CURVE, 0);\n" +
+                "    uint a = texelFetch( CURVE , n - 1, 0).r + texture(CURVE, 0.5).r;\n" +
+                "    return vec4(float(a) + float(CURVE_tex(0.25).r) + float(textureLod(CURVE, 0.1, 0.0).r));\n}",
+        )
+        assertTrue(shader.unsupported, shader.supported)
+        val curve = shader.textures.single()
+        assertEquals(1, curve.dimensions)
+        assertEquals(4, curve.width)
+        assertEquals(1, curve.height)
+        assertEquals(MpvShader.Format(1, 16, float = false, integer = true), curve.format)
+        val source = shader.planned("MAIN").single().source("MAIN")
+        assertTrue(source, "uniform highp usampler2D CURVE;" in source)
+        assertTrue(source, "int n = CURVE_mpv1d_textureSize(0);" in source)
+        assertTrue(source, "uint a = CURVE_mpv1d_texelFetch(n - 1, 0).r + CURVE_mpv1d_texture(0.5).r;" in source)
+        assertTrue(source, "float(CURVE_mpv1d_textureLod(0.1, 0.0).r)" in source)
+        val fetch = "uvec4 CURVE_mpv1d_texelFetch(int i, int lod) { return texelFetch(CURVE, ivec2(i, 0), lod); }"
+        assertTrue(source, fetch in source)
+        assertTrue(source, "#define CURVE_tex(pos) (textureLod(CURVE, vec2(pos, 0.5), 0.0))" in source)
+        val unorm = MpvShader.parse(
+            "//!TEXTURE T\n//!SIZE 2 1\n//!FORMAT rgba16\n" + "ffff".repeat(8) +
+                "\n//!HOOK MAIN\n//!BIND T\nvec4 hook() { return T_tex(vec2(0.5)); }",
+        )
+        assertEquals(MpvShader.Format(4, 16, float = false, heldBits = 32), unorm.textures.single().format)
+        assertTrue("uniform highp sampler2D T;" in unorm.planned("MAIN").single().source("MAIN"))
+    }
+
+    // libplacebo's own example (docs/custom-shaders.md), a vec3 and a float added: a uniform block and a storage
+    // block, read by one pass.
+    private val buffered = """
+        //!HOOK MAIN
+        //!BIND HOOKED
+        //!BIND buf_uniform
+        //!BIND buf_storage
+        vec4 hook() { return vec4(foo, bar, bat); }
+
+        //!BUFFER buf_uniform
+        //!VAR float foo
+        //!VAR float bar
+        0000803f00000040
+
+        //!BUFFER buf_storage
+        //!VAR vec2 bat
+        //!VAR int big[32];
+        //!VAR vec3 dir
+        //!VAR float tail
+        //!STORAGE
+    """.trimIndent()
+
+    @Test
+    fun `buffers are laid out as std140 and std430, the storage ones where compute runs`() {
+        val shader = MpvShader.parse(buffered)
+        assertTrue(shader.unsupported, shader.supported)
+        val (uniform, storage) = shader.buffers
+        assertEquals("buf_uniform", uniform.name)
+        assertFalse(uniform.storage)
+        assertEquals(listOf(0, 4), uniform.variables.map { it.offset })
+        assertEquals(8, uniform.size)
+        assertEquals(1f, java.nio.ByteBuffer.wrap(uniform.data).order(java.nio.ByteOrder.LITTLE_ENDIAN).float)
+        assertTrue(storage.storage)
+        // std430: the int array packed at 4 bytes from 8, the vec3 aligned to 16 after it, the float in its tail.
+        assertEquals(listOf(0, 8, 144, 156), storage.variables.map { it.offset })
+        assertEquals(160, storage.size)
+        assertTrue("no initial data: zeros", storage.data.size == 160 && storage.data.all { it.toInt() == 0 })
+        // std140 rounds an array's elements up to 16 bytes each.
+        val std140 = MpvShader.parse(buffered.replace("//!STORAGE", "") + "\n" + "00".repeat(544)).buffers[1]
+        assertEquals(listOf(0, 16, 528, 540), std140.variables.map { it.offset })
+        assertTrue(shader.usesStorage)
+        val uniformOnly = buffered.substringBefore("//!BUFFER buf_storage")
+        assertFalse(MpvShader.parse(uniformOnly).usesStorage)
+        val source = shader.planned("MAIN").single().source("MAIN")
+        assertTrue(source.startsWith("#version 310 es\n"))
+        assertTrue(source, "layout(std140) uniform buf_uniform {\n    float foo;\n    float bar;\n};" in source)
+        val block = "layout(std430, binding = 1) coherent restrict buffer buf_storage {\n    vec2 bat;\n" +
+            "    int big[32];\n    vec3 dir;\n    float tail;\n};"
+        assertTrue(source, block in source)
+        val planned = shader.planned("MAIN").single()
+        assertEquals(listOf("MAIN"), planned.textures("MAIN"))
+        assertEquals(listOf("buf_uniform", "buf_storage"), planned.buffers().map { it.name })
+        fun refused(buffer: String) =
+            !MpvShader.parse("$buffer\n//!HOOK MAIN\nvec4 hook() { return vec4(0); }").supported
+        assertTrue("too few bytes", refused("//!BUFFER b\n//!VAR float x\n00"))
+        assertTrue("an unknown type", refused("//!BUFFER b\n//!VAR double x\n0000000000000000"))
+        assertTrue("a uniform block without data", refused("//!BUFFER b\n//!VAR float x"))
+        assertFalse(refused("//!BUFFER b\n//!VAR mat3 m\n" + "00".repeat(48)))
+        try {
+            MpvShaders.load(mapOf("s.glsl" to buffered, "u.glsl" to uniformOnly))
+            MpvShaders.compute = false
+            assertEquals(listOf("u.glsl"), MpvShaders.choices)
+            MpvShaders.compute = true
+            assertEquals(listOf("s.glsl", "u.glsl"), MpvShaders.choices)
+        } finally {
+            MpvShaders.compute = false
+            MpvShaders.load(emptyMap())
+        }
+    }
+
+    @Test
+    fun `passes hooking a plane are told apart from those on the picture`() {
+        assertTrue(MpvShader.parse(twoPasses).hooksPlanes)
+        assertTrue(MpvShader.parse("//!HOOK CHROMA\nvec4 hook() { return vec4(0); }").hooksPlanes)
+        assertFalse(MpvShader.parse("//!HOOK MAIN\nvec4 hook() { return vec4(0); }").hooksPlanes)
+    }
+
+    @Test
     fun `the library offers the files the stages can run, by name, compute where the stage has it`() {
         MpvShaders.load(
             mapOf(
                 "b.glsl" to "//!HOOK MAIN\nvec4 hook() { return vec4(1); }",
                 "d.hook" to "//!HOOK LUMA\nvec4 hook() { return vec4(1); }",
                 "a.GLSL" to "//!HOOK MAIN\n//!COMPUTE 8 8\nvoid hook() {}",
-                "c.glsl" to "//!TEXTURE T\n//!SIZE 2\n//!FORMAT r8\n0000\n" +
+                "c.glsl" to "//!TEXTURE T\n//!SIZE 2 1\n//!FORMAT r8\n//!STORAGE\n0000\n" +
                     "//!HOOK MAIN\nvec4 hook() { return vec4(1); }",
                 "notes.txt" to "//!HOOK MAIN",
             ),

@@ -882,10 +882,24 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         conversion.toneMap(coded, into, pass)
     }
 
-    /** The mpv user shader [picture] chose where the stage runs it and it hooks the chroma (chromaHooked), or null. */
+    /**
+     * The mpv user shader [picture] chose where the stage runs it and it hooks the FFmpeg decoder's planes
+     * (planesHooked): the chroma, or the Y plane where [lumaOnPlanes] — or null.
+     */
     private fun chromaShader(picture: PictureAdjustment): MpvShader? = picture.shader
         ?.let { MpvShaders.library[it] }
-        ?.takeIf { it.hooksChroma && MpvShaders.runnable(it) && halfTargets && es3 }
+        ?.takeIf { (it.hooksChroma || lumaOnPlanes(it)) && MpvShaders.runnable(it) && halfTargets && es3 }
+
+    /**
+     * Whether [shader]'s LUMA hooks run on the FFmpeg decoder's Y plane, as mpv runs them: where the frame came as
+     * planes and the hooks leave the Y plane at its size, which the frames after it keep; a LUMA hook that enlarges it
+     * (a luma doubler) runs on the RGB picture's brightness on the way out instead, as on a hardware decoder's frames.
+     */
+    private fun lumaOnPlanes(shader: MpvShader): Boolean {
+        if (!yuvInput || shader.planned("LUMA").isEmpty()) return false
+        val sizes = MpvHooks.Sizes(query(EGL14.EGL_WIDTH), query(EGL14.EGL_HEIGHT), yuvWidth, yuvHeight)
+        return mpvHooks.lumaSize(shader, yuvWidth, yuvHeight, sizes) == MpvShader.Size(yuvWidth, yuvHeight)
+    }
 
     /**
      * [coded]'s blocks measured (glsl/video/peak.frag) and taken into [peakDetect]: on ES 3 those of the frame before,
@@ -2217,7 +2231,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val outHeight = query(EGL14.EGL_HEIGHT)
         val user = picture.shader?.let { MpvShaders.library[it] }
             ?.takeIf { MpvShaders.runnable(it) && halfTargets && es3 }
-        if (user != null) source = userHooks(user, source, MpvShader.BEFORE_SCALING, outWidth, outHeight)
+        if (user != null) {
+            // Its LUMA hooks ran on the decoder's Y plane as the frame came in, where they could (lumaOnPlanes).
+            val stages = if (lumaOnPlanes(user)) MpvShader.BEFORE_SCALING - "LUMA" else MpvShader.BEFORE_SCALING
+            source = userHooks(user, source, stages, outWidth, outHeight)
+        }
         val width = source.width
         val height = source.height
         val afterHooks = user != null && user.passes.any { p -> p.hooks.any { it in MpvShader.AFTER_SCALING } }
@@ -2376,11 +2394,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         mpvFrames.getOrPut(name) { Frame(gl) }.ensure(w, h, half = true, storage = es31)
 
     /**
-     * The FFmpeg decoder's frame last taken through [shader]'s CHROMA hooks, as mpv runs them and as GlStage does:
-     * `LUMA` the Y plane and `CHROMA` the Cb and Cr planes as one texture at their own size, both rows from the top as
-     * mpv holds them, the stride's padding cut off; then the Y plane and the hooked chroma — read bilinearly where the
-     * passes left it smaller — to RGB into [into], its top row where v is 1. The bound framebuffer and viewport are
-     * the caller's to give back.
+     * The FFmpeg decoder's frame last taken through [shader]'s plane hooks, as mpv runs them and as GlStage does
+     * (MpvHooks.planes): `LUMA` on the Y plane where [lumaOnPlanes], then `CHROMA` on the Cb and Cr planes as one
+     * texture at their own size, its passes binding that `LUMA`, both rows from the top as mpv holds them, the stride's
+     * padding cut off; then the Y plane and the hooked chroma — read bilinearly where the passes left it smaller — to
+     * RGB into [into], its top row where v is 1. The bound framebuffer and viewport are the caller's to give back.
      */
     private fun chromaHooked(shader: MpvShader, into: Frame) {
         val chromaWidth = (yuvWidth + 1) / 2
@@ -2391,11 +2409,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         finishing.copy(plane, luma, part(yuvWidth.toFloat() / yuvStrides[0]))
         val chromaPart = part(chromaWidth.toFloat() / yuvStrides[1])
         val flip = floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 1f)
-        // The FFmpeg decoder hands over limited range (a full-range source squeezed into it).
-        mpvHooks.chroma(
-            shader, luma, yuvTextures[1], yuvTextures[2], chromaPart,
-            MpvHooks.Sizes(videoWidth, videoHeight, videoWidth, videoHeight), into, yuvColor, 16f / 255f, flip,
-        )
+        // The FFmpeg decoder hands over limited range (a full-range source squeezed into it). The size shown is the
+        // screen's, which a pass's WHEN may weigh the planes against.
+        val sizes = MpvHooks.Sizes(query(EGL14.EGL_WIDTH), query(EGL14.EGL_HEIGHT), videoWidth, videoHeight)
+        mpvHooks.planes(
+            shader, luma, yuvTextures[1], yuvTextures[2], chromaPart, sizes, lumaOnPlanes(shader), yuvColor,
+            16f / 255f, flip,
+        ) { _, _ -> into }
     }
 
     /**

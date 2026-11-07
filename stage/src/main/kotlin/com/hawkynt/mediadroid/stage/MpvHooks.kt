@@ -32,8 +32,9 @@ class MpvHooks(
     /**
      * [from] through [shader]'s passes hooking [stages], in mpv's order — turned round on the way in and out; `LUMA`
      * the picture's Y, put back with its colour once its passes have run (glsl/video/mpv-luma.frag,
-     * mpv-recombine.frag). A pass whose `WHEN` does not hold, or that reads a texture there is not, is left out; a
-     * pass that will not build ends the shader there.
+     * mpv-recombine.frag): the fallback where the stage has no planes to run it on ([planes]), as a hardware decoder's
+     * RGB. A pass whose `WHEN` does not hold, or that reads a texture there is not, is left out; a pass that will not
+     * build ends the shader there.
      */
     fun run(shader: MpvShader, from: DrawTarget, stages: List<String>, sizes: Sizes): DrawTarget {
         if (stages.none { shader.planned(it).isNotEmpty() }) return from
@@ -71,22 +72,25 @@ class MpvHooks(
     }
 
     /**
-     * A 4:2:0 picture's planes through [shader]'s CHROMA hooks, as mpv runs them — `LUMA` the Y plane [luma], `CHROMA`
-     * the Cb and Cr planes ([cb], [cr], read through [chromaMatrix]) as one texture at their own size, both rows from
-     * the top as mpv holds them — then the Y plane and the hooked chroma to RGB by [colour] and its [foot] into
-     * [into], read through [matrix].
+     * A 4:2:0 picture's planes through [shader]'s plane hooks ([MpvShader.PLANES]), as libplacebo's renderer runs
+     * them on a YCbCr frame (pass_read_image): `LUMA` on the decoded Y plane [luma] where [lumaHooks] says so, then
+     * `CHROMA` on the Cb and Cr planes ([cb], [cr], read through [chromaMatrix]) as one texture at their own size, its
+     * passes binding the `LUMA` hooked before them; both rows from the top as mpv holds them. Then the hooked Y and
+     * chroma to RGB by [colour] and its [foot] at the hooked Y's size (the chroma read bilinearly where the passes
+     * left it smaller) into the frame [into] hands over for that size, read through [matrix].
      */
-    fun chroma(
+    fun planes(
         shader: MpvShader,
         luma: DrawTarget,
         cb: Int,
         cr: Int,
         chromaMatrix: FloatArray,
         sizes: Sizes,
-        into: DrawTarget,
+        lumaHooks: Boolean,
         colour: FloatArray,
         foot: Float,
         matrix: FloatArray,
+        into: (width: Int, height: Int) -> DrawTarget,
     ): DrawTarget {
         val textures = HashMap<String, DrawTarget>()
         textures["LUMA"] = luma
@@ -96,16 +100,37 @@ class MpvHooks(
         )
         hookFrame++
         val writes = HashMap<String, Int>()
-        for (planned in shader.planned(MpvShader.CHROMA)) {
-            val ran = pass(MpvShader.CHROMA, planned, textures, writes, sizes) { save, frame -> textures[save] = frame }
-            if (!ran) break
+        for (stage in MpvShader.PLANES) {
+            if (stage == "LUMA" && !lumaHooks) continue
+            for (planned in shader.planned(stage)) {
+                if (!pass(stage, planned, textures, writes, sizes) { save, frame -> textures[save] = frame }) break
+            }
         }
+        val y = textures.getValue("LUMA")
         val chroma = textures.getValue(MpvShader.CHROMA)
-        return passes.draw(Shaders.VIDEO_MPV_CHROMA_RGB, into, luma.texture, listOf(chroma.texture to "uChroma"),
-            matrix = matrix) {
+        return passes.draw(Shaders.VIDEO_MPV_CHROMA_RGB, into(y.width, y.height), y.texture,
+            listOf(chroma.texture to "uChroma"), matrix = matrix) {
             matrix3("uColor", colour)
             set("uFoot", foot)
         }
+    }
+
+    /**
+     * The size [shader]'s `LUMA` passes leave a [width] × [height] Y plane at, worked out as they would run with
+     * [sizes] (each pass's `WHEN` and `WIDTH` / `HEIGHT` over the textures saved before it) — for a stage whose frames
+     * keep the picture's size, which runs them on the planes only where that size stays.
+     */
+    fun lumaSize(shader: MpvShader, width: Int, height: Int, sizes: Sizes): MpvShader.Size {
+        val known = HashMap<String, MpvShader.Size>()
+        known["LUMA"] = MpvShader.Size(width, height)
+        known[MpvShader.CHROMA] = MpvShader.Size((width + 1) / 2, (height + 1) / 2)
+        for (planned in shader.planned("LUMA")) {
+            val now = known + ("OUTPUT" to MpvShader.Size(sizes.outWidth, sizes.outHeight)) +
+                ("HOOKED" to known.getValue("LUMA"))
+            if (!planned.runs(now) || planned.textures("LUMA").any { it !in known }) continue
+            known[planned.pass.save?.takeIf { it != "HOOKED" } ?: "LUMA"] = planned.size(now)
+        }
+        return known.getValue("LUMA")
     }
 
     /**
@@ -157,8 +182,21 @@ class MpvHooks(
         embedded.forEachIndexed { k, texture ->
             val unit = names.size + k
             gl.activeTexture(unit)
-            gl.bindTexture(if (texture.depth > 0) Gles.TEXTURE_3D else Gles.TEXTURE_2D, texture(planned.shader, texture))
+            val kind = if (texture.dimensions == 3) Gles.TEXTURE_3D else Gles.TEXTURE_2D
+            gl.bindTexture(kind, texture(planned.shader, texture))
             gl.uniform1i(gl.uniformLocation(program, texture.name), unit)
+        }
+        // The buffers at the binding points the source declares them at: a uniform block's set here (GLSL ES 3.00
+        // has no binding qualifier), a storage block's in the source.
+        val bound = planned.buffers()
+        bound.forEachIndexed { binding, buffer ->
+            val id = buffer(planned.shader, buffer)
+            if (buffer.storage) {
+                gl.bindBufferBase(Gles.SHADER_STORAGE_BUFFER, binding, id)
+            } else {
+                gl.uniformBlockBinding(program, buffer.name, binding)
+                gl.bindBufferBase(Gles.UNIFORM_BUFFER, binding, id)
+            }
         }
         for (unit in names.size + embedded.size until UNITS) {
             gl.activeTexture(unit)
@@ -188,8 +226,36 @@ class MpvHooks(
                 Gles.TEXTURE_FETCH_BARRIER_BIT or Gles.SHADER_IMAGE_ACCESS_BARRIER_BIT or Gles.FRAMEBUFFER_BARRIER_BIT,
             )
         }
+        // What a pass stored into a storage buffer is read by the passes after, and by the next frame's.
+        if (bound.any { it.storage }) {
+            gl.memoryBarrier(Gles.SHADER_STORAGE_BARRIER_BIT or Gles.UNIFORM_BARRIER_BIT)
+        }
         saved(save, into)
         return true
+    }
+
+    // The buffers of the shader last run, made once and kept from frame to frame (see buffer).
+    private val buffers = HashMap<MpvShader.Buffer, Int>()
+    private var buffersFor: MpvShader? = null
+
+    /**
+     * [buffer] of [shader] on the graphics card, made the first time a pass binds it with its initial data (zeros for
+     * a storage block that gives none, which keeps what the passes store in it from then on); another shader's make
+     * the last one's go. Its size rounded up to whole vec4s, which a uniform block's std140 size is.
+     */
+    private fun buffer(shader: MpvShader, buffer: MpvShader.Buffer): Int {
+        if (shader !== buffersFor) {
+            buffers.values.forEach(gl::deleteBuffer)
+            buffers.clear()
+            buffersFor = shader
+        }
+        return buffers.getOrPut(buffer) {
+            val id = gl.genBuffer()
+            val bytes = ByteBuffer.allocateDirect((buffer.size + 15) / 16 * 16).order(ByteOrder.nativeOrder())
+            bytes.put(buffer.data).position(0)
+            gl.bufferData(if (buffer.storage) Gles.SHADER_STORAGE_BUFFER else Gles.UNIFORM_BUFFER, id, bytes)
+            id
+        }
     }
 
     // The embedded textures of the shader last run, uploaded once (see texture).
@@ -198,8 +264,8 @@ class MpvHooks(
 
     /**
      * [texture] of [shader] on the graphics card, uploaded the first time it is read: its texels as declared (8-bit
-     * normalised, half or full floats; two or three dimensions), filtered and bordered as it says. Another shader's
-     * make the last one's go.
+     * normalised, 16-bit normalised as full floats, unsigned integers, half or full floats; one dimension as a row, two
+     * or three), filtered and bordered as it says. Another shader's make the last one's go.
      */
     private fun texture(shader: MpvShader, texture: MpvShader.Texture): Int {
         if (shader !== uploadedFor) {
@@ -208,21 +274,43 @@ class MpvHooks(
             uploadedFor = shader
         }
         return uploaded.getOrPut(texture) {
-            val kind = if (texture.depth > 0) Gles.TEXTURE_3D else Gles.TEXTURE_2D
+            val kind = if (texture.dimensions == 3) Gles.TEXTURE_3D else Gles.TEXTURE_2D
             val f = texture.format
-            val layout = intArrayOf(Gles.RED, Gles.RG, Gles.RGB, Gles.RGBA)[f.components - 1]
+            val c = f.components - 1
+            val layout = if (f.integer) {
+                intArrayOf(Gles.RED_INTEGER, Gles.RG_INTEGER, Gles.RGB_INTEGER, Gles.RGBA_INTEGER)[c]
+            } else {
+                intArrayOf(Gles.RED, Gles.RG, Gles.RGB, Gles.RGBA)[c]
+            }
             val internal = when {
-                !f.float -> intArrayOf(Gles.R8, Gles.RG8, Gles.RGB8, Gles.RGBA8)
+                f.integer && f.bits == 8 -> intArrayOf(Gles.R8UI, Gles.RG8UI, Gles.RGB8UI, Gles.RGBA8UI)
+                f.integer -> intArrayOf(Gles.R16UI, Gles.RG16UI, Gles.RGB16UI, Gles.RGBA16UI)
+                !f.float && f.bits == 8 -> intArrayOf(Gles.R8, Gles.RG8, Gles.RGB8, Gles.RGBA8)
                 f.heldBits == 16 -> intArrayOf(Gles.R16F, Gles.RG16F, Gles.RGB16F, Gles.RGBA16F)
                 else -> intArrayOf(Gles.R32F, Gles.RG32F, Gles.RGB32F, Gles.RGBA32F)
-            }[f.components - 1]
-            val type = if (!f.float) Gles.UNSIGNED_BYTE else if (f.bits == 16) Gles.HALF_FLOAT else Gles.FLOAT
+            }[c]
+            val unorm16 = !f.float && !f.integer && f.bits == 16
+            val type = when {
+                f.bits == 8 -> Gles.UNSIGNED_BYTE
+                f.integer -> Gles.UNSIGNED_SHORT
+                f.float && f.bits == 16 -> Gles.HALF_FLOAT
+                else -> Gles.FLOAT
+            }
+            // 16-bit normalised texels as the floats they stand for (OpenGL ES has no 16-bit normalised textures).
+            val data = if (!unorm16) {
+                texture.data
+            } else {
+                val words = ByteBuffer.wrap(texture.data).order(ByteOrder.LITTLE_ENDIAN)
+                val floats = ByteBuffer.allocate(texture.data.size * 2).order(ByteOrder.nativeOrder())
+                while (words.hasRemaining()) floats.putFloat((words.short.toInt() and 0xFFFF) / 65535f)
+                floats.array()
+            }
             val id = gl.genTexture()
             gl.bindTexture(kind, id)
             gl.pixelStorei(Gles.UNPACK_ALIGNMENT, 1)
-            val bytes = ByteBuffer.allocateDirect(texture.data.size).order(ByteOrder.nativeOrder())
-            bytes.put(texture.data).position(0)
-            if (texture.depth > 0) {
+            val bytes = ByteBuffer.allocateDirect(data.size).order(ByteOrder.nativeOrder())
+            bytes.put(data).position(0)
+            if (texture.dimensions == 3) {
                 gl.texImage3D(internal, texture.width, texture.height, texture.depth, layout, type, bytes)
             } else {
                 gl.texImage2D(internal, texture.width, texture.height, layout, type, bytes)
@@ -243,13 +331,16 @@ class MpvHooks(
         }
     }
 
-    /** Deletes the programs built and the textures uploaded, before the context goes. */
+    /** Deletes the programs built, the textures uploaded and the buffers made, before the context goes. */
     fun release() {
         programs.values.forEach(gl::deleteProgram)
         programs.clear()
         uploaded.values.forEach(gl::deleteTexture)
         uploaded.clear()
         uploadedFor = null
+        buffers.values.forEach(gl::deleteBuffer)
+        buffers.clear()
+        buffersFor = null
     }
 
     companion object {
