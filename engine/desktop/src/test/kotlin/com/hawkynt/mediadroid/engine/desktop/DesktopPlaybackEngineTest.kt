@@ -249,8 +249,15 @@ class DesktopPlaybackEngineTest {
             val track = engine.tracks.single { it.kind == Track.Kind.TEXT }
             assertEquals(0, track.source)
             engine.select(Track.Kind.TEXT, track.id)
+            // The stream picked is read again from where it plays, before the clock moves on.
+            waitFor { sink.flushed > 0 }
             sink.playedMs = 1200
-            waitFor { engine.subtitle() == "Second line\nwith two rows" }
+            // The pictures taken as the screen takes them: the reader stops a few pictures ahead, so without that
+            // it never reaches the line at 1 s.
+            waitFor {
+                engine.picture()
+                engine.subtitle() == "Second line\nwith two rows"
+            }
         }
     }
 
