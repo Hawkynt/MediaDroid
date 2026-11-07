@@ -45,6 +45,62 @@ class NativeNeuralTest {
     }
 
     @Test
+    fun `RIFE's flow, warped by the stage at the frames' own size, is the network's in-between`() {
+        assumeTrue("no display", System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null)
+        val neural = DesktopNeural(folder.root)
+        assertTrue("the native library did not load", neural.loaded)
+        val w = 256
+        val h = 192
+        fun picture(shift: Int, pts: Long) = MediaReader.Picture(pts, w, h, bytes(NeuralChecks.testFrame(w, h, shift)))
+        val first = picture(0, 0)
+        val last = picture(2, 40)
+        val truth = bytes(NeuralChecks.testFrame(w, h, 1))
+        val own = requireNotNull(neural.interpolator(PictureAdjustment.Interpolation.RIFE, false)).use { net ->
+            val rgb = requireNotNull(net.run(NeuralChecks.testFrame(w, h, 0), NeuralChecks.testFrame(w, h, 2), w, h))
+            ByteArray(w * h * 3).also(rgb::get)
+        }
+        GlStage(Presentation.SYNC).use { stage ->
+            assumeTrue(stage.ready)
+            val rife = PictureAdjustment(interpolation = PictureAdjustment.Interpolation.RIFE)
+            // Halfway the picture is the in-between itself (NeuralInterpolation.mix).
+            fun middle(msByHeight: Map<Int, Double>): ByteArray {
+                val passed = NeuralInterpolation.Passed("CPU", msByHeight)
+                stage.neural = GlStage.Neural(neural, motion = mapOf(PictureAdjustment.Interpolation.RIFE to passed))
+                return stage.process(Moment(first, next = last, phase = 0.5f), rife, w, h).rgba
+            }
+            // Fast enough at the frames' size: the flow worked out there, the in-between as near the truth as the
+            // network's own picture (the stage hands it the rows bottom first, so its padding falls elsewhere and the
+            // two are not the same to the pixel; tools/neural-check holds the warp itself to the network's, exactly).
+            val whole = middle(mapOf(240 to 1.0, 360 to 2.0))
+            val ownRgba = ByteArray(w * h * 4) { i -> if (i % 4 == 3) -1 else own[i / 4 * 3 + i % 4] }
+            val wholeOff = meanOff(whole, truth, w, h)
+            val ownOff = meanOff(ownRgba, truth, w, h)
+            assertTrue("$wholeOff, the network's own $ownOff", wholeOff <= ownOff + 1)
+            // Only 240p keeps up: the flow from there, the picture still at its own size and near the truth.
+            val small = middle(mapOf(240 to 10.0, 360 to 30.0))
+            val blend = ByteArray(w * h * 4) { i ->
+                (((first.rgba[i].toInt() and 0xFF) + (last.rgba[i].toInt() and 0xFF)) / 2).toByte()
+            }
+            val smallOff = meanOff(small, truth, w, h)
+            assertTrue("$smallOff, a blend ${meanOff(blend, truth, w, h)}", smallOff < meanOff(blend, truth, w, h) / 2)
+        }
+    }
+
+    private fun bytes(buffer: ByteBuffer): ByteArray = ByteArray(buffer.remaining()).also { buffer.duplicate().get(it) }
+
+    // The mean difference per value of two RGBA pictures away from their edges.
+    private fun meanOff(a: ByteArray, b: ByteArray, w: Int, h: Int): Double {
+        var sum = 0L
+        var count = 0
+        for (y in EDGE until h - EDGE) for (x in EDGE until w - EDGE) for (c in 0..2) {
+            val i = (y * w + x) * 4 + c
+            sum += abs((a[i].toInt() and 0xFF) - (b[i].toInt() and 0xFF))
+            count++
+        }
+        return sum.toDouble() / count
+    }
+
+    @Test
     fun `IFRNet makes the same in-between again and again, the heap around it left whole`() {
         // Its time plane once went in at the whole size where the network joins it at a sixteenth: ncnn's Concat wrote
         // past its output (AddressSanitizer), and within a few 480p in-betweens the process went down (Android too).
@@ -270,3 +326,6 @@ class NativeNeuralTest {
         }
     }
 }
+
+// Where the motion uncovers what neither frame shows: left out of the comparisons.
+private const val EDGE = 24

@@ -62,6 +62,41 @@ struct Rife : Interpolator {
         bytes(result, ncnn::Mat::PIXEL_RGB, w, h, rgb);
         return 0;
     }
+
+    // The graph read up to its last block's flow (blob "714": the flow so far plus the last block's change) and its
+    // mask logits ("713"), before the warp and blend that make "out0" from them.
+    int flow(const unsigned char* first, const unsigned char* second, int w, int h, float time, float* out) override {
+        const int pw = roundUp(w, padding);
+        const int ph = roundUp(h, padding);
+        ncnn::Mat in0 = planes(first, ncnn::Mat::PIXEL_RGBA2RGB, w, h, pw, ph, ncnn::BORDER_CONSTANT);
+        ncnn::Mat in1 = planes(second, ncnn::Mat::PIXEL_RGBA2RGB, w, h, pw, ph, ncnn::BORDER_CONSTANT);
+        ncnn::Mat timestep(pw, ph, 1);
+        timestep.fill(time);
+        ncnn::Extractor ex = net.create_extractor();
+        ex.input("in0", in0);
+        ex.input("in1", in1);
+        ex.input("in2", timestep);
+        ncnn::Mat flows, mask;
+        if (ex.extract("714", flows) != 0 || ex.extract("713", mask) != 0) return -2;
+        if (flows.c < 4 || mask.c < 1 || flows.w != pw || flows.h != ph || mask.w != pw || mask.h != ph) return -2;
+        float* masks = out + static_cast<size_t>(w) * h * 4;
+        for (int y = 0; y < h; y++) {
+            const float* fx0 = flows.channel(0).row(y);
+            const float* fy0 = flows.channel(1).row(y);
+            const float* fx1 = flows.channel(2).row(y);
+            const float* fy1 = flows.channel(3).row(y);
+            const float* m = mask.channel(0).row(y);
+            float* row = out + static_cast<size_t>(y) * w * 4;
+            for (int x = 0; x < w; x++) {
+                row[x * 4] = fx0[x];
+                row[x * 4 + 1] = fy0[x];
+                row[x * 4 + 2] = fx1[x];
+                row[x * 4 + 3] = fy1[x];
+                masks[static_cast<size_t>(y) * w + x] = m[x];
+            }
+        }
+        return 0;
+    }
 };
 
 // Feeds and reads blobs of either kind: CPU Mats, or GPU VkMats recorded into [cmd].

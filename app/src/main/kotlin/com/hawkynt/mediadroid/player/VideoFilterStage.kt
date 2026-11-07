@@ -169,6 +169,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val rifeFor = LongArray(2)
     private var rifeSize = NeuralInterpolation.Size(0, 0)
 
+    // A network handing back its flow (NeuralInterpolation.handsFlow, on GLSL ES 3 chips): its flow and mask as
+    // float textures, and the last two in-betweens warped at the frames' own size — which slot holds such a one.
+    private var rifeFlow = 0
+    private var rifeMask = 0
+    private val rifeWarped = Array(2) { Frame(gl) }
+    private val rifeWarpedSlot = BooleanArray(2)
+
     /**
      * The upscalers' models on ncnn (waifu2x, Real-CUGAN, RealSR) the household's self-test passed, with the unit each
      * runs on; one not in it plays as Standard scaling.
@@ -1055,6 +1062,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             if (rifeTextures[0] != 0) GLES20.glDeleteTextures(2, rifeTextures, 0)
             rifeTextures.fill(0)
             rifeSize = NeuralInterpolation.Size(0, 0)
+            rifeWarped.forEach { it.release() }
+            rifeWarpedSlot.fill(false)
+            rifeFlow = 0
+            rifeMask = 0
             neural?.close()
             neural = null
             if (neuralTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(neuralTexture), 0)
@@ -2221,7 +2232,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val rifeSlot = if (picture.interpolation.isNeural && kept >= 2) rifeFor.indexOf(keptAt[later]) else -1
         if (rifeSlot >= 0) {
             val mix = NeuralInterpolation.mix(phase)
-            if (mix.towardsMiddle) currentTexture = rifeTextures[rifeSlot] else previousTexture = rifeTextures[rifeSlot]
+            val middle = if (rifeWarpedSlot[rifeSlot]) rifeWarped[rifeSlot].texture else rifeTextures[rifeSlot]
+            if (mix.towardsMiddle) currentTexture = middle else previousTexture = middle
             weight = mix.weight
         }
         val mixed = frames[7].ensure(width, height)
@@ -2548,6 +2560,19 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, rifeRead[i])
             rifeRead[i].rewind()
         }
+        if (es3 && NeuralInterpolation.handsFlow(network)) {
+            // Its flow worked out at the working size, both frames warped by it at their own (rife-warp-es3.frag).
+            val flow = net.flow(rifeRead[0], rifeRead[1], w, h) ?: return
+            rifeFlow = passes.floats(rifeFlow, w, h, 4, flow.duplicate())
+            val mask = flow.duplicate().apply { position(w * h * 4 * Float.SIZE_BYTES) }.slice()
+            rifeMask = passes.floats(rifeMask, w, h, 1, mask)
+            val slot = if (rifeFor[0] <= rifeFor[1]) 0 else 1
+            val into = rifeWarped[slot].ensure(frameWidth, frameHeight)
+            finishing.warp(earlier, later, rifeFlow, rifeMask, into, w, h)
+            rifeWarpedSlot[slot] = true
+            rifeFor[slot] = keptAt[2]
+            return
+        }
         // The frames' arrivals are their ids: the later frame of this pair is the earlier of the next.
         val rgb = net.run(
             rifeRead[0], rifeRead[1], w, h, keptAt[1], keptAt[2], before = rifeRead[2].takeIf { looked.size > 2 },
@@ -2570,6 +2595,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }
         // Into the slot of the older pair: the newer one may still be on screen.
         val slot = if (rifeFor[0] <= rifeFor[1]) 0 else 1
+        rifeWarpedSlot[slot] = false
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, rifeTextures[slot])
         GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
         GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, rgb)

@@ -193,7 +193,9 @@ class NeuralTestService : Service() {
                         val smallest = when (kind) {
                             UPSCALER -> PictureCheck.HEIGHT
                             COLORIZER -> Colorizing.SIZE
-                            else -> NeuralInterpolation.TEST_SIZES.first().height
+                            else -> runCatching { PictureAdjustment.Interpolation.valueOf(networkName) }.getOrNull()
+                                ?.let { NeuralInterpolation.testSizes(it).first().height }
+                                ?: NeuralInterpolation.TEST_SIZES.first().height
                         }
                         answer = NeuralSelfTest.Answer(
                             NeuralSelfTest.cutShort(unit.name, times, runningHeight, smallest),

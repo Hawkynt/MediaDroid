@@ -3,6 +3,7 @@ package com.hawkynt.mediadroid.player
 import android.content.Context
 import com.hawkynt.mediadroid.shaders.NcnnShaders
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /** The native part's networks on Android: `libmediadroid_neural.so`, loaded on first use (see NativeInterpolation). */
 internal object AndroidNeural {
@@ -48,6 +49,20 @@ class NeuralInterpolator private constructor(
             handle, earlier, later, width, height, 0.5f, out, earlierId, laterId, before, after,
         )
         return if (ran == 0) out.also { it.rewind() } else null
+    }
+
+    private var flows: ByteBuffer = ByteBuffer.allocateDirect(0)
+
+    /**
+     * The network's flow and blend mask between [earlier] and [later] instead of its picture, for one that hands them
+     * back (NeuralInterpolation.handsFlow): NativeInterpolation.flow's floats in native order — valid until the next
+     * call; null where the network failed or hands back only pictures.
+     */
+    fun flow(earlier: ByteBuffer, later: ByteBuffer, width: Int, height: Int): ByteBuffer? {
+        val bytes = width * height * 5 * Float.SIZE_BYTES
+        if (flows.capacity() < bytes) flows = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
+        val ran = NativeInterpolation.flow(handle, earlier, later, width, height, 0.5f, flows)
+        return if (ran == 0) flows.also { it.rewind() } else null
     }
 
     override fun close() {
@@ -112,7 +127,9 @@ class NeuralInterpolator private constructor(
                 },
                 unit.name,
                 progress,
-            ) { android.util.Log.i("NeuralInterpolator", "$network $it") }
+                log = { android.util.Log.i("NeuralInterpolator", "$network $it") },
+                sizes = NeuralInterpolation.testSizes(network),
+            )
         }
     }
 }

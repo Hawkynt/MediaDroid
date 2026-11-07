@@ -33,6 +33,13 @@ struct Interpolator {
     const unsigned char* after = nullptr;
     virtual int between(const unsigned char* first, const unsigned char* second, int w, int h, float time,
                         unsigned char* rgb) = 0;
+    // The network's motion instead of its picture, where it has one to hand back (RIFE): into [out] (w x h, rows as
+    // stored) the flows towards the earlier and the later frame interleaved as four floats a pixel (earlier x, y,
+    // later x, y, in pixels of this size), then the blend mask's w x h logits (the earlier frame's share is their
+    // sigmoid). -1 where the network hands back only pictures.
+    virtual int flow(const unsigned char* first, const unsigned char* second, int w, int h, float time, float* out) {
+        return -1;
+    }
 };
 
 // Loads the structure (.param) and weights (.bin) named [name] into [net]: 0 when both loaded.

@@ -66,6 +66,20 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_openFlavr(JNIEnv* env, jo
 }
 
 JNIEXPORT jint JNICALL
+Java_com_hawkynt_mediadroid_player_NativeInterpolation_flow(
+    JNIEnv* env, jobject, jlong handle, jobject earlier, jobject later, jint w, jint h, jfloat time, jobject out) {
+    auto* it = reinterpret_cast<mediadroid::Interpolator*>(handle);
+    const auto* first = static_cast<const unsigned char*>(env->GetDirectBufferAddress(earlier));
+    const auto* second = static_cast<const unsigned char*>(env->GetDirectBufferAddress(later));
+    auto* floats = static_cast<float*>(env->GetDirectBufferAddress(out));
+    if (it == nullptr || first == nullptr || second == nullptr || floats == nullptr) return -1;
+    if (env->GetDirectBufferCapacity(out) < static_cast<jlong>(w) * h * 5 * 4) return -1;
+    it->earlierId = it->laterId = 0;
+    it->before = it->after = nullptr;
+    return it->flow(first, second, w, h, time, floats);
+}
+
+JNIEXPORT jint JNICALL
 Java_com_hawkynt_mediadroid_player_NativeInterpolation_between(
     JNIEnv* env, jobject, jlong handle, jobject earlier, jobject later, jint w, jint h, jfloat time, jobject out,
     jlong earlierId, jlong laterId, jobject before, jobject after) {

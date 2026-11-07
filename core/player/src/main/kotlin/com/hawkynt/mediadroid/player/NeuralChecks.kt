@@ -7,7 +7,7 @@ import kotlin.math.abs
  * What a neural network's self-test does on one unit, the same on every platform (the platform opens the network and
  * runs it in a process of its own, see NeuralSelfTest): whether the unit computes it right, on a small check picture
  * against the truth, and what one picture takes there at the sizes playback needs — a frame interpolation network
- * ([interpolator]) at each of NeuralInterpolation.TEST_SIZES while it keeps up, an upscaler ([enlarger]) at 576p.
+ * ([interpolator]) at each of its test sizes while it keeps up, an upscaler ([enlarger]) at 576p.
  */
 object NeuralChecks {
     /** A frame interpolation network on its unit, as the native part runs it (NativeInterpolation.between). */
@@ -52,26 +52,27 @@ object NeuralChecks {
 
     /**
      * The self-test of the frame interpolation network [net] on [unit]: whether it computes right (see [check]), and
-     * what one in-between takes at each of [NeuralInterpolation.TEST_SIZES], smallest first and only on while the last
-     * kept up; null where it runs wrong. Past the budget on the small check already, the smallest size is estimated
-     * from it by its pixels and nothing larger is given. [log] hears what the check found.
+     * what one in-between takes at each of [sizes] (NeuralInterpolation.testSizes of the network), smallest first and
+     * only on while the last kept up; null where it runs wrong. Past the budget on the small check already, the
+     * smallest size is estimated from it by its pixels and nothing larger is given. [log] hears what the check found.
      */
     fun interpolator(
         net: Between,
         unit: String,
         progress: Progress,
         log: (String) -> Unit = {},
+        sizes: List<NeuralInterpolation.Size> = NeuralInterpolation.TEST_SIZES,
     ): NeuralSelfTest.Timing? {
-        val smallest = NeuralInterpolation.TEST_SIZES.first()
+        val smallest = sizes.first()
         progress.running(smallest.height)
         val checkMs = check(net, unit, log) ?: return null
         if (NeuralInterpolation.tooSlowAlready(checkMs)) {
-            val estimate = NeuralInterpolation.estimate(checkMs, CHECK_SIDE * CHECK_SIDE)
+            val estimate = NeuralInterpolation.estimate(checkMs, CHECK_SIDE * CHECK_SIDE, smallest)
             progress.timed(smallest.height, estimate)
             return NeuralSelfTest.Timing(unit, mapOf(smallest.height to estimate))
         }
         val times = LinkedHashMap<Int, Double>()
-        for (size in NeuralInterpolation.TEST_SIZES) {
+        for (size in sizes) {
             progress.running(size.height)
             val ms = time(net, size) ?: break
             times[size.height] = ms

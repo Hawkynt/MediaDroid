@@ -31,7 +31,7 @@ object NeuralTestProcess {
     /** [network]'s self-test with the models in [models]; blocks. */
     fun selfTest(models: File, network: PictureAdjustment.Interpolation): NeuralSelfTest.Outcome =
         NeuralSelfTest.across(NeuralInterpolation::fastEnough) { unit, until ->
-            one(models, MOTION, network.name, unit, until, NeuralInterpolation.TEST_SIZES.first().height)
+            one(models, MOTION, network.name, unit, until, NeuralInterpolation.testSizes(network).first().height)
         }
 
     /** [choice]'s self-test with the models in [models]; blocks. */
@@ -160,6 +160,7 @@ object NeuralTestProcess {
                     { a, b, w, h, ia, ib, before, after -> net.run(a, b, w, h, ia, ib, before, after) },
                     unit,
                     progress,
+                    sizes = NeuralInterpolation.testSizes(network),
                 )
             }
         }

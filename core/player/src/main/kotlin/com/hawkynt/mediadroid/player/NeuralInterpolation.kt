@@ -11,7 +11,9 @@ import kotlin.math.sqrt
  *
  * The time an in-between takes grows with its pixels, so the self-test times [TEST_SIZES] and the player makes the
  * in-betweens of the material at its own size where the device keeps up, and otherwise at the most pixels it keeps
- * up with, the material's shape kept (see [workingSize]).
+ * up with, the material's shape kept (see [workingSize]). RIFE hands back its flow instead of a picture ([handsFlow]):
+ * the flow is worked out at that size and the frames are warped by it at their own, so a smaller size costs only
+ * motion detail, never sharpness — its self-test starts lower ([testSizes]).
  */
 object NeuralInterpolation {
     /** What one in-between may take: half a frame at 25 frames a second, so 25 can become 50. */
@@ -26,6 +28,26 @@ object NeuralInterpolation {
     /** What the self-test times, smallest first: 16:9 pictures at 480p, 576p, 720p and 1080p. */
     val TEST_SIZES = listOf(Size(854, 480), Size(1024, 576), Size(1280, 720), Size(1920, 1080))
 
+    /** The smaller sizes a network handing back its flow is also timed at: 240p and 360p. */
+    private val FLOW_SIZES = listOf(Size(426, 240), Size(640, 360))
+
+    /**
+     * Whether [network] hands back its flow and blend mask rather than a picture: RIFE, whose last step — the two
+     * frames warped by the flow and blended by the mask — the stage takes over at the frames' own size.
+     */
+    fun handsFlow(network: PictureAdjustment.Interpolation): Boolean = network == PictureAdjustment.Interpolation.RIFE
+
+    /** What [network]'s self-test times, smallest first: from 240p for one that [handsFlow], else [TEST_SIZES]. */
+    fun testSizes(network: PictureAdjustment.Interpolation): List<Size> =
+        if (handsFlow(network)) FLOW_SIZES + TEST_SIZES else TEST_SIZES
+
+    /**
+     * How much a flow worked out at [working] grows to serve [own]: across and down, each by its own ratio (the
+     * working size keeps the shape only to the nearest even pixel).
+     */
+    fun flowScale(own: Size, working: Size): Pair<Float, Float> =
+        own.width.toFloat() / working.width to own.height.toFloat() / working.height
+
     /**
      * The longest a self-test takes, from the tap to the answer, its network's loading included: a hundred times the
      * budget, so a slower device is told so at once. A test cut short counts as taking this long.
@@ -33,10 +55,10 @@ object NeuralInterpolation {
     const val MAX_WAIT_MS = 2000.0
 
     /**
-     * What an in-between at the smallest test size would take, from [ms] for one of [pixels]: by the pixels, a
-     * lower bound where the network's own overhead counts for more on the small one.
+     * What an in-between at the smallest test size ([smallest]) would take, from [ms] for one of [pixels]: by the
+     * pixels, a lower bound where the network's own overhead counts for more on the small one.
      */
-    fun estimate(ms: Double, pixels: Int): Double = ms * TEST_SIZES.first().area / pixels
+    fun estimate(ms: Double, pixels: Int, smallest: Size = TEST_SIZES.first()): Double = ms * smallest.area / pixels
 
     /**
      * Whether [ms] for the self-test's small check picture is already past the budget: the work only grows with the
@@ -68,7 +90,7 @@ object NeuralInterpolation {
      * tested size that kept up, its shape kept and both sides even; null where none did.
      */
     fun workingSize(width: Int, height: Int, msByHeight: Map<Int, Double>): Size? {
-        val tested = TEST_SIZES.mapNotNull { size -> msByHeight[size.height]?.let { size to it } }
+        val tested = (FLOW_SIZES + TEST_SIZES).mapNotNull { size -> msByHeight[size.height]?.let { size to it } }
         if (tested.isEmpty()) return null
         val own = Size(width, height)
         val (nearest, nearestMs) = tested.minBy { abs(it.first.area - own.area) }

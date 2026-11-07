@@ -9,6 +9,7 @@ import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.shaders.NcnnShaders
 import java.io.File
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * The neural networks on the desktop: the native library (NativeNetworks, `libmediadroid.so` / `mediadroid.dll`) runs
@@ -118,6 +119,20 @@ class DesktopNeural(val models: File) {
                 handle, earlier, later, width, height, 0.5f, out, earlierId, laterId, before, after,
             )
             return if (ran == 0) out.also { it.rewind() } else null
+        }
+
+        private var flows: ByteBuffer = ByteBuffer.allocateDirect(0)
+
+        /**
+         * The network's flow and blend mask between [earlier] and [later] instead of its picture, for one that hands
+         * them back (NeuralInterpolation.handsFlow): NativeInterpolation.flow's floats in native order — valid until
+         * the next call; null where the network failed or hands back only pictures.
+         */
+        fun flow(earlier: ByteBuffer, later: ByteBuffer, width: Int, height: Int): ByteBuffer? {
+            val bytes = width * height * 5 * Float.SIZE_BYTES
+            if (flows.capacity() < bytes) flows = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
+            val ran = NativeInterpolation.flow(handle, earlier, later, width, height, 0.5f, flows)
+            return if (ran == 0) flows.also { it.rewind() } else null
         }
 
         override fun close() {
