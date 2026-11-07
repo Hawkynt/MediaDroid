@@ -100,6 +100,7 @@ import androidx.compose.ui.draw.drawWithContent
 import com.hawkynt.mediadroid.player.TestPattern
 import com.hawkynt.mediadroid.player.PictureTrial
 import com.hawkynt.mediadroid.player.PlaybackMath
+import com.hawkynt.mediadroid.player.RefreshPeriod
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -335,11 +336,20 @@ fun PlayerScreen(
         var still: MediaReader.Picture? = null
         var histogramAtMs = 0L
         var stillOf: TestPattern? = null
+        // The screen's refresh, measured from the frames asked for back to back: each picture is picked for the
+        // middle of the refresh it shows at (DesktopPlaybackEngine.moment) — a refresh later where the stage hands
+        // its pictures out one call late (Presentation.PBO_LAGGED) and the last one went through it.
+        val refresh = RefreshPeriod()
+        val lagged = com.hawkynt.mediadroid.engine.desktop.Presentation.chosen() ==
+            com.hawkynt.mediadroid.engine.desktop.Presentation.PBO_LAGGED
+        var staging = false
         while (true) {
-            withFrameNanos { }
+            refresh.refreshed(withFrameNanos { it })
+            val began = System.nanoTime()
             // Another video opened (its frame cleared): nothing of the last one is drawn again.
             if (frame == null) staged = null
             var changed = false
+            val aheadMs = (refresh.periodNs / 2 + if (lagged && staging) refresh.periodNs else 0) / 1_000_000
             // A test pattern instead of the video: through the stage with the household's picture and the screen's
             // setup, as the films get them (TestPattern.pictureFor).
             val showing = pattern
@@ -364,7 +374,7 @@ fun PlayerScreen(
                     drawn = AssPicture.EMPTY
                     changed = true
                 }
-            } else engine.moment()?.let { moment ->
+            } else engine.moment(aheadMs)?.let { moment ->
                 val raw = moment.shown
                 val nowMs = System.currentTimeMillis()
                 if (engine.openedPath != cropVideo || !picture.cropBlackBars || !stage.ready) {
@@ -445,7 +455,8 @@ fun PlayerScreen(
                     shownSize = IntSize(outW, outH)
                     val throughStage = picture.hasFilters || pixelAspect != 1f || widening != 1f ||
                         !warp.isIdentity || raw.hdr != null || engine.drawsSubtitles || raw.planes != null
-                    staged = if (throughStage && stage.ready && outW > 0 && outH > 0) {
+                    staging = throughStage && stage.ready && outW > 0 && outH > 0
+                    staged = if (staging) {
                         withContext(Dispatchers.Default) { stage.process(moment, picture, outW, outH, part, warp) }
                     } else {
                         raw.eightBit()
@@ -527,6 +538,8 @@ fun PlayerScreen(
             val wasPlaying = isPlaying
             isPlaying = engine.isPlaying
             if (wasPlaying && !isPlaying && duration > 0 && position >= duration - 100) next()
+            // Done well within a refresh: the next frame is asked for at once, so the gap to it is one refresh.
+            if (System.nanoTime() - began < refresh.periodNs / 2) refresh.askedAgain()
         }
     }
     LaunchedEffect(Unit) { focus.requestFocus() }

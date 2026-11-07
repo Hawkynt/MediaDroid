@@ -424,7 +424,10 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   on the pair after the one on screen — need no delay, and neither does the sound; Film is undone before the pictures
   queue up, its four pictures of five spread over the cycle's own time. A choice is tried as on the phone: the same
   checks (`PictureTrial` in `:core:player`), the dry run on a stage of its own drawing at the size the largest screen
-  shows 576p, at that screen's refresh rate.
+  shows 576p, at that screen's refresh rate. Each picture is picked by the sound's clock for the middle of the
+  refresh it shows at — a refresh further ahead where the stage hands it out one picture late — the refresh measured
+  as on the phone (`RefreshPeriod`), so it reaches the screen as near its time as the refreshes allow. The phone's `FramePacer` stays the phone's: it spaces pictures a decoder hands over
+  unevenly, and on the desktop no decoder hands them over — the clock takes each from the queue decoded ahead.
 - How the stage's picture reaches the window was measured, not assumed ([#287](https://github.com/Hawkynt/MediaDroid/issues/287);
   `./gradlew :desktop:presentationBench`, `-Poffscreen` where the display presents nothing): the stage draws a new
   1080p or 4K picture whenever a 60 Hz clock asks for one, each picture uploaded fresh as a decoded one is, and Skia on
