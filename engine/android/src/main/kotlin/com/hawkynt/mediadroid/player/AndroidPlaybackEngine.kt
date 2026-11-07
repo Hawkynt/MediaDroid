@@ -402,7 +402,10 @@ class AndroidPlaybackEngine(
         exo.playWhenReady = true
     }
 
-    override fun pause() = exo.pause()
+    override fun pause() {
+        pausedForCall = false
+        exo.pause()
+    }
 
     override fun seekTo(positionMs: Long) = exo.seekTo(positionMs)
 
@@ -541,17 +544,64 @@ class AndroidPlaybackEngine(
     var spatialAudio: Boolean = false
         set(value) {
             field = value
-            exo.setAudioAttributes(
-                androidx.media3.common.AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                    .setSpatializationBehavior(
-                        if (value) C.SPATIALIZATION_BEHAVIOR_AUTO else C.SPATIALIZATION_BEHAVIOR_NEVER,
-                    )
-                    .build(),
-                true,
-            )
+            applyAudioAttributes()
         }
+
+    /**
+     * Whether the film plays on whatever other apps play (on a second screen, in picture-in-picture): it then takes no
+     * audio focus, so another app's video or music no longer pauses it; a call still does (Android 12 on, by the
+     * device's audio mode), and it goes on after. Off, the audio focus rules: another player taking over pauses it.
+     */
+    var playsOnForOthers: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            applyAudioAttributes()
+            watchCalls(value)
+        }
+
+    private fun applyAudioAttributes() {
+        exo.setAudioAttributes(
+            androidx.media3.common.AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .setSpatializationBehavior(
+                    if (spatialAudio) C.SPATIALIZATION_BEHAVIOR_AUTO else C.SPATIALIZATION_BEHAVIOR_NEVER,
+                )
+                .build(),
+            !playsOnForOthers,
+        )
+    }
+
+    private val audioManager = context.getSystemService(android.media.AudioManager::class.java)
+    private var callWatch: Any? = null
+    private var pausedForCall = false
+
+    // Without the audio focus a call no longer pauses the film: the audio mode tells of one (ringing, in a call, a
+    // voice or video chat) — paused then, and played on once the mode is normal again, unless paused meanwhile.
+    private fun watchCalls(on: Boolean) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return
+        if (on && callWatch == null) {
+            val listener = android.media.AudioManager.OnModeChangedListener { mode ->
+                if (mode == android.media.AudioManager.MODE_NORMAL) {
+                    if (pausedForCall) exo.playWhenReady = true
+                    pausedForCall = false
+                } else if (exo.playWhenReady) {
+                    pausedForCall = true
+                    exo.playWhenReady = false
+                }
+            }
+            val player = android.os.Handler(exo.applicationLooper)
+            audioManager.addOnModeChangedListener({ player.post(it) }, listener)
+            callWatch = listener
+        } else if (!on) {
+            (callWatch as? android.media.AudioManager.OnModeChangedListener)?.let {
+                audioManager.removeOnModeChangedListener(it)
+            }
+            callWatch = null
+            pausedForCall = false
+        }
+    }
 
     /**
      * The bundled FFmpeg's pictures handed as YUV planes to [output] (the picture stage), sparing its decoder a
@@ -705,7 +755,10 @@ class AndroidPlaybackEngine(
         }
     }
 
-    override fun close() = exo.release()
+    override fun close() {
+        watchCalls(false)
+        exo.release()
+    }
 
     companion object {
         /**

@@ -692,7 +692,8 @@ fun PhonePlayer(
             Side.LEFT -> {
                 brightness = PlaybackMath.boostedLevel(brightness, upFraction)
                 gammaBoost = PlaybackMath.gammaBoost(brightness)
-                activityWindow?.let { window ->
+                // The darkened phone stays dark: past the maximum the gamma still brightens the other screen.
+                if (!phoneDark) activityWindow?.let { window ->
                     window.attributes = window.attributes.apply {
                         screenBrightness = brightness.coerceIn(0.01f, 1f)
                     }
@@ -755,6 +756,12 @@ fun PhonePlayer(
     // With the film on the other screen the phone goes dark by itself once the controls hide — black and empty
     // at the lowest brightness, nothing left on it to burn in — until a touch lights it up again.
     val filmElsewhere = presentation?.isShowing == true
+    // On the other screen or in picture-in-picture the film plays on whatever other apps play (#458).
+    LaunchedEffect(filmElsewhere, inPip) { engine.playsOnForOthers = filmElsewhere || inPip }
+    // What a gesture set shows on the other screen too, where the viewer looks (#459).
+    LaunchedEffect(state.feedback, state.feedbackBoosted, presentation) {
+        presentation?.takeIf { it.isShowing }?.note(state.feedback, state.feedbackBoosted)
+    }
     LaunchedEffect(controlsVisible, state.panelOpen, filmElsewhere, askingToLock) {
         if (filmElsewhere && !controlsVisible && !state.panelOpen && !askingToLock && !small) {
             darkPhone.controlsHidden()
@@ -1514,19 +1521,28 @@ fun PhonePlayer(
                     )
                 }
             }
-            // The darkened phone: black over everything; a touch lights it up and brings the controls back.
+            // The darkened phone: black over everything; a tap lights it up and brings the controls back, the
+            // picture's other gestures — volume and brightness swipes, double-tap skips — work on it in the dark.
             if (phoneDark && !small) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color.Black)
-                        .pointerInput(Unit) {
-                            detectTapGestures {
+                        .playerGestures(
+                            onTap = {
                                 darkPhone.touch()
                                 phoneDark = false
                                 playerView?.showControls()
-                            }
-                        },
+                            },
+                            onDoubleTap = { side ->
+                                val forward = side == Side.RIGHT
+                                engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, forward))
+                                show(if (forward) "+15 s" else "−15 s")
+                            },
+                            onSwipe = ::swipe,
+                            onSwipeEnd = {},
+                            onPinch = { _, _ -> },
+                        ),
                 )
             }
         }
