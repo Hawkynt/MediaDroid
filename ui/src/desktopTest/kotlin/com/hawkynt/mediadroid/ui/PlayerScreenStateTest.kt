@@ -26,7 +26,8 @@ class PlayerScreenStateTest {
     private val engine = FakePlaybackEngine(length = 600_000)
     private val queue = (1..2).map { Playable("Episode $it", null, "/show/e$it.mkv", null) }
 
-    private fun state(demo: Boolean = false) = PlayerScreenState(queue, 0, store, engine, autoAdvance = true, demo = demo)
+    private fun state(demo: Boolean = false) =
+        PlayerScreenState(queue, 0, store, engine, autoAdvance = true, demo = demo)
 
     @Test
     fun `the files beside a video go along with it, subtitles and sound apart`() {
