@@ -374,8 +374,7 @@ and denoised. How the networks are checked on a desktop:
 
 **Android** 8.0 (API 26) or newer, phone, tablet, or TV box. Not on the Play Store (yet): download the APK from [Releases](https://github.com/Hawkynt/MediaDroid/releases) — a dated stable build or a `nightly-*` build. Take `MediaDroid.apk`, the signed release build, and enable installation from unknown sources; `MediaDroid-debug.apk` is for development and cannot update over it. Storage stays on your device; the app needs access only to the folders you point it at.
 
-**Windows** 10/11 (x64) and **Linux** (x64; arm64 to follow) — in progress ([#291](https://github.com/Hawkynt/MediaDroid/issues/291)), in the nightlies:
-from the same Releases, `MediaDroid-windows-x64.msi` (installs, updates in place) or `MediaDroid-windows-x64.zip`
+**Windows** 10/11 (x64) and **Linux** (x64; arm64 to follow) — from the same Releases, stable and nightly: `MediaDroid-windows-x64.msi` (installs, updates in place) or `MediaDroid-windows-x64.zip`
 (portable: unpack anywhere and run `MediaDroid.exe`, settings beside it), and `MediaDroid-linux-x64.AppImage` (mark it
 executable and run it; an arm64 AppImage follows once CI builds one). Java comes inside, and so does the native library
 the neural networks and ASS subtitles run on, with the OpenMP runtime it needs (Visual C++'s `vcomp140.dll`, GCC's
@@ -405,14 +404,17 @@ thumbs are painted from the titles themselves, and commits whatever changed back
 
 ## 💻 Platform support
 
-One app on three systems: the cores, the picture stage, the neural networks and the screens are shared; each platform
-adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/MediaDroid/issues/291)).
+One app on three systems: the cores, the picture stage, the neural networks and every screen — the library, the
+details, Files, Settings and the player — are shared (`:ui`, Compose Multiplatform); each platform adds only its shell
+(where the picture is shown, the window, the media session, the folder pickers) and its playback engine
+([#291](https://github.com/Hawkynt/MediaDroid/issues/291)).
 
 | Platform | Status | Package | Plays with | Neural networks |
 | --- | --- | --- | --- | --- |
 | Android 8.0+ — phone, tablet, TV box | ✅ shipping | APK | [Media3](https://github.com/androidx/media), the device's decoders, FFmpeg as fallback | ncnn on Vulkan or the CPU; TFLite on the NPU |
-| Windows 10/11, x64 | 🚧 in progress | MSI installer, portable zip | FFmpeg (LGPL build) with hardware decoding (D3D11VA/DXVA2) | ncnn on Vulkan or the CPU |
-| Linux, x64 and arm64 | 🚧 in progress | AppImage | FFmpeg (LGPL build) with hardware decoding (VA-API/NVDEC) | ncnn on Vulkan or the CPU |
+| Windows 10/11, x64 | ✅ shipping | MSI installer, portable zip | FFmpeg (LGPL build) with hardware decoding (D3D11VA/DXVA2) | ncnn on Vulkan or the CPU |
+| Linux, x64 | ✅ shipping | AppImage | FFmpeg (LGPL build) with hardware decoding (VA-API/NVDEC) | ncnn on Vulkan or the CPU |
+| Linux, arm64 | 🧪 native part built and tested in CI, no package yet | — | as on x64 | ncnn on Vulkan or the CPU |
 
 <details><summary>▸ What the desktop apps do, and what differs</summary>
 
@@ -555,8 +557,8 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
 ## 🗺️ Roadmap
 
 What comes next lives in the [open issues](https://github.com/Hawkynt/MediaDroid/issues), each a requirement of its
-own — among them more upscalers and interpolators ([#235](https://github.com/Hawkynt/MediaDroid/issues/235)) and the Windows and
-Linux apps ([#291](https://github.com/Hawkynt/MediaDroid/issues/291)).
+own — among them more upscalers and interpolators ([#235](https://github.com/Hawkynt/MediaDroid/issues/235)) and a Linux
+arm64 package.
 Considered and left out: online scraping, playlists, and IMDb/TMDb links — the metadata stays what is already in the
 folders. Prior art looked at: [Nova Video Player](https://github.com/nova-video-player/aos-Video), read as a user
 would for its menus.
@@ -565,7 +567,7 @@ would for its menus.
 
 | Module | What | Runs on |
 | --- | --- | --- |
-| `:app` | today the whole Android app — screens (the player's talking to the engine through `:engine:api`, never to Media3), picture stage on OpenGL ES, neural networks (`native/`, on [ncnn](https://github.com/Tencent/ncnn)); to become the Android shell alone | Android |
+| `:app` | the Android shell: the activity, the phone's player shell (`PhonePlayer`: the player panel, the filters' stage on OpenGL ES routed into it, picture in picture, the second screen), scanning and the folder pickers, the platform services behind `:ui`'s interfaces, the neural networks' Android side (`native/`, on [ncnn](https://github.com/Tencent/ncnn); the NPU) | Android |
 | `:core:nfo` | NFO parsing, the `SxxExx` / `NxNN` names, Kodi's art names | everywhere (JVM) |
 | `:core:library` | the folder scanner, the domain models, search, filters, grouping | everywhere (JVM) |
 | `:core:player` | the binge queue, the picture's rules (deinterlacing, scaling, smooth motion, the checks), the models catalogue | everywhere (JVM) |
@@ -576,9 +578,9 @@ would for its menus.
 | `:engine:android` | built ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): [Media3](https://github.com/androidx/media) behind that engine — ExoPlayer as the app builds it, FFmpeg's extension, libass, second subtitles, teletext, loudness, sidecar audio and network sources; the player panel with Media3's controls, the media session and notification; the contract runs on the real ExoPlayer under Robolectric | Android |
 | `:stage` | built ([#284](https://github.com/Hawkynt/MediaDroid/issues/284)): the picture stage's passes against an OpenGL ES interface (`Gles`: android.opengl on Android, LWJGL on the desktop), the shaders with them — how a pass runs and its frames, the upscalers, restoration, deinterlacers, HDR's tone mapping, chroma upscaling, blending and Motion, the colour correction and dither, the mpv user shaders' runner, colouring, and the dry run's test pictures; each platform keeps only what feeds it and reads it back (Android's decoder surfaces, Film and luma read-backs; the desktop's uploads and presentation). tools/shader-check draws with the real stage beside its own harness | everywhere (JVM) |
 | `native/` | built ([#285](https://github.com/Hawkynt/MediaDroid/issues/285)): the neural networks and their JNI surface as one CMake tree — `libmediadroid_neural.so` in the app, `libmediadroid.so` / `mediadroid.dll` on the desktop | Android, Windows, Linux |
-| `:ui` | started ([#286](https://github.com/Hawkynt/MediaDroid/issues/286)): every screen, in Compose Multiplatform — so far the theme both apps wear and the player's shared parts (statistics, histogram, the playback chain's graph, the picture controls, the speed slider, the gestures); the screens follow one by one | Android, Windows, Linux |
-| `:engine:desktop` | built ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): FFmpeg with hardware decoding, the stage on OpenGL 4.3, audio and sync, network sources; presenting the stage in the window waits for [#287](https://github.com/Hawkynt/MediaDroid/issues/287) | Windows, Linux |
-| `:desktop` | built ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): the desktop shell — window, menus, keyboard, file chooser | Windows, Linux |
+| `:ui` | built ([#286](https://github.com/Hawkynt/MediaDroid/issues/286)): every screen, in Compose Multiplatform — the app shell (`LibraryShell`: sidebar, walls, places, Files, Search, Filters, Settings, details), the first start, and the player (`PlayerScreen` over a `PlayerPlatform` that hosts each app's picture stage, window and media session); what a screen needs of its platform comes through interfaces each app fills in | Android, Windows, Linux |
+| `:engine:desktop` | built ([#288](https://github.com/Hawkynt/MediaDroid/issues/288)): FFmpeg with hardware decoding, the stage on OpenGL 4.3 and its own picture window ([#287](https://github.com/Hawkynt/MediaDroid/issues/287)), audio and sync, network sources | Windows, Linux |
+| `:desktop` | built ([#288](https://github.com/Hawkynt/MediaDroid/issues/288), [#290](https://github.com/Hawkynt/MediaDroid/issues/290)): the desktop shell — the window, the player's shell (`DesktopPlayer`: frame loop, full screen, screen keeper, refresh-rate matching), media keys (SMTC, MPRIS), the folder chooser, the platform services behind `:ui`'s interfaces; the MSI, portable zip and AppImage | Windows, Linux |
 
 The cores import no Android, so parsing, search, binge and the picture's rules are unit-tested in seconds without a
 device; shaders live in `stage/src/main/glsl`.
