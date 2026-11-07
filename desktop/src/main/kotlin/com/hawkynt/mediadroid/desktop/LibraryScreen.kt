@@ -41,6 +41,7 @@ import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.player.BingeQueue
 import com.hawkynt.mediadroid.ui.BrowseScreen
 import com.hawkynt.mediadroid.ui.DetailsScreen
+import com.hawkynt.mediadroid.ui.FilesScreen
 import com.hawkynt.mediadroid.ui.FiltersScreen
 import com.hawkynt.mediadroid.ui.OnboardingScreen
 import com.hawkynt.mediadroid.ui.PlacesScreen
@@ -48,8 +49,10 @@ import com.hawkynt.mediadroid.ui.SearchScreen
 import com.hawkynt.mediadroid.ui.SourcesSection
 import com.hawkynt.mediadroid.ui.Sidebar
 import com.hawkynt.mediadroid.ui.platform.LocalMediaArt
+import com.hawkynt.mediadroid.ui.platform.LocalMediaFiles
 import com.hawkynt.mediadroid.ui.platform.LocalSourceKeeper
 import com.hawkynt.mediadroid.ui.platform.MediaArt
+import com.hawkynt.mediadroid.ui.platform.MediaFiles
 import com.hawkynt.mediadroid.ui.platform.SourceKeeper
 import com.hawkynt.mediadroid.ui.playQueue
 import com.hawkynt.mediadroid.ui.startOf
@@ -62,8 +65,8 @@ import com.hawkynt.mediadroid.ui.Screen as Shown
 
 /**
  * The library: pick a folder once, then the walls both apps share (:ui) — Movies and TV Shows with their home rows,
- * Genres and Years, Search and Filters, beside the sidebar; a title opens its details. The media folder and the
- * network sources are under Settings.
+ * Genres and Years, the Files browser, Search and Filters, beside the sidebar; a title opens its details. The media
+ * folder and the network sources are under Settings.
  */
 @Composable
 fun LibraryScreen(
@@ -71,11 +74,16 @@ fun LibraryScreen(
     places: DesktopLibrary,
     art: MediaArt,
     keeper: SourceKeeper,
+    files: MediaFiles,
     library: Library?,
     onLibrary: (Library) -> Unit,
     onPlay: (List<Playing>, Int) -> Unit,
 ) {
-    CompositionLocalProvider(LocalMediaArt provides art, LocalSourceKeeper provides keeper) {
+    CompositionLocalProvider(
+        LocalMediaArt provides art,
+        LocalSourceKeeper provides keeper,
+        LocalMediaFiles provides files,
+    ) {
         Library(store, places, library, onLibrary, onPlay)
     }
 }
@@ -236,7 +244,6 @@ private fun Walls(
             onNavigate = ::navigate,
             onRefresh = onRefresh,
             modifier = Modifier.fillMaxHeight(),
-            files = false,
         )
         Box(Modifier.weight(1f).fillMaxHeight()) {
             when (val s = screen) {
@@ -267,6 +274,13 @@ private fun Walls(
                         filter = placeFilter
                         navigate(Shown.Browse(section))
                     },
+                )
+                is Shown.Files -> FilesScreen(
+                    store = state,
+                    roots = DesktopMediaFiles.roots(store),
+                    dir = s.dir,
+                    onOpen = { screen = Shown.Files(it) },
+                    onPlay = { queue, start -> onPlay(queue.map { Playing(it.title, it.videoPath) }, start) },
                 )
                 Shown.Search -> SearchScreen(
                     library = library,

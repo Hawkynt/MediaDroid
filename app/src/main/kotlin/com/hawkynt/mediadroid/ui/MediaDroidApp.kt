@@ -36,7 +36,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hawkynt.mediadroid.data.LibraryStore
 import com.hawkynt.mediadroid.data.SourceAccess
 import com.hawkynt.mediadroid.state.StateStore
-import com.hawkynt.mediadroid.data.StorageRoot
+import com.hawkynt.mediadroid.ui.platform.StorageRoot
 import com.hawkynt.mediadroid.data.StorageRoots
 import com.hawkynt.mediadroid.library.BrowseFilter
 import com.hawkynt.mediadroid.library.Episode
@@ -78,9 +78,11 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
     val context = LocalContext.current
     val art = remember { com.hawkynt.mediadroid.data.AndroidMediaArt(context) }
     val keeper = remember { com.hawkynt.mediadroid.data.AndroidSourceKeeper(context) }
+    val files = remember { com.hawkynt.mediadroid.data.AndroidMediaFiles(context) }
     CompositionLocalProvider(
         com.hawkynt.mediadroid.ui.platform.LocalMediaArt provides art,
         com.hawkynt.mediadroid.ui.platform.LocalSourceKeeper provides keeper,
+        com.hawkynt.mediadroid.ui.platform.LocalMediaFiles provides files,
     ) {
         AppShell(store, demo)
     }
