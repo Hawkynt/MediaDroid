@@ -1956,7 +1956,21 @@ fun PlayerScreen(
             // In the corner: a tap brings the player back full screen; the cross ends it. With the film on the other
             // screen the phone shows its picture in its place, the film playing on there.
             if (presentation?.isShowing == true) {
-                PosterImage(queue[index].posterPath, contentScale = ContentScale.Crop)
+                // Its poster, else a still from the video itself (a file from Files has no poster), and the screen it
+                // plays on marked.
+                PosterImage(
+                    queue[index].posterPath,
+                    videoFallback = queue[index].videoPath,
+                    contentScale = ContentScale.Crop,
+                )
+                Icon(
+                    painterResource(Res.drawable.ic_tv),
+                    contentDescription = "Playing on the other screen",
+                    tint = Color.White,
+                    modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).size(18.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), androidx.compose.foundation.shape.CircleShape)
+                        .padding(2.dp),
+                )
             }
             Box(
                 Modifier.fillMaxSize().clickable(onClickLabel = "Back to the player") { onGrow() },
