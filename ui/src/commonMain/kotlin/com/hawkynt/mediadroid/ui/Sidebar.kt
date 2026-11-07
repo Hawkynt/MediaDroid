@@ -60,6 +60,8 @@ import com.hawkynt.mediadroid.ui.resources.ic_movie
 import com.hawkynt.mediadroid.ui.resources.ic_tv
 import com.hawkynt.mediadroid.ui.resources.logo_mark
 import org.jetbrains.compose.resources.painterResource
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.ui.theme.focusClickable
 
@@ -69,7 +71,8 @@ private val ExpandedWidth = 232.dp
 /**
  * The left-hand menu the streaming apps share: Movies and TV Shows at the top, the tools below.
  * Expanded it shows labels; collapsed it is an icon rail. The toggle sits where the eye expects
- * it, at the very top.
+ * it, at the very top. At the bottom the last thing played to resume, or — with [playingCorner] — the spot where what
+ * plays now is shown small, [playingCorner] told where that spot lies.
  */
 @Composable
 fun Sidebar(
@@ -81,6 +84,7 @@ fun Sidebar(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
     resume: ResumeSpot? = null,
+    playingCorner: ((androidx.compose.ui.geometry.Rect) -> Unit)? = null,
 ) {
     val width by animateDpAsState(if (expanded) ExpandedWidth else CollapsedWidth, label = "sidebar-width")
     Column(modifier = modifier.width(width).background(MaterialTheme.colorScheme.surface)) {
@@ -221,8 +225,19 @@ fun Sidebar(
                 )
             }
         }
-        // The last thing played, one tap from resuming it, on every screen.
-        resume?.let { ResumeCard(it, expanded) }
+        // What plays now, small, in the card's place (the app draws the playing picture over this spot, told where it
+        // lies); else the last thing played, one tap from resuming it, on every screen.
+        if (playingCorner != null) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+                    .aspectRatio(if (expanded) 16f / 9f else 1f)
+                    .onGloballyPositioned { playingCorner(it.boundsInRoot()) },
+            )
+        } else {
+            resume?.let { ResumeCard(it, expanded) }
+        }
     }
 }
 

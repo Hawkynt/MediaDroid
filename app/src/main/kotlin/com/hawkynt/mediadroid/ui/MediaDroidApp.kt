@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.MaterialTheme
@@ -22,12 +25,16 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
@@ -122,6 +129,15 @@ private fun AppShell(store: StateStore, demo: Boolean) {
     var choosingFolder by remember { mutableStateOf(false) }
     var screen by remember { mutableStateOf<Screen>(Screen.Browse(LibrarySection.MOVIES)) }
     var lastBrowse by remember { mutableStateOf<Screen>(Screen.Browse(LibrarySection.MOVIES)) }
+    // What plays now, apart from the screen shown (#417): full screen over it, or — after Back — small in the
+    // sidebar's corner, playing on (on a second screen too) while the menus are used; where that corner lies.
+    var playing by remember { mutableStateOf<Screen.Player?>(null) }
+    var playingSmall by remember { mutableStateOf(false) }
+    var playingCorner by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    fun startPlaying(player: Screen.Player) {
+        playing = player
+        playingSmall = false
+    }
     var filter by remember { mutableStateOf(BrowseFilter()) }
     // Each wall keeps its own order, remembered across launches.
     var sorts by remember { mutableStateOf(LibrarySection.entries.associateWith { store.sortFor(it) }) }
@@ -330,15 +346,17 @@ private fun AppShell(store: StateStore, demo: Boolean) {
             ?: MovieVersions.toPlay(movie) { store.resumeFor(it) != null }
         val queue = version.playQueue()
         // The parts of one movie always run on; binge mode is about episodes.
-        screen = Screen.Player(queue, startOf(queue, path), autoAdvance = true)
+        startPlaying(Screen.Player(queue, startOf(queue, path), autoAdvance = true))
     }
     fun playShow(show: Show, fromEpisode: Episode? = null, path: String? = null) {
         val queue = show.playQueue()
         if (queue.isEmpty()) return
-        screen = Screen.Player(
-            queue,
-            startOf(queue, fromEpisode?.videoPath ?: path),
-            autoAdvance = store.data.settings.bingeWatching,
+        startPlaying(
+            Screen.Player(
+                queue,
+                startOf(queue, fromEpisode?.videoPath ?: path),
+                autoAdvance = store.data.settings.bingeWatching,
+            ),
         )
     }
     fun play(item: MediaItem, path: String? = null) {
@@ -386,144 +404,179 @@ private fun AppShell(store: StateStore, demo: Boolean) {
         }
     }
 
-    when (val s = screen) {
-        is Screen.Details -> {
-            BackHandler { screen = detailsReturn }
-            DetailsScreen(
-                item = s.item,
-                store = store,
-                onBack = { screen = detailsReturn },
-                onPlayMovie = { playMovie(it) },
-                onPlayShow = { show, episode -> playShow(show, episode) },
-                onPlayTrailer = { movie ->
-                    movie.trailerPath?.let { path ->
-                        val trailer = Playable("${movie.title} · Trailer", null, path, movie.posterPath)
-                        screen = Screen.Player(listOf(trailer), 0, autoAdvance = false, returnTo = s)
-                    }
-                },
-            )
-            return
-        }
-        is Screen.Player -> {
-            PlayerScreen(
-                queue = s.queue,
-                startIndex = s.startIndex,
-                store = store,
-                autoAdvance = s.autoAdvance,
-                onExit = { screen = s.returnTo ?: lastBrowse },
-                demo = demo,
-            )
-            return
-        }
-        else -> Unit
-    }
-
-    val current = screen
-    if (current is Screen.Browse && current.row != null) {
-        BackHandler { navigate(Screen.Browse(current.section)) }
-    } else if (current !is Screen.Browse) {
-        BackHandler { screen = lastBrowse }
-    }
-
-    // Titles whose every file lies on a source that cannot be reached right now are shown greyed out.
-    val away: (MediaItem) -> Boolean = remember(unreachable, store.sources) {
-        val sources = store.sources
-        val gone = unreachable
-        { item -> gone.isNotEmpty() && locationsOf(item).all { Source.owning(sources, it)?.id in gone } }
-    }
-    CompositionLocalProvider(LocalAway provides away) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .safeDrawingPadding(),
-        ) {
-            Sidebar(
-                expanded = sidebarExpanded,
-                current = screen,
-                scanning = scanning,
-                onToggle = {
-                    sidebarExpanded = !sidebarExpanded
-                    store.data.sidebarExpanded = sidebarExpanded
-                    store.save()
-                },
-                onNavigate = ::navigate,
-                onRefresh = { scan(rootPath) },
-                modifier = Modifier.fillMaxHeight(),
-                resume = resumeSpot(lib),
-            )
-            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                when (val s = screen) {
-                    is Screen.Browse -> BrowseScreen(
-                        library = lib,
-                        section = s.section,
+    // The screen shown, and over it what plays (see playing): one place in the tree for the player, so Back only
+    // shrinks it — nothing about its playing, its second screen or its sound starts over.
+    Box(Modifier.fillMaxSize()) {
+        val details = screen as? Screen.Details
+        if (details != null) {
+            val s = details
+                    BackHandler { screen = detailsReturn }
+                    DetailsScreen(
+                        item = s.item,
                         store = store,
-                        filter = filter.copy(sort = sorts.getValue(s.section)),
-                        rootPath = rootPath,
-                        row = s.row,
-                        gridState = when {
-                            s.row != null -> rowGrid
-                            s.section == LibrarySection.MOVIES -> movieGrid
-                            else -> showGrid
-                        },
-                        onOpen = ::openDetails,
-                        onPlay = { item, path -> play(item, path) },
-                        onClearFilter = { filter = BrowseFilter() },
-                        onSeeAll = { navigate(Screen.Browse(s.section, it)) },
-                    )
-                    is Screen.Places -> PlacesScreen(
-                        library = lib,
-                        store = store,
-                        kind = s.kind,
-                        section = placeSection,
-                        onSectionChange = { placeSection = it },
-                        onOpen = { section, placeFilter ->
-                            filter = placeFilter
-                            navigate(Screen.Browse(section))
+                        onBack = { screen = detailsReturn },
+                        onPlayMovie = { playMovie(it) },
+                        onPlayShow = { show, episode -> playShow(show, episode) },
+                        onPlayTrailer = { movie ->
+                            movie.trailerPath?.let { path ->
+                                val trailer = Playable("${movie.title} · Trailer", null, path, movie.posterPath)
+                                startPlaying(Screen.Player(listOf(trailer), 0, autoAdvance = false, returnTo = s))
+                            }
                         },
                     )
-                    is Screen.Files -> FilesScreen(
-                        store = store,
-                        roots = storageRoots,
-                        dir = s.dir,
-                        onOpen = { screen = Screen.Files(it) },
-                        onPlay = { queue, start ->
-                            screen = Screen.Player(
-                                queue,
-                                start,
-                                autoAdvance = store.data.settings.bingeWatching,
-                                returnTo = s,
+        } else {
+            val current = screen
+            if (current is Screen.Browse && current.row != null) {
+                BackHandler { navigate(Screen.Browse(current.section)) }
+            } else if (current !is Screen.Browse) {
+                BackHandler { screen = lastBrowse }
+            }
+
+            // Titles whose every file lies on a source that cannot be reached right now are shown greyed out.
+            val away: (MediaItem) -> Boolean = remember(unreachable, store.sources) {
+                val sources = store.sources
+                val gone = unreachable
+                { item -> gone.isNotEmpty() && locationsOf(item).all { Source.owning(sources, it)?.id in gone } }
+            }
+            CompositionLocalProvider(LocalAway provides away) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                        .safeDrawingPadding(),
+                ) {
+                    Sidebar(
+                        expanded = sidebarExpanded,
+                        current = screen,
+                        scanning = scanning,
+                        onToggle = {
+                            sidebarExpanded = !sidebarExpanded
+                            store.data.sidebarExpanded = sidebarExpanded
+                            store.save()
+                        },
+                        onNavigate = ::navigate,
+                        onRefresh = { scan(rootPath) },
+                        modifier = Modifier.fillMaxHeight(),
+                        resume = resumeSpot(lib),
+                        playingCorner = if (playing != null && playingSmall) {
+                            { rect -> playingCorner = rect }
+                        } else {
+                            null
+                        },
+                    )
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        when (val s = screen) {
+                            is Screen.Browse -> BrowseScreen(
+                                library = lib,
+                                section = s.section,
+                                store = store,
+                                filter = filter.copy(sort = sorts.getValue(s.section)),
+                                rootPath = rootPath,
+                                row = s.row,
+                                gridState = when {
+                                    s.row != null -> rowGrid
+                                    s.section == LibrarySection.MOVIES -> movieGrid
+                                    else -> showGrid
+                                },
+                                onOpen = ::openDetails,
+                                onPlay = { item, path -> play(item, path) },
+                                onClearFilter = { filter = BrowseFilter() },
+                                onSeeAll = { navigate(Screen.Browse(s.section, it)) },
                             )
-                        },
-                    )
-                    Screen.Search -> SearchScreen(
-                        library = lib,
-                        store = store,
-                        query = searchQuery,
-                        onQueryChange = { searchQuery = it },
-                        gridState = searchGrid,
-                        onOpen = ::openDetails,
-                    )
-                    Screen.Filters -> FiltersScreen(
-                        library = lib,
-                        filter = filter,
-                        onFilterChange = { filter = it },
-                        sorts = sorts,
-                        onSortChange = { section, order ->
-                            sorts = sorts + (section to order)
-                            store.saveSort(section, order)
-                        },
-                    )
-                    Screen.Settings -> SettingsScreen(
-                        store,
-                        rootPath = rootPath,
-                        onChangeFolder = ::launchPicker,
-                        unreachable = unreachable,
-                        onAddDeviceFolder = { addFolder.launch(null) },
-                        onSourcesChanged = { scan(rootPath) },
-                    )
-                    else -> Unit
+                            is Screen.Places -> PlacesScreen(
+                                library = lib,
+                                store = store,
+                                kind = s.kind,
+                                section = placeSection,
+                                onSectionChange = { placeSection = it },
+                                onOpen = { section, placeFilter ->
+                                    filter = placeFilter
+                                    navigate(Screen.Browse(section))
+                                },
+                            )
+                            is Screen.Files -> FilesScreen(
+                                store = store,
+                                roots = storageRoots,
+                                dir = s.dir,
+                                onOpen = { screen = Screen.Files(it) },
+                                onPlay = { queue, start ->
+                                    startPlaying(
+                                        Screen.Player(
+                                            queue,
+                                            start,
+                                            autoAdvance = store.data.settings.bingeWatching,
+                                            returnTo = s,
+                                        ),
+                                    )
+                                },
+                            )
+                            Screen.Search -> SearchScreen(
+                                library = lib,
+                                store = store,
+                                query = searchQuery,
+                                onQueryChange = { searchQuery = it },
+                                gridState = searchGrid,
+                                onOpen = ::openDetails,
+                            )
+                            Screen.Filters -> FiltersScreen(
+                                library = lib,
+                                filter = filter,
+                                onFilterChange = { filter = it },
+                                sorts = sorts,
+                                onSortChange = { section, order ->
+                                    sorts = sorts + (section to order)
+                                    store.saveSort(section, order)
+                                },
+                            )
+                            Screen.Settings -> SettingsScreen(
+                                store,
+                                rootPath = rootPath,
+                                onChangeFolder = ::launchPicker,
+                                unreachable = unreachable,
+                                onAddDeviceFolder = { addFolder.launch(null) },
+                                onSourcesChanged = { scan(rootPath) },
+                            )
+                            else -> Unit
+                        }
+                    }
                 }
+            }
+        }
+        playing?.let { player ->
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            val corner = playingCorner.takeIf { details == null }
+            val place = when {
+                !playingSmall -> Modifier.fillMaxSize()
+                corner != null -> with(density) {
+                    Modifier
+                        .offset { androidx.compose.ui.unit.IntOffset(corner.left.toInt(), corner.top.toInt()) }
+                        .size(corner.width.toDp(), corner.height.toDp())
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                }
+                // No sidebar on a title's details: the lower left corner.
+                else -> Modifier
+                    .align(Alignment.BottomStart)
+                    .safeDrawingPadding()
+                    .padding(16.dp)
+                    .size(192.dp, 108.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            }
+            key(player) {
+                PlayerScreen(
+                    queue = player.queue,
+                    startIndex = player.startIndex,
+                    store = store,
+                    autoAdvance = player.autoAdvance,
+                    onExit = {
+                        playing = null
+                        playingSmall = false
+                    },
+                    demo = demo,
+                    modifier = place,
+                    small = playingSmall,
+                    onShrink = { playingSmall = true },
+                    onGrow = { playingSmall = false },
+                )
             }
         }
     }
