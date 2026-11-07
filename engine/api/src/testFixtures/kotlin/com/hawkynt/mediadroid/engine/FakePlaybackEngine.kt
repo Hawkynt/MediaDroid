@@ -118,6 +118,9 @@ class FakePlaybackEngine(
 
     override val frameRate: Float get() = if (opened == null) 0f else 25f
 
+    override val videoFormat: VideoFormat?
+        get() = if (opened == null) null else VideoFormat(videoSize.first, videoSize.second, frameRate = frameRate)
+
     override var speed: Float = 1f
 
     override var volume: Float = 1f

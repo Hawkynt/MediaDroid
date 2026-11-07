@@ -182,6 +182,9 @@ class MediaReader(
     /** How the video is coded where it is HDR (SMPTE ST 2084's PQ, or HLG), else null. */
     val hdr: ToneMap.Transfer?
 
+    /** The bits of each of the picture's samples as coded (8, 10, 12), 8 where the file does not say. */
+    val bitDepth: Int
+
     /** The picture's frames a second (the stream's average), 0 where the file does not say or has no picture. */
     val frameRate: Float
 
@@ -259,6 +262,12 @@ class MediaReader(
         audioDecoder = audio?.codec()?.name()?.string
         width = video?.width() ?: 0
         height = video?.height() ?: 0
+        bitDepth = if (videoIndex < 0) {
+            8
+        } else {
+            avutil.av_pix_fmt_desc_get(format.streams(videoIndex).codecpar().format())?.comp(0)?.depth()
+                ?.takeIf { it > 0 } ?: 8
+        }
         hdr = if (videoIndex < 0) null else when (format.streams(videoIndex).codecpar().color_trc()) {
             avutil.AVCOL_TRC_SMPTE2084 -> ToneMap.Transfer.PQ
             avutil.AVCOL_TRC_ARIB_STD_B67 -> ToneMap.Transfer.HLG

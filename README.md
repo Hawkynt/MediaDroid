@@ -559,14 +559,14 @@ would for its menus.
 
 | Module | What | Runs on |
 | --- | --- | --- |
-| `:app` | today the whole Android app — screens, player on [Media3](https://github.com/androidx/media), picture stage on OpenGL ES, neural networks (`native/`, on [ncnn](https://github.com/Tencent/ncnn)); to become the Android shell alone | Android |
+| `:app` | today the whole Android app — screens (the player's talking to the engine through `:engine:api`, never to Media3), picture stage on OpenGL ES, neural networks (`native/`, on [ncnn](https://github.com/Tencent/ncnn)); to become the Android shell alone | Android |
 | `:core:nfo` | NFO parsing, the `SxxExx` / `NxNN` names, Kodi's art names | everywhere (JVM) |
 | `:core:library` | the folder scanner, the domain models, search, filters, grouping | everywhere (JVM) |
 | `:core:player` | the binge queue, the picture's rules (deinterlacing, scaling, smooth motion, the checks), the models catalogue | everywhere (JVM) |
 | `:core:imaging` | decoders for TIFF, TGA and PCX art | everywhere (JVM) |
 | `:core:sources` | SMB, NFS, FTP/SFTP and WebDAV | everywhere (JVM) |
 | `:engine:api` | built ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): the playback engine the screens talk to — commands, tracks, state, the picture's output and the events; its test fixtures carry the contract every engine passes and a fake engine that passes it, for the screens' tests | everywhere (JVM) |
-| `:engine:android` | built ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): Media3 behind that engine — ExoPlayer as the app builds it, FFmpeg's extension, libass, second subtitles, teletext, loudness, sidecar audio and network sources; the contract runs on the real ExoPlayer under Robolectric | Android |
+| `:engine:android` | built ([#283](https://github.com/Hawkynt/MediaDroid/issues/283)): [Media3](https://github.com/androidx/media) behind that engine — ExoPlayer as the app builds it, FFmpeg's extension, libass, second subtitles, teletext, loudness, sidecar audio and network sources; the player panel with Media3's controls, the media session and notification; the contract runs on the real ExoPlayer under Robolectric | Android |
 | `:stage` | built ([#284](https://github.com/Hawkynt/MediaDroid/issues/284)): the picture stage's passes against an OpenGL ES interface (`Gles`: android.opengl on Android, LWJGL on the desktop), the shaders with them — how a pass runs and its frames, the upscalers, restoration, deinterlacers, HDR's tone mapping, chroma upscaling, blending and Motion, the colour correction and dither, the mpv user shaders' runner, colouring, and the dry run's test pictures; each platform keeps only what feeds it and reads it back (Android's decoder surfaces, Film and luma read-backs; the desktop's uploads and presentation). tools/shader-check draws with the real stage beside its own harness | everywhere (JVM) |
 | `native/` | built ([#285](https://github.com/Hawkynt/MediaDroid/issues/285)): the neural networks and their JNI surface as one CMake tree — `libmediadroid_neural.so` in the app, `libmediadroid.so` / `mediadroid.dll` on the desktop | Android, Windows, Linux |
 | `:ui` | planned ([#286](https://github.com/Hawkynt/MediaDroid/issues/286)): every screen, in Compose Multiplatform | Android, Windows, Linux |
