@@ -1,5 +1,8 @@
 plugins {
     alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.android.library) apply false
+    alias(libs.plugins.android.kotlin.multiplatform.library) apply false
+    alias(libs.plugins.kotlin.multiplatform) apply false
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.kotlin.serialization) apply false
@@ -16,6 +19,16 @@ subprojects {
             exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
             showCauses = true
             showStackTraces = true
+        }
+    }
+}
+
+// A plain JVM module's jar is named after its whole path (core-player.jar, engine-desktop.jar): :desktop and
+// :engine:desktop would otherwise both make desktop.jar, and a folder of jars (the portable Windows zip) keeps one.
+subprojects {
+    plugins.withId("org.jetbrains.kotlin.jvm") {
+        tasks.withType<Jar>().configureEach {
+            archiveBaseName.set(project.path.removePrefix(":").replace(':', '-'))
         }
     }
 }

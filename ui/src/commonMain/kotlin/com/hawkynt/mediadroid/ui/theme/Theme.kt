@@ -38,7 +38,8 @@ object MediaDroidColors {
     val Outline = Color(0xFF3A3E66)
 }
 
-private val Scheme = darkColorScheme(
+/** The app's colours as Material's scheme, the same on every platform. */
+val MediaDroidScheme = darkColorScheme(
     primary = MediaDroidColors.Amber,
     onPrimary = MediaDroidColors.OnAmber,
     primaryContainer = Color(0xFF5A3E00),
@@ -68,7 +69,8 @@ private val Scheme = darkColorScheme(
  */
 private fun TextStyle.relativeLines() = copy(lineHeight = 1.25.em)
 
-private val Type = Typography().run {
+/** The app's type: Material's, with line heights relative to the font size and bold titles. */
+val MediaDroidTypography = Typography().run {
     copy(
         displayLarge = displayLarge.relativeLines(),
         displayMedium = displayMedium.relativeLines(),
@@ -95,8 +97,8 @@ private val Type = Typography().run {
  */
 @Composable
 fun MediaDroidTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = Scheme, typography = Type) {
-        Surface(color = Scheme.background, contentColor = Scheme.onBackground, content = content)
+    MaterialTheme(colorScheme = MediaDroidScheme, typography = MediaDroidTypography) {
+        Surface(color = MediaDroidScheme.background, contentColor = MediaDroidScheme.onBackground, content = content)
     }
 }
 

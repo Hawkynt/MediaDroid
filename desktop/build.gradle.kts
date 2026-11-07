@@ -28,6 +28,7 @@ dependencies {
     implementation(project(":core:player"))
     implementation(project(":core:sources"))
     implementation(project(":engine:desktop"))
+    implementation(project(":ui"))
     // The settings file, settings.json (DesktopStore).
     implementation(libs.serialization.json)
     // SMB servers announced on the local network (mDNS), SmbDiscovery.
@@ -251,7 +252,9 @@ tasks.register<Zip>("windowsZip") {
         } else {
             dependsOn(windowsJreUnpack, tasks.named("jar"))
             into("runtime") { from(windowsJreUnpack) }
+            // Two jars of one name would leave one out unnoticed: that fails the build instead.
             into("lib") {
+                duplicatesStrategy = DuplicatesStrategy.FAIL
                 from(tasks.named("jar"))
                 from(configurations.named("runtimeClasspath"))
             }

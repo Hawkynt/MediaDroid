@@ -1,9 +1,11 @@
 package com.hawkynt.mediadroid.desktop
 
+import com.hawkynt.mediadroid.ui.theme.MediaDroidScheme
+import com.hawkynt.mediadroid.ui.theme.MediaDroidTheme
+import com.hawkynt.mediadroid.ui.theme.MediaDroidTypography
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,16 +29,6 @@ sealed interface Screen {
 
 /** A video to play, and the title to show over it. */
 data class Playing(val title: String, val video: String)
-
-/** The app's colours: the Android app's dark navy and amber. */
-val MediaDroidColors = darkColorScheme(
-    primary = Color(0xFFFFB74D),
-    onPrimary = Color(0xFF1A1A2E),
-    background = Color(0xFF12121F),
-    surface = Color(0xFF1A1A2E),
-    onSurface = Color(0xFFEDEDF5),
-    onBackground = Color(0xFFEDEDF5),
-)
 
 /** The window as it was left (WindowPlace), else 1280 × 800 in the middle of the screen. */
 private fun windowState(saved: String?): WindowState {
@@ -101,7 +93,8 @@ fun main(args: Array<String>) = application {
                 Snapshot.of(window, File(target))
             }
         }
-        MaterialTheme(colorScheme = MediaDroidColors) {
+        // The Android app's theme (:ui), one for both.
+        MediaDroidTheme {
             when (val s = screen) {
                 Screen.Library -> LibraryScreen(
                     store = store,
@@ -148,7 +141,10 @@ fun main(args: Array<String>) = application {
                                 .background(Color.Black),
                         )
                         PictureOverlay(native, window) {
-                            MaterialTheme(colorScheme = MediaDroidColors) { player(native) }
+                            // The scheme without the theme's surface: the controls' window is see-through.
+                            MaterialTheme(colorScheme = MediaDroidScheme, typography = MediaDroidTypography) {
+                                player(native)
+                            }
                         }
                     }
                 }

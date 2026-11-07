@@ -42,6 +42,8 @@ dependencies {
         runtimeOnly(variantOf(libs.lwjgl.opengl) { classifier(natives) })
     }
     testImplementation(libs.junit)
+    // PlaybackEngineContract: what every engine does alike (DesktopEngineContractTest).
+    testImplementation(testFixtures(project(":engine:api")))
 }
 
 // The neural networks the app carries (NeuralModels.CARRIED), the same files as the Android app's assets, on the

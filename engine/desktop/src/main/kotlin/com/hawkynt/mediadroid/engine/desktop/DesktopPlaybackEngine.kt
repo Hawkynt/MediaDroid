@@ -2,8 +2,11 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
+import com.hawkynt.mediadroid.engine.PlaybackState
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.VideoFormat
+import com.hawkynt.mediadroid.engine.VideoOutput
 import com.hawkynt.mediadroid.library.FsFile
 import com.hawkynt.mediadroid.player.AssFrame
 import com.hawkynt.mediadroid.player.AssPicture
@@ -28,7 +31,8 @@ import java.util.concurrent.LinkedBlockingDeque
  * go through Film on their way to the queue.
  * ASS/SSA subtitles — the file's own streams and files beside it — are drawn by libass where the native library
  * carries it ([subtitlePicture]: styles, positions, karaoke, signs, the file's attached fonts); everything else, and
- * ASS without it, as lines of text ([subtitle]).
+ * ASS without it, as lines of text ([subtitle]). Its one picture output is the window's stage ([StageOutput]), which
+ * takes the moment due at each refresh.
  */
 class DesktopPlaybackEngine(
     override val tuning: PlaybackTuning,
@@ -92,9 +96,47 @@ class DesktopPlaybackEngine(
     override var openedPath: String? = null
         private set
 
+    /** The window's stage, which takes the pictures by [moment] at each refresh of the screen it shows on. */
+    class StageOutput : VideoOutput
+
+    @Volatile override var state: PlaybackState = PlaybackState.IDLE
+        private set
+
+    // A change of state, told. [from]: only from that state; [settled]: only with no seek waiting — checked under
+    // the lock a seek is asked under, so the reader's thread cannot call a seek done that is still to come.
+    private fun moveTo(
+        next: PlaybackState,
+        from: PlaybackState? = null,
+        settled: Boolean = false,
+        also: () -> Unit = {},
+    ) {
+        synchronized(lock) {
+            also()
+            if (state == next || (from != null && state != from) || (settled && pendingSeekMs != null)) return
+            state = next
+        }
+        listeners.forEach { it.onStateChanged(next) }
+    }
+
+    override var videoOutput: VideoOutput? = null
+        set(value) {
+            require(value == null || value is StageOutput) { "the desktop engine shows its pictures on a StageOutput" }
+            field = value
+            framed = false
+        }
+
+    // The first picture since the last open or new output has been handed out (onFirstFrame).
+    @Volatile private var framed = false
+
     override fun open(request: MediaRequest, autoPlay: Boolean) {
         stop()
-        val opened = readerOf(request.path, HardwareDecoding.candidates(softwareDecoding))
+        moveTo(PlaybackState.BUFFERING)
+        val opened = try {
+            readerOf(request.path, HardwareDecoding.candidates(softwareDecoding))
+        } catch (failed: Exception) {
+            moveTo(PlaybackState.IDLE)
+            throw failed
+        }
         opened.keepPlanes = keepPlanes
         reader = opened
         openedPath = request.path
@@ -150,9 +192,17 @@ class DesktopPlaybackEngine(
             isDaemon = true
             start()
         }
+        framed = false
+        moveTo(PlaybackState.READY)
+        val chip = opened.hardware?.let { " (${it.ffmpegName})" }.orEmpty()
+        val decoders = listOfNotNull(
+            opened.videoDecoder?.let { Track.Kind.VIDEO to it + chip },
+            opened.audioDecoder?.let { Track.Kind.AUDIO to it },
+        )
         listeners.forEach {
             it.onTracksChanged(tracks)
             it.onVideoSize(opened.width, opened.height, opened.pixelAspect)
+            for ((kind, name) in decoders) it.onDecoder(kind, name)
         }
         if (autoPlay) play() else pause()
     }
@@ -337,6 +387,7 @@ class DesktopPlaybackEngine(
         wallStartNs = System.nanoTime()
         wallPausedMs = 0
         settlingMs = null
+        moveTo(PlaybackState.READY, from = PlaybackState.BUFFERING, settled = true)
     }
 
     /** Which file and sound track play, and its ReplayGain, for even loudness. */
@@ -417,7 +468,9 @@ class DesktopPlaybackEngine(
                 if (pictures.isEmpty() && (durationMs == 0L || positionMs >= durationMs - 50)) {
                     if (playing) {
                         playing = false
-                        listeners.forEach { it.onPlayingChanged(false); it.onEnded() }
+                        listeners.forEach { it.onPlayingChanged(false) }
+                        moveTo(PlaybackState.ENDED)
+                        listeners.forEach { it.onEnded() }
                     }
                     return@Thread
                 }
@@ -456,6 +509,10 @@ class DesktopPlaybackEngine(
         }
         if (shown == null && !playing && pendingSeekMs == null) shown = pictures.pollFirst()
         val current = shown ?: return null
+        if (!framed && videoOutput != null) {
+            framed = true
+            listeners.forEach { it.onFirstFrame() }
+        }
         val ahead = pictures.iterator()
         val next = if (ahead.hasNext()) ahead.next() else null
         val after = if (ahead.hasNext()) ahead.next() else null
@@ -512,7 +569,8 @@ class DesktopPlaybackEngine(
     override fun seekTo(positionMs: Long) {
         if (reader == null) return
         val target = positionMs.coerceIn(0, durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE)
-        synchronized(lock) { pendingSeekMs = target }
+        moveTo(PlaybackState.BUFFERING) { pendingSeekMs = target }
+        listeners.forEach { it.onSeeked(target) }
     }
 
     /**
@@ -540,6 +598,22 @@ class DesktopPlaybackEngine(
     override val isPlaying: Boolean get() = playing
 
     override val frameRate: Float get() = reader?.frameRate ?: 0f
+
+    override val videoFormat: VideoFormat?
+        get() = reader?.takeIf { it.width > 0 && it.height > 0 }?.let {
+            VideoFormat(
+                it.width,
+                it.height,
+                it.pixelAspect,
+                it.frameRate,
+                when (it.hdr) {
+                    com.hawkynt.mediadroid.player.ToneMap.Transfer.PQ -> VideoFormat.Transfer.PQ
+                    com.hawkynt.mediadroid.player.ToneMap.Transfer.HLG -> VideoFormat.Transfer.HLG
+                    null -> VideoFormat.Transfer.SDR
+                },
+                it.bitDepth,
+            )
+        }
 
     /** How fast it plays, the sound at its own pitch (Tempo); taken in by the reader at its next turn. */
     override var speed: Float = 1f
@@ -788,6 +862,7 @@ class DesktopPlaybackEngine(
         shownBefore = null
         shownEarlier = null
         shownOlder = emptyList()
+        moveTo(PlaybackState.IDLE)
     }
 
     override fun close() = stop()

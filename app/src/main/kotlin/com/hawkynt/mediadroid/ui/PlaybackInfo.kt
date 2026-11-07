@@ -37,10 +37,8 @@ import java.io.File
 @Composable
 fun PlaybackInfoDialog(
     playing: Playable,
-    fileTags: androidx.media3.common.MediaMetadata,
+    engine: com.hawkynt.mediadroid.player.AndroidPlaybackEngine,
     videoPath: String,
-    tracks: Tracks,
-    videoSize: VideoSize,
     graph: PlaybackChain.Graph,
     statisticsShown: Boolean,
     onStatistics: (Boolean) -> Unit,
@@ -49,6 +47,10 @@ fun PlaybackInfoDialog(
     onHistogram: (Boolean) -> Unit = {},
 ) {
     val file = File(videoPath)
+    // What Media3 read from the file, as the engine plays it.
+    val fileTags = engine.exo.mediaMetadata
+    val tracks: Tracks = engine.exo.currentTracks
+    val videoSize: VideoSize = engine.exo.videoSize
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
@@ -210,10 +212,9 @@ private fun size(bytes: Long): String = when {
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun playbackFacts(
     location: String,
-    player: androidx.media3.exoplayer.ExoPlayer,
+    engine: com.hawkynt.mediadroid.player.AndroidPlaybackEngine,
     videoDecoder: String?,
     audioDecoder: String?,
-    audioTrack: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig?,
     picture: com.hawkynt.mediadroid.player.PictureAdjustment,
     fit: String,
     zoom: Float,
@@ -234,6 +235,8 @@ internal fun playbackFacts(
     val subtitleFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.SUBTITLES }
     val audioFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
     val inputOf = { groupId: String? -> inputOf(groupId, subtitleFiles.size, audioFiles.size) }
+    val player = engine.exo
+    val audioTrack = engine.audioTrackConfig
     val videoFormat = player.videoFormat
     val profile = com.hawkynt.mediadroid.library.CodecProfile.of(videoFormat?.codecs)
     val audioFormat = player.audioFormat
