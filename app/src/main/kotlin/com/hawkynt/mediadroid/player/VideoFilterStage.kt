@@ -17,6 +17,7 @@ import android.view.Surface
 import androidx.media3.decoder.VideoDecoderOutputBuffer
 import com.hawkynt.mediadroid.shaders.Shaders
 import com.hawkynt.mediadroid.stage.Colouring
+import com.hawkynt.mediadroid.stage.Conversion
 import com.hawkynt.mediadroid.stage.Deinterlacing
 import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Passes
@@ -95,6 +96,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     // The deinterlacers' passes (Deinterlacing).
     private val deinterlacing = Deinterlacing(passes)
+
+    // HDR's peak and tone mapping, and the chroma enlarged from the FFmpeg decoder's planes (Conversion).
+    private val conversion = Conversion(passes)
     private var debandEs3 = false
     private var deblockReady = false
 
@@ -184,8 +188,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     // Chroma upscaling's passes: spline36 (GLSL ES 1.00) and KrigBilateral's three (GLSL ES 3.00, half floats between
     // them; where the chip has neither, spline36 takes its place).
-    private var yuvSplineProgram = 0
-    private val krigPrograms = IntArray(3)
     private var krigReady = false
 
     /** When the frame being drawn arrived, on the clock eglPresentationTimeANDROID and the history use. */
@@ -378,8 +380,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     // HDR on a screen without HDR (see hdr): the tone mapping, the measurement of the source's peak, and where GLSL ES
     // 3.00 has GL_EXT_YUV_target the copy that reads the decoder's 10-bit YUV itself (0 without it).
-    private var tonemapProgram = 0
-    private var peakProgram = 0
     private var y2yProgram = 0
     private val peakDetect = PeakDetect()
 
@@ -871,26 +871,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         copyCoded(tenBit = true)
         if (measure) measurePeak(coded, transfer)
         val pass = ToneMap.pass(transfer, peakDetect.peak)
-        into.bind()
-        run(tonemapProgram, GLES20.GL_TEXTURE_2D, coded.texture, identity) { p -> toneUniforms(p, pass) }
+        conversion.toneMap(coded, into, pass)
     }
 
     /** The mpv user shader [picture] chose where the stage runs it and it hooks the chroma (chromaHooked), or null. */
     private fun chromaShader(picture: PictureAdjustment): MpvShader? = picture.shader
         ?.let { MpvShaders.library[it] }
         ?.takeIf { it.hooksChroma && MpvShaders.runnable(it) && halfTargets && es3 }
-
-    /** Hands [pass]'s uniforms (see [ToneMap.Pass.uniforms]) to [program]. */
-    private fun toneUniforms(program: Int, pass: ToneMap.Pass) = pass.uniforms { name, v ->
-        val at = GLES20.glGetUniformLocation(program, name)
-        when (v.size) {
-            1 -> GLES20.glUniform1f(at, v[0])
-            2 -> GLES20.glUniform2f(at, v[0], v[1])
-            3 -> GLES20.glUniform3f(at, v[0], v[1], v[2])
-            4 -> GLES20.glUniform4f(at, v[0], v[1], v[2], v[3])
-            else -> GLES20.glUniformMatrix3fv(at, 1, false, v, 0)
-        }
-    }
 
     /**
      * [coded]'s blocks measured (glsl/video/peak.frag) and taken into [peakDetect]: on ES 3 those of the frame before,
@@ -899,11 +886,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private fun measurePeak(coded: Frame, transfer: ToneMap.Transfer) {
         val side = PeakDetect.BLOCK
         val blocks = frames[HDR_BLOCKS].ensure((coded.width + side - 1) / side, (coded.height + side - 1) / side)
-        blocks.bind()
-        run(peakProgram, GLES20.GL_TEXTURE_2D, coded.texture, identity) { p ->
-            toneUniforms(p, PeakDetect.pass(transfer))
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), coded.width.toFloat(), coded.height.toFloat())
-        }
+        conversion.peak(coded, blocks, transfer)
         val count = blocks.width * blocks.height
         if (!es3) {
             val bytes = ByteBuffer.allocateDirect(count * 4)
@@ -1007,58 +990,17 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         }
         val chromaWidth = (yuvWidth + 1) / 2
         val chromaHeight = (yuvHeight + 1) / 2
-        fun planes(p: Int) {
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, yuvTextures[1])
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uU"), 1)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, yuvTextures[2])
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uV"), 2)
-            GLES20.glUniformMatrix3fv(GLES20.glGetUniformLocation(p, "uColor"), 1, false, yuvColor, 0)
-            // The FFmpeg decoder hands over limited range (a full-range source squeezed into it).
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFoot"), 16f / 255f)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        }
+        // The FFmpeg decoder hands over limited range (a full-range source squeezed into it).
+        val planes = Conversion.Planes(
+            yuvTextures[0], yuvTextures[1], yuvTextures[2], yuvWidth, yuvHeight, yuvStrides[0], yuvStrides[1],
+            yuvColor, 16f / 255f, texMatrix, yuvChroma,
+        )
         if (chroma == PictureAdjustment.Chroma.KRIG && krigReady) {
             val first = frames[CHROMA_LOW].ensure(yuvWidth, chromaHeight, half = true)
-            first.bind()
-            run(krigPrograms[0], GLES20.GL_TEXTURE_2D, yuvTextures[0], texMatrix) { p ->
-                GLES20.glUniform2f(
-                    GLES20.glGetUniformLocation(p, "uLumaSize"), yuvStrides[0].toFloat(), yuvHeight.toFloat(),
-                )
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uChromaHeight"), chromaHeight.toFloat())
-            }
             val second = frames[CHROMA_LOWER].ensure(chromaWidth, chromaHeight, half = true)
-            second.bind()
-            run(krigPrograms[1], GLES20.GL_TEXTURE_2D, first.texture, identity) { p ->
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uLumaWidth"), yuvWidth.toFloat())
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uChromaWidth"), chromaWidth.toFloat())
-            }
-            full.bind()
-            run(krigPrograms[2], GLES20.GL_TEXTURE_2D, yuvTextures[0], texMatrix) { p ->
-                planes(p)
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, second.texture)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uLow"), 3)
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uLumaStride"), yuvStrides[0].toFloat())
-                GLES20.glUniform2f(
-                    GLES20.glGetUniformLocation(p, "uLumaSize"), yuvWidth.toFloat(), yuvHeight.toFloat(),
-                )
-                GLES20.glUniform2f(
-                    GLES20.glGetUniformLocation(p, "uChromaSize"), chromaWidth.toFloat(), chromaHeight.toFloat(),
-                )
-            }
+            conversion.krig(planes, first, second, full)
         } else {
-            full.bind()
-            run(yuvSplineProgram, GLES20.GL_TEXTURE_2D, yuvTextures[0], texMatrix) { p ->
-                planes(p)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uChroma"), yuvChroma)
-                GLES20.glUniform2f(
-                    GLES20.glGetUniformLocation(p, "uChromaSize"), yuvStrides[1].toFloat(), chromaHeight.toFloat(),
-                )
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uChromaWidth"), chromaWidth.toFloat())
-            }
+            conversion.spline(planes, full)
         }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, bound[0])
         GLES20.glViewport(viewport[0], viewport[1], viewport[2], viewport[3])
@@ -1073,8 +1015,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             // On this thread, the vsync's own: a caller's may have no looper to make one on.
             vsync.removeFrameCallback(onYuvVsync)
             GLES20.glDeleteProgram(yuvProgram)
-            GLES20.glDeleteProgram(yuvSplineProgram)
-            krigPrograms.forEach { GLES20.glDeleteProgram(it) }
             passes.release()
             colouring.close()
             colouring.releaseFrames()
@@ -1102,8 +1042,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             if (uploaded.isNotEmpty()) GLES20.glDeleteTextures(uploaded.size, uploaded, 0)
             mpvPrograms.values.forEach { GLES20.glDeleteProgram(it) }
             mpvFrames.values.forEach { it.release() }
-            GLES20.glDeleteProgram(tonemapProgram)
-            GLES20.glDeleteProgram(peakProgram)
             if (ditherProgram != 0) GLES20.glDeleteProgram(ditherProgram)
             if (noiseTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(noiseTexture), 0)
             if (y2yProgram != 0) GLES20.glDeleteProgram(y2yProgram)
@@ -1232,15 +1170,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             // The mpv user shaders' compute passes write half floats, on a chip with compute shaders.
             MpvShaders.compute = es31
         }.isSuccess
-        yuvSplineProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_YUV_SPLINE)
+        conversion.build(krig = false)
         // KrigBilateral keeps the luma's mean and variance in half floats between its passes; spline36 stands in
         // where the chip draws none or cannot build them.
-        krigReady = halfTargets && runCatching {
-            listOf(Shaders.VIDEO_CHROMA_KRIG_1, Shaders.VIDEO_CHROMA_KRIG_2, Shaders.VIDEO_CHROMA_KRIG_3)
-                .forEachIndexed { i, fragment ->
-                    krigPrograms[i] = linked(program(Shaders.VIDEO_VERTEX_ES3, fragment))
-                }
-        }.isSuccess
+        krigReady = halfTargets && runCatching { conversion.build(krig = true) }.isSuccess
         xbrzReady = runCatching { upscalers.build(PictureAdjustment.Upscaler.XBRZ) }.isSuccess
         inputSurface = Surface(surfaceTexture)
 
@@ -1270,8 +1203,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         mpvRecombineProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_RECOMBINE)
         mpvChromaProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_CHROMA)
         mpvChromaRgbProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_CHROMA_RGB)
-        tonemapProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TONEMAP)
-        peakProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PEAK)
         // Dithering reads its texels exactly with GLSL ES 3.00's texelFetch; the GLSL ES 1.00 pass reads their centres.
         // Only chips that draw into half floats dither (the frames have to hold more than 8 bits), and those run ES 3.
         if (halfTargets) {

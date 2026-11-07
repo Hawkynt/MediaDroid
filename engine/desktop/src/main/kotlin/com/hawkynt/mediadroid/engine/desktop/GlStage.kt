@@ -19,6 +19,7 @@ import com.hawkynt.mediadroid.player.TemporalDenoise
 import com.hawkynt.mediadroid.player.ToneMap
 import com.hawkynt.mediadroid.shaders.Shaders
 import com.hawkynt.mediadroid.stage.Colouring
+import com.hawkynt.mediadroid.stage.Conversion
 import com.hawkynt.mediadroid.stage.Deinterlacing
 import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Passes
@@ -65,6 +66,7 @@ class GlStage(
     private val colouring = Colouring(gl, passes)
     private val restoration = Restoration(gl, passes)
     private val deinterlacing = Deinterlacing(passes)
+    private val conversion = Conversion(passes)
     private var obmcTable = 0
     private var noiseTable = 0
 
@@ -1255,10 +1257,7 @@ class GlStage(
         }
         val side = PeakDetect.BLOCK
         val blocks = target("hdr-blocks", (w + side - 1) / side, (h + side - 1) / side)
-        pass("peak.frag", blocks, coded.texture) { p ->
-            toneUniforms(p, PeakDetect.pass(transfer))
-            glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-        }
+        conversion.peak(coded, blocks, transfer)
         val count = blocks.width * blocks.height
         val read = MemoryUtil.memAlloc(count * 4)
         glPixelStorei(GL_PACK_ALIGNMENT, 1)
@@ -1266,7 +1265,7 @@ class GlStage(
         peakDetect.update(PeakDetect.unpack(ByteArray(count * 4).also { read.get(it) }, count))
         MemoryUtil.memFree(read)
         val tone = ToneMap.pass(transfer, peakDetect.peak)
-        pass("tonemap.frag", into, coded.texture) { p -> toneUniforms(p, tone) }
+        conversion.toneMap(coded, into, tone)
     }
 
     /**
@@ -1299,37 +1298,15 @@ class GlStage(
         // Rows from the top in the planes, the picture's top row where v is 1 in the frames: turned round.
         val flip = floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 1f)
         val colour = if (planes.fullRange) planes.matrix.toRgbFull() else planes.matrix.toRgb()
-        val chromaPlanes = listOf(planeTextures[1] to "uU", planeTextures[2] to "uV")
-        val common: (Int) -> Unit = { p ->
-            glUniformMatrix4fv(glGetUniformLocation(p, "uTexMatrix"), false, flip)
-            glUniformMatrix3fv(glGetUniformLocation(p, "uColor"), false, colour)
-            glUniform1f(glGetUniformLocation(p, "uFoot"), if (planes.fullRange) 0f else 16f / 255f)
-        }
+        val foot = if (planes.fullRange) 0f else 16f / 255f
+        val yuv = Conversion.Planes(
+            planeTextures[0], planeTextures[1], planeTextures[2], w, h, w, cw, colour, foot, flip,
+        )
         val whole = target("chroma-whole", w, h)
         chromaShader?.let { return chromaHooked(it, planes, whole, flip, colour) }
-        if (chroma == PictureAdjustment.Chroma.SPLINE36) {
-            return pass("yuv-spline.frag", whole, planeTextures[0], chromaPlanes) { p ->
-                common(p)
-                glUniform1f(glGetUniformLocation(p, "uChroma"), 1f)
-                glUniform2f(glGetUniformLocation(p, "uChromaSize"), cw.toFloat(), ch.toFloat())
-                glUniform1f(glGetUniformLocation(p, "uChromaWidth"), cw.toFloat())
-            }
-        }
-        val first = pass("chroma-krig-1.frag", target("chroma-low", w, ch, half = true), planeTextures[0]) { p ->
-            glUniformMatrix4fv(glGetUniformLocation(p, "uTexMatrix"), false, flip)
-            glUniform2f(glGetUniformLocation(p, "uLumaSize"), w.toFloat(), h.toFloat())
-            glUniform1f(glGetUniformLocation(p, "uChromaHeight"), ch.toFloat())
-        }
-        val second = pass("chroma-krig-2.frag", target("chroma-lower", cw, ch, half = true), first.texture) { p ->
-            glUniform1f(glGetUniformLocation(p, "uLumaWidth"), w.toFloat())
-            glUniform1f(glGetUniformLocation(p, "uChromaWidth"), cw.toFloat())
-        }
-        return pass("chroma-krig-3.frag", whole, planeTextures[0], chromaPlanes + (second.texture to "uLow")) { p ->
-            common(p)
-            glUniform1f(glGetUniformLocation(p, "uLumaStride"), w.toFloat())
-            glUniform2f(glGetUniformLocation(p, "uLumaSize"), w.toFloat(), h.toFloat())
-            glUniform2f(glGetUniformLocation(p, "uChromaSize"), cw.toFloat(), ch.toFloat())
-        }
+        if (chroma == PictureAdjustment.Chroma.SPLINE36) return conversion.spline(yuv, whole) as Target
+        val low = target("chroma-low", w, ch, half = true)
+        return conversion.krig(yuv, low, target("chroma-lower", cw, ch, half = true), whole) as Target
     }
 
     /**
@@ -1367,18 +1344,6 @@ class GlStage(
             glUniformMatrix4fv(glGetUniformLocation(p, "uTexMatrix"), false, flip)
             glUniformMatrix3fv(glGetUniformLocation(p, "uColor"), false, colour)
             glUniform1f(glGetUniformLocation(p, "uFoot"), if (planes.fullRange) 0f else 16f / 255f)
-        }
-    }
-
-    /** Hands [pass]'s uniforms (ToneMap.Pass.uniforms) to [program]. */
-    private fun toneUniforms(program: Int, pass: ToneMap.Pass) = pass.uniforms { name, v ->
-        val at = glGetUniformLocation(program, name)
-        when (v.size) {
-            1 -> glUniform1f(at, v[0])
-            2 -> glUniform2f(at, v[0], v[1])
-            3 -> glUniform3f(at, v[0], v[1], v[2])
-            4 -> glUniform4f(at, v[0], v[1], v[2], v[3])
-            else -> glUniformMatrix3fv(at, false, v)
         }
     }
 
@@ -1536,12 +1501,6 @@ class GlStage(
             "mpv-chroma.frag" to Shaders.VIDEO_MPV_CHROMA,
             "mpv-chroma-rgb.frag" to Shaders.VIDEO_MPV_CHROMA_RGB,
             "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
-            "yuv-spline.frag" to Shaders.VIDEO_YUV_SPLINE,
-            "chroma-krig-1.frag" to Shaders.VIDEO_CHROMA_KRIG_1,
-            "chroma-krig-2.frag" to Shaders.VIDEO_CHROMA_KRIG_2,
-            "chroma-krig-3.frag" to Shaders.VIDEO_CHROMA_KRIG_3,
-            "tonemap.frag" to Shaders.VIDEO_TONEMAP,
-            "peak.frag" to Shaders.VIDEO_PEAK,
             "adjust.frag" to Shaders.VIDEO_ADJUST,
             "blend.frag" to Shaders.VIDEO_BLEND,
             "motion.frag" to Shaders.VIDEO_MOTION,
