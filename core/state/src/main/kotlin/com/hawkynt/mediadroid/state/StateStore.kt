@@ -89,10 +89,13 @@ class StateStore(private val file: StateFile, private val watcher: StateWatcher 
 
     /**
      * Remembers where [videoPath] stopped. Near the end counts as finished, no point resuming the last seconds: half
-     * a percent of the runtime, capped at 30 s, so short clips still resume.
+     * a percent of the runtime, capped at 30 s, so short clips still resume. A new resume point needs [playedMs] —
+     * the time actually played this time — of [MIN_PLAYED_MS] (half the runtime for a short clip): a look of some
+     * seconds into an episode is nothing to continue. One already under way moves on however short the stretch.
      */
-    fun saveResume(videoPath: String, positionMs: Long, durationMs: Long) {
+    fun saveResume(videoPath: String, positionMs: Long, durationMs: Long, playedMs: Long = Long.MAX_VALUE) {
         if (durationMs <= 0 || positionMs <= 0) return
+        if (videoPath !in data.resume && playedMs < minOf(MIN_PLAYED_MS, durationMs / 2)) return
         val tail = minOf(30_000L, durationMs / 20)
         if (durationMs - positionMs < tail) {
             data.resume.remove(videoPath)
@@ -103,6 +106,11 @@ class StateStore(private val file: StateFile, private val watcher: StateWatcher 
     }
 
     fun resumeFor(videoPath: String): ResumeInfo? = data.resume[videoPath]
+
+    /** Forgets where [videoPath] stopped: it leaves Continue watching and plays from the start next time. */
+    fun forgetResume(videoPath: String) {
+        if (data.resume.remove(videoPath) != null) save()
+    }
 
     /** The lip-sync delay remembered for the audio output [outputKey], in ms. */
     fun audioDelayFor(outputKey: String): Int = data.audioDelays[outputKey] ?: 0
@@ -342,6 +350,9 @@ class StateStore(private val file: StateFile, private val watcher: StateWatcher 
     }
 
     companion object {
+        /** How long a video has to play before it is worth continuing: three minutes (see [saveResume]). */
+        const val MIN_PLAYED_MS = 180_000L
+
         private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
 
         /** The memory as the file keeps it. */

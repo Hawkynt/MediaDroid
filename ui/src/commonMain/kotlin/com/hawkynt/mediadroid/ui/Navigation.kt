@@ -77,11 +77,16 @@ fun Show.playQueue(): List<Playable> =
     }
 
 /**
- * Where a queue picks up: the file asked for, else one with a resume point, else the first not
- * yet watched — so Play on a show continues it instead of starting at the pilot again.
+ * Where a queue picks up (PlayStart): the file asked for, else the first not yet watched — so Play on a show
+ * continues it at the first episode not marked, not at a watched one that kept a resume point — else one with a
+ * resume point, else the start.
  */
-fun startOf(queue: List<Playable>, path: String?, store: StateStore): Int =
-    path?.let { p -> queue.indexOfFirst { it.videoPath == p } }?.takeIf { it >= 0 }
-        ?: queue.indexOfFirst { store.resumeFor(it.videoPath) != null }.takeIf { it >= 0 }
-        ?: queue.indexOfFirst { !store.isWatched(it.videoPath, it.nfoWatched) }.takeIf { it >= 0 }
-        ?: 0
+fun startOf(queue: List<Playable>, path: String?, store: StateStore): Int {
+    val nfoWatched = queue.associate { it.videoPath to it.nfoWatched }
+    return com.hawkynt.mediadroid.library.PlayStart.indexOf(
+        queue.map { it.videoPath },
+        path,
+        watched = { store.isWatched(it, nfoWatched[it] == true) },
+        resumed = { store.resumeFor(it) != null },
+    )
+}
