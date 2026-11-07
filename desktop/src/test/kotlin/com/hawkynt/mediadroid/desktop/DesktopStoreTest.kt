@@ -373,6 +373,15 @@ class DesktopStoreTest {
     }
 
     @Test
+    fun `a resume point keeps how long the video runs, for the walls' progress bars`() {
+        val data = folder.newFolder("data")
+        DesktopStore(data).setResume("/v/a.mkv", 30_000, 120_000)
+        val kept = com.hawkynt.mediadroid.state.StateStore.decode(File(data, "state.json").readText())!!
+        assertEquals(com.hawkynt.mediadroid.state.ResumeInfo(30_000, 120_000), kept.resume["/v/a.mkv"])
+        assertEquals(30_000L, DesktopStore(data).resumeMs("/v/a.mkv"))
+    }
+
+    @Test
     fun `the media folder and the sources beside it are one list, the media folder first, as on Android`() {
         val data = folder.newFolder("data")
         val store = DesktopStore(data).apply {
