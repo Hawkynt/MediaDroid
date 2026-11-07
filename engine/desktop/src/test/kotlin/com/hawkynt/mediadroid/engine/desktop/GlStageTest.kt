@@ -528,8 +528,9 @@ class GlStageTest {
     fun `dot crawl is combed out as the reference combs it`() {
         val w = 48
         val h = 32
-        // A still picture with a residue flipping sign every frame, as a composite decoder leaves it.
-        fun captured(k: Int) = MediaReader.Picture(k * 40L, w, h, ByteArray(w * h * 4) { i ->
+        // A still NTSC picture (30 frames a second) with a residue flipping sign every frame, as a composite decoder
+        // leaves it.
+        fun captured(k: Int) = MediaReader.Picture(k * 33L, w, h, ByteArray(w * h * 4) { i ->
             val x = i / 4 % w
             val y = i / 4 / w
             val sign = if ((x + y + k) % 2 == 0) 1 else -1
@@ -548,6 +549,34 @@ class GlStageTest {
         }
         assertTrue("off by $worst", worst <= 1)
         assertTrue(!expected.contentEquals(rgb(frames[1])))
+    }
+
+    @Test
+    fun `a PAL capture's dot crawl is combed out as the reference combs it`() {
+        val w = 48
+        val h = 32
+        // 25 frames a second, the residue's phase moving on a quarter turn a frame: opposite two frames apart; a
+        // stripe lit in the last frame only, which the comb must leave.
+        fun captured(k: Int) = MediaReader.Picture(k * 40L, w, h, ByteArray(w * h * 4) { i ->
+            val x = i / 4 % w
+            val y = i / 4 / w
+            val residue = intArrayOf(6, 3, -6, -3)[(x + y + k) % 4]
+            if (i % 4 == 3) -1 else (120 + x + residue + if (x in 20..23 && k == 3) 60 else 0).toByte()
+        })
+        val frames = (0..3).map(::captured)
+        val look = PictureAdjustment(dotCrawl = 0.5f)
+        val out = stage.process(Moment(frames[2], frames[1], frames[3], earlier = frames[0]), look, w, h)
+        fun rgb(p: MediaReader.Picture) = ByteArray(w * h * 3) { p.rgba[it / 3 * 4 + it % 3] }
+        val expected = DotCrawl.applyPal(
+            rgb(frames[0]), rgb(frames[1]), rgb(frames[2]), rgb(frames[3]), w, h,
+            requireNotNull(DotCrawl.threshold(look.dotCrawl)),
+        )
+        var worst = 0
+        for (i in 0 until w * h) for (c in 0..2) {
+            worst = maxOf(worst, abs((out.rgba[i * 4 + c].toInt() and 255) - (expected[i * 3 + c].toInt() and 255)))
+        }
+        assertTrue("off by $worst", worst <= 1)
+        assertTrue(!expected.contentEquals(rgb(frames[2])))
     }
 
     @Test

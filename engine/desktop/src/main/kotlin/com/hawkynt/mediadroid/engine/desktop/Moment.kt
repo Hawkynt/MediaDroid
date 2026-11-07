@@ -3,7 +3,8 @@ package com.hawkynt.mediadroid.engine.desktop
 /**
  * A moment of playback as the stage needs it (GlStage): the picture [shown], the one shown before it, the [next] two
  * decoded after it, and how far the clock is from [shown] to [next] ([phase], 0 to 1). The desktop decodes ahead, so
- * a temporal deinterlacer, smooth motion and Motion's search see the pictures to come without waiting for them.
+ * a temporal deinterlacer, smooth motion and Motion's search see the pictures to come without waiting for them. The
+ * picture shown before [previous], [earlier], is PAL's dot-crawl comb's (DotCrawl).
  */
 class Moment(
     val shown: MediaReader.Picture,
@@ -11,6 +12,7 @@ class Moment(
     val next: MediaReader.Picture? = null,
     val after: MediaReader.Picture? = null,
     val phase: Float = 0f,
+    val earlier: MediaReader.Picture? = null,
 ) {
     companion object {
         /** How far [now] is from [shown]'s time to [next]'s, 0 to 1; 0 without a next picture. */

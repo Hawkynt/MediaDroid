@@ -318,9 +318,9 @@ class GlStage(
             (!a.interpolation.isNeural || interpolator(a.interpolation) != null)
         // At field rate the second half of a picture's time shows its other field.
         val second = a.isFieldRate && !blending && next != null && m.phase >= 0.5f
-        var source = filtered(m.shown, m.previous, next, a, second, m.after)
+        var source = filtered(m.shown, m.previous, next, a, second, m.after, m.earlier)
         if (blending && next != null) {
-            val later = filtered(next, m.shown, m.after, a, false)
+            val later = filtered(next, m.shown, m.after, a, false, earlier = m.previous)
             source = mixed(m, next, source, later, a)
         }
         // The mpv user shader chosen, its hooks before the picture is enlarged (MpvShader).
@@ -448,7 +448,8 @@ class GlStage(
     /**
      * [picture] (its 3D eye) deinterlaced — a temporal deinterlacer reading [before] and [after] where known, its
      * [second] field rebuilt at field rate (MC Smooth reads [beyond], the picture after [after], too) — debanded,
-     * denoised and sharpened at its own size; kept while it is used.
+     * denoised and sharpened at its own size; kept while it is used. PAL's dot-crawl comb reads [earlier], the picture
+     * before [before].
      */
     private fun filtered(
         picture: MediaReader.Picture,
@@ -457,6 +458,7 @@ class GlStage(
         a: PictureAdjustment,
         second: Boolean,
         beyond: MediaReader.Picture? = null,
+        earlier: MediaReader.Picture? = null,
     ): Target {
         kept.firstOrNull { it.picture === picture && it.second == second }?.let {
             if (!it.unsettled) return slotTarget(it)
@@ -470,11 +472,20 @@ class GlStage(
         fun neighbour(p: MediaReader.Picture) = uploaded(p, region(p, crop, a.stereo))
         // 0. Dot crawl and rainbows combed out, then temporal denoising: the picture against the pictures before and
         // after it, as decoded.
+        // A PAL capture (a picture every 40 ms) is combed with the picture two before as well.
         val combed = DotCrawl.threshold(a.dotCrawl)?.let { threshold ->
             val prev = neighbour(before ?: picture).takeIf { it.width == w && it.height == h } ?: raw
             val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
-            pass("dot-crawl.frag", target("combed", w, h, half = deep), raw.texture,
-                listOf(prev.texture to "uPrev", next.texture to "uNext"), nearest = true) { p ->
+            val intervalMs = before?.let { picture.ptsMs - it.ptsMs } ?: after?.let { it.ptsMs - picture.ptsMs } ?: 0L
+            val pal = DotCrawl.Standard.forInterval(intervalMs.toFloat()) == DotCrawl.Standard.PAL
+            val sides = if (pal) {
+                val two = neighbour(earlier ?: picture).takeIf { it.width == w && it.height == h } ?: raw
+                listOf(two.texture to "uEarlier", prev.texture to "uPrev", next.texture to "uNext")
+            } else {
+                listOf(prev.texture to "uPrev", next.texture to "uNext")
+            }
+            pass(if (pal) "dot-crawl-pal.frag" else "dot-crawl.frag", target("combed", w, h, half = deep), raw.texture,
+                sides, nearest = true) { p ->
                 glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
                 glUniform1f(glGetUniformLocation(p, "uThreshold"), threshold)
             }
@@ -1647,7 +1658,7 @@ class GlStage(
         // What the stage hands on: 8-bit RGBA, read back for the screen.
         const val SCREEN_BITS = 8
 
-        // The pictures held: uploaded — the one on screen, the one before and two after, and one to spare — and
+        // The pictures held: uploaded — the one on screen, two before and two after, and one to spare — and
         // filtered — the one on screen and the next, both fields of one at field rate.
         const val UPLOADED = 6
         const val KEPT = 4
@@ -1668,6 +1679,7 @@ class GlStage(
             "mpv-recombine.frag" to Shaders.VIDEO_MPV_RECOMBINE,
             "temporal-denoise.frag" to Shaders.VIDEO_TEMPORAL_DENOISE,
             "dot-crawl.frag" to Shaders.VIDEO_DOT_CRAWL,
+            "dot-crawl-pal.frag" to Shaders.VIDEO_DOT_CRAWL_PAL,
             "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
             "yuv-spline.frag" to Shaders.VIDEO_YUV_SPLINE,
             "chroma-krig-1.frag" to Shaders.VIDEO_CHROMA_KRIG_1,
