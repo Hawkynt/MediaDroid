@@ -183,6 +183,10 @@ fun PlayerScreen(
     autoAdvance: Boolean,
     onExit: () -> Unit,
     demo: Boolean = false,
+    modifier: Modifier = Modifier.fillMaxSize(),
+    small: Boolean = false,
+    onShrink: () -> Unit = onExit,
+    onGrow: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val settings = store.data.settings
@@ -195,8 +199,13 @@ fun PlayerScreen(
     // Rotation for this session: following the sensor, or held in landscape or portrait.
     var rotation by remember { mutableStateOf(Rotation.AUTO) }
     val rotationActivity = remember(context) { context.findActivity() }
-    DisposableEffect(rotation) {
-        rotationActivity?.requestedOrientation = rotation.orientation
+    // In the corner the menus around it turn as they like; the player's rotation holds only full screen.
+    DisposableEffect(rotation, small) {
+        rotationActivity?.requestedOrientation = if (small) {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else {
+            rotation.orientation
+        }
         onDispose { }
     }
     DisposableEffect(Unit) {
@@ -361,7 +370,8 @@ fun PlayerScreen(
             }
         }
     }
-    val inPip = PlayerWindow.inPictureInPicture
+    // Small in the corner (#417) the player is what picture in picture makes it: the picture alone, no controls.
+    val inPip = PlayerWindow.inPictureInPicture || small
 
     var index by remember { mutableStateOf(startIndex) }
     // The current video's subtitle and audio files, with their locations, in the order they are merged in.
@@ -586,13 +596,16 @@ fun PlayerScreen(
     }
 
     // Immersive while watching: no status or navigation bar over the picture; a swipe from the
-    // edge shows them for a moment, leaving the player puts them back.
+    // edge shows them for a moment, leaving the player puts them back. Small in the corner the menus have their bars;
+    // the screen stays on either way while it plays.
     val hostView = LocalView.current
-    DisposableEffect(hostView) {
+    DisposableEffect(hostView, small) {
         val window = hostView.context.findActivity()?.window
         val insets = window?.let { WindowCompat.getInsetsController(it, hostView) }
-        insets?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        insets?.hide(WindowInsetsCompat.Type.systemBars())
+        if (!small) {
+            insets?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insets?.hide(WindowInsetsCompat.Type.systemBars())
+        }
         val cutoutBefore =
             if (android.os.Build.VERSION.SDK_INT >= 28) window?.attributes?.layoutInDisplayCutoutMode else null
         hostView.keepScreenOn = true
@@ -1017,7 +1030,7 @@ fun PlayerScreen(
     // at the lowest brightness, nothing left on it to burn in — until a touch lights it up again.
     val filmElsewhere = presentation?.isShowing == true
     LaunchedEffect(controlsVisible, panelOpen, filmElsewhere, askingToLock) {
-        if (filmElsewhere && !controlsVisible && !panelOpen && !askingToLock) {
+        if (filmElsewhere && !controlsVisible && !panelOpen && !askingToLock && !small) {
             darkPhone.controlsHidden()
             if (darkPhone.dark) phoneDark = true
         }
@@ -1054,16 +1067,35 @@ fun PlayerScreen(
         }
     }
 
-    BackHandler {
+    // Back shrinks the player into the corner, playing on, the menus usable beside it (#417); its own close button
+    // there, or the end of the queue, ends it.
+    BackHandler(enabled = !small) {
         when {
             locked -> lockHintStamp++
             panelOpen -> panelOpen = false
-            else -> {
-                leavePlayer()
-                onExit()
-            }
+            else -> onShrink()
         }
     }
+    LaunchedEffect(small) {
+        if (small) {
+            // Lit again, not locked: the household is going to use the phone.
+            darkPhone.touch()
+            phoneDark = false
+            infoOpen = false
+            audioPicker = false
+            subtitlePicker = false
+            secondPicker = false
+            chapterPicker = false
+        }
+    }
+    // In the corner there is no "All done" to press: the queue's end ends it; an error is shown full screen.
+    LaunchedEffect(small, finished) {
+        if (small && finished) {
+            leavePlayer()
+            onExit()
+        }
+    }
+    LaunchedEffect(small, playError) { if (small && playError != null) onGrow() }
 
     val current = queue[index]
     // The video's own picture correction, with the brightness swipe's gamma on top once past the maximum.
@@ -1337,8 +1369,7 @@ fun PlayerScreen(
         .padding(horizontal = insetX.dp, vertical = insetY.dp)
         .then(if (useCutout) Modifier.windowInsetsPadding(WindowInsets.displayCutout) else Modifier)
     Box(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = modifier
             .background(Color.Black)
             // A remote's left/right (with the controls hidden) and its rewind/fast-forward keys: held,
             // they step like the on-screen buttons.
@@ -2064,14 +2095,14 @@ fun PlayerScreen(
             )
         }
         // Not over the open panel: the household is still choosing there; the prompt shows once it is closed.
-        if (finished && !panelOpen) {
+        if (finished && !panelOpen && !small) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Button(onClick = { leavePlayer(); onExit() }) {
                     Text("All done — back to the library", fontSize = 22.sp)
                 }
             }
         }
-        playError?.let { code ->
+        playError?.takeIf { !small }?.let { code ->
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Button(onClick = { leavePlayer(); onExit() }) {
                     Text("Cannot play this file ($code) — back to the library", fontSize = 22.sp)
@@ -2079,7 +2110,32 @@ fun PlayerScreen(
             }
         }
         // The darkened phone: black over everything; a touch lights it up and brings the controls back.
-        if (phoneDark) {
+        if (small) {
+            // In the corner: a tap brings the player back full screen; the cross ends it. With the film on the other
+            // screen the phone shows its picture in its place, the film playing on there.
+            if (presentation?.isShowing == true) {
+                PosterImage(queue[index].posterPath, contentScale = ContentScale.Crop)
+            }
+            Box(
+                Modifier.fillMaxSize().clickable(onClickLabel = "Back to the player") { onGrow() },
+            )
+            IconButton(
+                onClick = {
+                    leavePlayer()
+                    onExit()
+                },
+                modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).size(24.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), androidx.compose.foundation.shape.CircleShape),
+            ) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Stop playing",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+        if (phoneDark && !small) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
