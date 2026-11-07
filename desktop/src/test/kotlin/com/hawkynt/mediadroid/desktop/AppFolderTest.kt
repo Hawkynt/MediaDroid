@@ -27,4 +27,12 @@ class AppFolderTest {
             AppFolder.of("Windows 11", mapOf("APPDATA" to "C:\\x"), "C:\\u", File("/opt/md")),
         )
     }
+
+    @Test
+    fun `the program's folder is two up from its resources, however the launcher wrote that path`() {
+        val root = File(System.getProperty("user.dir")).absoluteFile
+        assertEquals(File("/opt/md"), AppFolder.programOf("/opt/md/lib/resources"))
+        assertEquals(root, AppFolder.programOf("lib${File.separator}resources"))
+        assertEquals(null, AppFolder.programOf(null))
+    }
 }
