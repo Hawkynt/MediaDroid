@@ -62,7 +62,10 @@ fun main(args: Array<String>) = application {
     val folder = remember { AppFolder.current() }
     val store = remember { DesktopStore(folder) }
     // The places media lives — this computer's folder and the network sources — and the files behind them.
-    val places = remember { DesktopLibrary(store, DesktopSecrets.forThisSystem(folder)) }
+    val secrets = remember { DesktopSecrets.forThisSystem(folder) }
+    val places = remember { DesktopLibrary(store, secrets) }
+    // The sources' passwords, connections and the SMB servers on the local network, for the shared sources section.
+    val keeper = remember { DesktopSourceKeeper(places, secrets) }
     // The walls' pictures: this computer's as they are, the network sources' copied once into the app-data folder.
     val art = remember { DesktopMediaArt(places, File(folder, "art")) }
     // The media keys and the system's now-playing panel, for the app's whole life (MPRIS, SMTC).
@@ -98,6 +101,7 @@ fun main(args: Array<String>) = application {
                     store = store,
                     places = places,
                     art = art,
+                    keeper = keeper,
                     library = library,
                     onLibrary = { library = it },
                     onPlay = { queue, index -> screen = Screen.Player(queue, index) },

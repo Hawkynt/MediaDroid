@@ -5,14 +5,12 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import com.hawkynt.mediadroid.ui.platform.LanServer
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import javax.jmdns.JmDNS
 import javax.jmdns.ServiceEvent
 import javax.jmdns.ServiceListener
-
-/** An SMB server announced on the local network: its name, and the address to connect to. */
-data class LanServer(val name: String, val host: String)
 
 /** What an mDNS answer becomes, and how the list of servers on the network changes: pure, for the tests. */
 object LanServers {

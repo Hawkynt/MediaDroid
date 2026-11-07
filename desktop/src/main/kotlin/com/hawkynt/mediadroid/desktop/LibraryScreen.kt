@@ -8,18 +8,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Folder
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -30,7 +27,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,19 +36,27 @@ import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
+import com.hawkynt.mediadroid.library.Source
+import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.player.BingeQueue
 import com.hawkynt.mediadroid.ui.BrowseScreen
 import com.hawkynt.mediadroid.ui.DetailsScreen
 import com.hawkynt.mediadroid.ui.FiltersScreen
+import com.hawkynt.mediadroid.ui.OnboardingScreen
 import com.hawkynt.mediadroid.ui.PlacesScreen
 import com.hawkynt.mediadroid.ui.SearchScreen
+import com.hawkynt.mediadroid.ui.SourcesSection
 import com.hawkynt.mediadroid.ui.Sidebar
 import com.hawkynt.mediadroid.ui.platform.LocalMediaArt
+import com.hawkynt.mediadroid.ui.platform.LocalSourceKeeper
 import com.hawkynt.mediadroid.ui.platform.MediaArt
+import com.hawkynt.mediadroid.ui.platform.SourceKeeper
 import com.hawkynt.mediadroid.ui.playQueue
 import com.hawkynt.mediadroid.ui.startOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.UUID
 import javax.swing.JFileChooser
 import com.hawkynt.mediadroid.ui.Screen as Shown
 
@@ -66,11 +70,12 @@ fun LibraryScreen(
     store: DesktopStore,
     places: DesktopLibrary,
     art: MediaArt,
+    keeper: SourceKeeper,
     library: Library?,
     onLibrary: (Library) -> Unit,
     onPlay: (List<Playing>, Int) -> Unit,
 ) {
-    CompositionLocalProvider(LocalMediaArt provides art) {
+    CompositionLocalProvider(LocalMediaArt provides art, LocalSourceKeeper provides keeper) {
         Library(store, places, library, onLibrary, onPlay)
     }
 }
@@ -89,6 +94,8 @@ private fun Library(
     var showSources by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "sources") }
     // Moves on whenever the places change: the library is scanned again.
     var generation by remember { mutableIntStateOf(0) }
+    // A typed media folder that is not there, said on the first start.
+    var typedWrong by remember { mutableStateOf<String?>(null) }
     val nothingYet = folder == null && places.networkSources.isEmpty()
     LaunchedEffect(generation) {
         if (folder == null && places.networkSources.isEmpty()) return@LaunchedEffect
@@ -106,19 +113,27 @@ private fun Library(
     }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         when {
-            nothingYet -> Column(
-                Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text("Your movies and shows are already organized.", fontSize = 24.sp, color = Color.White)
-                Spacer(Modifier.padding(8.dp))
-                Button(onClick = changeFolder) {
-                    Icon(Icons.Default.Folder, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Choose media folder", fontSize = 18.sp)
-                }
-                TextButton(onClick = { showSources = true }) { Text("Or add a network source", fontSize = 16.sp) }
-            }
+            nothingYet -> OnboardingScreen(
+                hasAccess = true,
+                currentPath = "",
+                scanning = false,
+                scanError = typedWrong,
+                canCancel = false,
+                onGrantAccess = {},
+                onPickFolder = changeFolder,
+                onUsePath = { typed ->
+                    val path = typed.trim()
+                    if (File(path).isDirectory) {
+                        store.libraryFolder = path
+                        folder = path
+                        generation++
+                    } else {
+                        typedWrong = "There is no folder at $path."
+                    }
+                },
+                onCancel = {},
+                onNetworkSource = { showSources = true },
+            )
             library == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             else -> Walls(
                 store = store,
@@ -127,12 +142,18 @@ private fun Library(
                 scanning = scanning,
                 onRefresh = { generation++ },
                 onPlay = onPlay,
-                onSources = { showSources = true },
                 onFolder = changeFolder,
             )
         }
         if (showSources) {
-            SourcesPanel(places, onChanged = { generation++ }, onClose = { showSources = false })
+            Column(
+                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+                    .verticalScroll(rememberScrollState()).padding(24.dp),
+            ) {
+                Sources(store, onFolder = changeFolder, onChanged = { generation++ })
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { showSources = false }) { Text("Done") }
+            }
         }
     }
 }
@@ -146,7 +167,6 @@ private fun Walls(
     scanning: Boolean,
     onRefresh: () -> Unit,
     onPlay: (List<Playing>, Int) -> Unit,
-    onSources: () -> Unit,
     onFolder: () -> Unit,
 ) {
     val state = store.state
@@ -266,31 +286,39 @@ private fun Walls(
                         state.saveSort(section, order)
                     },
                 )
-                Shown.Settings -> MediaPlaces(store, places, onSources = onSources, onFolder = onFolder)
+                Shown.Settings -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+                    Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(16.dp))
+                    Sources(store, onFolder = onFolder, onChanged = onRefresh)
+                }
                 else -> Unit
             }
         }
     }
 }
 
-/** Where the library is read from: the media folder and the network sources, each changed from here. */
+/**
+ * Where the library is read from, as Android's Settings shows it (SourcesSection): the media folder, further folders
+ * of this computer and the network sources, each added, changed or removed from here.
+ */
 @Composable
-private fun MediaPlaces(store: DesktopStore, places: DesktopLibrary, onSources: () -> Unit, onFolder: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Media folder", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Text(store.libraryFolder ?: "None chosen yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedButton(onClick = onFolder) {
-            Text(if (store.libraryFolder == null) "Choose folder" else "Change folder")
-        }
-        Spacer(Modifier.padding(4.dp))
-        Text("Network sources", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        val sources = places.networkSources
-        Text(
-            if (sources.isEmpty()) "None added yet." else sources.joinToString { it.name },
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedButton(onClick = onSources) { Text("Network sources") }
-    }
+private fun Sources(store: DesktopStore, onFolder: () -> Unit, onChanged: () -> Unit) {
+    SourcesSection(
+        store = store.state,
+        unreachable = emptySet(),
+        onChangeMainFolder = onFolder,
+        onAddDeviceFolder = {
+            chooseFolder()?.let { path ->
+                val state = store.state
+                if (state.sources.none { it.kind == SourceKind.LOCAL && it.path == path }) {
+                    val name = File(path).name.ifEmpty { path }
+                    state.saveSources(state.sources + Source.local(UUID.randomUUID().toString(), name, path))
+                    onChanged()
+                }
+            }
+        },
+        onChanged = onChanged,
+    )
 }
 
 /**
