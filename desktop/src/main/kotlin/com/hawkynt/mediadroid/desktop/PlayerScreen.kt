@@ -58,6 +58,9 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
+import com.hawkynt.mediadroid.ui.PlayerCommand
+import com.hawkynt.mediadroid.ui.PlayerKeys
+import com.hawkynt.mediadroid.ui.clock
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
@@ -708,24 +711,25 @@ fun PlayerScreen(
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                 controlsUntil = System.currentTimeMillis() + CONTROLS_MS
-                when (event.key) {
-                    Key.Spacebar, Key.K -> togglePlay()
-                    Key.DirectionRight -> engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, true))
-                    Key.DirectionLeft -> engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, false))
-                    Key.F -> onFullScreen()
-                    Key.N -> next()
-                    Key.P -> panel = !panel
-                    Key.S -> nextSubtitles()
-                    Key.C -> snapshot()
-                    Key.Comma -> stepFrame(false)
-                    Key.Period -> stepFrame(true)
-                    Key.PageUp -> jumpChapter(true)
-                    Key.PageDown -> jumpChapter(false)
-                    Key.L -> abLoop = abLoop.mark(engine.positionMs)
-                    Key.LeftBracket -> changeSpeed(speed - SPEED_STEP)
-                    Key.RightBracket -> changeSpeed(speed + SPEED_STEP)
-                    Key.Escape -> if (fullScreen) onFullScreen() else onExit()
-                    else -> return@onKeyEvent false
+                when (PlayerKeys.commandOf(event.key) ?: return@onKeyEvent false) {
+                    PlayerCommand.PLAY_PAUSE -> togglePlay()
+                    PlayerCommand.SEEK_FORWARD ->
+                        engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, true))
+                    PlayerCommand.SEEK_BACK ->
+                        engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, false))
+                    PlayerCommand.FULL_SCREEN -> onFullScreen()
+                    PlayerCommand.NEXT -> next()
+                    PlayerCommand.PANEL -> panel = !panel
+                    PlayerCommand.NEXT_SUBTITLES -> nextSubtitles()
+                    PlayerCommand.SNAPSHOT -> snapshot()
+                    PlayerCommand.FRAME_BACK -> stepFrame(false)
+                    PlayerCommand.FRAME_FORWARD -> stepFrame(true)
+                    PlayerCommand.CHAPTER_NEXT -> jumpChapter(true)
+                    PlayerCommand.CHAPTER_BACK -> jumpChapter(false)
+                    PlayerCommand.REPEAT -> abLoop = abLoop.mark(engine.positionMs)
+                    PlayerCommand.SLOWER -> changeSpeed(speed - SPEED_STEP)
+                    PlayerCommand.FASTER -> changeSpeed(speed + SPEED_STEP)
+                    PlayerCommand.LEAVE -> if (fullScreen) onFullScreen() else onExit()
                 }
                 true
             },
@@ -990,11 +994,6 @@ private fun DrawScope.drawShown(image: ImageBitmap, shown: IntSize, drift: IntOf
         size.width.toInt(), size.height.toInt(), shown.width, shown.height, image.width, image.height, drift.x, drift.y,
     )
     drawImage(image, dstOffset = IntOffset(at[0], at[1]), dstSize = IntSize(at[2], at[3]))
-}
-
-private fun clock(ms: Long): String {
-    val s = ms / 1000
-    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
 
 private const val CONTROLS_MS = 3_000L

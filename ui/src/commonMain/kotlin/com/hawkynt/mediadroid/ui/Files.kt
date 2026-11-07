@@ -339,12 +339,6 @@ private fun rowModifier(onClick: () -> Unit, onLongClick: (() -> Unit)? = null):
         .focusClickable(shape = shape, onLongClick = onLongClick, onClick = onClick)
 }
 
-/** `1:42:05` or `42:05`. */
-private fun clock(ms: Long): String {
-    val s = ms / 1000
-    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
-}
-
 /** The folder above a location: a path's parent, or a URI without its last part. */
 private fun parentOf(location: String): String? = if (location.startsWith("/")) {
     File(location).parent
