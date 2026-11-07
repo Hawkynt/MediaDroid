@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.net.Uri
 import android.media.AudioManager
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.geometry.Offset
@@ -19,38 +18,30 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
-import androidx.compose.ui.text.font.FontWeight
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,11 +57,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorMatrix
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -82,7 +70,6 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.hawkynt.mediadroid.R
 import com.hawkynt.mediadroid.ui.resources.Res
 import com.hawkynt.mediadroid.ui.resources.ic_phonelink_lock
-import com.hawkynt.mediadroid.ui.resources.ic_photo_camera
 import com.hawkynt.mediadroid.ui.resources.ic_tv
 import org.jetbrains.compose.resources.painterResource
 import com.hawkynt.mediadroid.engine.PlaybackEngine
@@ -98,20 +85,13 @@ import com.hawkynt.mediadroid.player.PictureFit
 import com.hawkynt.mediadroid.player.PictureLayout
 import com.hawkynt.mediadroid.player.ScreenRect
 import com.hawkynt.mediadroid.player.ScreenWarp
-import com.hawkynt.mediadroid.library.SkipRules
-import java.io.File
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.filled.Info
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableLongStateOf
 import com.hawkynt.mediadroid.player.BurnInDrift
@@ -166,18 +146,15 @@ private fun PlayerPanel.applyVideoLook(
 ) = fitPicture(fit, zoom, pan.x, pan.y, drift.x, drift.y, bend)
 
 /**
- * Full-screen playback: it remembers where you stopped, a show keeps going, and
- * the household controls live right on the screen — speed from 0.2x to 5x,
- * subtitles on/off, and a picker for audio and subtitle tracks when the file
- * carries several. Picture and sound follow the guarded settings. Nothing but
- * the picture shows while watching: a tap brings every control up together,
- * and they fade out again after a few seconds untouched. On the bare picture a
- * double tap jumps 15 s, vertical swipes set brightness (left) and volume
- * (right), and two fingers zoom. With an external display attached the video
- * can go there while the phone keeps the controls.
+ * The phone's player: the shared [PlayerScreen] over the phone's picture stage — Media3's player panel with its own
+ * controls, the filters' stage routed into it — its window (immersive, the camera cutout, rotation, picture in
+ * picture, the screen kept on), its media session and notification, and what only a phone does: on the bare picture a
+ * double tap jumps 15 s, vertical swipes set brightness (left) and volume (right), two fingers zoom; a held skip steps
+ * further; a child lock; with an external display attached the video goes there while the phone keeps the controls,
+ * and darkens. Back shrinks it into a corner, playing on.
  */
 @Composable
-fun PlayerScreen(
+fun PhonePlayer(
     queue: List<Playable>,
     startIndex: Int,
     store: StateStore,
@@ -214,7 +191,8 @@ fun PlayerScreen(
             rotationActivity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
-    var subtitleLook by remember { mutableStateOf(store.subtitleLookFor(queue[startIndex].videoPath)) }
+    // The shared screen's state, made once the engine is; the engine's knobs read it as it plays.
+    val shared = remember { arrayOfNulls<PlayerScreenState>(1) }
     var nightMode by remember { mutableStateOf(false) }
 
     // Lip-sync, remembered per audio output: a Bluetooth headset lags differently from the speaker.
@@ -250,7 +228,7 @@ fun PlayerScreen(
             override val nightMode get() = nightMode
             override val normalizeLoudness get() = settings.evenLoudness
             override val audioDelayMs get() = audioDelayMs
-            override val subtitleDelayMs get() = subtitleLook.delayMs
+            override val subtitleDelayMs get() = shared[0]?.subtitleLook?.delayMs ?: 0
         }
     }
     val engine = remember {
@@ -275,6 +253,11 @@ fun PlayerScreen(
             placeholders = demo,
         )
     }
+    // The queue, the video's picture and look, what is open over the player — the same on both platforms.
+    val state = remember {
+        PlayerScreenState(queue, startIndex, store, engine, autoAdvance, demo = demo).also { shared[0] = it }
+    }
+    val session = state.session
     // The video's frame rate, for the sound's wait behind a filtered picture; kept current by the routing loop.
     val videoFrameRate = engine.videoFrameRate
     // Every frame equally long on screen: the film's rate times the chosen speed decides the display mode (TV boxes,
@@ -291,13 +274,7 @@ fun PlayerScreen(
     // Which decoders are at work, as Media3 reports them, for the info sheet.
     var videoDecoder by remember { mutableStateOf<String?>(null) }
     var audioDecoder by remember { mutableStateOf<String?>(null) }
-    var infoOpen by remember { mutableStateOf(false) }
-    // The statistics over the picture (Info › Advanced), for this session only.
-    var statisticsShown by remember { mutableStateOf(false) }
-    // The histogram of the picture on screen, off until switched on beneath the statistics; its last count.
-    var histogramShown by remember { mutableStateOf(false) }
-    var histogram by remember { mutableStateOf<com.hawkynt.mediadroid.player.Histogram?>(null) }
-    val statistics = remember { com.hawkynt.mediadroid.player.PlaybackStatistics() }
+    val statistics = state.statistics
     // The player panel opens its shutter only for a first frame drawn into its own surface; one drawn by the filters'
     // stage from FFmpeg's planes is told only by the engine's first-frame event, so the shutter is opened from here.
     val openShutter = remember { arrayOfNulls<() -> Unit>(1) }
@@ -335,12 +312,9 @@ fun PlayerScreen(
         if (darkPhone.leave()) com.hawkynt.mediadroid.player.PhoneLock.lockNow(context)
         phoneDark = false
     }
-    // Whether it plays, for the controls that show only while paused (the frame steps).
-    var playingNow by remember { mutableStateOf(false) }
     DisposableEffect(engine) {
         fun publish() {
             PlayerWindow.playing = engine.isPlaying
-            playingNow = engine.isPlaying
             val size = engine.videoFormat
             PlayerWindow.aspect = PlaybackMath.pipAspect(size?.width ?: 0, size?.height ?: 0, size?.pixelAspect ?: 1f)
                 ?.let { (w, h) -> android.util.Rational(w, h) }
@@ -374,17 +348,8 @@ fun PlayerScreen(
     // Small in the corner (#417) the player is what picture in picture makes it: the picture alone, no controls.
     val inPip = PlayerWindow.inPictureInPicture || small
 
-    // The queue, where each video starts and what comes after it, as both players play it (PlayerSession).
-    val session = remember {
-        PlayerSession(queue, startIndex, store, engine, autoAdvance, skipping = settings.skipIntroCredits)
-    }
     val index = session.index
-    // The current video's subtitle and audio files, with their locations, in the order they are merged in.
-    var sidecars by remember {
-        mutableStateOf(emptyList<Pair<com.hawkynt.mediadroid.library.Sidecars.Sidecar, String>>())
-    }
-    var playError by remember { mutableStateOf<String?>(null) }
-    var speed by remember { mutableStateOf(settings.defaultSpeed) }
+    val speed = state.speed
     // Checked again when the speed changes and every few seconds: a new video, a switched mode, a second screen.
     LaunchedEffect(engine, speed) {
         while (true) {
@@ -417,23 +382,15 @@ fun PlayerScreen(
             delay(3000)
         }
     }
-    var subtitlesOn by remember { mutableStateOf(settings.subtitlesOn) }
-    var audioPicker by remember { mutableStateOf(false) }
-    var subtitlePicker by remember { mutableStateOf(false) }
-    var secondPicker by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(false) }
-    var panelOpen by remember { mutableStateOf(false) }
-    // Per video: its own picture if one was saved, else the household default.
-    var picture by remember { mutableStateOf(store.pictureFor(queue[startIndex].videoPath)) }
+    // Per video: its own picture, else its folder's, else the household's (PlayerScreenState).
+    val picture = state.picture
     var playerView by remember { mutableStateOf<PlayerPanel?>(null) }
     LaunchedEffect(inPip) {
-        if (inPip) {
-            panelOpen = false
-            playerView?.hideControls()
-        }
+        if (inPip) playerView?.hideControls()
         playerView?.controlsEnabled = !inPip
     }
-    var fit by remember { mutableStateOf(PictureFit.FIT) }
+    val fit = state.fit
     // The part of the picture's width and height left once the stage has cropped its black bars; 1 and 1 without.
     var cropShare by remember { mutableStateOf(1f to 1f) }
     // Burn-in care on an OLED screen (BurnInDrift): the drift's step, counted from the player's start.
@@ -487,16 +444,8 @@ fun PlayerScreen(
     }
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
-    // Short-lived on-screen confirmation of a gesture: "+15 s", "Volume 40 %".
-    var feedback by remember { mutableStateOf<String?>(null) }
-    var feedbackStamp by remember { mutableIntStateOf(0) }
-    // Whether the shown text is a level past the device's maximum, which shows in the accent colour.
-    var feedbackBoosted by remember { mutableStateOf(false) }
-    fun show(text: String, boosted: Boolean = false) {
-        feedback = text
-        feedbackBoosted = boosted
-        feedbackStamp++
-    }
+    // Short-lived on-screen confirmation of a gesture: "+15 s", "Volume 40 %" — in the accent colour past the maximum.
+    fun show(text: String, boosted: Boolean = false) = state.show(text, boosted)
     // Holding a skip button (on screen or on a remote) steps further the longer it is held; the target
     // shows while holding and letting go seeks there once.
     val holdScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -531,16 +480,8 @@ fun PlayerScreen(
     }
     DisposableEffect(seekPreviews) { onDispose { seekPreviews?.close() } }
 
-    // The file's own chapters (Chapters), listed and stepped through; the part repeated between two marks (AbLoop).
+    // The file's own chapters (Chapters), marked on the time bar.
     val chapters = session.chapters
-    var chapterPicker by remember { mutableStateOf(false) }
-    val abLoop = session.abLoop
-    fun jumpChapter(forward: Boolean) {
-        session.jumpChapter(forward)?.let { show(it) }
-    }
-    // One picture on or back, paused there (as mpv's frame steps pause).
-    fun stepFrame(forward: Boolean) = session.stepFrame(forward)
-    fun markRepeat() = show(session.markRepeat())
     val externalDisplay = rememberExternalDisplay()
     var onSecondScreen by remember { mutableStateOf(false) }
     var presentation by remember { mutableStateOf<VideoPresentation?>(null) }
@@ -592,85 +533,17 @@ fun PlayerScreen(
         }
     }
 
-    // Intro/credits for the current item: the file's own chapters first, the `.edl` beside it as fallback
-    // (see SkipRules). Skipped only while the household has skipping switched on; the credits
-    // count towards "watched" either way.
-    val skipping = session.skipping
-
-    // Preferred languages steer automatic selection for each new item. The
-    // global preferred language covers audio; the subtitle language is applied
-    // as an override once the item's tracks are known (see the listener).
-    LaunchedEffect(index) {
-        val playable = queue[index]
-        picture = store.pictureFor(playable.videoPath)
-        if (!demo && store.data.lastPlayed != playable.videoPath) {
-            store.data.lastPlayed = playable.videoPath
-            store.save()
-        }
-        subtitleLook = store.subtitleLookFor(playable.videoPath)
-        val chapters = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            // Chapters mark intros and credits for videos on network sources as for local ones.
-            com.hawkynt.mediadroid.data.SourceAccess.resolve(context, playable.videoPath)
-                ?.let { com.hawkynt.mediadroid.library.Chapters.read(it) }
-                .orEmpty()
-        }
-        // Subtitle and audio files beside it, named after it (see Sidecars).
-        sidecars = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val video = com.hawkynt.mediadroid.data.SourceAccess.resolve(context, playable.videoPath)
-            val folder = video?.parentFile
-            val names = folder?.listFiles()?.map { it.name }.orEmpty()
-            com.hawkynt.mediadroid.library.Sidecars.of(video?.name.orEmpty(), names)
-                .map { it to folder!!.child(it.name).path }
-        }
-        // Back on the main thread before touching the player: ExoPlayer only answers the thread it was built on.
+    // Each video opened as the shared screen asks (PlayerPlatform.open): on the main thread, which is the only one
+    // ExoPlayer answers; the picture routed before it starts. The demo library's videos are placeholders: the screen
+    // shows its chrome without playing them.
+    suspend fun openOnMain(request: com.hawkynt.mediadroid.engine.MediaRequest) =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
-            val (subtitleFiles, audioFiles) = sidecars.partition { (sidecar, _) ->
-                sidecar.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.SUBTITLES
-            }
-            // Resume where you left off — but never back into a known intro.
-            val startPos = session.begin(chapters)
-            engine.open(
-                com.hawkynt.mediadroid.engine.MediaRequest(
-                    path = playable.videoPath,
-                    subtitles = subtitleFiles.map { (sidecar, path) ->
-                        com.hawkynt.mediadroid.engine.MediaRequest.SubtitleFile(
-                            path, sidecar.mimeType, sidecar.language, sidecar.describe(), sidecar.forced,
-                        )
-                    },
-                    audio = audioFiles.map { it.second },
-                    startMs = startPos,
-                    audioLanguage = settings.audioLanguage,
-                ),
-                autoPlay = false,
-            )
-            // The demo library's videos are placeholders: the screen shows its chrome without playing them.
+            engine.open(request, autoPlay = false)
             if (!demo) {
                 routeAtOnce[0]?.invoke()
                 engine.play()
             }
         }
-    }
-
-    LaunchedEffect(speed, subtitlesOn, judderFactor) {
-        engine.speed = speed * judderFactor
-        engine.subtitlesOn = subtitlesOn
-    }
-
-    // The time the current item has actually played this time — not where it stands — for whether it is worth a
-    // resume point at all (StateStore.saveResume): counted while it plays, at its speed.
-    LaunchedEffect(engine) {
-        var last = System.currentTimeMillis()
-        while (true) {
-            delay(1_000)
-            val now = System.currentTimeMillis()
-            session.countPlayed(now - last, speed)
-            last = now
-        }
-    }
-
-    /** Remembers how far the current item got: watched once only its tail or credits are left. */
-    fun saveProgress(position: Long = engine.positionMs, duration: Long = engine.durationMs) =
-        session.saveProgress(position, duration)
 
     // Next and Previous on the controls move through the queue (see QueuePlayer).
     val queuePlayer = remember {
@@ -726,15 +599,10 @@ fun PlayerScreen(
     val freshSurface = remember { arrayOfNulls<() -> Unit>(1) }
     val freshSurfaceFor = remember { arrayOfNulls<String>(1) }
 
-    fun finishCurrent() = session.finishCurrent()
-
+    // The end, seeks and tracks are the shared screen's; what goes wrong with the phone's decoders is the phone's.
+    // The engine closes after the shared screen has kept the progress (it leaves the composition first).
     DisposableEffect(engine) {
         val listener = object : PlaybackEngine.Listener {
-            override fun onEnded() = finishCurrent()
-
-            // Skipping forward into the tail or the credits finishes the item as well.
-            override fun onSeeked(positionMs: Long) = saveProgress(positionMs)
-
             override fun onError(code: String) {
                 val item = engine.openedPath
                 // After a file the bundled FFmpeg decoded, its software renderer still holds the surface as a
@@ -753,65 +621,29 @@ fun PlayerScreen(
                 // An audio file beside the video that cannot go along with it (one that cannot seek, say)
                 // must not stop the film: it plays again without them, from where it was.
                 if (item != null && engine.sidecarAudio) {
-                    sidecars = sidecars.filter { it.first.kind != com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
+                    state.sidecars =
+                        state.sidecars.filter { it.first.kind != com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
                     engine.reload(withoutSidecarAudio = true)
                     return
                 }
-                playError = code
+                state.error = code
             }
 
             override fun onFirstFrame() {
                 freshSurfaceFor[0] = null
             }
-
-            override fun onTracksChanged(tracks: List<Track>) =
-                session.tracksChanged(tracks, settings.subtitleLanguage)
         }
         engine.addListener(listener)
         onDispose {
-            saveProgress()
             engine.removeListener(listener)
             engine.close()
         }
     }
 
-    // Intros skipped, the credits ending the video, the progress kept (PlayerSession.tick).
-    LaunchedEffect(engine) {
-        while (true) {
-            delay(500)
-            session.tick()
-        }
-    }
-
-    // Back to the part's start once its end is reached, checked often enough to land within a few frames.
-    LaunchedEffect(abLoop) {
-        if (!abLoop.repeating) return@LaunchedEffect
-        while (true) {
-            delay(AB_CHECK_MS)
-            session.keepRepeating()
-        }
-    }
     // The chapters marked on the time bar.
     LaunchedEffect(chapters, playerView) {
         val starts = chapters.map { it.startMs }.filter { it > 0 }.sorted().toLongArray()
         playerView?.markChapters(starts)
-    }
-
-    // Sleep timer: a moment on the clock (elapsedRealtime) or "at the end of this video"; never kept.
-    LaunchedEffect(session.sleepAtMs) {
-        if (session.sleepAtMs == null) {
-            engine.volume = 1f
-            return@LaunchedEffect
-        }
-        while (true) {
-            val ranOut = session.sleepTick(android.os.SystemClock.elapsedRealtime())
-            engine.volume = session.sleepVolume
-            if (ranOut) {
-                show("Sleep timer: paused")
-                break
-            }
-            delay(250)
-        }
     }
 
     // The camera cutout: the window may reach into it (short edges) or keep clear of it.
@@ -923,16 +755,11 @@ fun PlayerScreen(
     // With the film on the other screen the phone goes dark by itself once the controls hide — black and empty
     // at the lowest brightness, nothing left on it to burn in — until a touch lights it up again.
     val filmElsewhere = presentation?.isShowing == true
-    LaunchedEffect(controlsVisible, panelOpen, filmElsewhere, askingToLock) {
-        if (filmElsewhere && !controlsVisible && !panelOpen && !askingToLock && !small) {
+    LaunchedEffect(controlsVisible, state.panelOpen, filmElsewhere, askingToLock) {
+        if (filmElsewhere && !controlsVisible && !state.panelOpen && !askingToLock && !small) {
             darkPhone.controlsHidden()
             if (darkPhone.dark) phoneDark = true
         }
-    }
-
-    LaunchedEffect(feedbackStamp) {
-        delay(800)
-        feedback = null
     }
 
     // Darkening asks once for permission to lock the phone; it darkens whatever the answer, locking only
@@ -966,7 +793,7 @@ fun PlayerScreen(
     BackHandler(enabled = !small) {
         when {
             locked -> lockHintStamp++
-            panelOpen -> panelOpen = false
+            state.panelOpen -> state.panelOpen = false
             else -> onShrink()
         }
     }
@@ -975,11 +802,6 @@ fun PlayerScreen(
             // Lit again, not locked: the household is going to use the phone.
             darkPhone.touch()
             phoneDark = false
-            infoOpen = false
-            audioPicker = false
-            subtitlePicker = false
-            secondPicker = false
-            chapterPicker = false
         }
     }
     // In the corner there is no "All done" to press: the queue's end ends it; an error is shown full screen.
@@ -989,9 +811,8 @@ fun PlayerScreen(
             onExit()
         }
     }
-    LaunchedEffect(small, playError) { if (small && playError != null) onGrow() }
+    LaunchedEffect(small, state.error) { if (small && state.error != null) onGrow() }
 
-    val current = queue[index]
     // The video's own picture correction, with the brightness swipe's gamma on top once past the maximum.
     val reducingJudder = settings.judderLimitPercent > 0 || settings.matchRefreshRate
     val shownPicture = com.hawkynt.mediadroid.player.PlaybackMath.smoothedWhenUneven(
@@ -1072,7 +893,7 @@ fun PlayerScreen(
             ?.warpFor(format) ?: ScreenWarp.None
         val wanted =
             (ffmpegVideo || toneMapped ||
-                ((shownPicture.hasFilters || !bend.isIdentity || histogramShown) && transfer == null)) &&
+                ((shownPicture.hasFilters || !bend.isIdentity || state.histogramShown) && transfer == null)) &&
                 target != null && target.holder.surface.isValid
         val stage = filterStage[0] ?: com.hawkynt.mediadroid.player.VideoFilterStage().also { made ->
             filterStage[0] = made
@@ -1083,15 +904,15 @@ fun PlayerScreen(
         engine.planesTo(stage)
         if (wanted) {
             val active = stage
-            active.statistics = if (statisticsShown) statistics else null
+            active.statistics = if (state.statisticsShown) statistics else null
             // Counted on the stage's thread from its small sample; shown on the main one.
-            active.onScreenSample = if (histogramShown) {
+            active.onScreenSample = if (state.histogramShown) {
                 val main = android.os.Handler(android.os.Looper.getMainLooper())
                 val take: (com.hawkynt.mediadroid.player.VideoFilterStage.ReadBack) -> Unit = { sample ->
                     val counted = com.hawkynt.mediadroid.player.Histogram.of(
                         sample.rgba, sample.width, sample.height, step = 1,
                     )
-                    main.post { histogram = counted }
+                    main.post { state.histogram = counted }
                 }
                 take
             } else {
@@ -1145,6 +966,7 @@ fun PlayerScreen(
     }
     androidx.compose.runtime.SideEffect { filterStage[0]?.filters = shownPicture }
     // Without the filters' stage, the statistics take each frame as the player releases it to the screen.
+    val statisticsShown = state.statisticsShown
     DisposableEffect(engine, statisticsShown) {
         if (statisticsShown) {
             engine.onFrameReleased = { releaseTimeNs ->
@@ -1156,23 +978,8 @@ fun PlayerScreen(
         }
         onDispose { if (statisticsShown) engine.onFrameReleased = null }
     }
-    LaunchedEffect(index) {
-        statistics.clear()
-        // Every video's black bars are its own.
-        filterStage[0]?.forgetCrop()
-    }
-    // A pause, a seek or buffering is no frame time: the statistics start their gaps afresh after one.
-    DisposableEffect(engine) {
-        val listener = object : PlaybackEngine.Listener {
-            override fun onPlayingChanged(playing: Boolean) {
-                if (!playing) statistics.interrupted()
-            }
-
-            override fun onSeeked(positionMs: Long) = statistics.interrupted()
-        }
-        engine.addListener(listener)
-        onDispose { engine.removeListener(listener) }
-    }
+    // Every video's black bars are its own.
+    LaunchedEffect(index) { filterStage[0]?.forgetCrop() }
     // The loop asks the latest composition's routing, with the picture and screens as they are now.
     val routeNow by androidx.compose.runtime.rememberUpdatedState({ routeVideo() })
     routeAtOnce[0] = { routeNow() }
@@ -1229,7 +1036,7 @@ fun PlayerScreen(
     val askToSave = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { granted -> if (granted) takeSnapshot() else show("Saving pictures needs access to storage") }
-    fun snapshot() {
+    fun askSnapshot() {
         if (com.hawkynt.mediadroid.data.SnapshotSaver.needsPermission(context)) {
             askToSave.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
         } else {
@@ -1262,642 +1069,485 @@ fun PlayerScreen(
     val safeArea = Modifier
         .padding(horizontal = insetX.dp, vertical = insetY.dp)
         .then(if (useCutout) Modifier.windowInsetsPadding(WindowInsets.displayCutout) else Modifier)
-    Box(
-        modifier = modifier
-            .background(Color.Black)
-            // A remote's left/right (with the controls hidden) and its rewind/fast-forward keys: held,
-            // they step like the on-screen buttons.
-            .onPreviewKeyEvent { event ->
-                val native = event.nativeKeyEvent
-                if (locked) {
-                    val volumeKey = native.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP ||
-                        native.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN ||
-                        native.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_MUTE
-                    if (!volumeKey && native.action == android.view.KeyEvent.ACTION_DOWN) lockHintStamp++
-                    return@onPreviewKeyEvent !volumeKey
-                }
-                // The shared keyboard (PlayerKeys), as far as the phone's player takes it: . and , (and a remote's
-                // step keys) step a frame, Page Up and Down a chapter, L repeats a part.
-                val command: (() -> Unit)? = when (PlayerKeys.commandOf(event.key)) {
-                    PlayerCommand.FRAME_FORWARD -> { -> stepFrame(true) }
-                    PlayerCommand.FRAME_BACK -> { -> stepFrame(false) }
-                    PlayerCommand.CHAPTER_NEXT -> { -> jumpChapter(true) }
-                    PlayerCommand.CHAPTER_BACK -> { -> jumpChapter(false) }
-                    PlayerCommand.REPEAT -> { -> markRepeat() }
-                    else -> null
-                }
-                if (command != null) {
-                    if (native.action == android.view.KeyEvent.ACTION_DOWN) command()
-                    return@onPreviewKeyEvent true
-                }
-                val forward = when (native.keyCode) {
-                    android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> true
-                    android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> false
-                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> if (controlsVisible) null else true
-                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> if (controlsVisible) null else false
-                    else -> null
-                } ?: return@onPreviewKeyEvent false
-                when {
-                    native.action == android.view.KeyEvent.ACTION_DOWN && native.repeatCount == 1 -> {
-                        startHold(forward)
-                        true
-                    }
-                    native.action == android.view.KeyEvent.ACTION_DOWN && native.repeatCount > 1 -> true
-                    native.action == android.view.KeyEvent.ACTION_UP && holdJob != null -> {
-                        endHold()
-                        true
-                    }
-                    else -> false
-                }
-            },
-    ) {
-        // The demo library's videos are empty placeholders: their picture stands in for the video,
-        // showing through the player's (then transparent) shutter beneath its controls.
-        if (demo) PosterImage(queue[index].posterPath, contentScale = ContentScale.Crop)
-        AndroidView(
-            factory = { androidContext ->
-                PlayerPanel.inflate(androidContext).apply {
-                    show(engine, queuePlayer)
-                    // Start on the bare picture; a tap shows the controls, inactivity hides them.
-                    setUpControls(
-                        ControlsTimeoutMs,
-                        onVisible = { controlsVisible = it },
-                        onHoldForward = { holding -> if (holding) startHold(true) else endHold() },
-                        onHoldBack = { holding -> if (holding) startHold(false) else endHold() },
-                    )
-                    if (demo) clearShutter()
-                    onScrub { scrub = it }
-                    playerView = this
-                    attachSubtitles(this)
-                }.root
-            },
-            update = { view ->
-                val panel = playerView ?: return@AndroidView
-                panel.applySubtitleLook(engine, subtitleLook)
-                // While the picture is on the other screen the phone's surface would keep showing the
-                // last frame it got; it is hidden so the phone stays black behind the controls.
-                val elsewhere = presentation?.isShowing == true
-                panel.showPicture(!elsewhere)
-                if (!elsewhere) panel.applyVideoLook(fit, zoom, pan, panel.drift(), warpShown)
-                panel.showShape(engine.videoFormat)
-                val density = view.resources.displayMetrics.density
-                val cutout = view.rootWindowInsets
-                    ?.takeIf { useCutout && android.os.Build.VERSION.SDK_INT >= 28 }
-                    ?.displayCutout
-                panel.padControls(
-                    (insetX * density).toInt() + (cutout?.safeInsetLeft ?: 0),
-                    (insetY * density).toInt() + (cutout?.safeInsetTop ?: 0),
-                    (insetX * density).toInt() + (cutout?.safeInsetRight ?: 0),
-                    (insetY * density).toInt() + (cutout?.safeInsetBottom ?: 0),
-                )
-            },
-            modifier = Modifier.fillMaxSize(),
-        )
+    val check = pictureCheck(context, store)
+    val offeredColorizers = rememberColorizers(context, store)
+    val platform = object : PlayerPlatform {
+        // Media3's own controls take play, pause and seeking; a remote's keys reach them.
+        override val commands = PHONE_COMMANDS
+        override val subtitlesByTrack = false
+        override val pictureOnly = inPip
+        override val controlsVisible = controlsVisible
 
-        presentation?.let { shown ->
-            if (shown.isShowing) {
-                shown.playerView.applyVideoLook(fit, zoom, pan, shown.playerView.drift(), warpShown)
-                shown.playerView.showShape(engine.videoFormat)
-                shown.playerView.applySubtitleLook(engine, subtitleLook)
+        // Touching one of our own controls keeps Media3's up too: both are one set of controls to the viewer.
+        override fun showControls() {
+            playerView?.showControls()
+        }
+
+        override fun hideControls() {
+            playerView?.hideControls()
+        }
+
+        override fun fileOf(location: String) = com.hawkynt.mediadroid.data.SourceAccess.resolve(context, location)
+
+        override suspend fun open(request: com.hawkynt.mediadroid.engine.MediaRequest) = openOnMain(request)
+
+        override fun snapshot() = askSnapshot()
+
+        override fun leave() {
+            leavePlayer()
+            onExit()
+        }
+
+        // While locked every key but volume is ignored; a remote's left and right (the controls hidden) and its
+        // rewind and fast-forward keys, held, step like the on-screen buttons.
+        override fun onKey(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+            val native = event.nativeKeyEvent
+            if (locked) {
+                val volumeKey = native.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP ||
+                    native.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN ||
+                    native.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_MUTE
+                if (!volumeKey && native.action == android.view.KeyEvent.ACTION_DOWN) lockHintStamp++
+                return !volumeKey
+            }
+            val forward = when (native.keyCode) {
+                android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> true
+                android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> false
+                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> if (controlsVisible) null else true
+                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> if (controlsVisible) null else false
+                else -> null
+            } ?: return false
+            return when {
+                native.action == android.view.KeyEvent.ACTION_DOWN && native.repeatCount == 1 -> {
+                    startHold(forward)
+                    true
+                }
+                native.action == android.view.KeyEvent.ACTION_DOWN && native.repeatCount > 1 -> true
+                native.action == android.view.KeyEvent.ACTION_UP && holdJob != null -> {
+                    endHold()
+                    true
+                }
+                else -> false
             }
         }
-        // The bare picture listens for gestures; with the controls up, touches go to the controls.
-        if (!controlsVisible && !panelOpen && !inPip) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .playerGestures(
-                        onTap = { playerView?.showControls() },
-                        onDoubleTap = { side ->
-                            val forward = side == Side.RIGHT
-                            engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, forward))
-                            show(if (forward) "+15 s" else "−15 s")
-                        },
-                        onSwipe = ::swipe,
-                        onSwipeEnd = {},
-                        onPinch = { factor, move ->
-                            val view = playerView ?: return@playerGestures
-                            zoom = PlaybackMath.zoom(zoom, factor)
-                            pan = Offset(
-                                PlaybackMath.pan(pan.x + move.x, zoom, view.width.toFloat()),
-                                PlaybackMath.pan(pan.y + move.y, zoom, view.height.toFloat()),
-                            )
-                            show("Zoom %.1f×".format(zoom))
-                        },
-                    ),
-            )
-        }
-        feedback?.takeIf { !inPip }?.let {
-            FeedbackNote(it, Modifier.align(Alignment.Center), accent = feedbackBoosted)
-        }
-        scrub?.takeIf { controlsVisible && !inPip }?.let {
-            SeekPreviewCard(it, engine.durationMs, seekPreviews, clock(it.positionMs))
-        }
-        // When the film will be over on the clock, on the free right end of Media3's time row.
-        if (controlsVisible && !inPip) {
-            var endsAt by remember { mutableStateOf<Long?>(null) }
-            LaunchedEffect(Unit) {
-                while (true) {
-                    endsAt = PlaybackMath.endsAtMs(
-                        System.currentTimeMillis(),
-                        engine.positionMs,
-                        engine.durationMs,
-                        engine.speed,
-                    )
-                    delay(1000)
-                }
-            }
-            endsAt?.let { at ->
-                Text(
-                    "Ends " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(at)),
-                    color = Color.White,
-                    fontSize = 15.sp,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .then(safeArea)
-                        .padding(end = 16.dp, bottom = 14.dp),
-                )
-            }
-        }
-        // Our controls ride on top, in the band Media3 leaves free, and come and go with its own.
-        AnimatedVisibility(
-            visible = controlsVisible && !inPip,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.TopCenter).then(safeArea),
-        ) {
-            PlayerTopBar(
-                title = buildString {
-                    append(current.title)
-                    current.subtitle?.let { append("  ·  $it") }
-                },
-                note = sleepNote(session),
-                paused = !playingNow,
-                abLoop = abLoop,
-                hasChapters = chapters.isNotEmpty(),
-                onBack = { leavePlayer(); onExit() },
-                onStepFrame = { forward -> stepFrame(forward); keepControls() },
-                onRepeat = { markRepeat(); keepControls() },
-                onChapters = {
-                    chapterPicker = true
-                    playerView?.hideControls()
-                },
-                onSnapshot = {
-                    snapshot()
-                    keepControls()
-                },
-                onInfo = {
-                    infoOpen = true
-                    playerView?.hideControls()
-                },
-                onGear = {
-                    panelOpen = true
-                    playerView?.hideControls()
-                },
-                screens = {
-                    if (externalDisplay != null) {
-                        IconButton(
-                            onClick = {
-                                onSecondScreen = !onSecondScreen
-                                keepControls()
-                            },
-                        ) {
-                            Icon(
-                                painterResource(Res.drawable.ic_tv),
-                                contentDescription =
-                                    if (onSecondScreen) "Back to this screen" else "Play on the other screen",
-                                tint = if (onSecondScreen) MaterialTheme.colorScheme.primary else Color.White,
-                            )
-                        }
-                    }
-                    if (onSecondScreen) {
-                        IconButton(
-                            onClick = {
-                                if (com.hawkynt.mediadroid.player.PhoneLock.allowed(context)) {
-                                    darkPhone.darken()
-                                    phoneDark = true
-                                } else {
-                                    askingToLock = true
-                                    askToLock.launch(com.hawkynt.mediadroid.player.PhoneLock.askIntent(context))
-                                }
-                            },
-                        ) {
-                            Icon(
-                                painterResource(Res.drawable.ic_phonelink_lock),
-                                contentDescription = "Darken this phone",
-                                tint = Color.White,
-                            )
-                        }
-                    }
-                },
-            )
-        }
-        // A camera's flash as the picture is taken, then the picture small with a button to share it.
-        AnimatedVisibility(visible = snapshotFlash, enter = fadeIn(), exit = fadeOut()) {
-            Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.5f)))
-        }
-        snapshotTaken?.let { (picture, uri) ->
-            SnapshotCard(
-                picture,
-                uri,
-                onShare = { com.hawkynt.mediadroid.data.SnapshotSaver.share(context, it) },
-                modifier = Modifier.align(Alignment.TopEnd).then(safeArea).padding(top = 72.dp, end = 16.dp),
-            )
-        }
-        if (panelOpen) {
-            // Tapping beside the panel closes it, like the players everyone knows.
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(interactionSource = null, indication = null) { panelOpen = false },
-            )
-            GearPanel(
-                speed = speed,
-                onSpeed = { speed = it },
-                fit = fit,
-                onFit = {
-                    fit = it
-                    zoom = 1f
-                    pan = Offset.Zero
-                },
-                subtitlesOn = subtitlesOn,
-                onSubtitles = { subtitlesOn = it },
-                picture = picture,
-                onPicture = { picture = it },
-                onPictureDone = { store.savePicture(queue[index].videoPath, picture) },
-                check = pictureCheck(context, store),
-                colorizers = rememberColorizers(context, store),
-                onResetPicture = {
-                    store.savePicture(queue[index].videoPath, null)
-                    picture = store.pictureFor(queue[index].videoPath)
-                },
-                folder = com.hawkynt.mediadroid.library.FolderDefaults.label(
-                    store.folderOf(queue[index].videoPath), store.sources,
-                ),
-                pictureFolder = store.pictureFolderOf(queue[index].videoPath)?.let {
-                    com.hawkynt.mediadroid.library.FolderDefaults.label(it, store.sources)
-                },
-                onUseForFolder = {
-                    val video = queue[index].videoPath
-                    store.saveFolderPicture(store.folderOf(video), picture)
-                    // The video follows its folder's picture now, its 3D eye and shape kept as its own.
-                    store.savePicture(video, picture)
-                    picture = store.pictureFor(video)
-                },
-                onForgetFolder = {
-                    val video = queue[index].videoPath
-                    store.pictureFolderOf(video)?.let { store.saveFolderPicture(it, null) }
-                    picture = store.pictureFor(video)
-                },
-                onAudioTrack = { audioPicker = true },
-                onSubtitleTrack = { subtitlePicker = true },
-                onSecondSubtitleTrack = { secondPicker = true },
-                onClose = { panelOpen = false },
-                afterPictureSize = {
-                    if (android.os.Build.VERSION.SDK_INT >= 28) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Use the camera cutout", fontSize = 16.sp)
-                                Text(
-                                    "The picture may reach into the notch or punch hole, mostly useful with Fill.",
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            androidx.compose.material3.Switch(
-                                checked = useCutout,
-                                onCheckedChange = {
-                                    useCutout = it
-                                    store.data.settings.useCutout = it
-                                    store.save()
-                                },
-                            )
-                        }
-                    }
-                },
-                sections = {
-                    androidx.compose.material3.OutlinedButton(
-                        onClick = {
-                            locked = true
-                            panelOpen = false
-                            playerView?.hideControls()
-                            lockHintStamp++
-                        },
-                        modifier = Modifier.padding(top = 12.dp),
-                    ) {
-                        Icon(Icons.Filled.Lock, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Lock the player", fontSize = 16.sp)
-                    }
-                    Text(
-                        "Touches and buttons do nothing until the lock symbol is held for two seconds.",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
 
-                    PanelTitle("Sound")
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Night mode", fontSize = 16.sp)
-                            Text(
-                                "Quiet dialogue comes up, loud scenes come down.",
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        androidx.compose.material3.Switch(checked = nightMode, onCheckedChange = { nightMode = it })
-                    }
-
-
-                    PanelTitle("Audio delay · ${audioOutput.name}")
-                    // Wraps rather than squeezes: a button pressed narrower than its word shows it a letter a line.
-                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                    androidx.compose.foundation.layout.FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        itemVerticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        fun nudge(steps: Int) {
-                            audioDelayMs = PlaybackMath.nudgeAudioDelay(audioDelayMs, steps)
-                            store.saveAudioDelay(audioOutput.key, audioDelayMs)
-                        }
-                        androidx.compose.material3.OutlinedButton(onClick = { nudge(-1) }) {
-                            Text("Sooner", fontSize = 16.sp)
-                        }
-                        Text(
-                            if (audioDelayMs == 0) "in sync" else "%+d ms".format(audioDelayMs),
-                            fontSize = 18.sp,
-                            modifier = Modifier.widthIn(min = 90.dp),
-                        )
-                        androidx.compose.material3.OutlinedButton(onClick = { nudge(1) }) {
-                            Text("Later", fontSize = 16.sp)
-                        }
-                        if (audioDelayMs != 0) {
-                            androidx.compose.material3.TextButton(
-                                onClick = { nudge(-audioDelayMs / PlaybackMath.AUDIO_DELAY_STEP_MS) },
-                            ) {
-                                Text("Reset")
-                            }
-                        }
-                    }
-                    Text(
-                        PlaybackMath.syncText("sound", audioDelayMs).replaceFirstChar { it.uppercase() } +
-                            ". Later when you hear a word before the lips move, sooner when after. " +
-                            "Kept for this output.",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-
-                    SubtitleLookRows(
-                        subtitleLook,
-                        onLook = { look ->
-                            subtitleLook = look
-                            store.saveSubtitleLook(queue[index].videoPath, look)
-                        },
-                        onReset = {
-                            store.saveSubtitleLook(queue[index].videoPath, null)
-                            subtitleLook = store.subtitleLookFor(queue[index].videoPath)
-                        },
-                    )
-
-                    if (spatializerAvailable) {
-                        PanelTitle("Spatial audio")
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "Surround sound through the system's spatializer, for headphones that support it.",
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f),
-                            )
-                            androidx.compose.material3.Switch(
-                                checked = spatialAudio,
-                                onCheckedChange = {
-                                    spatialAudio = it
-                                    store.data.settings.spatialAudio = it
-                                    store.save()
-                                },
-                            )
-                        }
-                    }
-
-                    PanelTitle("Rotation")
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Rotation.entries.forEach { option ->
-                            FilterChip(
-                                selected = rotation == option,
-                                onClick = { rotation = option },
-                                label = { Text(option.label, fontSize = 16.sp) },
-                            )
-                        }
-                    }
-
-                    SleepChoice(session) { android.os.SystemClock.elapsedRealtime() }
-
-                    RepeatChoice(session.repeat) { session.repeat = it }
-                },
-                modifier = Modifier.align(Alignment.CenterEnd).then(safeArea),
-            )
-        }
-        if (statisticsShown || histogramShown) {
-            // The statistics, and beneath them the histogram — on the left, beside the gear's picture controls.
-            val overlayDrift = playerView?.drift() ?: Offset.Zero
-            Column(
-                Modifier.align(Alignment.TopStart).then(safeArea).padding(8.dp)
-                    .offset { androidx.compose.ui.unit.IntOffset(overlayDrift.x.toInt(), overlayDrift.y.toInt()) },
-            ) {
-                if (statisticsShown) StatisticsOverlay(statistics, Modifier)
-                if (histogramShown) {
-                    HistogramOverlay(histogram, Modifier.padding(top = if (statisticsShown) 8.dp else 0.dp))
-                }
-            }
-        }
-        if (locked) {
-            LockOverlay(stamp = lockHintStamp, onTouch = { lockHintStamp++ }, onUnlock = { locked = false })
-        }
-        if (infoOpen) {
-            val report = engine.report
+        override fun facts(): com.hawkynt.mediadroid.player.PlaybackChain.Facts {
             val mode = (presentation?.takeIf { it.isShowing }?.display ?: hostView.display)?.mode
-            PlaybackInfoDialog(
-                playing = queue[index],
-                report = report,
-                tracks = engine.tracks,
-                videoPath = queue[index].videoPath,
-                graph = com.hawkynt.mediadroid.player.PlaybackChain.of(
-                    playbackFacts(
-                        location = queue[index].videoPath,
-                        report = report,
-                        videoDecoder = videoDecoder,
-                        audioDecoder = audioDecoder,
-                        picture = shownPicture,
-                        fit = fit.label,
-                        zoom = zoom,
-                        screen = if (presentation?.isShowing == true) {
-                            externalDisplay?.name ?: "the other screen"
+            return playbackFacts(
+                location = session.current.videoPath,
+                report = engine.report,
+                videoDecoder = videoDecoder,
+                audioDecoder = audioDecoder,
+                picture = shownPicture,
+                fit = fit.label,
+                zoom = zoom,
+                screen = if (presentation?.isShowing == true) {
+                    externalDisplay?.name ?: "the other screen"
+                } else {
+                    "this screen"
+                },
+                screenWidth = mode?.physicalWidth ?: 0,
+                screenHeight = mode?.physicalHeight ?: 0,
+                refreshHz = mode?.refreshRate ?: 0f,
+                loudnessDb = settings.loudness + loudnessBoostDb,
+                nightMode = nightMode,
+                evenLoudness = settings.evenLoudness,
+                replayGainDb = engine.replayGainDb,
+                speed = speed,
+                delayMs = audioDelayMs,
+                spatial = spatialAudio,
+                device = audioOutput.name,
+                subtitleDelayMs = state.subtitleLook.delayMs,
+                speedFactor = judderFactor,
+            )
+        }
+
+        // A size chosen starts the pinch's zoom over.
+        override fun onFit(fit: PictureFit) {
+            zoom = 1f
+            pan = Offset.Zero
+        }
+
+        override val speedFactor = judderFactor
+        override val pictureCheck = check
+        override val colorizers = offeredColorizers
+        override val fitHint = "Pinch with two fingers to zoom; choosing a size resets the zoom."
+        override val safeArea = safeArea
+
+        // The statistics drift with the picture on an OLED screen.
+        override val overlayPlace: Modifier
+            get() {
+                val overlayDrift = playerView?.drift() ?: Offset.Zero
+                return safeArea.padding(8.dp)
+                    .offset { IntOffset(overlayDrift.x.toInt(), overlayDrift.y.toInt()) }
+            }
+
+        @Composable
+        override fun BoxScope.Stage() {
+            // The demo library's videos are empty placeholders: their picture stands in for the video,
+            // showing through the player's (then transparent) shutter beneath its controls.
+            if (demo) PosterImage(queue[index].posterPath, contentScale = ContentScale.Crop)
+            AndroidView(
+                factory = { androidContext ->
+                    PlayerPanel.inflate(androidContext).apply {
+                        show(engine, queuePlayer)
+                        // Start on the bare picture; a tap shows the controls, inactivity hides them.
+                        setUpControls(
+                            ControlsTimeoutMs,
+                            onVisible = { controlsVisible = it },
+                            onHoldForward = { holding -> if (holding) startHold(true) else endHold() },
+                            onHoldBack = { holding -> if (holding) startHold(false) else endHold() },
+                        )
+                        if (demo) clearShutter()
+                        onScrub { scrub = it }
+                        playerView = this
+                        attachSubtitles(this)
+                    }.root
+                },
+                update = { view ->
+                    val panel = playerView ?: return@AndroidView
+                    panel.applySubtitleLook(engine, state.subtitleLook)
+                    // While the picture is on the other screen the phone's surface would keep showing the
+                    // last frame it got; it is hidden so the phone stays black behind the controls.
+                    val elsewhere = presentation?.isShowing == true
+                    panel.showPicture(!elsewhere)
+                    if (!elsewhere) panel.applyVideoLook(state.fit, zoom, pan, panel.drift(), warpShown)
+                    panel.showShape(engine.videoFormat)
+                    val density = view.resources.displayMetrics.density
+                    val cutout = view.rootWindowInsets
+                        ?.takeIf { useCutout && android.os.Build.VERSION.SDK_INT >= 28 }
+                        ?.displayCutout
+                    panel.padControls(
+                        (insetX * density).toInt() + (cutout?.safeInsetLeft ?: 0),
+                        (insetY * density).toInt() + (cutout?.safeInsetTop ?: 0),
+                        (insetX * density).toInt() + (cutout?.safeInsetRight ?: 0),
+                        (insetY * density).toInt() + (cutout?.safeInsetBottom ?: 0),
+                    )
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            presentation?.let { shown ->
+                if (shown.isShowing) {
+                    shown.playerView.applyVideoLook(state.fit, zoom, pan, shown.playerView.drift(), warpShown)
+                    shown.playerView.showShape(engine.videoFormat)
+                    shown.playerView.applySubtitleLook(engine, state.subtitleLook)
+                }
+            }
+            // The bare picture listens for gestures; with the controls up, touches go to the controls.
+            if (!controlsVisible && !state.panelOpen && !inPip) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .playerGestures(
+                            onTap = { playerView?.showControls() },
+                            onDoubleTap = { side ->
+                                val forward = side == Side.RIGHT
+                                engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, forward))
+                                show(if (forward) "+15 s" else "−15 s")
+                            },
+                            onSwipe = ::swipe,
+                            onSwipeEnd = {},
+                            onPinch = { factor, move ->
+                                val view = playerView ?: return@playerGestures
+                                zoom = PlaybackMath.zoom(zoom, factor)
+                                pan = Offset(
+                                    PlaybackMath.pan(pan.x + move.x, zoom, view.width.toFloat()),
+                                    PlaybackMath.pan(pan.y + move.y, zoom, view.height.toFloat()),
+                                )
+                                show("Zoom %.1f×".format(zoom))
+                            },
+                        ),
+                )
+            }
+            scrub?.takeIf { controlsVisible && !inPip }?.let {
+                SeekPreviewCard(it, engine.durationMs, seekPreviews, clock(it.positionMs))
+            }
+            // When the film will be over on the clock, on the free right end of Media3's time row.
+            if (controlsVisible && !inPip) {
+                var endsAt by remember { mutableStateOf<Long?>(null) }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        endsAt = PlaybackMath.endsAtMs(
+                            System.currentTimeMillis(),
+                            engine.positionMs,
+                            engine.durationMs,
+                            engine.speed,
+                        )
+                        delay(1000)
+                    }
+                }
+                endsAt?.let { at ->
+                    Text(
+                        "Ends " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(at)),
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .then(safeArea)
+                            .padding(end = 16.dp, bottom = 14.dp),
+                    )
+                }
+            }
+        }
+
+        // The phone's second screen: the film there while the phone keeps the controls, and the phone darkened.
+        @Composable
+        override fun RowScope.TopBarButtons() {
+            if (externalDisplay != null) {
+                IconButton(
+                    onClick = {
+                        onSecondScreen = !onSecondScreen
+                        keepControls()
+                    },
+                ) {
+                    Icon(
+                        painterResource(Res.drawable.ic_tv),
+                        contentDescription =
+                            if (onSecondScreen) "Back to this screen" else "Play on the other screen",
+                        tint = if (onSecondScreen) MaterialTheme.colorScheme.primary else Color.White,
+                    )
+                }
+            }
+            if (onSecondScreen) {
+                IconButton(
+                    onClick = {
+                        if (com.hawkynt.mediadroid.player.PhoneLock.allowed(context)) {
+                            darkPhone.darken()
+                            phoneDark = true
                         } else {
-                            "this screen"
-                        },
-                        screenWidth = mode?.physicalWidth ?: 0,
-                        screenHeight = mode?.physicalHeight ?: 0,
-                        refreshHz = mode?.refreshRate ?: 0f,
-                        loudnessDb = settings.loudness + loudnessBoostDb,
-                        nightMode = nightMode,
-                        evenLoudness = settings.evenLoudness,
-                        replayGainDb = engine.replayGainDb,
-                        speed = speed,
-                        delayMs = audioDelayMs,
-                        spatial = spatialAudio,
-                        device = audioOutput.name,
-                        subtitleDelayMs = subtitleLook.delayMs,
-                        speedFactor = judderFactor,
-                    ),
-                ),
-                statisticsShown = statisticsShown,
-                onStatistics = { statisticsShown = it },
-                onDismiss = { infoOpen = false },
-                histogramShown = histogramShown,
-                onHistogram = {
-                    histogramShown = it
-                    if (!it) histogram = null
-                },
-            )
-        }
-        if (chapterPicker) {
-            ChapterDialog(
-                chapters = chapters,
-                current = com.hawkynt.mediadroid.player.ChapterSteps.current(chapters, engine.positionMs),
-                onDismiss = { chapterPicker = false },
-                onPick = { start ->
-                    engine.seekTo(start)
-                    chapterPicker = false
-                },
-            )
-        }
-        if (audioPicker) {
-            // Audio files beside the video are merged in as sources 1, 2 …: their names say what they are.
-            val audioFiles = sidecars.filter { it.first.kind == com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
-            TrackDialog(
-                tracks = engine.tracks,
-                kind = com.hawkynt.mediadroid.engine.Track.Kind.AUDIO,
-                labelFor = { track ->
-                    track.source.takeIf { audioFiles.isNotEmpty() && it >= 1 }
-                        ?.let { audioFiles.getOrNull(it - 1)?.first?.describe() }
-                },
-                onDismiss = { audioPicker = false },
-                onPick = { picked ->
-                    session.manualTrackPick = true
-                    engine.select(com.hawkynt.mediadroid.engine.Track.Kind.AUDIO, picked?.id)
-                    audioPicker = false
-                },
-            )
-        }
-        if (secondPicker) {
-            // A second track at the top: a language to learn by, or the signs beside the dialogue.
-            TrackDialog(
-                tracks = com.hawkynt.mediadroid.engine.Tracks.secondText(engine.tracks),
-                kind = com.hawkynt.mediadroid.engine.Track.Kind.TEXT,
-                noneLabel = "None",
-                marked = { it.second },
-                onDismiss = { secondPicker = false },
-                onPick = { picked ->
-                    engine.secondSubtitle = picked?.id
-                    secondPicker = false
-                },
-            )
-        }
-        if (subtitlePicker) {
-            TrackDialog(
-                tracks = engine.tracks,
-                kind = com.hawkynt.mediadroid.engine.Track.Kind.TEXT,
-                onDismiss = { subtitlePicker = false },
-                onPick = { picked ->
-                    session.manualTrackPick = true
-                    subtitlesOn = picked != null || subtitlesOn
-                    engine.subtitlesOn = true
-                    engine.select(com.hawkynt.mediadroid.engine.Track.Kind.TEXT, picked?.id)
-                    subtitlePicker = false
-                },
-            )
-        }
-        // Not over the open panel: the household is still choosing there; the prompt shows once it is closed.
-        if (session.finished && !panelOpen && !small) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Button(onClick = { leavePlayer(); onExit() }) {
-                    Text("All done — back to the library", fontSize = 22.sp)
-                }
-            }
-        }
-        playError?.takeIf { !small }?.let { code ->
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Button(onClick = { leavePlayer(); onExit() }) {
-                    Text("Cannot play this file ($code) — back to the library", fontSize = 22.sp)
-                }
-            }
-        }
-        // The darkened phone: black over everything; a touch lights it up and brings the controls back.
-        if (small) {
-            // In the corner: a tap brings the player back full screen; the cross ends it. With the film on the other
-            // screen the phone shows its picture in its place, the film playing on there.
-            if (presentation?.isShowing == true) {
-                // Its poster, else a still from the video itself (a file from Files has no poster), and the screen it
-                // plays on marked.
-                PosterImage(
-                    queue[index].posterPath,
-                    videoFallback = queue[index].videoPath,
-                    contentScale = ContentScale.Crop,
-                )
-                Icon(
-                    painterResource(Res.drawable.ic_tv),
-                    contentDescription = "Playing on the other screen",
-                    tint = Color.White,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).size(18.dp)
-                        .background(Color.Black.copy(alpha = 0.55f), androidx.compose.foundation.shape.CircleShape)
-                        .padding(2.dp),
-                )
-            }
-            Box(
-                Modifier.fillMaxSize().clickable(onClickLabel = "Back to the player") { onGrow() },
-            )
-            IconButton(
-                onClick = {
-                    leavePlayer()
-                    onExit()
-                },
-                modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).size(24.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), androidx.compose.foundation.shape.CircleShape),
-            ) {
-                Icon(
-                    Icons.Filled.Close,
-                    contentDescription = "Stop playing",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        }
-        if (phoneDark && !small) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black)
-                    .pointerInput(Unit) {
-                        detectTapGestures {
-                            darkPhone.touch()
-                            phoneDark = false
-                            playerView?.showControls()
+                            askingToLock = true
+                            askToLock.launch(com.hawkynt.mediadroid.player.PhoneLock.askIntent(context))
                         }
                     },
+                ) {
+                    Icon(
+                        painterResource(Res.drawable.ic_phonelink_lock),
+                        contentDescription = "Darken this phone",
+                        tint = Color.White,
+                    )
+                }
+            }
+        }
+
+        // The child lock, the sound (night mode, the output's delay, spatial audio) and the rotation.
+        @Composable
+        override fun ColumnScope.GearSections() {
+            OutlinedButton(
+                onClick = {
+                    locked = true
+                    state.panelOpen = false
+                    playerView?.hideControls()
+                    lockHintStamp++
+                },
+                modifier = Modifier.padding(top = 12.dp),
+            ) {
+                Icon(Icons.Filled.Lock, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Lock the player", fontSize = 16.sp)
+            }
+            Text(
+                "Touches and buttons do nothing until the lock symbol is held for two seconds.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
             )
+
+            PanelTitle("Sound")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Night mode", fontSize = 16.sp)
+                    Text(
+                        "Quiet dialogue comes up, loud scenes come down.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = nightMode, onCheckedChange = { nightMode = it })
+            }
+
+            PanelTitle("Audio delay · ${audioOutput.name}")
+            // Wraps rather than squeezes: a button pressed narrower than its word shows it a letter a line.
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                itemVerticalAlignment = Alignment.CenterVertically,
+            ) {
+                fun nudge(steps: Int) {
+                    audioDelayMs = PlaybackMath.nudgeAudioDelay(audioDelayMs, steps)
+                    store.saveAudioDelay(audioOutput.key, audioDelayMs)
+                }
+                OutlinedButton(onClick = { nudge(-1) }) {
+                    Text("Sooner", fontSize = 16.sp)
+                }
+                Text(
+                    if (audioDelayMs == 0) "in sync" else "%+d ms".format(audioDelayMs),
+                    fontSize = 18.sp,
+                    modifier = Modifier.widthIn(min = 90.dp),
+                )
+                OutlinedButton(onClick = { nudge(1) }) {
+                    Text("Later", fontSize = 16.sp)
+                }
+                if (audioDelayMs != 0) {
+                    TextButton(onClick = { nudge(-audioDelayMs / PlaybackMath.AUDIO_DELAY_STEP_MS) }) {
+                        Text("Reset")
+                    }
+                }
+            }
+            Text(
+                PlaybackMath.syncText("sound", audioDelayMs).replaceFirstChar { it.uppercase() } +
+                    ". Later when you hear a word before the lips move, sooner when after. " +
+                    "Kept for this output.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            if (spatializerAvailable) {
+                PanelTitle("Spatial audio")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Surround sound through the system's spatializer, for headphones that support it.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = spatialAudio,
+                        onCheckedChange = {
+                            spatialAudio = it
+                            store.data.settings.spatialAudio = it
+                            store.save()
+                        },
+                    )
+                }
+            }
+
+            PanelTitle("Rotation")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Rotation.entries.forEach { option ->
+                    FilterChip(
+                        selected = rotation == option,
+                        onClick = { rotation = option },
+                        label = { Text(option.label, fontSize = 16.sp) },
+                    )
+                }
+            }
+        }
+
+        // The camera cutout, for the picture filling the screen.
+        @Composable
+        override fun ColumnScope.GearAfterPictureSize() {
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Use the camera cutout", fontSize = 16.sp)
+                        Text(
+                            "The picture may reach into the notch or punch hole, mostly useful with Fill.",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = useCutout,
+                        onCheckedChange = {
+                            useCutout = it
+                            store.data.settings.useCutout = it
+                            store.save()
+                        },
+                    )
+                }
+            }
+        }
+
+        @Composable
+        override fun BoxScope.Overlays() {
+            // A camera's flash as the picture is taken, then the picture small with a button to share it.
+            AnimatedVisibility(visible = snapshotFlash, enter = fadeIn(), exit = fadeOut()) {
+                Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.5f)))
+            }
+            snapshotTaken?.let { (picture, uri) ->
+                SnapshotCard(
+                    picture,
+                    uri,
+                    onShare = { com.hawkynt.mediadroid.data.SnapshotSaver.share(context, it) },
+                    modifier = Modifier.align(Alignment.TopEnd).then(safeArea).padding(top = 72.dp, end = 16.dp),
+                )
+            }
+            if (locked) {
+                LockOverlay(stamp = lockHintStamp, onTouch = { lockHintStamp++ }, onUnlock = { locked = false })
+            }
+            if (small) {
+                // In the corner: a tap brings the player back full screen; the cross ends it. With the film on the
+                // other screen the phone shows its picture in its place, the film playing on there.
+                if (presentation?.isShowing == true) {
+                    // Its poster, else a still from the video itself (a file from Files has no poster), and the
+                    // screen it plays on marked.
+                    PosterImage(
+                        queue[index].posterPath,
+                        videoFallback = queue[index].videoPath,
+                        contentScale = ContentScale.Crop,
+                    )
+                    Icon(
+                        painterResource(Res.drawable.ic_tv),
+                        contentDescription = "Playing on the other screen",
+                        tint = Color.White,
+                        modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).size(18.dp)
+                            .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                            .padding(2.dp),
+                    )
+                }
+                Box(
+                    Modifier.fillMaxSize().clickable(onClickLabel = "Back to the player") { onGrow() },
+                )
+                IconButton(
+                    onClick = {
+                        leavePlayer()
+                        onExit()
+                    },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).size(24.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Stop playing",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            // The darkened phone: black over everything; a touch lights it up and brings the controls back.
+            if (phoneDark && !small) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .pointerInput(Unit) {
+                            detectTapGestures {
+                                darkPhone.touch()
+                                phoneDark = false
+                                playerView?.showControls()
+                            }
+                        },
+                )
+            }
         }
     }
+    PlayerScreen(state, platform, modifier)
 }
+
+/** The shared keys (PlayerKeys) the phone's player answers itself; Media3's controls answer the rest. */
+private val PHONE_COMMANDS = setOf(
+    PlayerCommand.FRAME_FORWARD,
+    PlayerCommand.FRAME_BACK,
+    PlayerCommand.CHAPTER_NEXT,
+    PlayerCommand.CHAPTER_BACK,
+    PlayerCommand.REPEAT,
+)
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
 }
-
-/** How often a repeated part's end is looked for. */
-private const val AB_CHECK_MS = 40L
 
 /** How long the flash of a snapshot lasts. */
 private const val SNAPSHOT_FLASH_MS = 150L
