@@ -90,8 +90,10 @@ abstract class PlaybackEngineContract {
         }
     }
 
-    private fun assertNear(expected: Long, actual: Long) =
-        assertTrue("$actual is not within $toleranceMs ms of $expected", kotlin.math.abs(actual - expected) <= toleranceMs)
+    private fun assertNear(expected: Long, actual: Long) = assertTrue(
+        "$actual is not within $toleranceMs ms of $expected",
+        kotlin.math.abs(actual - expected) <= toleranceMs,
+    )
 
     private fun openPaused(request: MediaRequest = media) {
         engine.open(request, autoPlay = false)
@@ -174,6 +176,17 @@ abstract class PlaybackEngineContract {
         }
         waitFor("the picture's size") { heard.all<Recorder.Size>().any { it.width > 0 && it.height > 0 } }
         assertTrue(engine.tracks.any { it.kind == Track.Kind.AUDIO && it.selected })
+    }
+
+    @Test
+    fun `the picture's format is known once it shows`() {
+        assertNull(engine.videoFormat)
+        engine.videoOutput = output()
+        openPaused()
+        waitFor("the picture's format") { (engine.videoFormat?.width ?: 0) > 0 }
+        val format = engine.videoFormat!!
+        assertTrue(format.height > 0 && format.pixelAspect > 0f && format.frameRate > 0f)
+        assertEquals(VideoFormat.Transfer.SDR, format.transfer)
     }
 
     @Test

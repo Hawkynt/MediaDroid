@@ -5,6 +5,7 @@ import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackState
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.VideoFormat
 import com.hawkynt.mediadroid.engine.VideoOutput
 import com.hawkynt.mediadroid.library.FsFile
 import com.hawkynt.mediadroid.player.AssFrame
@@ -597,6 +598,22 @@ class DesktopPlaybackEngine(
     override val isPlaying: Boolean get() = playing
 
     override val frameRate: Float get() = reader?.frameRate ?: 0f
+
+    override val videoFormat: VideoFormat?
+        get() = reader?.takeIf { it.width > 0 && it.height > 0 }?.let {
+            VideoFormat(
+                it.width,
+                it.height,
+                it.pixelAspect,
+                it.frameRate,
+                when (it.hdr) {
+                    com.hawkynt.mediadroid.player.ToneMap.Transfer.PQ -> VideoFormat.Transfer.PQ
+                    com.hawkynt.mediadroid.player.ToneMap.Transfer.HLG -> VideoFormat.Transfer.HLG
+                    null -> VideoFormat.Transfer.SDR
+                },
+                it.bitDepth,
+            )
+        }
 
     /** How fast it plays, the sound at its own pitch (Tempo); taken in by the reader at its next turn. */
     override var speed: Float = 1f

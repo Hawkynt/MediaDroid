@@ -15,6 +15,7 @@ import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.PlaybackState
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.VideoFormat
 import com.hawkynt.mediadroid.engine.VideoOutput
 import com.hawkynt.mediadroid.library.FsFile
 
@@ -27,7 +28,10 @@ import com.hawkynt.mediadroid.library.FsFile
  * and a [SurfaceViewOutput]. What it needs of the app comes in: the household's [options], the [files] behind a
  * network source's location and how late the picture stage shows a picture ([pictureLatencyMs]).
  *
- * [exo] stays reachable while the player screen moves over to the engine's own commands (#283).
+ * Beyond the shared API it offers what only Android has: the FFmpeg decoder's pictures handed to the picture stage as
+ * planes ([planesTo]), each picture's release to the screen ([onFrameReleased]), spatial audio ([spatialAudio]), a
+ * reload after an error ([reload]) and, for the info sheet and the controls ([PlayerPanel], [PlaybackQueue]), Media3
+ * itself ([exo]) — the screens reach Media3 through these, never directly.
  */
 class AndroidPlaybackEngine(
     context: Context,
@@ -274,10 +278,24 @@ class AndroidPlaybackEngine(
     /** The file and audio track playing and its ReplayGain, for the even-loudness correction on the audio thread. */
     @Volatile private var fileLoudness: FileLoudness? = null
 
+    /** The sound output as the audio track was set up (for the info sheet); null before. */
+    var audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig? = null
+        private set
+
     /** The ReplayGain of the file and audio track playing, if its tags carry one. */
     val replayGainDb: Float? get() = fileLoudness?.tagGainDb
 
     init {
+        exo.addAnalyticsListener(
+            object : AnalyticsListener {
+                override fun onAudioTrackInitialized(
+                    eventTime: AnalyticsListener.EventTime,
+                    audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig,
+                ) {
+                    this@AndroidPlaybackEngine.audioTrackConfig = audioTrackConfig
+                }
+            },
+        )
         // The audio track playing and its ReplayGain tags, as Media3 read them from the file.
         exo.addListener(
             object : Player.Listener {
@@ -367,6 +385,84 @@ class AndroidPlaybackEngine(
     override val isPlaying: Boolean get() = exo.isPlaying
 
     override val frameRate: Float get() = exo.videoFormat?.frameRate?.takeIf { it > 0f } ?: 0f
+
+    override val videoFormat: VideoFormat?
+        get() {
+            val size = exo.videoSize
+            if (size.width <= 0 || size.height <= 0) return null
+            val format = exo.videoFormat
+            return VideoFormat(
+                size.width,
+                size.height,
+                size.pixelWidthHeightRatio,
+                format?.frameRate?.takeIf { it > 0f } ?: 0f,
+                when (format?.colorInfo?.colorTransfer) {
+                    C.COLOR_TRANSFER_ST2084 -> VideoFormat.Transfer.PQ
+                    C.COLOR_TRANSFER_HLG -> VideoFormat.Transfer.HLG
+                    else -> VideoFormat.Transfer.SDR
+                },
+                format?.colorInfo?.lumaBitdepth?.takeIf { it > 0 } ?: 8,
+            )
+        }
+
+    /**
+     * A film's sound: other players pause for it, it pauses for a call — spatialized by the device's spatializer only
+     * when this is on.
+     */
+    var spatialAudio: Boolean = false
+        set(value) {
+            field = value
+            exo.setAudioAttributes(
+                androidx.media3.common.AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .setSpatializationBehavior(
+                        if (value) C.SPATIALIZATION_BEHAVIOR_AUTO else C.SPATIALIZATION_BEHAVIOR_NEVER,
+                    )
+                    .build(),
+                true,
+            )
+        }
+
+    /**
+     * The bundled FFmpeg's pictures handed as YUV planes to [output] (the picture stage), sparing its decoder a
+     * window's buffer queue; idle while a device decoder plays. Asked again on every routing: any new surface given
+     * to the player points FFmpeg's renderer back at it.
+     */
+    fun planesTo(output: androidx.media3.exoplayer.video.VideoDecoderOutputBufferRenderer) {
+        val renderer = ffmpegVideoRenderer[0] ?: return
+        exo.createMessage(renderer)
+            .setType(androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_OUTPUT)
+            .setPayload(output)
+            .send()
+    }
+
+    /** Told each picture's release to the screen, in System.nanoTime's time, while set; null for none. */
+    var onFrameReleased: ((releaseTimeNs: Long) -> Unit)? = null
+        set(value) {
+            field?.let { exo.clearVideoFrameMetadataListener(frameListener) }
+            field = value
+            if (value != null) exo.setVideoFrameMetadataListener(frameListener)
+        }
+
+    private val frameListener = androidx.media3.exoplayer.video.VideoFrameMetadataListener { _, releaseTimeNs, _, _ ->
+        onFrameReleased?.invoke(releaseTimeNs)
+    }
+
+    /** Whether what is open plays with sound files beside it merged in. */
+    val sidecarAudio: Boolean
+        get() = (exo.currentMediaItem?.localConfiguration?.tag as? SidecarAudio)?.locations?.isNotEmpty() == true
+
+    /**
+     * What is open loaded afresh and played on from where it was — after an error, with a fresh picture surface in
+     * place, say; [withoutSidecarAudio] leaves the sound files beside it out (one that cannot go along with the video).
+     */
+    fun reload(withoutSidecarAudio: Boolean = false) {
+        val item = exo.currentMediaItem ?: return
+        val position = exo.currentPosition
+        exo.setMediaItem(if (withoutSidecarAudio) item.buildUpon().setTag(null).build() else item, position)
+        exo.prepare()
+    }
 
     override var speed: Float
         get() = exo.playbackParameters.speed

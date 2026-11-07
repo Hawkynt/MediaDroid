@@ -44,6 +44,9 @@ interface PlaybackEngine : AutoCloseable {
     /** The picture's frames a second, 0 while unknown or without a picture (for stepping frame by frame). */
     val frameRate: Float get() = 0f
 
+    /** The picture of what is open, once known; null before, or without a picture. */
+    val videoFormat: VideoFormat? get() = null
+
     /** Playback speed, 1 for normal. */
     var speed: Float
 

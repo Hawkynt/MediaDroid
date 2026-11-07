@@ -54,6 +54,7 @@ dependencies {
     api(project(":core:library"))
     api(libs.media3.exoplayer)
     api(libs.media3.ui)
+    implementation(libs.media3.session)
     compileOnly(ffmpegAar)
 
     testImplementation(libs.junit)

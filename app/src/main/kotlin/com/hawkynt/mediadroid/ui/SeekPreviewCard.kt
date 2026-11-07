@@ -1,8 +1,6 @@
 package com.hawkynt.mediadroid.ui
 
 import android.graphics.Bitmap
-import android.view.View
-import androidx.annotation.OptIn
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -28,44 +26,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.ui.PlayerView
-import androidx.media3.ui.TimeBar
 import com.hawkynt.mediadroid.data.SeekPreviews
 import com.hawkynt.mediadroid.player.SeekPreview
 
-/**
- * The finger on Media3's seek bar: the moment it points at and where the bar's line runs, in the player
- * view's pixels, so a picture can float above that spot.
- */
-internal data class Scrub(val positionMs: Long, val lineLeft: Float, val lineWidth: Float, val lineY: Float)
-
-/** Reports every move of a finger (or a remote's keys) along the seek bar, and null when it lets go. */
-@OptIn(UnstableApi::class)
-internal fun PlayerView.onScrub(report: (Scrub?) -> Unit) {
-    val bar = findViewById<View>(androidx.media3.ui.R.id.exo_progress) ?: return
-    val timeBar = bar as? TimeBar ?: return
-    val playerView = this
-    fun at(position: Long): Scrub {
-        val barAt = IntArray(2).also(bar::getLocationInWindow)
-        val viewAt = IntArray(2).also(playerView::getLocationInWindow)
-        // Media3 draws the line inside the bar's padding, inset by half the dragged scrubber.
-        val inset = bar.paddingLeft + SCRUBBER_HALF_DP * bar.resources.displayMetrics.density
-        val left = barAt[0] - viewAt[0] + inset
-        val width = bar.width - bar.paddingLeft - bar.paddingRight - 2 * SCRUBBER_HALF_DP *
-            bar.resources.displayMetrics.density
-        return Scrub(position, left, width.coerceAtLeast(1f), barAt[1] - viewAt[1] + bar.height / 2f)
-    }
-    timeBar.addListener(
-        object : TimeBar.OnScrubListener {
-            override fun onScrubStart(timeBar: TimeBar, position: Long) = report(at(position))
-
-            override fun onScrubMove(timeBar: TimeBar, position: Long) = report(at(position))
-
-            override fun onScrubStop(timeBar: TimeBar, position: Long, canceled: Boolean) = report(null)
-        },
-    )
-}
+/** The finger on the seek bar (PlayerPanel.onScrub): the moment it points at and where the bar's line runs. */
+internal typealias Scrub = com.hawkynt.mediadroid.player.PlayerPanel.Scrub
 
 /**
  * The picture of the moment under the finger, floating above the seek bar with its time: a picture
@@ -123,5 +88,4 @@ internal fun SeekPreviewCard(scrub: Scrub, durationMs: Long, session: SeekPrevie
     }
 }
 
-private const val SCRUBBER_HALF_DP = 12
 private const val PICTURE_WIDTH_DP = 168

@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Display
-import android.view.LayoutInflater
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -17,9 +16,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.media3.common.Player
-import androidx.media3.ui.PlayerView
-import com.hawkynt.mediadroid.R
+import com.hawkynt.mediadroid.player.AndroidPlaybackEngine
+import com.hawkynt.mediadroid.player.PlayerPanel
 
 /**
  * The external display a video can be sent to — HDMI, a USB-C dock, a wireless display — or null.
@@ -47,32 +45,29 @@ private fun DisplayManager.presentationDisplay(): Display? =
 
 /**
  * The video alone, full screen on [display]; the phone keeps the controls. Uses the same player
- * layout as the phone (texture surface), so fit, zoom and picture correction apply there as well.
+ * panel as the phone, so fit, zoom and picture correction apply there as well.
  */
 class VideoPresentation(
     context: Context,
     display: Display,
-    private val player: Player,
+    private val engine: AndroidPlaybackEngine,
 ) : Presentation(context, display) {
 
-    lateinit var playerView: PlayerView
+    lateinit var playerView: PlayerPanel
         private set
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        playerView = (LayoutInflater.from(context).inflate(R.layout.player_view, null, false) as PlayerView).apply {
-            useController = false
-            this.player = this@VideoPresentation.player
-        }
-        setContentView(playerView)
+        playerView = PlayerPanel.inflate(context, controls = false).apply { show(engine) }
+        setContentView(playerView.root)
         // What the picture leaves free is black, whatever colour the window's theme would give it.
-        playerView.setBackgroundColor(Color.BLACK)
+        playerView.root.setBackgroundColor(Color.BLACK)
         window?.setBackgroundDrawable(ColorDrawable(Color.BLACK))
     }
 
     /** Hands the picture back: the player stops drawing here before the window goes. */
     fun release() {
-        if (::playerView.isInitialized) playerView.player = null
+        if (::playerView.isInitialized) playerView.show(null)
         dismiss()
     }
 }

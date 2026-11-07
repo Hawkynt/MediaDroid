@@ -10,7 +10,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.res.painterResource
-import androidx.media3.ui.AspectRatioFrameLayout
 import com.hawkynt.mediadroid.player.PlaybackMath
 import kotlin.math.roundToInt
 import android.view.View
@@ -81,15 +80,13 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.media3.common.C
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.common.TrackSelectionOverride
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.audio.DefaultAudioSink
-import androidx.media3.ui.PlayerView
 import com.hawkynt.mediadroid.R
+import com.hawkynt.mediadroid.engine.PlaybackEngine
+import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.VideoFormat
+import com.hawkynt.mediadroid.player.AndroidPlaybackEngine
+import com.hawkynt.mediadroid.player.PlaybackQueue
+import com.hawkynt.mediadroid.player.PlayerPanel
 import com.hawkynt.mediadroid.player.PlayerWindow
 import com.hawkynt.mediadroid.data.StateStore
 import com.hawkynt.mediadroid.data.screenKey
@@ -98,7 +95,6 @@ import com.hawkynt.mediadroid.player.PictureLayout
 import com.hawkynt.mediadroid.player.ScreenRect
 import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.library.SkipRules
-import com.hawkynt.mediadroid.player.LoudnessAudioProcessor
 import java.io.File
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.shape.CircleShape
@@ -120,102 +116,49 @@ import com.hawkynt.mediadroid.player.BurnInDrift
 private const val ControlsTimeoutMs = 3_000
 
 /**
- * How the video fills the screen, as Media3's resize modes: panoramic is fitted, its frame as wide as the panorama
- * makes the picture (see [applyCropShape]).
+ * The picture's shape on the panel: [video]'s own, narrowed or flattened by the black bars the filters' stage crops —
+ * [share] the part of the width and height it still shows — so Fit, Fill and Stretch work on the picture alone — or
+ * the shape [aspect] gives the whole frame where the file's flag is wrong; drawn narrower on a screen seen wider than
+ * its pixels ([screen], an anamorphic lens), so it is seen as meant; as wide as the stage's [warp] shows it
+ * panoramic, or the whole screen where the warp draws all of it (a keystone).
  */
-private val PictureFit.resizeMode: Int
-    get() = when (this) {
-        PictureFit.FIT, PictureFit.PANORAMIC -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-        PictureFit.FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-        PictureFit.STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-    }
-
-/**
- * The picture's shape on the view: [video]'s own, as the player view gives it, narrowed or flattened by the black
- * bars the filters' stage crops — [share] the part of the width and height it still shows — so Fit, Fill and Stretch
- * work on the picture alone — or the shape [aspect] gives the whole frame where the file's flag is wrong; drawn
- * narrower on a screen seen wider than its pixels ([screen], an anamorphic lens), so it is seen as meant; as wide
- * as the stage's [warp] shows it panoramic, or the whole screen where the warp draws all of it (a keystone).
- */
-private fun PlayerView.applyCropShape(
-    video: androidx.media3.common.VideoSize,
+private fun PlayerPanel.applyCropShape(
+    video: VideoFormat?,
     share: Pair<Float, Float>,
     aspect: com.hawkynt.mediadroid.player.AspectOverride,
     screen: com.hawkynt.mediadroid.player.ScreenShape,
     warp: ScreenWarp,
 ) {
     val drawn = drawnAspect(video, share, aspect, screen) ?: return
-    val frame = findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame) ?: return
-    frame.setAspectRatio(if (warp.wholeScreen && panelAspect() > 0f) panelAspect() else drawn * warp.panorama)
+    shapePicture(if (warp.wholeScreen && panelAspect > 0f) panelAspect else drawn * warp.panorama)
 }
 
-/** The shape the picture is drawn in on this view's screen (see [applyCropShape]); null before its size is known. */
-private fun PlayerView.drawnAspect(
-    video: androidx.media3.common.VideoSize,
+/** The shape the picture is drawn in on this panel's screen (see [applyCropShape]); null before its size is known. */
+private fun PlayerPanel.drawnAspect(
+    video: VideoFormat?,
     share: Pair<Float, Float>,
     aspect: com.hawkynt.mediadroid.player.AspectOverride,
     screen: com.hawkynt.mediadroid.player.ScreenShape,
 ): Float? {
-    if (video.width == 0 || video.height == 0) return null
+    if (video == null || video.width == 0 || video.height == 0) return null
     val meant = com.hawkynt.mediadroid.player.PictureShape.aspect(
-        video.width, video.height, video.pixelWidthHeightRatio, aspect, share.first, share.second,
+        video.width, video.height, video.pixelAspect, aspect, share.first, share.second,
     )
-    return com.hawkynt.mediadroid.player.PictureShape.drawn(meant, panelAspect(), screen)
+    return com.hawkynt.mediadroid.player.PictureShape.drawn(meant, panelAspect, screen)
 }
 
-/** The shape of the screen this view fills: its width over its height; 0 before it is laid out. */
-private fun PlayerView.panelAspect(): Float =
-    rootView.takeIf { it.width > 0 && it.height > 0 }?.let { it.width.toFloat() / it.height } ?: 0f
-
 /**
- * Fit, zoom and picture correction on the video frame inside a player view only — the controls
- * and subtitles drawn above it are neither scaled nor tinted. [drift] moves the picture and the subtitles together
- * (BurnInDrift, an OLED screen's burn-in care).
+ * Fit, zoom and picture correction on the video frame inside a player panel only — the controls and subtitles drawn
+ * above it are neither scaled nor tinted. [drift] moves the picture and the subtitles together (BurnInDrift, an OLED
+ * screen's burn-in care).
  */
-private fun PlayerView.applyVideoLook(
+private fun PlayerPanel.applyVideoLook(
     fit: PictureFit,
     zoom: Float,
     pan: Offset,
     drift: Offset = Offset.Zero,
     bend: ScreenWarp = ScreenWarp.None,
-) {
-    resizeMode = fit.resizeMode
-    val frame = findViewById<View>(androidx.media3.ui.R.id.exo_content_frame) ?: return
-    frame.scaleX = zoom
-    frame.scaleY = zoom
-    frame.translationX = pan.x + drift.x
-    frame.translationY = pan.y + drift.y
-    subtitleView?.translationX = drift.x
-    subtitleView?.translationY = drift.y
-    // The second subtitle track sits in the overlay frame.
-    overlayFrameLayout?.translationX = drift.x
-    overlayFrameLayout?.translationY = drift.y
-    // The subtitles — text and teletext, the second track, libass's signs — bent as the stage bends the picture: a
-    // projector's mirror, flip and keystone (ScreenWarp.overlayMatrix).
-    val ass = (frame as? android.view.ViewGroup)?.let { group ->
-        (0 until group.childCount).map { group.getChildAt(it) }
-            .filterIsInstance<com.hawkynt.mediadroid.player.AssOverlayView>()
-    }.orEmpty()
-    (listOfNotNull(subtitleView, overlayFrameLayout) + ass).forEach { it.bendWith(bend) }
-}
-
-/**
- * This view's drawing bent by [warp] over its own size: through the view's animation matrix, which takes a projective
- * one, from Android 10; before, only the mirror and the flip, by its scale about its middle.
- */
-private fun View.bendWith(warp: ScreenWarp) {
-    if (android.os.Build.VERSION.SDK_INT >= 29) {
-        animationMatrix = if (warp.bendsOverlays && width > 0 && height > 0) {
-            android.graphics.Matrix().apply { setValues(warp.overlayMatrix(width.toFloat(), height.toFloat())) }
-        } else {
-            null
-        }
-    } else {
-        val m = warp.overlayMatrix(1f, 1f)
-        scaleX = if (m[0] < 0f) -1f else 1f
-        scaleY = if (m[4] < 0f) -1f else 1f
-    }
-}
+) = fitPicture(fit, zoom, pan.x, pan.y, drift.x, drift.y, bend)
 
 /**
  * Full-screen playback: it remembers where you stopped, a show keeps going, and
@@ -318,18 +261,15 @@ fun PlayerScreen(
             placeholders = demo,
         )
     }
-    val player = engine.exo
     // The video's frame rate, for the sound's wait behind a filtered picture; kept current by the routing loop.
     val videoFrameRate = engine.videoFrameRate
-    // The bundled FFmpeg's video renderer, which hands its pictures to the filters' stage as YUV planes.
-    val ffmpegVideoRenderer = engine.ffmpegVideoRenderer
     // Every frame equally long on screen: the film's rate times the chosen speed decides the display mode (TV boxes,
     // "Match the refresh rate") and the small speed change of Even frames, together (see PlaybackMath.evenPlayback).
     val displayActivity = remember(context) { context.findActivity() }
     var judderFactor by remember { mutableFloatStateOf(1f) }
     // False while no even rate is within reach (see PlaybackMath.smoothedWhenUneven).
     var evenReachable by remember { mutableStateOf(true) }
-    DisposableEffect(player) {
+    DisposableEffect(engine) {
         onDispose {
             displayActivity?.window?.let { it.attributes = it.attributes.apply { preferredDisplayModeId = 0 } }
         }
@@ -337,7 +277,6 @@ fun PlayerScreen(
     // Which decoders are at work, as Media3 reports them, for the info sheet.
     var videoDecoder by remember { mutableStateOf<String?>(null) }
     var audioDecoder by remember { mutableStateOf<String?>(null) }
-    var audioTrack by remember { mutableStateOf<androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig?>(null) }
     var infoOpen by remember { mutableStateOf(false) }
     // The statistics over the picture (Info › Advanced), for this session only.
     var statisticsShown by remember { mutableStateOf(false) }
@@ -345,64 +284,32 @@ fun PlayerScreen(
     var histogramShown by remember { mutableStateOf(false) }
     var histogram by remember { mutableStateOf<com.hawkynt.mediadroid.player.Histogram?>(null) }
     val statistics = remember { com.hawkynt.mediadroid.player.PlaybackStatistics() }
-    // PlayerView opens its shutter only for a first frame drawn into its own surface; one drawn by the filters'
-    // stage from FFmpeg's planes is announced to analytics alone, so the shutter is opened from here.
+    // The player panel opens its shutter only for a first frame drawn into its own surface; one drawn by the filters'
+    // stage from FFmpeg's planes is told only by the engine's first-frame event, so the shutter is opened from here.
     val openShutter = remember { arrayOfNulls<() -> Unit>(1) }
     // The routing of the picture (see routeVideo), asked at once when a decoder starts: FFmpeg's must reach the
     // filters' stage before its first pictures, or they go through the slow window path, late, and are dropped.
     val routeAtOnce = remember { arrayOfNulls<() -> Unit>(1) }
-    DisposableEffect(player) {
-        val analytics = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
-            override fun onRenderedFirstFrame(
-                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
-                output: Any,
-                renderTimeMs: Long,
-            ) {
-                if (output is com.hawkynt.mediadroid.player.VideoFilterStage) openShutter[0]?.invoke()
+    DisposableEffect(engine) {
+        val listener = object : PlaybackEngine.Listener {
+            override fun onFirstFrame() {
+                openShutter[0]?.invoke()
             }
 
-            override fun onVideoDecoderInitialized(
-                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
-                decoderName: String,
-                initializedTimestampMs: Long,
-                initializationDurationMs: Long,
-            ) {
-                videoDecoder = decoderName
-                routeAtOnce[0]?.invoke()
-            }
-
-            override fun onAudioDecoderInitialized(
-                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
-                decoderName: String,
-                initializedTimestampMs: Long,
-                initializationDurationMs: Long,
-            ) {
-                audioDecoder = decoderName
-            }
-
-            override fun onAudioTrackInitialized(
-                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
-                audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig,
-            ) {
-                audioTrack = audioTrackConfig
+            override fun onDecoder(kind: Track.Kind, name: String) {
+                if (kind == Track.Kind.VIDEO) {
+                    videoDecoder = name
+                    routeAtOnce[0]?.invoke()
+                } else {
+                    audioDecoder = name
+                }
             }
         }
-        player.addAnalyticsListener(analytics)
-        onDispose { player.removeAnalyticsListener(analytics) }
+        engine.addListener(listener)
+        onDispose { engine.removeListener(listener) }
     }
     // A film's sound: other players pause for it, it pauses for a call; spatialized only when switched on.
-    LaunchedEffect(spatialAudio) {
-        player.setAudioAttributes(
-            androidx.media3.common.AudioAttributes.Builder()
-                .setUsage(C.USAGE_MEDIA)
-                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                .setSpatializationBehavior(
-                    if (spatialAudio) C.SPATIALIZATION_BEHAVIOR_AUTO else C.SPATIALIZATION_BEHAVIOR_NEVER,
-                )
-                .build(),
-            true,
-        )
-    }
+    LaunchedEffect(spatialAudio) { engine.spatialAudio = spatialAudio }
     // Picture in picture: leaving the app mid-film shrinks it into a small window; once the app is out of
     // sight (or that window is closed) the film pauses. On a second screen it plays on instead.
     val pipActivity = remember(context) { context.findActivity() }
@@ -416,22 +323,22 @@ fun PlayerScreen(
     }
     // Whether it plays, for the controls that show only while paused (the frame steps).
     var playingNow by remember { mutableStateOf(false) }
-    DisposableEffect(player) {
+    DisposableEffect(engine) {
         fun publish() {
             PlayerWindow.playing = engine.isPlaying
             playingNow = engine.isPlaying
-            val size = player.videoSize
-            PlayerWindow.aspect = PlaybackMath.pipAspect(size.width, size.height, size.pixelWidthHeightRatio)
+            val size = engine.videoFormat
+            PlayerWindow.aspect = PlaybackMath.pipAspect(size?.width ?: 0, size?.height ?: 0, size?.pixelAspect ?: 1f)
                 ?.let { (w, h) -> android.util.Rational(w, h) }
             if (android.os.Build.VERSION.SDK_INT >= 31) {
                 runCatching { pipActivity?.setPictureInPictureParams(PlayerWindow.params()) }
             }
         }
-        val listener = object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) = publish()
-            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) = publish()
+        val listener = object : PlaybackEngine.Listener {
+            override fun onPlayingChanged(playing: Boolean) = publish()
+            override fun onVideoSize(width: Int, height: Int, pixelAspect: Float) = publish()
         }
-        player.addListener(listener)
+        engine.addListener(listener)
         val lifecycle = (pipActivity as? androidx.lifecycle.LifecycleOwner)?.lifecycle
         val stopObserver = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
@@ -442,7 +349,7 @@ fun PlayerScreen(
         }
         lifecycle?.addObserver(stopObserver)
         onDispose {
-            player.removeListener(listener)
+            engine.removeListener(listener)
             lifecycle?.removeObserver(stopObserver)
             PlayerWindow.playing = false
             if (android.os.Build.VERSION.SDK_INT >= 31) {
@@ -461,9 +368,9 @@ fun PlayerScreen(
     var playError by remember { mutableStateOf<String?>(null) }
     var speed by remember { mutableStateOf(settings.defaultSpeed) }
     // Checked again when the speed changes and every few seconds: a new video, a switched mode, a second screen.
-    LaunchedEffect(player, speed) {
+    LaunchedEffect(engine, speed) {
         while (true) {
-            val frameRate = player.videoFormat?.frameRate ?: 0f
+            val frameRate = engine.frameRate
             val window = displayActivity?.window
             val display = window?.decorView?.display
             val onOtherScreen = PlayerWindow.displayRefreshHz
@@ -502,13 +409,13 @@ fun PlayerScreen(
     var panelOpen by remember { mutableStateOf(false) }
     // Per video: its own picture if one was saved, else the household default.
     var picture by remember { mutableStateOf(store.pictureFor(queue[startIndex].videoPath)) }
-    var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    var playerView by remember { mutableStateOf<PlayerPanel?>(null) }
     LaunchedEffect(inPip) {
         if (inPip) {
             panelOpen = false
-            playerView?.hideController()
+            playerView?.hideControls()
         }
-        playerView?.useController = !inPip
+        playerView?.controlsEnabled = !inPip
     }
     var fit by remember { mutableStateOf(PictureFit.FIT) }
     // The part of the picture's width and height left once the stage has cropped its black bars; 1 and 1 without.
@@ -524,35 +431,35 @@ fun PlayerScreen(
         }
     }
     // Where the picture and the overlays have drifted to on this view's screen; nowhere unless it is an OLED one.
-    fun PlayerView.drift(): Offset {
+    fun PlayerPanel.drift(): Offset {
         if (!store.screenSetup(screenKey(display)).burnInCare) return Offset.Zero
-        val (x, y) = BurnInDrift.offset(driftStep * BurnInDrift.STEP_MS, BurnInDrift.amplitude(rootView.height))
+        val (x, y) = BurnInDrift.offset(driftStep * BurnInDrift.STEP_MS, BurnInDrift.amplitude(screenHeight))
         return Offset(x.toFloat(), y.toFloat())
     }
     // How the stage bends the picture's geometry (panoramic, a projector's); none while it does not draw it.
     var warpShown by remember { mutableStateOf(ScreenWarp.None) }
     // The view's frame in the picture's shape: cropped, as this video's shape is set, for the screen it is on.
-    fun PlayerView.showShape(video: androidx.media3.common.VideoSize) =
+    fun PlayerPanel.showShape(video: VideoFormat?) =
         applyCropShape(video, cropShare, picture.aspect, store.screenSetup(screenKey(display)).shape, warpShown)
     // What the stage's last pass does to the picture on this view's screen: Panoramic's widening, the screen's
     // mirror and flip — and with a keystone the whole screen, the picture placed on it as its size puts it.
-    fun PlayerView.warpFor(video: androidx.media3.common.VideoSize): ScreenWarp {
+    fun PlayerPanel.warpFor(video: VideoFormat?): ScreenWarp {
         val setup = store.screenSetup(screenKey(display))
         val drawn = drawnAspect(video, cropShare, picture.aspect, setup.shape) ?: return ScreenWarp.None
-        val panorama = if (fit == PictureFit.PANORAMIC) PictureLayout.panorama(drawn, panelAspect()) else 1f
-        val w = rootView.width
-        val h = rootView.height
+        val panorama = if (fit == PictureFit.PANORAMIC) PictureLayout.panorama(drawn, panelAspect) else 1f
+        val w = screenWidth
+        val h = screenHeight
         if (!setup.keystoned || w <= 0 || h <= 0) return ScreenWarp.of(setup, panorama = panorama)
         val (pictureWidth, pictureHeight) = PictureLayout.size(fit, drawn, w, h)
         return ScreenWarp.of(setup, ScreenRect.centred(pictureWidth, pictureHeight, w, h), panorama)
     }
     // Where the picture is drawn on this view when a keystone has the stage draw the whole screen; null otherwise.
-    fun PlayerView.placeFor(video: androidx.media3.common.VideoSize): ScreenRect? {
+    fun PlayerPanel.placeFor(video: VideoFormat?): ScreenRect? {
         val setup = store.screenSetup(screenKey(display))
         if (!setup.keystoned || !warpShown.wholeScreen) return null
         val drawn = drawnAspect(video, cropShare, picture.aspect, setup.shape) ?: return null
-        val w = rootView.width
-        val h = rootView.height
+        val w = screenWidth
+        val h = screenHeight
         if (w <= 0 || h <= 0) return null
         val (pictureWidth, pictureHeight) = PictureLayout.size(fit, drawn, w, h)
         return ScreenRect.centred(pictureWidth, pictureHeight, w, h)
@@ -590,7 +497,7 @@ fun PlayerScreen(
                 target = (target + if (forward) step else -step).coerceIn(0L, end)
                 holdTarget = target
                 show((if (forward) "» " else "« ") + clock(target))
-                playerView?.showController()
+                playerView?.showControls()
                 delay(PlaybackMath.HOLD_REPEAT_MS)
             }
         }
@@ -650,30 +557,28 @@ fun PlayerScreen(
     val externalDisplay = rememberExternalDisplay()
     var onSecondScreen by remember { mutableStateOf(false) }
     var presentation by remember { mutableStateOf<VideoPresentation?>(null) }
-    DisposableEffect(player) {
+    DisposableEffect(engine) {
         val main = android.os.Handler(android.os.Looper.getMainLooper())
-        val listener = object : Player.Listener {
+        val listener = object : PlaybackEngine.Listener {
             // After the player views have given their frames the video's own shape, the crop's shape again.
-            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+            override fun onVideoSize(width: Int, height: Int, pixelAspect: Float) {
                 main.post {
                     listOfNotNull(playerView, presentation?.takeIf { it.isShowing }?.playerView)
-                        .forEach { it.showShape(videoSize) }
+                        .forEach { it.showShape(engine.videoFormat) }
                 }
             }
         }
-        player.addListener(listener)
-        onDispose { player.removeListener(listener) }
+        engine.addListener(listener)
+        onDispose { engine.removeListener(listener) }
     }
     openShutter[0] = {
-        listOfNotNull(playerView, presentation?.takeIf { it.isShowing }?.playerView).forEach {
-            it.findViewById<View>(androidx.media3.ui.R.id.exo_shutter)?.visibility = View.INVISIBLE
-        }
+        listOfNotNull(playerView, presentation?.takeIf { it.isShowing }?.playerView).forEach { it.openShutter() }
     }
 
     // Touching one of our own controls must keep Media3's controls up too, or they would time
     // out mid-choice: both are one set of controls to the viewer.
     fun keepControls() {
-        playerView?.showController()
+        playerView?.showControls()
     }
 
     // Immersive while watching: no status or navigation bar over the picture; a swipe from the
@@ -784,8 +689,8 @@ fun PlayerScreen(
 
     // Next and Previous on the controls move through the queue (see QueuePlayer).
     val queuePlayer = remember {
-        QueuePlayer(
-            player,
+        PlaybackQueue(
+            engine,
             hasNext = { index + 1 < queue.size },
             onNext = {
                 if (index + 1 < queue.size) {
@@ -822,21 +727,23 @@ fun PlayerScreen(
         }
     }
     DisposableEffect(queuePlayer) {
-        val session = androidx.media3.session.MediaSession.Builder(context, queuePlayer)
-            .setId("mediadroid-player")
-            .build()
-        val notifications = com.hawkynt.mediadroid.player.PlaybackNotification.attach(
+        val controls = queuePlayer.publish(
             context,
-            queuePlayer,
-            session,
+            id = "mediadroid-player",
+            smallIcon = R.drawable.ic_movie,
+            open = android.app.PendingIntent.getActivity(
+                context,
+                0,
+                android.content.Intent(context, com.hawkynt.mediadroid.MainActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                android.app.PendingIntent.FLAG_IMMUTABLE,
+            ),
             title = { queue[index].title },
             subtitle = { queue[index].subtitle },
             posterPath = { queue[index].posterPath },
+            onPosted = { com.hawkynt.mediadroid.player.PlaybackService.latest = it },
         )
-        onDispose {
-            notifications.setPlayer(null)
-            session.release()
-        }
+        onDispose { controls.close() }
     }
 
     var repeat by remember { mutableStateOf(PlaybackMath.Repeat.OFF) }
@@ -871,73 +778,58 @@ fun PlayerScreen(
         }
     }
 
-    DisposableEffect(player) {
-        val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) finishCurrent()
-            }
+    DisposableEffect(engine) {
+        val listener = object : PlaybackEngine.Listener {
+            override fun onEnded() = finishCurrent()
 
-            override fun onPositionDiscontinuity(
-                oldPosition: Player.PositionInfo,
-                newPosition: Player.PositionInfo,
-                reason: Int,
-            ) {
-                // Skipping forward into the tail or the credits finishes the item as well.
-                if (reason == Player.DISCONTINUITY_REASON_SEEK) saveProgress(newPosition.positionMs)
-            }
+            // Skipping forward into the tail or the credits finishes the item as well.
+            override fun onSeeked(positionMs: Long) = saveProgress(positionMs)
 
-            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                val item = player.currentMediaItem
+            override fun onError(code: String) {
+                val item = engine.openedPath
                 // After a file the bundled FFmpeg decoded, its software renderer still holds the surface as a
                 // CPU producer, and the device's decoder for the next file cannot attach: a fresh surface over
                 // the same picture, and the item loaded afresh — which lets the software decoder go, and the
                 // old surface with it — to play on from where it was.
                 val renew = freshSurface[0]
-                if (error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED &&
-                    item != null && freshSurfaceFor[0] != item.mediaId && renew != null
+                if (code == PlaybackEngine.Errors.DECODER_INIT_FAILED &&
+                    item != null && freshSurfaceFor[0] != item && renew != null
                 ) {
-                    freshSurfaceFor[0] = item.mediaId
-                    val position = engine.positionMs
+                    freshSurfaceFor[0] = item
                     renew()
-                    player.setMediaItem(item, position)
-                    player.prepare()
+                    engine.reload()
                     return
                 }
                 // An audio file beside the video that cannot go along with it (one that cannot seek, say)
                 // must not stop the film: it plays again without them, from where it was.
-                val audio = item?.localConfiguration?.tag as? com.hawkynt.mediadroid.player.SidecarAudio
-                if (item != null && audio != null && audio.locations.isNotEmpty()) {
-                    val position = engine.positionMs
+                if (item != null && engine.sidecarAudio) {
                     sidecars = sidecars.filter { it.first.kind != com.hawkynt.mediadroid.library.Sidecars.Kind.AUDIO }
-                    player.setMediaItem(item.buildUpon().setTag(null).build(), position)
-                    player.prepare()
+                    engine.reload(withoutSidecarAudio = true)
                     return
                 }
-                playError = error.errorCodeName
+                playError = code
             }
 
-            override fun onRenderedFirstFrame() {
+            override fun onFirstFrame() {
                 freshSurfaceFor[0] = null
             }
 
-            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            override fun onTracksChanged(tracks: List<Track>) {
                 if (manualTrackPick) return
-                val wanted = com.hawkynt.mediadroid.engine.Tracks.preferredText(
-                    com.hawkynt.mediadroid.player.AndroidPlaybackEngine.tracksOf(tracks),
-                    settings.subtitleLanguage,
-                ) ?: return
-                engine.select(com.hawkynt.mediadroid.engine.Track.Kind.TEXT, wanted.id)
+                val wanted = com.hawkynt.mediadroid.engine.Tracks.preferredText(tracks, settings.subtitleLanguage)
+                    ?: return
+                engine.select(Track.Kind.TEXT, wanted.id)
             }
         }
-        player.addListener(listener)
+        engine.addListener(listener)
         onDispose {
             saveProgress()
-            player.removeListener(listener)
+            engine.removeListener(listener)
             engine.close()
         }
     }
 
-    LaunchedEffect(player) {
+    LaunchedEffect(engine) {
         var tick = 0
         while (true) {
             delay(500)
@@ -974,7 +866,7 @@ fun PlayerScreen(
     // The chapters marked on the time bar.
     LaunchedEffect(chapters, playerView) {
         val starts = chapters.map { it.startMs }.filter { it > 0 }.sorted().toLongArray()
-        playerView?.setExtraAdGroupMarkers(starts, BooleanArray(starts.size))
+        playerView?.markChapters(starts)
     }
 
     LaunchedEffect(sleepAt) {
@@ -1061,26 +953,15 @@ fun PlayerScreen(
 
     // Over a player view's picture: the ASS subtitles libass draws, first and second, and the second track's text at
     // the top.
-    fun attachSubtitles(view: PlayerView) {
-        for (subtitles in listOf(engine.assSubtitles, engine.secondAss)) {
-            com.hawkynt.mediadroid.player.AssOverlayView.attach(
-                view,
-                subtitles,
-                positionMs = { player.currentPosition - engine.tuning.subtitleDelayMs },
-                videoSize = { player.videoSize.width to player.videoSize.height },
-                crop = { assCrop[0] },
-                place = { view.placeFor(player.videoSize) },
-            )
-        }
-        engine.second.attach(view)
-    }
+    fun attachSubtitles(view: PlayerPanel) =
+        view.showSubtitles(engine, crop = { assCrop[0] }, place = { view.placeFor(engine.videoFormat) })
 
     // The video on the external display while the phone keeps the controls; back to the phone
     // when switched off or when the display goes away.
     DisposableEffect(onSecondScreen, externalDisplay?.displayId) {
         val display = externalDisplay
         if (onSecondScreen && display != null) {
-            presentation = VideoPresentation(context, display, player).also {
+            presentation = VideoPresentation(context, display, engine).also {
                 it.show()
                 attachSubtitles(it.playerView)
             }
@@ -1107,9 +988,9 @@ fun PlayerScreen(
                 it.release()
                 presentation = null
                 // The phone's view takes the picture back.
-                playerView?.videoSurfaceView?.visibility = View.VISIBLE
-                playerView?.player = null
-                playerView?.player = queuePlayer
+                playerView?.showPicture(true)
+                playerView?.show(null)
+                playerView?.show(engine, queuePlayer)
             }
         }
     }
@@ -1140,7 +1021,7 @@ fun PlayerScreen(
     }
     DisposableEffect(phoneDark) {
         val window = pipActivity?.window
-        if (phoneDark) playerView?.hideController()
+        if (phoneDark) playerView?.hideControls()
         window?.attributes = window?.attributes?.apply {
             screenBrightness = if (phoneDark) {
                 0f
@@ -1224,13 +1105,13 @@ fun PlayerScreen(
     fun routeVideo() {
         // The demo library's videos never play: no stage, no routing.
         if (demo) return
-        val target = ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.videoSurfaceView)
-            as? android.view.SurfaceView
+        val target = (presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.surfaceView
         target?.let { watch(it) }
-        videoFrameRate[0] = player.videoFormat?.frameRate ?: -1f
-        val transfer = when (player.videoFormat?.colorInfo?.colorTransfer) {
-            C.COLOR_TRANSFER_ST2084 -> com.hawkynt.mediadroid.player.ToneMap.Transfer.PQ
-            C.COLOR_TRANSFER_HLG -> com.hawkynt.mediadroid.player.ToneMap.Transfer.HLG
+        val format = engine.videoFormat
+        videoFrameRate[0] = engine.frameRate.takeIf { it > 0f } ?: -1f
+        val transfer = when (format?.transfer) {
+            VideoFormat.Transfer.PQ -> com.hawkynt.mediadroid.player.ToneMap.Transfer.PQ
+            VideoFormat.Transfer.HLG -> com.hawkynt.mediadroid.player.ToneMap.Transfer.HLG
             else -> null
         }
         // FFmpeg's pictures always go through the stage: it takes them as YUV planes, which spares the
@@ -1244,7 +1125,7 @@ fun PlayerScreen(
             (ffmpegVideo || settings.hdrToneMapping && target?.display?.isHdr != true)
         // Panoramic, a projector's mirror, flip or keystone: the stage bends the picture's geometry.
         val bend = (presentation?.takeIf { it.isShowing }?.playerView ?: playerView)
-            ?.warpFor(player.videoSize) ?: ScreenWarp.None
+            ?.warpFor(format) ?: ScreenWarp.None
         val wanted =
             (ffmpegVideo || toneMapped ||
                 ((shownPicture.hasFilters || !bend.isIdentity || histogramShown) && transfer == null)) &&
@@ -1255,12 +1136,7 @@ fun PlayerScreen(
             val main = android.os.Handler(android.os.Looper.getMainLooper())
             made.onCrop = { _, _ -> main.post { routeAtOnce[0]?.invoke() } }
         }
-        ffmpegVideoRenderer[0]?.let { renderer ->
-            player.createMessage(renderer)
-                .setType(androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_OUTPUT)
-                .setPayload(stage)
-                .send()
-        }
+        engine.planesTo(stage)
         if (wanted) {
             val active = stage
             active.statistics = if (statisticsShown) statistics else null
@@ -1292,25 +1168,20 @@ fun PlayerScreen(
             active.filters = shownPicture
             active.warp = bend
             active.hdr = transfer.takeIf { toneMapped }
-            active.sourceBits = player.videoFormat?.colorInfo?.lumaBitdepth?.takeIf { it > 0 } ?: 8
+            active.sourceBits = format?.bitDepth ?: 8
             active.downscaler = runCatching { com.hawkynt.mediadroid.player.Downscaler.valueOf(settings.downscaler) }
                 .getOrDefault(com.hawkynt.mediadroid.player.Downscaler.DEFAULT)
-            active.setVideoSize(player.videoSize.width, player.videoSize.height)
+            active.setVideoSize(format?.width ?: 0, format?.height ?: 0)
             if (routedTo[0] !== target) {
-                player.setVideoSurface(active.inputSurface)
-                ffmpegVideoRenderer[0]?.let { renderer ->
-                    player.createMessage(renderer)
-                        .setType(androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_OUTPUT)
-                        .setPayload(active)
-                        .send()
-                }
+                engine.videoOutput = AndroidPlaybackEngine.SurfaceOutput(active.inputSurface)
+                engine.planesTo(active)
                 // Taken on a later round when the view's surface is not free yet.
                 if (active.setOutput(target!!.holder.surface)) routedTo[0] = target
             }
         } else if (routedTo[0] != null) {
             stage.setOutput(null)
             routedTo[0] = null
-            target?.let { player.setVideoSurfaceView(it) }
+            target?.let { engine.videoOutput = AndroidPlaybackEngine.SurfaceViewOutput(it) }
         }
         // Only a picture drawn by the stage is cropped, or panoramic.
         cropShare = if (routedTo[0] != null) stage.cropShare else 1f to 1f
@@ -1319,27 +1190,27 @@ fun PlayerScreen(
     }
     freshSurface[0] = {
         val stage = filterStage[0]
-        val view = routedTo[0] ?: ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)
-            ?.videoSurfaceView as? android.view.SurfaceView)
+        val view = routedTo[0] ?: (presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.surfaceView
         if (stage != null && routedTo[0] != null) {
-            stage.renewInput { player.setVideoSurface(it) }
+            stage.renewInput { engine.videoOutput = AndroidPlaybackEngine.SurfaceOutput(it) }
         } else if (view != null) {
             // The player makes its own surface over the view's, and lets the old one go.
-            player.clearVideoSurfaceView(view)
-            player.setVideoSurfaceView(view)
+            engine.videoOutput = null
+            engine.videoOutput = AndroidPlaybackEngine.SurfaceViewOutput(view)
         }
     }
     androidx.compose.runtime.SideEffect { filterStage[0]?.filters = shownPicture }
     // Without the filters' stage, the statistics take each frame as the player releases it to the screen.
-    DisposableEffect(player, statisticsShown) {
-        val listener = androidx.media3.exoplayer.video.VideoFrameMetadataListener { _, releaseTimeNs, _, _ ->
-            if (routedTo[0] == null) {
-                statistics.frameArrived(releaseTimeNs)
-                statistics.pictureShown(releaseTimeNs)
+    DisposableEffect(engine, statisticsShown) {
+        if (statisticsShown) {
+            engine.onFrameReleased = { releaseTimeNs ->
+                if (routedTo[0] == null) {
+                    statistics.frameArrived(releaseTimeNs)
+                    statistics.pictureShown(releaseTimeNs)
+                }
             }
         }
-        if (statisticsShown) player.setVideoFrameMetadataListener(listener)
-        onDispose { if (statisticsShown) player.clearVideoFrameMetadataListener(listener) }
+        onDispose { if (statisticsShown) engine.onFrameReleased = null }
     }
     LaunchedEffect(index) {
         statistics.clear()
@@ -1347,31 +1218,27 @@ fun PlayerScreen(
         filterStage[0]?.forgetCrop()
     }
     // A pause, a seek or buffering is no frame time: the statistics start their gaps afresh after one.
-    DisposableEffect(player) {
-        val listener = object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (!isPlaying) statistics.interrupted()
+    DisposableEffect(engine) {
+        val listener = object : PlaybackEngine.Listener {
+            override fun onPlayingChanged(playing: Boolean) {
+                if (!playing) statistics.interrupted()
             }
 
-            override fun onPositionDiscontinuity(
-                oldPosition: Player.PositionInfo,
-                newPosition: Player.PositionInfo,
-                reason: Int,
-            ) = statistics.interrupted()
+            override fun onSeeked(positionMs: Long) = statistics.interrupted()
         }
-        player.addListener(listener)
-        onDispose { player.removeListener(listener) }
+        engine.addListener(listener)
+        onDispose { engine.removeListener(listener) }
     }
     // The loop asks the latest composition's routing, with the picture and screens as they are now.
     val routeNow by androidx.compose.runtime.rememberUpdatedState({ routeVideo() })
     routeAtOnce[0] = { routeNow() }
-    LaunchedEffect(player) {
+    LaunchedEffect(engine) {
         while (true) {
             routeNow()
             delay(400)
         }
     }
-    DisposableEffect(player) {
+    DisposableEffect(engine) {
         onDispose {
             filterStage[0]?.setOutput(null)
             filterStage[0]?.release()
@@ -1395,8 +1262,7 @@ fun PlayerScreen(
             positionMs,
         )
         val stage = filterStage[0]?.takeIf { routedTo[0] != null }
-        val view = routedTo[0] ?: ((presentation?.takeIf { it.isShowing }?.playerView ?: playerView)
-            ?.videoSurfaceView as? android.view.SurfaceView)
+        val view = routedTo[0] ?: (presentation?.takeIf { it.isShowing }?.playerView ?: playerView)?.surfaceView
         holdScope.launch {
             snapshotFlash = true
             val bitmap = stage?.let { stagePicture(it) } ?: viewPicture(view)
@@ -1508,50 +1374,35 @@ fun PlayerScreen(
         if (demo) PosterImage(queue[index].posterPath, contentScale = ContentScale.Crop)
         AndroidView(
             factory = { androidContext ->
-                // Inflated, not constructed: the texture surface (see the layout)
-                // is only reachable through the XML attribute.
-                (
-                    android.view.LayoutInflater.from(androidContext)
-                        .inflate(R.layout.player_view, null, false) as PlayerView
-                    ).apply {
-                    this.player = queuePlayer
-                    useController = true
+                PlayerPanel.inflate(androidContext).apply {
+                    show(engine, queuePlayer)
                     // Start on the bare picture; a tap shows the controls, inactivity hides them.
-                    controllerAutoShow = false
-                    controllerShowTimeoutMs = ControlsTimeoutMs
-                    controllerHideOnTouch = true
-                    // Speed, subtitles and tracks are ours (wider speed range, language rules);
-                    // Media3's gear would offer a second, conflicting set.
-                    findViewById<View>(androidx.media3.ui.R.id.exo_settings)?.visibility = View.GONE
-                    setShowSubtitleButton(false)
-                    setControllerVisibilityListener(
-                        PlayerView.ControllerVisibilityListener { visibility ->
-                            controlsVisible = visibility == View.VISIBLE
-                        },
+                    setUpControls(
+                        ControlsTimeoutMs,
+                        onVisible = { controlsVisible = it },
+                        onHoldForward = { holding -> if (holding) startHold(true) else endHold() },
+                        onHoldBack = { holding -> if (holding) startHold(false) else endHold() },
                     )
-                    if (demo) setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                    findViewById<View>(androidx.media3.ui.R.id.exo_ffwd)?.onHold({ startHold(true) }, ::endHold)
-                    findViewById<View>(androidx.media3.ui.R.id.exo_rew)?.onHold({ startHold(false) }, ::endHold)
+                    if (demo) clearShutter()
                     onScrub { scrub = it }
                     playerView = this
                     attachSubtitles(this)
-                }
+                }.root
             },
             update = { view ->
-                view.subtitleView?.applyLook(subtitleLook)
-                engine.second.viewOf(view)?.applyLook(subtitleLook)
+                val panel = playerView ?: return@AndroidView
+                panel.applySubtitleLook(engine, subtitleLook)
                 // While the picture is on the other screen the phone's surface would keep showing the
                 // last frame it got; it is hidden so the phone stays black behind the controls.
                 val elsewhere = presentation?.isShowing == true
-                view.videoSurfaceView?.visibility = if (elsewhere) View.INVISIBLE else View.VISIBLE
-                com.hawkynt.mediadroid.player.AssOverlayView.show(view, !elsewhere)
-                if (!elsewhere) view.applyVideoLook(fit, zoom, pan, view.drift(), warpShown)
-                view.showShape(player.videoSize)
+                panel.showPicture(!elsewhere)
+                if (!elsewhere) panel.applyVideoLook(fit, zoom, pan, panel.drift(), warpShown)
+                panel.showShape(engine.videoFormat)
                 val density = view.resources.displayMetrics.density
                 val cutout = view.rootWindowInsets
                     ?.takeIf { useCutout && android.os.Build.VERSION.SDK_INT >= 28 }
                     ?.displayCutout
-                view.findViewById<View>(androidx.media3.ui.R.id.exo_controller)?.setPadding(
+                panel.padControls(
                     (insetX * density).toInt() + (cutout?.safeInsetLeft ?: 0),
                     (insetY * density).toInt() + (cutout?.safeInsetTop ?: 0),
                     (insetX * density).toInt() + (cutout?.safeInsetRight ?: 0),
@@ -1564,8 +1415,8 @@ fun PlayerScreen(
         presentation?.let { shown ->
             if (shown.isShowing) {
                 shown.playerView.applyVideoLook(fit, zoom, pan, shown.playerView.drift(), warpShown)
-                shown.playerView.showShape(player.videoSize)
-                engine.second.viewOf(shown.playerView)?.applyLook(subtitleLook)
+                shown.playerView.showShape(engine.videoFormat)
+                shown.playerView.applySubtitleLook(engine, subtitleLook)
             }
         }
         // The bare picture listens for gestures; with the controls up, touches go to the controls.
@@ -1574,7 +1425,7 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .playerGestures(
-                        onTap = { playerView?.showController() },
+                        onTap = { playerView?.showControls() },
                         onDoubleTap = { side ->
                             val forward = side == Side.RIGHT
                             engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, forward))
@@ -1734,7 +1585,7 @@ fun PlayerScreen(
                         IconButton(
                             onClick = {
                                 chapterPicker = true
-                                playerView?.hideController()
+                                playerView?.hideControls()
                             },
                         ) {
                             Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Chapters", tint = Color.White)
@@ -1755,7 +1606,7 @@ fun PlayerScreen(
                     IconButton(
                         onClick = {
                             infoOpen = true
-                            playerView?.hideController()
+                            playerView?.hideControls()
                         },
                     ) {
                         Icon(Icons.Filled.Info, contentDescription = "What is playing", tint = Color.White)
@@ -1763,7 +1614,7 @@ fun PlayerScreen(
                     IconButton(
                         onClick = {
                             panelOpen = true
-                            playerView?.hideController()
+                            playerView?.hideControls()
                         },
                     ) {
                         Icon(Icons.Filled.Settings, contentDescription = "Playback and picture", tint = Color.White)
@@ -1859,7 +1710,7 @@ fun PlayerScreen(
                         onClick = {
                             locked = true
                             panelOpen = false
-                            playerView?.hideController()
+                            playerView?.hideControls()
                             lockHintStamp++
                         },
                         modifier = Modifier.padding(top = 12.dp),
@@ -2094,17 +1945,14 @@ fun PlayerScreen(
         if (infoOpen) {
             PlaybackInfoDialog(
                 playing = queue[index],
-                fileTags = player.mediaMetadata,
+                engine = engine,
                 videoPath = queue[index].videoPath,
-                tracks = player.currentTracks,
-                videoSize = player.videoSize,
                 graph = com.hawkynt.mediadroid.player.PlaybackChain.of(
                     playbackFacts(
                         location = queue[index].videoPath,
-                        player = player,
+                        engine = engine,
                         videoDecoder = videoDecoder,
                         audioDecoder = audioDecoder,
-                        audioTrack = audioTrack,
                         picture = shownPicture,
                         fit = fit.label,
                         zoom = zoom,
@@ -2218,7 +2066,7 @@ fun PlayerScreen(
                         detectTapGestures {
                             darkPhone.touch()
                             phoneDark = false
-                            playerView?.showController()
+                            playerView?.showControls()
                         }
                     },
             )
@@ -2460,41 +2308,6 @@ private fun clock(ms: Long): String {
 /** How often a repeated part's end is looked for. */
 private const val AB_CHECK_MS = 40L
 
-/** How long a skip button must be held before it starts stepping on its own. */
-private const val HOLD_START_MS = 400L
-
-/**
- * Calls [start] once the view has been held for [HOLD_START_MS] and [end] when it is let go; a short
- * tap stays an ordinary click.
- */
-@android.annotation.SuppressLint("ClickableViewAccessibility")
-private fun View.onHold(start: () -> Unit, end: () -> Unit) {
-    var holding = false
-    val starter = Runnable {
-        holding = true
-        start()
-    }
-    setOnTouchListener { view, event ->
-        when (event.actionMasked) {
-            android.view.MotionEvent.ACTION_DOWN -> {
-                holding = false
-                view.postDelayed(starter, HOLD_START_MS)
-            }
-            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                view.removeCallbacks(starter)
-                if (holding) {
-                    holding = false
-                    end()
-                    // The hold replaced the click.
-                    view.isPressed = false
-                    return@setOnTouchListener true
-                }
-            }
-        }
-        false
-    }
-}
-
 /** How long the lock symbol must be held to unlock the player. */
 private const val UNLOCK_HOLD_MS = 2_000L
 
@@ -2561,23 +2374,6 @@ private fun LockOverlay(stamp: Int, onTouch: () -> Unit, onUnlock: () -> Unit) {
             }
         }
     }
-}
-
-/** Size, position and backing of the subtitles as [look] has them. */
-private fun androidx.media3.ui.SubtitleView.applyLook(look: com.hawkynt.mediadroid.player.SubtitleLook) {
-    setFractionalTextSize(look.textSizeFraction)
-    setBottomPaddingFraction(look.bottomPaddingFraction)
-    setStyle(
-        androidx.media3.ui.CaptionStyleCompat(
-            android.graphics.Color.WHITE,
-            if (look.box) 0xB0000000.toInt() else android.graphics.Color.TRANSPARENT,
-            android.graphics.Color.TRANSPARENT,
-            if (look.box) androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
-            else androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-            android.graphics.Color.BLACK,
-            null,
-        ),
-    )
 }
 
 /** How the player screen turns: with the device, or held in one orientation (sensor-flipped either way). */
