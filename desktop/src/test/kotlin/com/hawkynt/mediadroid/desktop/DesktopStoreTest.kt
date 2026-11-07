@@ -280,25 +280,47 @@ class DesktopStoreTest {
     }
 
     @Test
+    fun `a video keeps a picture of its own over its folder's and the household's, until it is reset`() {
+        val data = folder.newFolder("data")
+        DesktopStore(data).apply {
+            sources = listOf(nas)
+            picture = PictureAdjustment(brightness = 0.1f)
+            setFolderPicture(folderOf("smb://nas/media/VHS/a.mkv"), PictureAdjustment(noise = -0.5f))
+            savePicture("smb://nas/media/VHS/a.mkv", PictureAdjustment(contrast = 1.5f, noise = -0.5f))
+            // What it would start with anyway is not kept as its own.
+            savePicture("smb://nas/media/VHS/b.mkv", pictureFor("smb://nas/media/VHS/b.mkv"))
+        }
+        val again = DesktopStore(data)
+        assertEquals(1.5f, again.pictureFor("smb://nas/media/VHS/a.mkv").contrast)
+        assertEquals(1f, again.pictureFor("smb://nas/media/VHS/b.mkv").contrast)
+        assertEquals(1f, again.pictureFor("smb://nas/media/Films/c.mkv").contrast)
+        assertEquals(0.1f, again.pictureFor("smb://nas/media/Films/c.mkv").brightness)
+        assertFalse(File(data, "state.json").readText().contains("VHS/b.mkv"))
+        // Reset: back to its folder's.
+        again.savePicture("smb://nas/media/VHS/a.mkv", null)
+        assertEquals(PictureAdjustment(noise = -0.5f), DesktopStore(data).pictureFor("smb://nas/media/VHS/a.mkv"))
+    }
+
+    @Test
     fun `a video's shape and each screen's setup are kept, each for its own`() {
         val data = folder.newFolder("data")
         DesktopStore(data).apply {
-            setAspect("/v/dvd.mkv", AspectOverride.SIXTEEN_NINE)
+            savePicture("/v/dvd.mkv", pictureFor("/v/dvd.mkv").copy(aspect = AspectOverride.SIXTEEN_NINE))
             setScreenSetup(
                 "projector",
                 ScreenSetup(ScreenShape.LENS_133, true, true, keystoneVertical = 0.1f, burnInCare = true),
             )
         }
         val again = DesktopStore(data)
-        assertEquals(AspectOverride.SIXTEEN_NINE, again.aspectOf("/v/dvd.mkv"))
-        assertEquals(AspectOverride.AUTO, again.aspectOf("/v/other.mkv"))
+        assertEquals(AspectOverride.SIXTEEN_NINE, again.pictureFor("/v/dvd.mkv").aspect)
+        assertEquals(AspectOverride.AUTO, again.pictureFor("/v/other.mkv").aspect)
         assertEquals(
             ScreenSetup(ScreenShape.LENS_133, true, true, keystoneVertical = 0.1f, burnInCare = true),
             again.screenSetup("projector"),
         )
         assertEquals(ScreenSetup.Default, again.screenSetup("monitor"))
         // Back to the defaults: nothing is kept for them.
-        again.setAspect("/v/dvd.mkv", AspectOverride.AUTO)
+        again.savePicture("/v/dvd.mkv", null)
         again.setScreenSetup("projector", ScreenSetup.Default)
         val text = File(data, "state.json").readText()
         assertFalse(text.contains("/v/dvd.mkv"))
@@ -349,11 +371,10 @@ class DesktopStoreTest {
         assertEquals(42_000L, store.resumeMs("/v/a.mkv"))
         assertTrue(store.watched("/v/b.mkv"))
         assertEquals("GPU", store.motionPassed(PictureAdjustment.Interpolation.DAIN)?.unit)
-        assertEquals(AspectOverride.SIXTEEN_NINE, store.aspectOf("/v/dvd.mkv"))
+        assertEquals(AspectOverride.SIXTEEN_NINE, store.pictureFor("/v/dvd.mkv").aspect)
         assertEquals(ScreenShape.LENS_133, store.screenSetup("projector").shape)
         assertTrue(store.screenSetup("projector").mirror)
         assertEquals(1_500, store.subtitleDelayMs("/v/a.mkv"))
-        assertEquals(PictureAdjustment.ColourSystem.PAL, store.colourSystemFor("/v/tape.mkv"))
         assertEquals(PictureAdjustment.ColourSystem.PAL, store.pictureFor("/v/tape.mkv").colourSystem)
         assertEquals(LogoMask(LogoMask.Corner.TOP_RIGHT, 0.2f, LogoMask.Mode.DIM), store.logoFor("/v/News/1.mkv"))
         assertTrue(store.softwareDecoding)
