@@ -542,8 +542,13 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   previous in the queue, and the title of what plays; the screensaver held off while something plays (Windows: the
   thread's execution state; Linux: an idle lock from systemd-logind and the desktop's own screensaver asked over
   D-Bus, org.freedesktop.ScreenSaver).
-- Not on the desktop: the second screen and casting, the phone's lock and gestures for volume and brightness, the NPU;
-  switching the display's refresh rate to the film's comes later.
+- Matching the refresh rate, in Settings: the monitor the player is on switches to a mode of its size whose refresh
+  is a whole multiple of the film's rate at its speed — 23.976 or 24 Hz for a film, 50 Hz for PAL, 59.94 for NTSC
+  video — and back to its own once playback ends, the app closes or is stopped (Windows: ChangeDisplaySettingsEx,
+  for the program only, which Windows undoes itself however it ends; Linux on X11: XRandR through `xrandr`). Under
+  Wayland the compositor keeps the screen's mode to itself, so the row does not show there; Even frames keeps the
+  frames even at the mode the monitor has.
+- Not on the desktop: the second screen and casting, the phone's lock and gestures for volume and brightness, the NPU.
 
 </details>
 
