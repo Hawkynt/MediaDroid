@@ -75,9 +75,16 @@ class StateStore(private val file: StateFile, private val watcher: StateWatcher 
     /** Whether [videoPath] counts as watched; [nfoWatched] is what its NFO says. */
     fun isWatched(videoPath: String, nfoWatched: Boolean = false): Boolean = marks.isWatched(videoPath, nfoWatched)
 
-    /** Marks a video watched as it finishes playing; cheap to call again and again. */
+    /**
+     * Marks a video watched as it finishes playing; cheap to call again and again. Watched already, it still drops a
+     * resume point the video kept from a later look — or it would stay under Continue watching for good.
+     */
     fun markWatched(videoPath: String) {
-        if (videoPath !in current.watched) setWatched(listOf(videoPath), true)
+        if (videoPath !in current.watched) {
+            setWatched(listOf(videoPath), true)
+        } else if (current.resume.remove(videoPath) != null) {
+            save()
+        }
     }
 
     /** Ticks [videoPaths] off as watched (dropping their resume points) or unticks them. */

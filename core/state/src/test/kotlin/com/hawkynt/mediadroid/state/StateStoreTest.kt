@@ -188,4 +188,15 @@ class StateStoreTest {
         assertEquals(600_000L, store.resumeFor("/b.mkv")?.positionMs)
         assertNull(StateStore(Memory(null)).resumeFor("/a.mkv"))
     }
+
+    @Test
+    fun `finishing a video already marked watched still drops the resume point it kept`() {
+        val store = StateStore(Memory())
+        store.markWatched("/e1.mkv")
+        // A later look left a point behind (or an older version of the app did).
+        store.data.resume["/e1.mkv"] = ResumeInfo(600_000, 2_400_000)
+        store.markWatched("/e1.mkv")
+        assertNull(store.resumeFor("/e1.mkv"))
+        assertTrue(store.isWatched("/e1.mkv"))
+    }
 }
