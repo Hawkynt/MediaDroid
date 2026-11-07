@@ -564,7 +564,8 @@ class GlStage(
         // 0. Dot crawl and rainbows combed out, then temporal denoising: the picture against the pictures before and
         // after it, as decoded. The standard (DotCrawl.Standard) from the rate, the file's colour tags and the
         // household's choice: NTSC's comb reads the pictures either side; PAL's (and PAL-M's) the picture two before
-        // as well; per field, for a capture bobbed to its fields, the same field's pictures two, four and six before.
+        // as well; per field, for a capture bobbed to its fields, the same field's pictures two, four and six before
+        // (NTSC's and PAL's alike, with the residues each pairs).
         val combed = DotCrawl.threshold(a.dotCrawl)?.let { threshold ->
             fun near(p: MediaReader.Picture?) = p?.let(::neighbour)?.takeIf { it.width == w && it.height == h } ?: raw
             val intervalMs = before?.let { picture.ptsMs - it.ptsMs } ?: after?.let { it.ptsMs - picture.ptsMs } ?: 0L
@@ -577,6 +578,11 @@ class GlStage(
                 // the two before.
                 DotCrawl.Standard.PAL_FIELDS -> restoration.dotCrawl(
                     raw, near(earlier), near(older.getOrNull(3)), near(older.getOrNull(1)), into, threshold,
+                )
+                // DotCrawl.applyNtscFields: the same with the two before for the two before, the four before for the
+                // picture before.
+                DotCrawl.Standard.NTSC_FIELDS -> restoration.dotCrawl(
+                    raw, near(older.getOrNull(1)), near(older.getOrNull(3)), near(earlier), into, threshold,
                 )
             } as Target
         } ?: raw

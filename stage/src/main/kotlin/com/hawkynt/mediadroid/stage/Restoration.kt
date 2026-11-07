@@ -23,7 +23,7 @@ class Restoration(private val gl: Gles, private val passes: Passes) {
      * Dot crawl and rainbows combed out of [shown] (DotCrawl) into [into]: NTSC's comb against [prev] and [next], PAL's
      * ([earlier], the picture two before, given) against those three; every texel read as it is. PAL's comb per field
      * (DotCrawl.applyPalFields) is PAL's with the same field's pictures: [earlier] four before, [prev] two before,
-     * [next] six before.
+     * [next] six before; NTSC's per field (DotCrawl.applyNtscFields) the same with [earlier] two before, [prev] four.
      */
     fun dotCrawl(
         shown: DrawTarget,

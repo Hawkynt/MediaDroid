@@ -194,9 +194,9 @@ class DotCrawlTest {
         assertEquals(DotCrawl.Standard.NTSC, of(1001f / 30f))
         assertEquals(DotCrawl.Standard.NTSC, of(1001f / 24f))
         assertEquals(DotCrawl.Standard.NTSC, of(0f))
-        // PAL bobbed to its 50 fields; NTSC's 59.94 fields stay NTSC's comb.
+        // Bobbed to the fields: PAL's 50, NTSC's 59.94.
         assertEquals(DotCrawl.Standard.PAL_FIELDS, of(20f))
-        assertEquals(DotCrawl.Standard.NTSC, of(1001f / 60f))
+        assertEquals(DotCrawl.Standard.NTSC_FIELDS, of(1001f / 60f))
         // PAL-M (29.97, PAL's colour): from the tags, or chosen; PAL's comb at its frame rate.
         assertEquals(DotCrawl.Standard.PAL, of(1001f / 30f, pal = true))
         assertEquals(DotCrawl.Standard.PAL, of(1001f / 30f, PictureAdjustment.ColourSystem.PAL_M))
@@ -207,6 +207,8 @@ class DotCrawlTest {
         assertEquals(DotCrawl.Standard.NTSC, of(40f, PictureAdjustment.ColourSystem.NTSC))
         assertEquals(DotCrawl.Standard.PAL, of(40f, PictureAdjustment.ColourSystem.PAL))
         assertEquals(DotCrawl.Standard.PAL_FIELDS, of(20f, PictureAdjustment.ColourSystem.PAL))
+        assertEquals(DotCrawl.Standard.NTSC_FIELDS, of(20f, PictureAdjustment.ColourSystem.NTSC))
+        assertEquals(DotCrawl.Standard.NTSC_FIELDS, of(1001f / 60f, PictureAdjustment.ColourSystem.NTSC, pal = true))
     }
 
     /**
@@ -299,7 +301,65 @@ class DotCrawlTest {
         assertTrue(residueLeft(ntsc, clean(10), IntRange.EMPTY).first * 3 > residue)
     }
 
+    /**
+     * An NTSC composite capture's residue at frame [t]: the subcarrier at 227.5 times the line rate (SMPTE 170M:
+     * 3 579 545.45 Hz on a 15 734.27 Hz line) sampled at 13.5 MHz, 525 lines a frame, a frame's rows taken from its two
+     * fields 262.5 lines apart; a cross-luminance residue of about ±8 levels.
+     */
+    private fun ntscResidue(x: Int, y: Int, t: Int): Int {
+        val lines = y % 2 * 262.5 + y / 2 + 525.0 * t
+        val cycles = x * NTSC_SUBCARRIER / 13_500_000.0 + lines * 227.5
+        return (8 * sin(2 * PI * (cycles - floor(cycles)))).roundToInt()
+    }
+
+    /** An NTSC capture bobbed to 59.94 pictures a second: picture [n] is field n % 2 of frame n / 2, lines doubled. */
+    private fun ntscBobbedResidue(x: Int, y: Int, n: Int): Int =
+        ntscResidue(x, 2 * (y / 2) + Math.floorMod(n, 2), Math.floorDiv(n, 2))
+
+    private fun ntscBobbedCaptured(n: Int, barX: Int) = clean(barX).also { picture ->
+        for (i in picture.indices) {
+            val p = i / 3
+            picture[i] = ((picture[i].toInt() and 0xFF) + ntscBobbedResidue(p % w, p / w, n)).coerceIn(0, 255)
+                .toByte()
+        }
+    }
+
+    @Test
+    fun `bobbed NTSC is combed per field, with the pictures of the same field one, two and three frames back`() {
+        // The same field a frame on carries the opposite residue; the other field, neither the same nor the opposite.
+        var quadrature = 0
+        for (y in 0 until 8) for (x in 0 until 8) {
+            assertEquals(-ntscBobbedResidue(x, y, 2).toFloat(), ntscBobbedResidue(x, y, 0).toFloat(), 1f)
+            if (abs(ntscBobbedResidue(x, y, 1) + ntscBobbedResidue(x, y, 0)) > 2) quadrature++
+        }
+        assertTrue(quadrature > 16)
+        val threshold = requireNotNull(DotCrawl.threshold(0.5f))
+        // Pictures n - 6 to n, the bar moving 2 pixels a picture; the one shown is the last.
+        val pictures = (0..6).map { ntscBobbedCaptured(it, 32 + 2 * it) }
+        val out = DotCrawl.applyNtscFields(pictures[0], pictures[2], pictures[4], pictures[6], w, h, threshold)
+        val moving = 31..50
+        val (before, counted) = residueLeft(pictures[6], clean(44), moving)
+        val (after, _) = residueLeft(out, clean(44), moving)
+        assertTrue("residue $before before, $after after", before >= counted * 3)
+        assertTrue("residue $before before, $after after", after * 10 < before)
+        for (y in 0 until h) for (x in 45..49) for (c in 0..2) {
+            val i = (y * w + x) * 3 + c
+            assertEquals("($x, $y) in the bar", pictures[6][i], out[i])
+        }
+        // The frame-rate comb on the pictures either side (the other field), and PAL's per field (the same field's
+        // two frames back, in phase again here), leave most of it.
+        val still = (0..7).map { ntscBobbedCaptured(it, 10) }
+        val (residue, _) = residueLeft(still[6], clean(10), IntRange.EMPTY)
+        val frameRate = DotCrawl.apply(still[5], still[6], still[7], w, h, threshold)
+        assertTrue(residueLeft(frameRate, clean(10), IntRange.EMPTY).first * 3 > residue)
+        val pal = DotCrawl.applyPalFields(still[0], still[2], still[4], still[6], w, h, threshold)
+        assertTrue(residueLeft(pal, clean(10), IntRange.EMPTY).first * 3 > residue)
+    }
+
     private companion object {
+        /** NTSC's colour subcarrier, Hz: 227.5 × the System M line rate, 4.5 MHz / 286 (SMPTE 170M). */
+        const val NTSC_SUBCARRIER = 227.5 * 4_500_000.0 / 286.0
+
         /** PAL's colour subcarrier, Hz: 283.75 × 15 625 + 25 (ITU-R BT.1700). */
         const val PAL_SUBCARRIER = 4_433_618.75
 
