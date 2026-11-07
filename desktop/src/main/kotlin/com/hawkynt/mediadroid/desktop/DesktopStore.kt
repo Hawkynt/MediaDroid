@@ -92,6 +92,11 @@ class DesktopStore(private val folder: File) {
         get() = settings.speed
         set(value) = change { copy(speed = value) }
 
+    /** Software decoding first, as Android's setting: no graphics chip's decoder is tried (HardwareDecoding). */
+    var softwareDecoding: Boolean
+        get() = settings.softwareDecoding
+        set(value) = change { copy(softwareDecoding = value) }
+
     /** The household's sound: the loudness gain, even loudness and the lip-sync delay of this machine's output. */
     var sound: SoundSettings
         get() = settings.sound
@@ -244,6 +249,8 @@ internal data class DesktopSettings(
     val logos: Map<String, LogoSettings> = emptyMap(),
     /** Pictures per folder or share, by FolderPlace.key: what the videos in it start with. */
     val folderPictures: Map<String, PictureSettings> = emptyMap(),
+    /** Software decoding first: no graphics chip's decoder tried. */
+    val softwareDecoding: Boolean = false,
 ) {
     companion object {
         private val json = Json {

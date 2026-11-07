@@ -54,6 +54,57 @@ class MediaReaderTest {
             assertEquals(1000L, first.ptsMs)
         }
 
+    private fun pictures(reader: MediaReader): List<MediaReader.Picture> =
+        generateSequence { reader.read() }.filterIsInstance<MediaReader.Picture>().toList()
+
+    @Test
+    fun `with software decoding asked for, no hardware decoder is tried`() =
+        MediaReader(clip, decoders = emptyList()).use { r ->
+            assertEquals(50, pictures(r).size)
+            assertNull(r.hardware)
+        }
+
+    @Test
+    fun `a hardware decoder this system cannot have leaves the pictures to software, the same ones`() {
+        // D3D11VA is not built into FFmpeg for Linux, nor VA-API for Windows: the device cannot open.
+        val foreign = if (System.getProperty("os.name").startsWith("Windows")) {
+            HardwareDecoding.Device.VAAPI
+        } else {
+            HardwareDecoding.Device.D3D11VA
+        }
+        val software = MediaReader(clip, decoders = emptyList()).use(::pictures)
+        MediaReader(clip, decoders = listOf(foreign)).use { r ->
+            val decoded = pictures(r)
+            assertNull(r.hardware)
+            assertEquals(software.map { it.ptsMs }, decoded.map { it.ptsMs })
+            assertTrue(software.zip(decoded).all { (a, b) -> a.rgba.contentEquals(b.rgba) })
+        }
+    }
+
+    @Test
+    fun `whichever decoder this machine opens, the pictures are the software decoder's`() {
+        // Software on a machine without a hardware decoder (CI); on one with, its pictures copied back to the
+        // processor — 4:2:0 either way, so within a little rounding of the software decoder's.
+        val software = MediaReader(clip, decoders = emptyList()).use(::pictures)
+        MediaReader(clip).use { r ->
+            val decoded = pictures(r)
+            assertEquals(software.map { it.ptsMs }, decoded.map { it.ptsMs })
+            for ((a, b) in software.zip(decoded)) {
+                val off = a.rgba.indices.sumOf { i ->
+                    kotlin.math.abs((a.rgba[i].toInt() and 0xFF) - (b.rgba[i].toInt() and 0xFF))
+                }.toDouble() / a.rgba.size
+                assertTrue("${r.hardware}: $off a value", off < 3.0)
+            }
+        }
+    }
+
+    @Test
+    fun `a hardware decoder's interleaved chroma comes apart into the two planes the stage takes`() {
+        val (u, v) = MediaReader.deinterleave(byteArrayOf(1, 2, 3, 4, 5, 6))
+        assertTrue(u.contentEquals(byteArrayOf(1, 3, 5)))
+        assertTrue(v.contentEquals(byteArrayOf(2, 4, 6)))
+    }
+
     @Test
     fun `the frame rate comes from the file`() = MediaReader(clip).use { r ->
         assertEquals(25f, r.frameRate, 0.001f)

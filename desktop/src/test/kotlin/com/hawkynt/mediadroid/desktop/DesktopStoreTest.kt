@@ -163,6 +163,16 @@ class DesktopStoreTest {
     }
 
     @Test
+    fun `software decoding first is off until the household picks it, then kept`() {
+        val data = folder.newFolder("data")
+        assertFalse(DesktopStore(data).softwareDecoding)
+        DesktopStore(data).softwareDecoding = true
+        assertTrue(DesktopStore(data).softwareDecoding)
+        val json = Json.parseToJsonElement(File(data, "settings.json").readText()).jsonObject
+        assertEquals("true", json["softwareDecoding"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `a fresh store has the defaults, and watching a video forgets where it was left`() {
         val store = DesktopStore(folder.newFolder("data"))
         assertNull(store.libraryFolder)

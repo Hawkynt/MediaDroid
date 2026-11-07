@@ -452,6 +452,11 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
   keeps its own Skia context internal and draws through Direct3D 12 on Windows, so sharing waits for that, or for a
   native surface under the controls. Not measured yet: the pacing on a real screen's refresh (the session was
   locked) and Windows on real graphics. The CI runs the benchmark on llvmpipe as a regression record only.
+- The picture is decoded on the graphics chip through FFmpeg's hardware decoding — D3D11VA, else DXVA2, on Windows;
+  NVDEC, else VA-API, on Linux — and copied back for the stage. Whatever the chip cannot decode (a codec or profile it
+  lacks, a driver that opens and then decodes nothing) FFmpeg decodes in software, the next device tried first; a chip
+  that fails midway hands over to software where it stopped. The panel's Video decoding puts software first, as the
+  phone's setting does, for a video the chip plays with errors, and says which decoder plays the picture.
 - The neural networks run on the same native tree as on the phone (`libmediadroid.so` / `mediadroid.dll`): ncnn on
   Vulkan where the machine has a Vulkan device, else on the CPU. Their files live in the app-data folder's `models/`,
   a folder per network beside `settings.json`: RIFE, IFRNet, waifu2x, Real-CUGAN and Real-ESRGAN come inside the app

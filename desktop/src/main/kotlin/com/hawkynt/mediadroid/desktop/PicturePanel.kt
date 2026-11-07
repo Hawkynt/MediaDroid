@@ -105,6 +105,10 @@ fun PicturePanel(
     colorizers: List<PictureAdjustment.Colorize> = listOf(PictureAdjustment.Colorize.OFF),
     subtitleDelayMs: Int = 0,
     onSubtitleDelay: (Int) -> Unit = {},
+    /** Software decoding first (DesktopStore.softwareDecoding), and the chip's decoder playing now, null for none. */
+    softwareDecoding: Boolean = false,
+    onSoftwareDecoding: (Boolean) -> Unit = {},
+    hardwareDecoder: String? = null,
 ) {
     Column(
         modifier.width(380.dp).fillMaxHeight().background(Color(0xF01A1A2E)).verticalScroll(rememberScrollState())
@@ -577,7 +581,30 @@ fun PicturePanel(
             color = Color.Gray,
             fontSize = 13.sp,
         )
+        DecodingControls(softwareDecoding, onSoftwareDecoding, hardwareDecoder)
     }
+}
+
+/** Hardware or software decoding first, worded as Android's Settings word it. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DecodingControls(software: Boolean, onSoftware: (Boolean) -> Unit, hardwareDecoder: String?) {
+    Text("Video decoding", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FilterChip(selected = !software, onClick = { onSoftware(false) }, label = { Text("Hardware (recommended)") })
+        FilterChip(selected = software, onClick = { onSoftware(true) }, label = { Text("Software") })
+    }
+    Text(
+        if (software) {
+            "Software decoding works the processor hard and can stutter on large videos. It is meant for videos " +
+                "that otherwise play only with errors. From the next video on."
+        } else {
+            "The graphics chip's own decoder plays the picture (" + (hardwareDecoder ?: "this video: software") +
+                "); software decoding steps in for what it cannot play."
+        },
+        color = if (software) MaterialTheme.colorScheme.error else Color.Gray,
+        fontSize = 13.sp,
+    )
 }
 
 /**

@@ -37,7 +37,9 @@ class DesktopPlaybackEngine(
     private val sinkFactory: () -> AudioSink = { JavaSoundSink() },
 ) : PlaybackEngine {
 
-    private fun readerOf(location: String) = MediaReader(location, files(location))
+    // Only the video's own picture is worth a graphics chip's decoder: not the cover art of a sound file beside it.
+    private fun readerOf(location: String, decoders: List<HardwareDecoding.Device> = emptyList()) =
+        MediaReader(location, files(location), decoders)
 
     private val listeners = CopyOnWriteArrayList<PlaybackEngine.Listener>()
     // As many as picturesAhead allows: a few, more while the sound is set sooner than the picture.
@@ -88,7 +90,7 @@ class DesktopPlaybackEngine(
 
     override fun open(request: MediaRequest, autoPlay: Boolean) {
         stop()
-        val opened = readerOf(request.path)
+        val opened = readerOf(request.path, HardwareDecoding.candidates(softwareDecoding))
         opened.keepPlanes = keepPlanes
         reader = opened
         openedPath = request.path
@@ -458,6 +460,15 @@ class DesktopPlaybackEngine(
         }
 
     /**
+     * Software decoding first, as Android's setting puts it: from the next video on, no graphics chip's decoder is
+     * tried (HardwareDecoding) — for a video a chip's decoder plays with errors.
+     */
+    @Volatile var softwareDecoding: Boolean = false
+
+    /** The graphics chip's decoder the picture is decoded on (HardwareDecoding), null for software. */
+    val hardwareDecoder: HardwareDecoding.Device? get() = reader?.hardware
+
+    /**
      * Whether the pictures decoded from now on carry their 4:2:0 planes (MediaReader.keepPlanes), for the stage's
      * chroma upscaling.
      */
@@ -624,7 +635,7 @@ class DesktopPlaybackEngine(
         if (files(path) != null) return
         Thread({
             runCatching {
-                MediaReader(path).use { r ->
+                MediaReader(path, decoders = emptyList()).use { r ->
                     r.forEachAssEvent(index, { ass !== track && secondAss !== track }) {
                         track.event(it.data.toByteArray(), it.startMs, it.durationMs)
                     }
