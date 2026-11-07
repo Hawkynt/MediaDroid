@@ -125,9 +125,14 @@ private fun PatternSurface(pattern: TestPattern, picture: PictureAdjustment, war
     val drawn = remember { arrayOfNulls<Any>(2) }
     // The surface's callbacks are made once; they read what is to be shown now.
     val now by rememberUpdatedState(Triple(pattern, picture, warp))
-    fun show(holder: SurfaceHolder, width: Int, height: Int) {
+    fun show(
+        holder: SurfaceHolder,
+        width: Int,
+        height: Int,
+        shown: Triple<TestPattern, PictureAdjustment, ScreenWarp>,
+    ) {
         if (width <= 0 || height <= 0) return
-        val (pattern, picture, warp) = now
+        val (pattern, picture, warp) = shown
         stage.filters = picture
         stage.warp = warp
         stage.setVideoSize(width, height)
@@ -167,7 +172,7 @@ private fun PatternSurface(pattern: TestPattern, picture: PictureAdjustment, war
                         override fun surfaceCreated(holder: SurfaceHolder) = Unit
 
                         override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) =
-                            show(holder, w, h)
+                            show(holder, w, h, now)
 
                         override fun surfaceDestroyed(holder: SurfaceHolder) {
                             stage.setOutput(null)
@@ -178,8 +183,11 @@ private fun PatternSurface(pattern: TestPattern, picture: PictureAdjustment, war
                 )
             }
         },
+        // What is shown named here, not only read through `now`: a new pattern makes a new block, and AndroidView runs
+        // a new block — a state read inside show() alone did not bring it back, and taps changed only the caption.
         update = { view ->
-            if (view.holder.surface.isValid) show(view.holder, view.width, view.height)
+            val shown = Triple(pattern, picture, warp)
+            if (view.holder.surface.isValid) show(view.holder, view.width, view.height, shown)
         },
         modifier = Modifier.fillMaxSize(),
     )

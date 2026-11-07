@@ -95,7 +95,9 @@ enum class TestPattern(val label: String, val hint: String) {
          * The household's [picture] as the patterns are shown with it: its colour, sharpness, noise and debanding —
          * what the patterns are there to set — but nothing that would change the pattern itself: no deinterlacing
          * (its lines would blend), no smooth motion, no cropping of its black, no 3D eye, the file's own shape, no
-         * station logo hidden in a corner.
+         * station logo hidden in a corner. Nothing that weighs the frames around it either — temporal denoising, the
+         * dot-crawl comb: a pattern is one still frame, and those show a picture from behind the newest, so the next
+         * pattern would never come — and no colouring of a black-and-white picture, which the grey ones would get.
          */
         fun pictureFor(picture: PictureAdjustment): PictureAdjustment = picture.copy(
             deinterlace = PictureAdjustment.Deinterlace.OFF,
@@ -105,6 +107,9 @@ enum class TestPattern(val label: String, val hint: String) {
             stereo = PictureAdjustment.Stereo.OFF,
             aspect = AspectOverride.AUTO,
             logo = null,
+            temporalDenoise = 0f,
+            dotCrawl = 0f,
+            colorize = PictureAdjustment.Colorize.OFF,
         )
 
         /** A grey of [percent] of the full range. */
