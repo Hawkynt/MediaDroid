@@ -43,5 +43,30 @@ original by 2.42 per value and Real-CUGAN by 8.85 (it sharpens hard edges with h
 3.08; shrunk back, their outputs are off from their inputs by 1.28 and 6.47, the app's check allowing 10.
 `NEURAL_CHECK_DUMP=<folder>` writes the pictures.
 
+`NEURAL_CHECK_FRAMES=<folder>` runs the interpolators on real footage instead: every `<name>-a.ppm`, `-b.ppm` and
+`-c.ppm` there (three frames in a row, binary PPM), the in-between of a and c against b, as the mean difference per
+value and PSNR beside a plain blend's (`NEURAL_CHECK_EACH=1` prints every triplet). For RIFE it also runs the stage's
+own path — the frames drawn smaller, the flow and mask handed back (`Interpolator::flow`) and both frames warped at
+their own size as `glsl/video/rife-warp-es3.frag` warps them — at half and a quarter of the size, and, for comparison,
+the whole picture made at that size and enlarged, as a slow device had it before. At the self-test's sizes it checks
+that the flow, warped that way at the network's own size, gives the network's own in-between (at most one apart).
+
+From Blender's Sintel trailer (CC BY 3.0, `sintel_trailer-1080p.mp4` from download.blender.org) brought to 854 × 480
+with FFmpeg's area scaling, on the CPU of the laptop above: 24 triplets spread over the trailer (mostly calm), and the
+17 with the most motion that are no cut (a blend off by at least 3, the steps either side within 2.5 times each
+other):
+
+| RIFE 4.25 lite | Spread | Most motion | Time |
+|----------------|--------|-------------|------|
+| at the frames' size | 44.31 dB | 26.25 dB | 375 ms |
+| flow at 1/2, warped whole | 43.35 dB | 25.82 dB | 124 ms |
+| flow at 1/4, warped whole | 41.05 dB | 25.17 dB | 51 ms |
+| picture at 1/2, enlarged | 38.40 dB | 25.83 dB | 102 ms |
+| picture at 1/4, enlarged | 35.08 dB | 24.64 dB | 27 ms |
+| a plain blend | 43.66 dB | 23.31 dB | |
+
+At 1280 × 720 the flow at half the size scores 26.12 dB on the moving triplets where the frames' own size scores
+26.33, in 256 ms against 832.
+
 It found what the phone could not show: DAIN's correlation reading packed features as unpacked, its result
 downloaded from the GPU as raw half floats, and ncnn's Winograd and im2col convolutions taking gigabytes on the CPU.
