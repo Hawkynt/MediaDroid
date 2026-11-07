@@ -44,6 +44,19 @@ internal class LwjglGles(private val quad: () -> Int) : Gles {
     override fun texSubImage2D(width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer) =
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, pixels)
     override fun pixelStorei(name: Int, value: Int) = glPixelStorei(name, value)
+    override fun texImage3D(
+        internalFormat: Int,
+        width: Int,
+        height: Int,
+        depth: Int,
+        format: Int,
+        type: Int,
+        pixels: ByteBuffer,
+    ) = glTexImage3D(GL_TEXTURE_3D, 0, internalFormat, width, height, depth, 0, format, type, pixels)
+    override fun dispatchCompute(x: Int, y: Int, z: Int) = glDispatchCompute(x, y, z)
+    override fun bindImageTexture(unit: Int, texture: Int, format: Int) =
+        glBindImageTexture(unit, texture, 0, false, 0, GL_WRITE_ONLY, format)
+    override fun memoryBarrier(bits: Int) = glMemoryBarrier(bits)
     override fun genFramebuffer() = glGenFramebuffers()
     override fun deleteFramebuffer(framebuffer: Int) = glDeleteFramebuffers(framebuffer)
     override fun framebufferTexture2D(texture: Int) =

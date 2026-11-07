@@ -23,8 +23,10 @@ import com.hawkynt.mediadroid.stage.Conversion
 import com.hawkynt.mediadroid.stage.Deinterlacing
 import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Finishing
+import com.hawkynt.mediadroid.stage.MpvHooks
 import com.hawkynt.mediadroid.stage.Passes
 import com.hawkynt.mediadroid.stage.Restoration
+import com.hawkynt.mediadroid.stage.SampledTexture
 import com.hawkynt.mediadroid.stage.StageTables
 import com.hawkynt.mediadroid.stage.Upscaling
 import org.lwjgl.glfw.GLFW
@@ -69,6 +71,11 @@ class GlStage(
     private val deinterlacing = Deinterlacing(passes)
     private val conversion = Conversion(passes)
     private val finishing = Finishing(passes)
+
+    // The mpv user shaders' runner, its frames the stage's own in half floats; OpenGL 4.3 runs compute passes.
+    private val mpvHooks = MpvHooks(gl, passes, finishing, compute = { true }) { name, w, h ->
+        target(name, w, h, half = true)
+    }
     private var obmcTable = 0
 
     // Whether this moment's passes draw into half floats for the last pass to dither (see run).
@@ -719,17 +726,9 @@ class GlStage(
             along.gridHeight, along.scale) as Target
     }
 
-    // The mpv user shaders' programs, by their source; and the frame counter and random number their passes are given.
-    private val userPrograms = HashMap<String, Int>()
-    private var hookFrame = 0
-    private val hookRandom = java.util.Random(0)
-
     /**
-     * [from] through [shader]'s passes hooking [stages], in mpv's order — the textures held the way mpv holds them, the
-     * picture's top row first (turned round on the way in and out), in half floats; `LUMA` the picture's Y, put back
-     * with its colour once its passes have run (glsl/video/mpv-luma.frag, mpv-recombine.frag). [outW] × [outH] is the
-     * size shown (`OUTPUT`, `target_size`), [inputW] × [inputH] the video's (`input_size`). A pass whose `WHEN` does
-     * not hold, or that reads a texture there is not, is left out; a pass that will not compile ends the shader there.
+     * [from] through [shader]'s passes hooking [stages] (MpvHooks): [outW] × [outH] the size shown, [inputW] × [inputH]
+     * the video's.
      */
     private fun userHooks(
         shader: MpvShader,
@@ -739,206 +738,7 @@ class GlStage(
         outH: Int,
         inputW: Int,
         inputH: Int,
-    ): Target {
-        if (stages.none { shader.planned(it).isNotEmpty() }) return from
-        val turn = floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 1f)
-        // A copy is a blend wholly of the one picture, the program's other input pointed at it too (see copy).
-        fun turned(t: Target, name: String) =
-            finishing.copy(t, target(name, t.width, t.height, half = true), turn) as Target
-        val textures = HashMap<String, Target>()
-        val writes = HashMap<String, Int>()
-        // Every hook point but LUMA stands for the picture itself.
-        val pictureNames = (MpvShader.BEFORE_SCALING + MpvShader.AFTER_SCALING) - "LUMA"
-        fun picture(t: Target) = pictureNames.forEach { textures[it] = t }
-        picture(turned(from, "mpvIn"))
-        hookFrame++
-        val sizes = HookSizes(outW, outH, inputW, inputH)
-        fun runPass(stage: String, planned: MpvShader.Planned): Boolean =
-            hookPass(stage, planned, textures, writes, sizes) { save, into ->
-                if (save == stage && stage in pictureNames) picture(into) else textures[save] = into
-            }
-        run stages@{
-            for (stage in stages) {
-                val passes = shader.planned(stage)
-                if (passes.isEmpty()) continue
-                if (stage == "LUMA") {
-                    val before = textures.getValue("MAIN")
-                    val lumaTarget = target("mpvLuma", before.width, before.height, half = true)
-                    textures["LUMA"] = pass("mpv-luma.frag", lumaTarget, before.texture)
-                    if (!passes.all { runPass(stage, it) }) return@stages
-                    val luma = textures.getValue("LUMA")
-                    picture(pass("mpv-recombine.frag", target("mpvRecombined", luma.width, luma.height, half = true),
-                        before.texture, listOf(luma.texture to "uLuma")))
-                } else if (!passes.all { runPass(stage, it) }) {
-                    return@stages
-                }
-            }
-        }
-        return turned(textures.getValue("MAIN"), "mpvOut")
-    }
-
-    /** The sizes an mpv user shader's passes are given: the size shown and the video's. */
-    private class HookSizes(val outW: Int, val outH: Int, val inputW: Int, val inputH: Int)
-
-    /**
-     * One pass of an mpv user shader, [planned] on [stage], over [textures] by name (mpv's: the hooked one and those
-     * saved), into a half-float frame of its own handed to [saved] with the name it saves under: a fragment pass drawn,
-     * a compute pass dispatched in its blocks (as libplacebo's hook_hook dispatches it) with the frame as its
-     * `out_image`. The shader's embedded textures are bound beside them under their own names. A pass whose `WHEN`
-     * does not hold, or that reads a texture there is not, is left out (true); one that will not compile ends the
-     * shader (false).
-     */
-    private fun hookPass(
-        stage: String,
-        planned: MpvShader.Planned,
-        textures: Map<String, Target>,
-        writes: MutableMap<String, Int>,
-        sizes: HookSizes,
-        saved: (String, Target) -> Unit,
-    ): Boolean {
-        val hooked = textures.getValue(stage)
-        val known = textures.mapValues { MpvShader.Size(it.value.width, it.value.height) } +
-            ("OUTPUT" to MpvShader.Size(sizes.outW, sizes.outH)) +
-            ("HOOKED" to MpvShader.Size(hooked.width, hooked.height))
-        if (!planned.runs(known)) return true
-        val names = planned.textures(stage)
-        if (names.any { it !in textures }) return true
-        val size = planned.size(known)
-        val compute = planned.pass.compute
-        val program = runCatching {
-            val source = planned.source(stage)
-            if (compute != null) computeProgram(source) else userProgram(source)
-        }.getOrNull() ?: return false
-        val save = planned.pass.save?.takeIf { it != "HOOKED" } ?: stage
-        val count = writes.merge(save, 1, Int::plus)!!
-        val into = target("mpv:$save:${count % 2}", size.width, size.height, half = true)
-        glUseProgram(program)
-        names.forEachIndexed { unit, name ->
-            val t = textures.getValue(name)
-            glActiveTexture(GL_TEXTURE0 + unit)
-            glBindTexture(GL_TEXTURE_2D, t.texture)
-            // Read as libplacebo reads a hook's textures: linearly, clamped at the edges.
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-            glUniform1i(glGetUniformLocation(program, "${name}_raw"), unit)
-            glUniform2f(glGetUniformLocation(program, "${name}_size"), t.width.toFloat(), t.height.toFloat())
-        }
-        val embedded = planned.userTextures()
-        embedded.forEachIndexed { k, texture ->
-            val unit = names.size + k
-            glActiveTexture(GL_TEXTURE0 + unit)
-            glBindTexture(if (texture.depth > 0) GL_TEXTURE_3D else GL_TEXTURE_2D, userTexture(planned.shader, texture))
-            glUniform1i(glGetUniformLocation(program, texture.name), unit)
-        }
-        for (unit in names.size + embedded.size until 8) {
-            glActiveTexture(GL_TEXTURE0 + unit)
-            glBindTexture(GL_TEXTURE_2D, 0)
-        }
-        glActiveTexture(GL_TEXTURE0)
-        glUniform2f(glGetUniformLocation(program, "mpvTarget"), into.width.toFloat(), into.height.toFloat())
-        glUniform1i(glGetUniformLocation(program, "frame"), hookFrame)
-        glUniform1f(glGetUniformLocation(program, "random"), hookRandom.nextFloat())
-        glUniform2f(glGetUniformLocation(program, "input_size"), sizes.inputW.toFloat(), sizes.inputH.toFloat())
-        glUniform2f(glGetUniformLocation(program, "target_size"), sizes.outW.toFloat(), sizes.outH.toFloat())
-        glUniform2f(glGetUniformLocation(program, "tex_offset"), 0f, 0f)
-        if (compute == null) {
-            glBindFramebuffer(GL_FRAMEBUFFER, into.framebuffer)
-            glViewport(0, 0, into.width, into.height)
-            glBindVertexArray(vao)
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
-        } else {
-            // As many blocks as cover the output, rounded up; what they store is read by the passes after.
-            glBindImageTexture(0, into.texture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA16F)
-            glDispatchCompute(
-                (into.width + compute.blockWidth - 1) / compute.blockWidth,
-                (into.height + compute.blockHeight - 1) / compute.blockHeight,
-                1,
-            )
-            glMemoryBarrier(
-                GL_TEXTURE_FETCH_BARRIER_BIT or GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GL_FRAMEBUFFER_BARRIER_BIT,
-            )
-        }
-        saved(save, into)
-        return true
-    }
-
-    // The embedded textures of the shader last run, uploaded once (see userTexture).
-    private val userTextures = HashMap<MpvShader.Texture, Int>()
-    private var userTexturesOf: MpvShader? = null
-
-    /**
-     * [texture] of [shader] on the graphics card, uploaded the first time it is read: its texels as declared (8-bit
-     * normalised, half or full floats; two or three dimensions), filtered and bordered as it says. Another shader's
-     * make the last one's go.
-     */
-    private fun userTexture(shader: MpvShader, texture: MpvShader.Texture): Int {
-        if (shader !== userTexturesOf) {
-            userTextures.values.forEach { glDeleteTextures(it) }
-            userTextures.clear()
-            userTexturesOf = shader
-        }
-        return userTextures.getOrPut(texture) {
-            val kind = if (texture.depth > 0) GL_TEXTURE_3D else GL_TEXTURE_2D
-            val f = texture.format
-            val layout = intArrayOf(GL_RED, GL_RG, GL_RGB, GL_RGBA)[f.components - 1]
-            val internal = when {
-                !f.float -> intArrayOf(GL_R8, GL_RG8, GL_RGB8, GL_RGBA8)
-                f.heldBits == 16 -> intArrayOf(GL_R16F, GL_RG16F, GL_RGB16F, GL_RGBA16F)
-                else -> intArrayOf(GL_R32F, GL_RG32F, GL_RGB32F, GL_RGBA32F)
-            }[f.components - 1]
-            val type = if (!f.float) GL_UNSIGNED_BYTE else if (f.bits == 16) GL_HALF_FLOAT else GL_FLOAT
-            val id = glGenTextures()
-            glBindTexture(kind, id)
-            glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-            val bytes = MemoryUtil.memAlloc(texture.data.size).put(texture.data).flip()
-            if (texture.depth > 0) {
-                glTexImage3D(kind, 0, internal, texture.width, texture.height, texture.depth, 0, layout, type, bytes)
-            } else {
-                glTexImage2D(kind, 0, internal, texture.width, texture.height, 0, layout, type, bytes)
-            }
-            MemoryUtil.memFree(bytes)
-            val filter = if (texture.linear) GL_LINEAR else GL_NEAREST
-            glTexParameteri(kind, GL_TEXTURE_MIN_FILTER, filter)
-            glTexParameteri(kind, GL_TEXTURE_MAG_FILTER, filter)
-            val wrap = when (texture.border) {
-                MpvShader.Border.CLAMP -> GL_CLAMP_TO_EDGE
-                MpvShader.Border.REPEAT -> GL_REPEAT
-                MpvShader.Border.MIRROR -> GL_MIRRORED_REPEAT
-            }
-            listOf(GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R).forEach { glTexParameteri(kind, it, wrap) }
-            glBindTexture(kind, 0)
-            id
-        }
-    }
-
-    /** A user shader's pass as a program, built once: its fragment shader with the stage's vertex shader beside it. */
-    private fun userProgram(fragment: String): Int = userPrograms.getOrPut(fragment) {
-        val version = fragment.substringBefore('\n')
-        val vertex = version + "\n" + Shaders.VIDEO_VERTEX_ES3.substringAfter('\n')
-        glCreateProgram().also {
-            glAttachShader(it, compiled(GL_VERTEX_SHADER, vertex))
-            glAttachShader(it, compiled(GL_FRAGMENT_SHADER, fragment))
-            glBindAttribLocation(it, 0, "aPosition")
-            glBindAttribLocation(it, 1, "aTexCoord")
-            glLinkProgram(it)
-            check(glGetProgrami(it, GL_LINK_STATUS) != 0) { "mpv shader: " + glGetProgramInfoLog(it) }
-        }
-    }
-
-    /** A user shader's compute pass as a program, built once. */
-    private fun computeProgram(source: String): Int = userPrograms.getOrPut(source) {
-        glCreateProgram().also {
-            glAttachShader(it, compiled(GL_COMPUTE_SHADER, source))
-            glLinkProgram(it)
-            check(glGetProgrami(it, GL_LINK_STATUS) != 0) { "mpv shader: " + glGetProgramInfoLog(it) }
-        }
-    }
-
-    private fun compiled(type: Int, source: String): Int = glCreateShader(type).also {
-        glShaderSource(it, source)
-        glCompileShader(it)
-        check(glGetShaderi(it, GL_COMPILE_STATUS) != 0) { "mpv shader: " + glGetShaderInfoLog(it) }
-    }
+    ): Target = mpvHooks.run(shader, from, stages, MpvHooks.Sizes(outW, outH, inputW, inputH)) as Target
 
     /**
      * [picture]'s [region] on the graphics card, uploaded unless it is still there: an HDR picture's tone-mapped floats
@@ -1287,27 +1087,11 @@ class GlStage(
     ): Target {
         val w = whole.width
         val h = whole.height
-        val textures = HashMap<String, Target>()
-        textures["LUMA"] = Target(planeTextures[0], 0, w, h, GL_R8)
-        textures[MpvShader.CHROMA] = pass(
-            "mpv-chroma.frag", target("mpvChroma", (w + 1) / 2, (h + 1) / 2, half = true), planeTextures[1],
-            listOf(planeTextures[2] to "uV"),
-        )
-        hookFrame++
-        val writes = HashMap<String, Int>()
-        val sizes = HookSizes(hookOutW, hookOutH, w, h)
-        for (planned in shader.planned(MpvShader.CHROMA)) {
-            val ran = hookPass(MpvShader.CHROMA, planned, textures, writes, sizes) { save, into ->
-                textures[save] = into
-            }
-            if (!ran) break
-        }
-        val chroma = textures.getValue(MpvShader.CHROMA)
-        return pass("mpv-chroma-rgb.frag", whole, planeTextures[0], listOf(chroma.texture to "uChroma")) { p ->
-            glUniformMatrix4fv(glGetUniformLocation(p, "uTexMatrix"), false, flip)
-            glUniformMatrix3fv(glGetUniformLocation(p, "uColor"), false, colour)
-            glUniform1f(glGetUniformLocation(p, "uFoot"), if (planes.fullRange) 0f else 16f / 255f)
-        }
+        val luma = SampledTexture(planeTextures[0], w, h)
+        return mpvHooks.chroma(
+            shader, luma, planeTextures[1], planeTextures[2], Passes.IDENTITY, MpvHooks.Sizes(hookOutW, hookOutH, w, h),
+            whole, colour, if (planes.fullRange) 0f else 16f / 255f, flip,
+        ) as Target
     }
 
     /** [from] read back for the window as [presentation] says, timed into [presentNanos]. */
@@ -1459,10 +1243,6 @@ class GlStage(
         const val UPLOADED = 6
         const val KEPT = 4
         val SHADERS = mapOf(
-            "mpv-luma.frag" to Shaders.VIDEO_MPV_LUMA,
-            "mpv-recombine.frag" to Shaders.VIDEO_MPV_RECOMBINE,
-            "mpv-chroma.frag" to Shaders.VIDEO_MPV_CHROMA,
-            "mpv-chroma-rgb.frag" to Shaders.VIDEO_MPV_CHROMA_RGB,
             "blend.frag" to Shaders.VIDEO_BLEND,
         )
     }

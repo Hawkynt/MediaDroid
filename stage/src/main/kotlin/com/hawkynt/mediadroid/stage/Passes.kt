@@ -71,6 +71,19 @@ class Passes(
         }
     }
 
+    /** [source] compiled and linked as a compute program (OpenGL ES 3.1); an exception where it does not build. */
+    fun linkCompute(source: String): Int {
+        val shader = gl.createShader(Gles.COMPUTE_SHADER)
+        gl.shaderSource(shader, source)
+        gl.compileShader(shader)
+        check(gl.shaderCompiled(shader)) { "Shader: " + gl.shaderInfoLog(shader) }
+        return gl.createProgram().also {
+            gl.attachShader(it, shader)
+            gl.linkProgram(it)
+            check(gl.programLinked(it)) { "Program: " + gl.programInfoLog(it) }
+        }
+    }
+
     /**
      * [fragment] drawn over the whole of [into], reading [input] as `uTex` on unit 0 and each of [extra] (a texture
      * and its sampler's name) on the units after it — linearly, or with [nearest] every one of them texel by texel (for
