@@ -1,7 +1,6 @@
 package com.hawkynt.mediadroid.ui
 
-import android.net.Uri
-import androidx.activity.compose.BackHandler
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,7 +40,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,15 +47,16 @@ import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.ui.resources.Res
 import com.hawkynt.mediadroid.ui.resources.ic_folder_open
 import org.jetbrains.compose.resources.painterResource
-import com.hawkynt.mediadroid.data.QualityStore
-import com.hawkynt.mediadroid.data.SourceAccess
 import com.hawkynt.mediadroid.state.StateStore
-import com.hawkynt.mediadroid.data.StorageRoot
+import com.hawkynt.mediadroid.ui.platform.ContainerTags
+import com.hawkynt.mediadroid.ui.platform.LocalMediaFiles
+import com.hawkynt.mediadroid.ui.platform.StorageRoot
 import com.hawkynt.mediadroid.library.FileEntry
 import com.hawkynt.mediadroid.library.FileSort
 import com.hawkynt.mediadroid.library.FolderEntry
 import com.hawkynt.mediadroid.library.FolderListing
 import com.hawkynt.mediadroid.library.Listing
+import com.hawkynt.mediadroid.library.PercentDecoding
 import com.hawkynt.mediadroid.ui.theme.focusClickable
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -69,7 +68,7 @@ import kotlinx.coroutines.withContext
  * their real names. Nothing is grouped or renamed; an NFO beside a video still gives it its title and
  * the usual art its picture. Playing a video queues the folder's videos in the order shown.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun FilesScreen(
     store: StateStore,
@@ -78,13 +77,13 @@ fun FilesScreen(
     onOpen: (String?) -> Unit,
     onPlay: (queue: List<Playable>, startIndex: Int) -> Unit,
 ) {
-    val context = LocalContext.current
+    val files = LocalMediaFiles.current
     val scope = rememberCoroutineScope()
     var sort by remember { mutableStateOf(store.filesSort) }
     val listing by produceState<Listing?>(null, dir, sort) {
         // Any source: the device's storage, a share, a WebDAV or cloud folder.
         value = dir?.let {
-            withContext(Dispatchers.IO) { SourceAccess.resolve(context, it)?.let { d -> FolderListing.list(d, sort) } }
+            withContext(Dispatchers.IO) { files.resolve(it)?.let { d -> FolderListing.list(d, sort) } }
         }
     }
     // Up one folder; from a volume's top back to the list of volumes.
@@ -94,7 +93,7 @@ fun FilesScreen(
     fun play(videos: List<FileEntry>, start: Int) {
         val queue = videos.map {
             // A title or description the file carries stands in where no NFO gave one.
-            val tags = com.hawkynt.mediadroid.data.ContainerTags.peek(it.path)
+            val tags = ContainerTags.peek(it.path)
             val title = if (it.title == it.name.substringBeforeLast('.')) tags?.title ?: it.title else it.title
             Playable(
                 title = title,
@@ -184,7 +183,7 @@ fun FilesScreen(
                         onPlay = {
                             scope.launch {
                                 val videos = withContext(Dispatchers.IO) {
-                                    SourceAccess.resolve(context, folder.path)
+                                    files.resolve(folder.path)
                                         ?.let { FolderListing.list(it, sort).videos }
                                         .orEmpty()
                                 }
@@ -254,17 +253,17 @@ private fun FolderRow(folder: FolderEntry, onClick: () -> Unit, onPlay: () -> Un
 
 @Composable
 private fun VideoRow(video: FileEntry, store: StateStore, onClick: () -> Unit) {
-    val context = LocalContext.current
+    val files = LocalMediaFiles.current
     val duration by produceState<Long?>(null, video.path) {
-        value = QualityStore.of(context).durationMsFor(video.path)
+        value = files.durationMs(video.path)
     }
     val watched = store.isWatched(video.path, video.nfoWatched)
     val progress = store.resumeFor(video.path)?.let { progressOf(it.positionMs, it.durationMs) }?.takeIf { it > 0f }
     // Without an NFO, the file's own tags name and describe it.
     val stem = video.name.substringBeforeLast('.')
     val untold = video.title == stem || video.plot == null
-    val tags by produceState(com.hawkynt.mediadroid.data.ContainerTags.peek(video.path), video.path, untold) {
-        if (untold) value = com.hawkynt.mediadroid.data.ContainerTags.of(context, video.path)
+    val tags by produceState(ContainerTags.peek(video.path), video.path, untold) {
+        if (untold) value = ContainerTags.of(files, video.path)
     }
     val title = if (video.title == stem) tags?.title ?: video.title else video.title
     val plot = video.plot ?: tags?.description
@@ -354,6 +353,8 @@ private fun parentOf(location: String): String? = if (location.startsWith("/")) 
 }
 
 /** The last part of a location, decoded for a URI. */
-private fun nameOf(location: String): String =
-    if (location.startsWith("/")) File(location).name else Uri.decode(location.trimEnd('/').substringAfterLast('/'))
-
+private fun nameOf(location: String): String = if (location.startsWith("/")) {
+    File(location).name
+} else {
+    PercentDecoding.decode(location.trimEnd('/').substringAfterLast('/'))
+}

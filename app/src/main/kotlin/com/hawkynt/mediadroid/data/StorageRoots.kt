@@ -4,10 +4,8 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.os.storage.StorageManager
+import com.hawkynt.mediadroid.ui.platform.StorageRoot
 import java.io.File
-
-/** A place the Files browser starts from: the internal storage, an SD card, a USB drive. */
-data class StorageRoot(val label: String, val path: String, val removable: Boolean)
 
 /** The device's mounted storage volumes, the internal storage first. */
 object StorageRoots {

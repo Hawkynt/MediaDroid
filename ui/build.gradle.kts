@@ -28,6 +28,7 @@ kotlin {
             // Res.drawable.* for both apps; the apps draw them too, so the resources reach them.
             api(compose.components.resources)
             implementation(libs.compose.mp.material.icons)
+            implementation(libs.compose.mp.backhandler)
             // The art on the walls, from files the platform hands over (MediaArt).
             implementation(libs.coil.compose)
             implementation(project(":core:player"))
