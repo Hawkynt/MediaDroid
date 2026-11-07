@@ -5,6 +5,7 @@ import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
+import com.hawkynt.mediadroid.state.StateStore
 
 /** One thing the player can play, with enough context to label itself and skip its intro. */
 data class Playable(
@@ -74,3 +75,13 @@ fun Show.playQueue(): List<Playable> =
             )
         }
     }
+
+/**
+ * Where a queue picks up: the file asked for, else one with a resume point, else the first not
+ * yet watched — so Play on a show continues it instead of starting at the pilot again.
+ */
+fun startOf(queue: List<Playable>, path: String?, store: StateStore): Int =
+    path?.let { p -> queue.indexOfFirst { it.videoPath == p } }?.takeIf { it >= 0 }
+        ?: queue.indexOfFirst { store.resumeFor(it.videoPath) != null }.takeIf { it >= 0 }
+        ?: queue.indexOfFirst { !store.isWatched(it.videoPath, it.nfoWatched) }.takeIf { it >= 0 }
+        ?: 0

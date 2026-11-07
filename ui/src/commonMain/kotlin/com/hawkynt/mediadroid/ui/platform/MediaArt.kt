@@ -18,6 +18,15 @@ interface MediaArt {
     /** What [video]'s file really holds, probed once and cached; null before, or where it cannot be read. */
     suspend fun streamDetails(video: String): StreamDetails? = null
 
+    /** How many bytes the file at [location] holds; null where it cannot be told. */
+    suspend fun fileSize(location: String): Long? = null
+
+    /**
+     * Every track of the video at [location] as the details' File section lists it, `Video: H.264 1920×1080`, video
+     * first, then sound, then subtitles; null where the file cannot be read.
+     */
+    suspend fun tracks(location: String): List<String>? = null
+
     /** Nothing beyond this device's own pictures. */
     object None : MediaArt
 }
