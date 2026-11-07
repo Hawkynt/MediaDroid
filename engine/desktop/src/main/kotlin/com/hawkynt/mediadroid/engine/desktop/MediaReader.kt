@@ -201,6 +201,12 @@ class MediaReader(
     @Volatile var hardware: HardwareDecoding.Device? = null
         private set
 
+    /** The picture's decoder by FFmpeg's name for it (h264, hevc …), as opened; null without a picture. */
+    val videoDecoder: String?
+
+    /** The sound's decoder by FFmpeg's name for it (aac, ac3 …), as opened; null without sound. */
+    val audioDecoder: String?
+
     /**
      * The fonts the file carries for its subtitles (Matroska attachments), by file name: those said to be fonts by
      * their MIME type or, without one, by their extension.
@@ -248,6 +254,9 @@ class MediaReader(
         }.flatten()
         if (videoIndex >= 0) video = openVideoDecoder(decoders)
         if (audioIndex >= 0) audio = openDecoder(audioIndex)
+        // Read now: the decoders' contexts go with the reader, from another thread.
+        videoDecoder = video?.codec()?.name()?.string
+        audioDecoder = audio?.codec()?.name()?.string
         width = video?.width() ?: 0
         height = video?.height() ?: 0
         hdr = if (videoIndex < 0) null else when (format.streams(videoIndex).codecpar().color_trc()) {

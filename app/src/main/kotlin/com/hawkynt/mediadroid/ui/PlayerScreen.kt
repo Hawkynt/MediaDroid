@@ -296,7 +296,7 @@ fun PlayerScreen(
             override val subtitleDelayMs get() = subtitleLook.delayMs
         }
     }
-    val engine = remember { com.hawkynt.mediadroid.player.AndroidPlaybackEngine(context, settings, tuning) }
+    val engine = remember { com.hawkynt.mediadroid.player.AndroidPlaybackEngine(context, settings, tuning, demo) }
     val player = engine.exo
     // The video's frame rate, for the sound's wait behind a filtered picture; kept current by the routing loop.
     val videoFrameRate = engine.videoFrameRate

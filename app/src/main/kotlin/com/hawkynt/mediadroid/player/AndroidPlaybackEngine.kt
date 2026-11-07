@@ -8,19 +8,23 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import com.hawkynt.mediadroid.data.Settings
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
+import com.hawkynt.mediadroid.engine.PlaybackState
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.VideoOutput
 
 /**
  * The Android playback engine: Media3's ExoPlayer, built as the player has always built it — the bundled FFmpeg
  * preferred for audio and the fallback for video (first with software decoding), FFmpeg's video renderer keeping as
  * many pictures ahead as Settings asks, loudness, night mode and even loudness on the decoded sound, the sound waiting
  * for a filtered picture, sidecar audio merged in, network sources streamed, ASS/SSA subtitles drawn by libass where
- * the native library carries it ([assSubtitles]) — behind [PlaybackEngine].
+ * the native library carries it ([assSubtitles]) — behind [PlaybackEngine]. Its picture outputs are a [SurfaceOutput]
+ * and a [SurfaceViewOutput].
  *
  * [exo] stays reachable while the player screen moves over to the engine's own commands (#283).
  */
@@ -28,6 +32,11 @@ class AndroidPlaybackEngine(
     context: Context,
     private val settings: Settings,
     override val tuning: PlaybackTuning,
+    /**
+     * The demo library's placeholder videos (README screenshots): what is opened is set and its start shown on the
+     * controls, never loaded — a placeholder is no video to play.
+     */
+    private val placeholders: Boolean = false,
 ) : PlaybackEngine {
 
     /** The video's frame rate, for the sound's wait behind a filtered picture; kept current by the player screen. */
@@ -248,7 +257,7 @@ class AndroidPlaybackEngine(
             )
             .build()
 
-    private val listeners = mutableMapOf<PlaybackEngine.Listener, Player.Listener>()
+    private val listeners = mutableMapOf<PlaybackEngine.Listener, Pair<Player.Listener, AnalyticsListener>>()
 
     /** The file and audio track playing and its ReplayGain, for the even-loudness correction on the audio thread. */
     @Volatile private var fileLoudness: FileLoudness? = null
@@ -279,6 +288,25 @@ class AndroidPlaybackEngine(
     override var openedPath: String? = null
         private set
 
+    /** A surface the pictures are drawn into: the picture stage's input, say. */
+    class SurfaceOutput(val surface: android.view.Surface) : VideoOutput
+
+    /** A view whose surface the pictures are drawn into, the player making its own over the view's as it needs. */
+    class SurfaceViewOutput(val view: android.view.SurfaceView) : VideoOutput
+
+    override var videoOutput: VideoOutput? = null
+        set(value) {
+            when (value) {
+                null -> exo.clearVideoSurface()
+                is SurfaceOutput -> exo.setVideoSurface(value.surface)
+                is SurfaceViewOutput -> exo.setVideoSurfaceView(value.view)
+                else -> throw IllegalArgumentException("Media3 draws into a SurfaceOutput or a SurfaceViewOutput")
+            }
+            field = value
+        }
+
+    override val state: PlaybackState get() = stateOf(exo.playbackState)
+
     override fun open(request: MediaRequest, autoPlay: Boolean) {
         openedPath = request.path
         secondSubtitle = null
@@ -305,6 +333,8 @@ class AndroidPlaybackEngine(
                 .build(),
         )
         if (request.startMs > 0) exo.seekTo(request.startMs)
+        // Prepared at once, playing or not: a paused video stands ready at its first picture.
+        if (!placeholders) exo.prepare()
         if (autoPlay) play()
     }
 
@@ -382,7 +412,16 @@ class AndroidPlaybackEngine(
             override fun onIsPlayingChanged(isPlaying: Boolean) = listener.onPlayingChanged(isPlaying)
 
             override fun onPlaybackStateChanged(state: Int) {
+                listener.onStateChanged(stateOf(state))
                 if (state == Player.STATE_ENDED) listener.onEnded()
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) listener.onSeeked(newPosition.positionMs)
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) =
@@ -394,12 +433,39 @@ class AndroidPlaybackEngine(
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) =
                 listener.onError(error.errorCodeName)
         }
-        listeners[listener] = bridge
+        // The first picture and the decoders, whatever output they reach: the stage's included, which Player.Listener
+        // does not hear of.
+        val analytics = object : AnalyticsListener {
+            override fun onRenderedFirstFrame(
+                eventTime: AnalyticsListener.EventTime,
+                output: Any,
+                renderTimeMs: Long,
+            ) = listener.onFirstFrame()
+
+            override fun onVideoDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) = listener.onDecoder(Track.Kind.VIDEO, decoderName)
+
+            override fun onAudioDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) = listener.onDecoder(Track.Kind.AUDIO, decoderName)
+        }
+        listeners[listener] = bridge to analytics
         exo.addListener(bridge)
+        exo.addAnalyticsListener(analytics)
     }
 
     override fun removeListener(listener: PlaybackEngine.Listener) {
-        listeners.remove(listener)?.let { exo.removeListener(it) }
+        listeners.remove(listener)?.let { (bridge, analytics) ->
+            exo.removeListener(bridge)
+            exo.removeAnalyticsListener(analytics)
+        }
     }
 
     override fun close() = exo.release()
@@ -433,6 +499,13 @@ class AndroidPlaybackEngine(
         /** Playback starts with 2.5 s buffered, and again after a stall with 5 s. */
         private const val BUFFER_START_MS = 2_500
         private const val BUFFER_RESTART_MS = 5_000
+
+        private fun stateOf(state: Int) = when (state) {
+            Player.STATE_BUFFERING -> PlaybackState.BUFFERING
+            Player.STATE_READY -> PlaybackState.READY
+            Player.STATE_ENDED -> PlaybackState.ENDED
+            else -> PlaybackState.IDLE
+        }
 
         private fun typeOf(kind: Track.Kind) = when (kind) {
             Track.Kind.AUDIO -> C.TRACK_TYPE_AUDIO
