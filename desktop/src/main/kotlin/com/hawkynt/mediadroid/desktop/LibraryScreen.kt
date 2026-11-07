@@ -39,6 +39,7 @@ import com.hawkynt.mediadroid.library.Show
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.player.BingeQueue
+import com.hawkynt.mediadroid.ui.Playable
 import com.hawkynt.mediadroid.ui.BrowseScreen
 import com.hawkynt.mediadroid.ui.DetailsScreen
 import com.hawkynt.mediadroid.ui.FilesScreen
@@ -81,7 +82,7 @@ fun LibraryScreen(
     settings: SettingsPlatform,
     library: Library?,
     onLibrary: (Library) -> Unit,
-    onPlay: (List<Playing>, Int) -> Unit,
+    onPlay: (List<Playable>, Int, Boolean) -> Unit,
 ) {
     CompositionLocalProvider(
         LocalMediaArt provides art,
@@ -99,7 +100,7 @@ private fun Library(
     places: DesktopLibrary,
     library: Library?,
     onLibrary: (Library) -> Unit,
-    onPlay: (List<Playing>, Int) -> Unit,
+    onPlay: (List<Playable>, Int, Boolean) -> Unit,
 ) {
     var folder by remember { mutableStateOf(store.libraryFolder) }
     var scanning by remember { mutableStateOf(false) }
@@ -179,7 +180,7 @@ private fun Walls(
     library: Library,
     scanning: Boolean,
     onRefresh: () -> Unit,
-    onPlay: (List<Playing>, Int) -> Unit,
+    onPlay: (List<Playable>, Int, Boolean) -> Unit,
     onFolder: () -> Unit,
 ) {
     val state = store.state
@@ -211,14 +212,14 @@ private fun Walls(
     // else the first not yet watched.
     fun play(item: MediaItem, path: String?) {
         when (item) {
+            // The parts of one film always run on; binge-watching is about episodes (Settings).
             is Movie -> {
                 val queue = item.playQueue()
-                onPlay(queue.map { Playing(item.title, it.videoPath) }, startOf(queue, path, state))
+                onPlay(queue, startOf(queue, path, state), true)
             }
             is Show -> {
-                val queue = showQueue(item)
-                val from = item.playQueue().let { it.getOrNull(startOf(it, path, state)) }?.videoPath
-                onPlay(queue, queue.indexOfFirst { it.video == from }.coerceAtLeast(0))
+                val queue = item.playQueue()
+                onPlay(queue, startOf(queue, path, state), state.data.settings.bingeWatching)
             }
         }
     }
@@ -235,7 +236,7 @@ private fun Walls(
             onPlayMovie = { play(it, null) },
             onPlayShow = { show, episode -> play(show, episode?.videoPath) },
             onPlayTrailer = { movie ->
-                movie.trailerPath?.let { onPlay(listOf(Playing("${movie.title} · Trailer", it)), 0) }
+                movie.trailerPath?.let { onPlay(listOf(Playable("${movie.title} · Trailer", null, it, movie.posterPath)), 0, false) }
             },
         )
         return
@@ -289,7 +290,7 @@ private fun Walls(
                     roots = DesktopMediaFiles.roots(store),
                     dir = s.dir,
                     onOpen = { screen = Shown.Files(it) },
-                    onPlay = { queue, start -> onPlay(queue.map { Playing(it.title, it.videoPath) }, start) },
+                    onPlay = { queue, start -> onPlay(queue, start, state.data.settings.bingeWatching) },
                 )
                 Shown.Search -> SearchScreen(
                     library = library,
@@ -347,14 +348,6 @@ private fun addDeviceFolder(store: DesktopStore, onChanged: () -> Unit) {
             onChanged()
         }
     }
-}
-
-/**
- * Every episode of [show] in the order a binge plays them (BingeQueue: seasons, then episodes), the watched ones
- * kept — the one picked plays, and the rest of the show after it.
- */
-internal fun showQueue(show: Show): List<Playing> = BingeQueue.queue(show.seasons, skipWatched = false).map {
-    Playing("${show.title} · S%02dE%02d".format(it.season, it.episode.number), it.episode.videoPath)
 }
 
 private fun chooseFolder(): String? {

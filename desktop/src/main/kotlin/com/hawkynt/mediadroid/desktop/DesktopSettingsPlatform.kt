@@ -14,11 +14,11 @@ import javax.swing.JFileChooser
 
 /**
  * Settings on this computer. The rows only some platforms act on show where the desktop player does: the folder of
- * mpv shaders (ShaderFolder). Binge-watching, skipping intros, refresh-rate matching, even frames, passthrough, HDR
- * tone mapping, large-video scaling, the decoded buffer, the subtitles' look and the audio language are the Android
- * player's alone so far, and so are not shown. The default picture's choices are tried as the player tries them
+ * mpv shaders (ShaderFolder), binge-watching and skipping intros and credits (the player's PlayerSession, shared with
+ * the phone). Refresh-rate matching, even frames, passthrough, HDR tone mapping, large-video scaling, the decoded
+ * buffer, the subtitles' look and the audio language are the Android player's alone so far, and so are not shown. The default picture's choices are tried as the player tries them
  * (DesktopTrial), the screens are the monitors attached now (OutputScreen), each under the key the player keeps its
- * setup by; the test patterns are in the player's picture panel, over the video.
+ * setup by; the test patterns are in the player's gear, over the video.
  */
 class DesktopSettingsPlatform(private val store: DesktopStore, private val folder: File) : SettingsPlatform {
     override val offered: Set<PlatformSetting> = OFFERED
@@ -52,6 +52,10 @@ class DesktopSettingsPlatform(private val store: DesktopStore, private val folde
 
     companion object {
         /** The rows only some platforms act on that the desktop player does. */
-        val OFFERED: Set<PlatformSetting> = setOf(PlatformSetting.SHADER_FOLDER)
+        val OFFERED: Set<PlatformSetting> = setOf(
+            PlatformSetting.SHADER_FOLDER,
+            PlatformSetting.BINGE_WATCHING,
+            PlatformSetting.SKIP_INTRO_CREDITS,
+        )
     }
 }

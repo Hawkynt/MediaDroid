@@ -24,11 +24,13 @@ import java.io.File
 /** What the window shows: the library, or the player on a queue of videos. */
 sealed interface Screen {
     data object Library : Screen
-    data class Player(val queue: List<Playing>, val index: Int) : Screen
+    /** [autoAdvance]: the next video starts when one ends (a film's parts always, episodes with binge-watching). */
+    data class Player(
+        val queue: List<com.hawkynt.mediadroid.ui.Playable>,
+        val index: Int,
+        val autoAdvance: Boolean = true,
+    ) : Screen
 }
-
-/** A video to play, and the title to show over it. */
-data class Playing(val title: String, val video: String)
 
 /** The window as it was left (WindowPlace), else 1280 × 800 in the middle of the screen. */
 private fun windowState(saved: String?): WindowState {
@@ -83,7 +85,9 @@ fun main(args: Array<String>) = application {
     val opened = remember { args.firstOrNull()?.let(::File)?.takeIf { it.isFile } }
     var screen by remember {
         mutableStateOf(
-            opened?.let { Screen.Player(listOf(Playing(it.nameWithoutExtension, it.path)), 0) } ?: Screen.Library,
+            opened?.let {
+                Screen.Player(listOf(com.hawkynt.mediadroid.ui.Playable(it.nameWithoutExtension, null, it.path, null)), 0)
+            } ?: Screen.Library,
         )
     }
     var library by remember { mutableStateOf<Library?>(null) }
@@ -115,7 +119,7 @@ fun main(args: Array<String>) = application {
                     settings = settings,
                     library = library,
                     onLibrary = { library = it },
-                    onPlay = { queue, index -> screen = Screen.Player(queue, index) },
+                    onPlay = { queue, index, autoAdvance -> screen = Screen.Player(queue, index, autoAdvance) },
                 )
                 is Screen.Player -> {
                     val player = @androidx.compose.runtime.Composable { native: NativePicture? ->
@@ -125,6 +129,7 @@ fun main(args: Array<String>) = application {
                             mediaKeys = mediaKeys,
                             queue = s.queue,
                             startIndex = s.index,
+                            autoAdvance = s.autoAdvance,
                             fullScreen = state.placement == WindowPlacement.Fullscreen,
                             screen = { OutputScreen.of(window) },
                             onFullScreen = {
