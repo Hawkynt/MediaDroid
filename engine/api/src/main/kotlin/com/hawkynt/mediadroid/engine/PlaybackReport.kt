@@ -43,7 +43,10 @@ data class PlaybackReport(
         val description: String? = null,
     )
 
-    /** A file read: its [path] and the [demuxer] that reads it, where known. */
+    /**
+     * A file read: its [path] and the [demuxer] that reads it, where known — Media3's extractor by its class name
+     * (`MatroskaExtractor`), FFmpeg's as `ffmpeg:<format>` (`ffmpeg:matroska,webm`).
+     */
     data class Input(val path: String, val demuxer: String? = null)
 
     /**

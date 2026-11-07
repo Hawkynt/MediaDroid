@@ -634,9 +634,10 @@ class DesktopPlaybackEngine(
             val text = selectedText
             return PlaybackReport(
                 tags = facts.tags,
-                inputs = listOf(PlaybackReport.Input(request.path, facts.demuxer?.let { "FFmpeg $it" })) +
-                    request.subtitles.map { PlaybackReport.Input(it.path, "FFmpeg") } +
-                    request.audio.map { PlaybackReport.Input(it, "FFmpeg") },
+                // The files beside it are FFmpeg's too, named by their extension as most of its demuxers are.
+                inputs = listOf(PlaybackReport.Input(request.path, facts.demuxer?.let { "ffmpeg:$it" })) +
+                    request.subtitles.map { PlaybackReport.Input(it.path, sidecarDemuxer(it.path)) } +
+                    request.audio.map { PlaybackReport.Input(it, sidecarDemuxer(it)) },
                 video = reader.takeIf { it.width > 0 && it.height > 0 }?.let {
                     PlaybackReport.Video(
                         codecs = facts.videoCodec,
@@ -975,3 +976,7 @@ class DesktopPlaybackEngine(
         const val SOUND_FILE = "sound:"
     }
 }
+
+/** The demuxer a file beside the video is read by, as the report names it: FFmpeg's, by the file's extension. */
+private fun sidecarDemuxer(path: String): String? =
+    path.substringAfterLast('/').substringAfterLast('.', "").lowercase().ifEmpty { null }?.let { "ffmpeg:$it" }

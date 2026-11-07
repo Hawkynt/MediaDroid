@@ -61,7 +61,16 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
 import com.hawkynt.mediadroid.ui.PlayerCommand
 import com.hawkynt.mediadroid.ui.PlayerKeys
+import com.hawkynt.mediadroid.ui.ChapterDialog
+import com.hawkynt.mediadroid.ui.FeedbackNote
 import com.hawkynt.mediadroid.ui.GearPanel
+import com.hawkynt.mediadroid.ui.HistogramOverlay
+import com.hawkynt.mediadroid.ui.PlaybackInfoDialog
+import com.hawkynt.mediadroid.ui.SleepChoice
+import com.hawkynt.mediadroid.ui.StatisticsOverlay
+import com.hawkynt.mediadroid.ui.playbackFacts
+import com.hawkynt.mediadroid.ui.sleepNote
+import androidx.compose.material.icons.filled.Info
 import com.hawkynt.mediadroid.ui.Playable
 import com.hawkynt.mediadroid.ui.PlayerSession
 import com.hawkynt.mediadroid.ui.RepeatChoice
@@ -278,7 +287,41 @@ fun PlayerScreen(
     var controlsUntil by remember { mutableLongStateOf(System.currentTimeMillis() + CONTROLS_MS) }
     // The file's own chapters, and the part repeated between two marks — as on the phone.
     val chapters = session.chapters
-    var chapterMenu by remember { mutableStateOf(false) }
+    var chapterPicker by remember { mutableStateOf(false) }
+    // A short confirmation over the picture: a chapter's name, a repeat marked, the sleep timer run out.
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var feedbackStamp by remember { mutableIntStateOf(0) }
+    fun show(text: String) {
+        feedback = text
+        feedbackStamp++
+    }
+    LaunchedEffect(feedbackStamp) {
+        delay(FEEDBACK_MS)
+        feedback = null
+    }
+    // What is playing (the info sheet), and the statistics over the picture it switches on, for this player only;
+    // MEDIADROID_SHOW=info opens it from the start (documentation and checks).
+    var infoOpen by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "info") }
+    var statisticsShown by remember { mutableStateOf(false) }
+    val statistics = remember { com.hawkynt.mediadroid.player.PlaybackStatistics() }
+    LaunchedEffect(index) { statistics.clear() }
+    // The sleep timer, as on the phone: the sound fades over its last seconds, then the video pauses.
+    val baseVolume = remember { engine.volume }
+    LaunchedEffect(session.sleepAtMs) {
+        if (session.sleepAtMs == null) {
+            engine.volume = baseVolume
+            return@LaunchedEffect
+        }
+        while (true) {
+            val ranOut = session.sleepTick(System.nanoTime() / 1_000_000)
+            engine.volume = baseVolume * session.sleepVolume
+            if (ranOut) {
+                show("Sleep timer: paused")
+                break
+            }
+            delay(250)
+        }
+    }
     val abLoop = session.abLoop
     val focus = remember { FocusRequester() }
 
@@ -460,6 +503,11 @@ fun PlayerScreen(
                 val pixelAspect = PictureShape.pixelAspect(raw.width, raw.height, engine.pixelAspect, picture.aspect)
                 val look = listOf(picture, canvas, part, timing, pixelAspect, widening, fit)
                 if (raw !== lastShown || look != lastLook) {
+                    if (raw !== lastShown) {
+                        val at = System.nanoTime()
+                        statistics.frameArrived(at)
+                        statistics.pictureShown(at)
+                    }
                     lastShown = raw
                     lastLook = look
                     // Sized by the picture's true shape: non-square pixels (PAL DV, anamorphic DVD) widened, or the
@@ -693,7 +741,7 @@ fun PlayerScreen(
     fun stepFrame(forward: Boolean) = session.stepFrame(forward)
 
     fun jumpChapter(forward: Boolean) {
-        session.jumpChapter(forward)
+        session.jumpChapter(forward)?.let(::show)
     }
 
     // S: the next subtitle track, after the last one off again.
@@ -727,7 +775,7 @@ fun PlayerScreen(
                     PlayerCommand.FRAME_FORWARD -> stepFrame(true)
                     PlayerCommand.CHAPTER_NEXT -> jumpChapter(true)
                     PlayerCommand.CHAPTER_BACK -> jumpChapter(false)
-                    PlayerCommand.REPEAT -> session.markRepeat()
+                    PlayerCommand.REPEAT -> show(session.markRepeat())
                     PlayerCommand.SLOWER -> changeSpeed(speed - SPEED_STEP)
                     PlayerCommand.FASTER -> changeSpeed(speed + SPEED_STEP)
                     PlayerCommand.LEAVE -> if (fullScreen) onFullScreen() else onExit()
@@ -769,11 +817,16 @@ fun PlayerScreen(
                 )
             }
         }
-        if (histogramShown) {
-            HistogramOverlay(
-                histogram, Modifier.align(Alignment.TopStart).then(drifted).padding(top = 72.dp, start = 12.dp),
-            )
+        if (statisticsShown || histogramShown) {
+            // The statistics, and beneath them the histogram — on the left, beside the gear's picture controls.
+            Column(Modifier.align(Alignment.TopStart).then(drifted).padding(top = 72.dp, start = 12.dp)) {
+                if (statisticsShown) StatisticsOverlay(statistics, Modifier)
+                if (histogramShown) {
+                    HistogramOverlay(histogram, Modifier.padding(top = if (statisticsShown) 8.dp else 0.dp))
+                }
+            }
         }
+        feedback?.let { FeedbackNote(it, Modifier.align(Alignment.Center)) }
         if (panel) {
             // Clicking beside the panel closes it, as on the phone.
             Box(Modifier.fillMaxSize().clickable(interactionSource = null, indication = null) { panel = false })
@@ -787,7 +840,11 @@ fun PlayerScreen(
                 subtitlesOn = tracks.any { it.kind == Track.Kind.TEXT && it.selected },
                 onSubtitles = { on ->
                     val text = Tracks.of(engine.tracks, Track.Kind.TEXT)
-                    val chosen = if (on) Tracks.preferredText(text, store.subtitleLanguage) ?: text.firstOrNull() else null
+                    val chosen = if (on) {
+                        Tracks.preferredText(text, store.subtitleLanguage) ?: text.firstOrNull()
+                    } else {
+                        null
+                    }
                     pick(Track.Kind.TEXT, chosen?.id)
                 },
                 // This video's picture, as on the phone: live while a slider moves, kept when it is let go. The
@@ -845,6 +902,7 @@ fun PlayerScreen(
                         subtitleDelayMs = it
                         store.setSubtitleDelay(video, it)
                     }
+                    SleepChoice(session) { System.nanoTime() / 1_000_000 }
                     RepeatChoice(session.repeat) { session.repeat = it }
                     DesktopDecodingRows(
                         softwareDecoding,
@@ -865,6 +923,59 @@ fun PlayerScreen(
                         pattern = pattern,
                         onPattern = { pattern = it },
                     )
+                },
+            )
+        }
+        if (chapterPicker) {
+            ChapterDialog(
+                chapters = chapters,
+                current = ChapterSteps.current(chapters, engine.positionMs),
+                onDismiss = { chapterPicker = false },
+                onPick = { start ->
+                    engine.seekTo(start)
+                    chapterPicker = false
+                },
+            )
+        }
+        if (infoOpen) {
+            val report = engine.report
+            val shownOn = screen()
+            PlaybackInfoDialog(
+                playing = playing,
+                report = report,
+                tracks = engine.tracks,
+                videoPath = playing.videoPath,
+                graph = com.hawkynt.mediadroid.player.PlaybackChain.of(
+                    playbackFacts(
+                        location = playing.videoPath,
+                        report = report,
+                        videoDecoder = engine.hardwareDecoder?.label ?: "FFmpeg",
+                        audioDecoder = "FFmpeg",
+                        picture = picture,
+                        fit = fit.label,
+                        zoom = 1f,
+                        screen = shownOn.name,
+                        screenWidth = (shownOn.height * shownOn.aspect).toInt(),
+                        screenHeight = shownOn.height,
+                        refreshHz = 0f,
+                        loudnessDb = sound.loudnessDb,
+                        nightMode = nightMode,
+                        evenLoudness = sound.evenLoudness,
+                        replayGainDb = null,
+                        speed = speed,
+                        delayMs = sound.audioDelayMs,
+                        spatial = false,
+                        device = "this computer's output",
+                        subtitleDelayMs = subtitleDelayMs,
+                    ),
+                ),
+                statisticsShown = statisticsShown,
+                onStatistics = { statisticsShown = it },
+                onDismiss = { infoOpen = false },
+                histogramShown = histogramShown,
+                onHistogram = {
+                    histogramShown = it
+                    if (!it) histogram = null
                 },
             )
         }
@@ -939,6 +1050,8 @@ fun PlayerScreen(
                 ChapterSteps.current(chapters, position)?.let {
                     Text("  ·  " + ChapterSteps.name(chapters, it), color = Color.White, fontSize = 16.sp)
                 }
+                Spacer(Modifier.weight(1f))
+                sleepNote(session)?.let { Text(it, color = Color.White, fontSize = 15.sp, maxLines = 1) }
             }
             Column(
                 Modifier.fillMaxWidth().align(Alignment.BottomStart)
@@ -974,7 +1087,7 @@ fun PlayerScreen(
                         Icon(Icons.Default.PhotoCamera, "Take a picture", tint = Color.White)
                     }
                     // L: one press marks the start, the next the end, the third stops repeating.
-                    TextButton(onClick = { session.markRepeat() }) {
+                    TextButton(onClick = { show(session.markRepeat()) }) {
                         val a = abLoop.a
                         val b = abLoop.b
                         Text(
@@ -988,23 +1101,12 @@ fun PlayerScreen(
                         )
                     }
                     if (chapters.isNotEmpty()) {
-                        Box {
-                            IconButton(onClick = { chapterMenu = true }) {
-                                Icon(Icons.AutoMirrored.Filled.List, "Chapters", tint = Color.White)
-                            }
-                            DropdownMenu(expanded = chapterMenu, onDismissRequest = { chapterMenu = false }) {
-                                chapters.indices.sortedBy { chapters[it].startMs }.forEach { i ->
-                                    val label = ChapterSteps.name(chapters, i) + "  ·  " + clock(chapters[i].startMs)
-                                    DropdownMenuItem(
-                                        text = { Text(label) },
-                                        onClick = {
-                                            engine.seekTo(chapters[i].startMs)
-                                            chapterMenu = false
-                                        },
-                                    )
-                                }
-                            }
+                        IconButton(onClick = { chapterPicker = true }) {
+                            Icon(Icons.AutoMirrored.Filled.List, "Chapters", tint = Color.White)
                         }
+                    }
+                    IconButton(onClick = { infoOpen = true }) {
+                        Icon(Icons.Default.Info, "What is playing", tint = Color.White)
                     }
                     IconButton(onClick = { panel = !panel }) {
                         Icon(Icons.Default.Tune, "Picture", tint = Color.White)
@@ -1086,6 +1188,9 @@ private const val HISTOGRAM_MS = 500L
 
 /** How long a snapshot's file stays named on screen. */
 private const val SNAPSHOT_NOTE_MS = 5_000L
+
+/** How long a confirmation stays over the picture. */
+private const val FEEDBACK_MS = 800L
 
 /** How much [ and ] change the speed. */
 private const val SPEED_STEP = 0.05f

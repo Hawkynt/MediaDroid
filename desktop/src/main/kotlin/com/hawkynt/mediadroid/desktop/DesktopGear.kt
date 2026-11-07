@@ -148,8 +148,9 @@ fun ColumnScope.DesktopDecodingRows(software: Boolean, onSoftware: (Boolean) -> 
 }
 
 /**
- * The screen the window is on, kept for that screen alone (Settings → Screens): the shape it is seen at, a projector's
- * mirror, flip and keystone, burn-in care — live on the picture behind the panel — and the test patterns to set them by.
+ * The screen the window is on, kept for that screen alone (Settings → Screens): the shape it is seen at, a
+ * projector's mirror, flip and keystone, burn-in care — live on the picture behind the panel — and the test patterns
+ * to set them by.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
