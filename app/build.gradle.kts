@@ -103,6 +103,7 @@ dependencies {
     implementation(project(":core:sources"))
     implementation(project(":engine:api"))
     implementation(project(":engine:android"))
+    implementation(project(":ui"))
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

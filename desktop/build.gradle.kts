@@ -28,6 +28,7 @@ dependencies {
     implementation(project(":core:player"))
     implementation(project(":core:sources"))
     implementation(project(":engine:desktop"))
+    implementation(project(":ui"))
     // The settings file, settings.json (DesktopStore).
     implementation(libs.serialization.json)
     // SMB servers announced on the local network (mDNS), SmbDiscovery.
