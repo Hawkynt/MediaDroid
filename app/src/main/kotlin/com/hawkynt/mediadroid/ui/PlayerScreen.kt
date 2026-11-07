@@ -110,6 +110,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.Info
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableLongStateOf
@@ -1382,15 +1383,14 @@ fun PlayerScreen(
                     if (!volumeKey && native.action == android.view.KeyEvent.ACTION_DOWN) lockHintStamp++
                     return@onPreviewKeyEvent !volumeKey
                 }
-                // mpv's keys for the same: . and , step a frame, Page Up and Down a chapter, L repeats a part.
-                val command: (() -> Unit)? = when (native.keyCode) {
-                    android.view.KeyEvent.KEYCODE_MEDIA_STEP_FORWARD, android.view.KeyEvent.KEYCODE_PERIOD ->
-                        { -> stepFrame(true) }
-                    android.view.KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD, android.view.KeyEvent.KEYCODE_COMMA ->
-                        { -> stepFrame(false) }
-                    android.view.KeyEvent.KEYCODE_PAGE_UP -> { -> jumpChapter(true) }
-                    android.view.KeyEvent.KEYCODE_PAGE_DOWN -> { -> jumpChapter(false) }
-                    android.view.KeyEvent.KEYCODE_L -> { -> markRepeat() }
+                // The shared keyboard (PlayerKeys), as far as the phone's player takes it: . and , (and a remote's
+                // step keys) step a frame, Page Up and Down a chapter, L repeats a part.
+                val command: (() -> Unit)? = when (PlayerKeys.commandOf(event.key)) {
+                    PlayerCommand.FRAME_FORWARD -> { -> stepFrame(true) }
+                    PlayerCommand.FRAME_BACK -> { -> stepFrame(false) }
+                    PlayerCommand.CHAPTER_NEXT -> { -> jumpChapter(true) }
+                    PlayerCommand.CHAPTER_BACK -> { -> jumpChapter(false) }
+                    PlayerCommand.REPEAT -> { -> markRepeat() }
                     else -> null
                 }
                 if (command != null) {
@@ -1690,7 +1690,7 @@ fun PlayerScreen(
                     .fillMaxSize()
                     .clickable(interactionSource = null, indication = null) { panelOpen = false },
             )
-            PlayerPanel(
+            GearPanel(
                 speed = speed,
                 onSpeed = { speed = it },
                 fit = fit,
@@ -2156,307 +2156,20 @@ fun PlayerScreen(
     }
 }
 
-/** The file's chapters with where each begins, the playing one marked; picking one plays from its start. */
-@Composable
-private fun ChapterDialog(
-    chapters: List<com.hawkynt.mediadroid.library.Chapter>,
-    current: Int?,
-    onDismiss: () -> Unit,
-    onPick: (Long) -> Unit,
-) {
-    val ordered = chapters.indices.sortedBy { chapters[it].startMs }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close", fontSize = 18.sp) } },
-        title = { Text("Chapters") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                ordered.forEach { i ->
-                    val playing = i == current
-                    TextButton(onClick = { onPick(chapters[i].startMs) }, modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            com.hawkynt.mediadroid.player.ChapterSteps.name(chapters, i),
-                            fontSize = 20.sp,
-                            fontWeight = if (playing) FontWeight.Bold else FontWeight.Normal,
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(clock(chapters[i].startMs), fontSize = 18.sp)
-                    }
-                }
-            }
-        },
-    )
-}
-
-/** Lists the audio or subtitle tracks of the current item; "Automatic" clears the pick. */
-@Composable
-private fun TrackDialog(
-    tracks: List<com.hawkynt.mediadroid.engine.Track>,
-    kind: com.hawkynt.mediadroid.engine.Track.Kind,
-    labelFor: (com.hawkynt.mediadroid.engine.Track) -> String? = { null },
-    /** What the first choice, no track of its own, is called. */
-    noneLabel: String = "Automatic",
-    /** The track shown marked as the one playing; none by default. */
-    marked: (com.hawkynt.mediadroid.engine.Track) -> Boolean = { false },
-    onDismiss: () -> Unit,
-    onPick: (com.hawkynt.mediadroid.engine.Track?) -> Unit,
-) {
-    val choices = com.hawkynt.mediadroid.engine.Tracks.of(tracks, kind)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close", fontSize = 18.sp) } },
-        text = {
-            Column {
-                TextButton(onClick = { onPick(null) }) { Text(noneLabel, fontSize = 20.sp) }
-                choices.forEachIndexed { i, track ->
-                    val label = labelFor(track) ?: track.label ?: track.language ?: "Track ${i + 1}"
-                    TextButton(onClick = { onPick(track) }) {
-                        Text(
-                            buildString {
-                                if (marked(track)) append("✓ ")
-                                append(label)
-                                track.language?.let { append("  ($it)") }
-                            },
-                            fontSize = 20.sp,
-                        )
-                    }
-                }
-                if (choices.isEmpty()) Text("This file has only one such track.", fontSize = 18.sp)
-            }
-        },
-    )
-}
-
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
 }
 
-/**
- * The gear's side panel: speed, this video's picture, subtitles and tracks. Picture changes show
- * live and are remembered for this one video when a slider is let go.
- */
-@Composable
-private fun PlayerPanel(
-    speed: Float,
-    onSpeed: (Float) -> Unit,
-    fit: PictureFit,
-    onFit: (PictureFit) -> Unit,
-    subtitlesOn: Boolean,
-    onSubtitles: (Boolean) -> Unit,
-    picture: PictureAdjustment,
-    onPicture: (PictureAdjustment) -> Unit,
-    onPictureDone: () -> Unit,
-    onResetPicture: () -> Unit,
-    /** Tries a choice of deinterlacing, upscaling or smooth motion before it is taken (see pictureCheck). */
-    check: PictureTry = { _, _ -> PictureVerdict(true) },
-    /** The colourisers offered for this video (see rememberColorizers). */
-    colorizers: List<PictureAdjustment.Colorize> = listOf(PictureAdjustment.Colorize.OFF),
-    onAudioTrack: () -> Unit,
-    onSubtitleTrack: () -> Unit,
-    /** Picks a second subtitle track, shown at the top beside the first. */
-    onSecondSubtitleTrack: () -> Unit = {},
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
-    sections: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
-    afterPictureSize: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
-    /** The folder this video is in, and the one whose picture it starts with, if any has one (FolderDefaults). */
-    folder: String = "",
-    pictureFolder: String? = null,
-    onUseForFolder: () -> Unit = {},
-    onForgetFolder: () -> Unit = {},
-) {
-    Column(
-        modifier = modifier
-            .fillMaxHeight()
-            .widthIn(max = 400.dp)
-            .fillMaxWidth(0.9f)
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
-            .clickable(interactionSource = null, indication = null) {}
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Playback & picture", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close") }
-        }
-
-        PanelTitle("Speed")
-        SpeedSlider(speed, onSpeed, Modifier.fillMaxWidth())
-
-        sections()
-
-        PanelTitle("Picture size")
-        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PictureFit.entries.forEach { option ->
-                FilterChip(
-                    selected = fit == option,
-                    onClick = { onFit(option) },
-                    label = { Text(option.label, fontSize = 16.sp) },
-                )
-            }
-        }
-        Text(
-            (if (fit == PictureFit.PANORAMIC) "A narrow picture fills a wide screen: the middle as it is, the sides " +
-                "stretched. " else "") + "Pinch with two fingers to zoom; choosing a size resets the zoom.",
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-        // The frame's shape, for a file whose flag is wrong (PictureShape); remembered with this video's picture.
-        Text("Shape", fontSize = 16.sp, modifier = Modifier.padding(top = 12.dp))
-        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            com.hawkynt.mediadroid.player.AspectOverride.entries.forEach { option ->
-                FilterChip(
-                    selected = picture.aspect == option,
-                    onClick = {
-                        onPicture(picture.copy(aspect = option))
-                        onPictureDone()
-                    },
-                    label = { Text(option.label, fontSize = 16.sp) },
-                )
-            }
-        }
-        Text(
-            "Only for a picture that looks squeezed or stretched: its file says the wrong shape.",
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        afterPictureSize()
-
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 20.dp)) {
-            Text(
-                "Picture for this video",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = onResetPicture) { Text("Reset", fontSize = 16.sp) }
-        }
-        PictureSliders(
-            picture, onChange = onPicture, onDone = onPictureDone, stereo = true, logo = true, check = check,
-            colorizers = colorizers,
-        )
-        // The picture for every video in the folder, as one: a folder of VHS rips starting deinterlaced.
-        OutlinedButton(onClick = onUseForFolder, modifier = Modifier.padding(top = 8.dp)) {
-            Text("Use for the whole folder", fontSize = 16.sp)
-        }
-        Text(
-            if (pictureFolder != null) {
-                "Videos in $pictureFolder start with that folder's picture; a video changed here keeps its own."
-            } else {
-                "Every video in $folder will start with this picture; each can still be changed on its own."
-            },
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (pictureFolder != null) {
-            TextButton(onClick = onForgetFolder) { Text("Forget the folder's picture", fontSize = 16.sp) }
-        }
-
-        PanelTitle("Subtitles & sound")
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Subtitles", fontSize = 17.sp, modifier = Modifier.weight(1f))
-            Switch(checked = subtitlesOn, onCheckedChange = onSubtitles)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-            OutlinedButton(onClick = onAudioTrack) { Text("Audio track…", fontSize = 16.sp) }
-            OutlinedButton(onClick = onSubtitleTrack) { Text("Subtitle track…", fontSize = 16.sp) }
-        }
-        OutlinedButton(onClick = onSecondSubtitleTrack, modifier = Modifier.padding(top = 8.dp)) {
-            Text("Second subtitles…", fontSize = 16.sp)
-        }
-    }
-}
-
-@Composable
-private fun PanelTitle(text: String) {
-    Text(text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
-}
-
-/** `1:23:45` or `23:45` for a position in milliseconds. */
-private fun clock(ms: Long): String {
-    val total = ms / 1000
-    val h = total / 3600
-    val m = total / 60 % 60
-    val sec = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
-}
-
 /** How often a repeated part's end is looked for. */
 private const val AB_CHECK_MS = 40L
-
-/** How long the lock symbol must be held to unlock the player. */
-private const val UNLOCK_HOLD_MS = 2_000L
 
 /** How long the flash of a snapshot lasts. */
 private const val SNAPSHOT_FLASH_MS = 150L
 
 /** How long the snapshot just taken stays on screen, with its share button. */
 private const val SNAPSHOT_SHOWN_MS = 6_000L
-
-/** How long the lock symbol stays up after a touch. */
-private const val LOCK_HINT_MS = 2_500L
-
-/**
- * The locked player: a layer over everything that swallows every touch. Any touch (or a [stamp] change
- * from a key or Back) shows the lock symbol for a moment; holding it for [UNLOCK_HOLD_MS] unlocks.
- */
-@Composable
-private fun LockOverlay(stamp: Int, onTouch: () -> Unit, onUnlock: () -> Unit) {
-    var visible by remember { mutableStateOf(true) }
-    var holding by remember { mutableStateOf(false) }
-    LaunchedEffect(stamp, holding) {
-        visible = true
-        if (!holding) {
-            delay(LOCK_HINT_MS)
-            visible = false
-        }
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        event.changes.forEach { it.consume() }
-                        if (event.changes.any { it.pressed }) onTouch()
-                    }
-                }
-            },
-    ) {
-        if (visible) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(96.dp)
-                    .background(Color.Black.copy(alpha = if (holding) 0.85f else 0.6f), CircleShape)
-                    .pointerInput(Unit) {
-                        awaitEachGesture {
-                            awaitFirstDown()
-                            holding = true
-                            val released = withTimeoutOrNull(UNLOCK_HOLD_MS) { waitForUpOrCancellation() }
-                            holding = false
-                            if (released == null) onUnlock()
-                        }
-                    },
-            ) {
-                Icon(
-                    Icons.Filled.Lock,
-                    contentDescription = "Hold to unlock",
-                    tint = Color.White,
-                    modifier = Modifier.size(48.dp),
-                )
-            }
-        }
-    }
-}
 
 /** How the player screen turns: with the device, or held in one orientation (sensor-flipped either way). */
 private enum class Rotation(val label: String, val orientation: Int) {
