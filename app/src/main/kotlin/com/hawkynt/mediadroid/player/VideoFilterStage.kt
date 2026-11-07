@@ -19,6 +19,7 @@ import com.hawkynt.mediadroid.shaders.Shaders
 import com.hawkynt.mediadroid.stage.Colouring
 import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Passes
+import com.hawkynt.mediadroid.stage.Restoration
 import com.hawkynt.mediadroid.stage.Upscaling
 import com.hawkynt.mediadroid.stage.WindowTarget
 import java.nio.ByteBuffer
@@ -85,6 +86,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // Colour for black-and-white pictures (Colouring): DDColor on a thread of its own, its colour laid under each
     // picture.
     private val colouring = Colouring(gl, passes)
+
+    // The restoration passes at the picture's size (Restoration): dot crawl, temporal denoising, deblocking and
+    // deringing, the logo, debanding, denoising, sharpening; whether debanding runs GLSL ES 3.00's pass, and whether
+    // deblocking's and deringing's (GLSL ES 3.00 only) built.
+    private val restoration = Restoration(gl, passes)
+    private var debandEs3 = false
+    private var deblockReady = false
 
     /**
      * Where DDColor's self-test passed and what one run took there (NeuralChecks.colorizer); null while colour is not
@@ -343,24 +351,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var copyProgram = 0
     private var adjustProgram = 0
     private var deinterlaceProgram = 0
-    private var denoiseProgram = 0
-    private var debandProgram = 0
-    private var logoProgram = 0
 
     // Deblocking's pass and deringing's two (GLSL ES 3.00; without, neither runs).
-    private var deblockProgram = 0
-    private var cdefDirectionProgram = 0
-    private var cdefProgram = 0
     private var mpvLumaProgram = 0
     private var mpvRecombineProgram = 0
     private var mpvChromaProgram = 0
     private var mpvChromaRgbProgram = 0
-    private var temporalDenoiseProgram = 0
-    private var dotCrawlProgram = 0
-    private var dotCrawlPalProgram = 0
 
     // Debanding's frame index, which seeds its random numbers with the pixel's position: libplacebo's 8-bit counter.
-    private var debandFrame = 0
 
     // Dithering to the screen's 8 bits (see Dither): the last pass, and libplacebo's blue-noise matrix as a texture
     // (made on first use); whether the picture being drawn is dithered, its frames then held in half floats.
@@ -1097,12 +1095,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             enlarger = null
             if (enlargerTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(enlargerTexture), 0)
             GLES20.glDeleteProgram(deinterlaceProgram)
-            GLES20.glDeleteProgram(denoiseProgram)
-            GLES20.glDeleteProgram(debandProgram)
-            GLES20.glDeleteProgram(logoProgram)
-            GLES20.glDeleteProgram(deblockProgram)
-            GLES20.glDeleteProgram(cdefDirectionProgram)
-            GLES20.glDeleteProgram(cdefProgram)
             GLES20.glDeleteProgram(mpvLumaProgram)
             GLES20.glDeleteProgram(mpvRecombineProgram)
             GLES20.glDeleteProgram(mpvChromaProgram)
@@ -1111,9 +1103,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             if (uploaded.isNotEmpty()) GLES20.glDeleteTextures(uploaded.size, uploaded, 0)
             mpvPrograms.values.forEach { GLES20.glDeleteProgram(it) }
             mpvFrames.values.forEach { it.release() }
-            GLES20.glDeleteProgram(temporalDenoiseProgram)
-            GLES20.glDeleteProgram(dotCrawlProgram)
-            GLES20.glDeleteProgram(dotCrawlPalProgram)
             GLES20.glDeleteProgram(tonemapProgram)
             GLES20.glDeleteProgram(peakProgram)
             if (ditherProgram != 0) GLES20.glDeleteProgram(ditherProgram)
@@ -1262,7 +1251,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         copyProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_COPY)
         adjustProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_ADJUST)
         deinterlaceProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEINTERLACE)
-        denoiseProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DENOISE)
         sharpenProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_SHARPEN)
         upscalers.build(PictureAdjustment.Upscaler.LANCZOS)
         upscalers.build(PictureAdjustment.Upscaler.GSR)
@@ -1275,29 +1263,17 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         if (!fsrEs3) upscalers.build(PictureAdjustment.Upscaler.FSR, es3 = false)
         // Debanding draws libplacebo's own random numbers where GLSL ES 3.00 has unsigned integers for them; the
         // GLSL ES 1.00 pass draws others (see glsl/video/deband.frag).
-        val debandEs3 = es3 && runCatching {
-            debandProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_DEBAND_ES3))
-        }.isSuccess
-        if (!debandEs3) debandProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEBAND)
-        logoProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_LOGO_MASK)
+        debandEs3 = es3 && runCatching { passes.program(Shaders.VIDEO_DEBAND_ES3) }.isSuccess
+        restoration.build(debandEs3)
         // Deblocking and deringing filter each value as its exact 8-bit step: GLSL ES 3.00's integers and texelFetch.
-        if (es3) {
-            runCatching {
-                val programs = listOf(
-                    Shaders.VIDEO_DEBLOCK_ES3, Shaders.VIDEO_CDEF_DIRECTION_ES3, Shaders.VIDEO_CDEF_ES3,
-                ).map { linked(program(Shaders.VIDEO_VERTEX_ES3, it)) }
-                deblockProgram = programs[0]
-                cdefDirectionProgram = programs[1]
-                cdefProgram = programs[2]
-            }
-        }
+        deblockReady = es3 && runCatching {
+            listOf(Shaders.VIDEO_DEBLOCK_ES3, Shaders.VIDEO_CDEF_DIRECTION_ES3, Shaders.VIDEO_CDEF_ES3)
+                .forEach { passes.program(it) }
+        }.isSuccess
         mpvLumaProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_LUMA)
         mpvRecombineProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_RECOMBINE)
         mpvChromaProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_CHROMA)
         mpvChromaRgbProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MPV_CHROMA_RGB)
-        temporalDenoiseProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TEMPORAL_DENOISE)
-        dotCrawlProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DOT_CRAWL)
-        dotCrawlPalProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DOT_CRAWL_PAL)
         tonemapProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_TONEMAP)
         peakProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PEAK)
         // Dithering reads its texels exactly with GLSL ES 3.00's texelFetch; the GLSL ES 1.00 pass reads their centres.
@@ -1489,26 +1465,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             val into = frames[DOT_CRAWL].ensure(width, height, deepInput(picture))
             val pal = DotCrawl.Standard.forInterval(frameIntervalNs / 1e6f) == DotCrawl.Standard.PAL
             val earlier = if (historyCount >= 4) frames[earliest] else prev
-            exact(earlier.texture, prev.texture, cur.texture, next.texture) {
-                into.bind()
-                val program = if (pal) dotCrawlPalProgram else dotCrawlProgram
-                run(program, GLES20.GL_TEXTURE_2D, cur.texture, identity) { p ->
-                    if (pal) {
-                        GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
-                        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, earlier.texture)
-                        GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uEarlier"), 3)
-                    }
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prev.texture)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrev"), 1)
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, next.texture)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uNext"), 2)
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uThreshold"), threshold)
-                }
-            }
+            restoration.dotCrawl(cur, prev, next, if (pal) earlier else null, into, threshold)
             into
         } ?: cur
         // Temporal denoising on the frame shown, against its neighbours as decoded, before any deinterlacing: each
@@ -1533,43 +1490,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 cut -> 0f
                 else -> 1f
             }
-            exact(prev.texture, combed.texture, next.texture) {
-                into.bind()
-                run(temporalDenoiseProgram, GLES20.GL_TEXTURE_2D, combed.texture, identity) { p ->
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prev.texture)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrev"), 1)
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, next.texture)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uNext"), 2)
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, denoiseVectorTexture)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrevVectors"), 3)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uNextVectors"), 3)
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE4)
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, obmcTexture)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uObmc"), 4)
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-                    GLES20.glUniform1f(
-                        GLES20.glGetUniformLocation(p, "uA"), TemporalDenoise.threshold(params.a).toFloat(),
-                    )
-                    GLES20.glUniform1f(
-                        GLES20.glGetUniformLocation(p, "uB"), TemporalDenoise.threshold(params.b).toFloat(),
-                    )
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uPrevMode"), prevMode)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uNextMode"), nextMode)
-                    for (side in listOf("Prev", "Next")) {
-                        GLES20.glUniform2f(
-                            GLES20.glGetUniformLocation(p, "u${side}Grid"),
-                            denoiseGrid[0].toFloat(), denoiseGrid[1].toFloat(),
-                        )
-                        GLES20.glUniform1f(
-                            GLES20.glGetUniformLocation(p, "u${side}Scale"), denoiseGridScale.toFloat(),
-                        )
-                    }
-                }
-            }
+            fun side(frame: Frame, mode: Float) = Restoration.Side(
+                frame, denoiseVectorTexture, mode, denoiseGrid[0], denoiseGrid[1], denoiseGridScale, grid = true,
+            )
+            restoration.temporalDenoise(combed, side(prev, prevMode), side(next, nextMode), obmcTexture, params, into)
             into
         } ?: combed
         val deinterlaced = when {
@@ -2089,48 +2013,19 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             val rect = logo.rectangle(width, height)
             if (rect.left + rect.width < width && rect.top + rect.height < height) {
                 val masked = frames[LOGO_MASKED].ensure(width, height, deepInput(picture))
-                exact(source.texture) {
-                    masked.bind()
-                    run(logoProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                        GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-                        GLES20.glUniform4f(
-                            GLES20.glGetUniformLocation(p, "uRect"),
-                            rect.left.toFloat(), rect.top.toFloat(), rect.width.toFloat(), rect.height.toFloat(),
-                        )
-                        GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uMode"), logo.mode.ordinal)
-                    }
-                }
+                restoration.logo(source, masked, logo, rect)
                 source = masked
             }
         }
         picture.debandParams()?.let { deband ->
             val debanded = frames[DEBANDED].ensure(width, height, deepInput(picture))
-            debanded.bind()
-            debandFrame = (debandFrame + 1) and 0xFF
-            run(debandProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-                // The frames hold the picture's top row where v is 1; libplacebo counts rows from the top.
-                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uRows"), height.toFloat(), -1f)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFrame"), debandFrame.toFloat())
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uIterations"), deband.iterations)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uThreshold"), deband.threshold / 1000f)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), deband.radius)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uDebandGrain"), deband.grain / 1000f)
-            }
+            restoration.deband(source, debanded, deband, debandEs3)
             source = debanded
         }
         val kernel = picture.denoiseKernel()
         if (kernel != null) {
             val denoised = frames[1].ensure(width, height, deepInput(picture))
-            denoised.bind()
-            run(denoiseProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
-                val radius = kernel.radius
-                val sigmaR = kernel.similarity
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), radius)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSigmaS2"), 2f * radius * radius)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSigmaR2"), 2f * sigmaR * sigmaR)
-            }
+            restoration.denoise(source, denoised, kernel)
             source = denoised
         }
         return source
@@ -2157,7 +2052,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private fun deblocked(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
         val deblock = picture.deblockParams()
         val dering = picture.deringParams()
-        if ((deblock == null && dering == null) || deblockProgram == 0) return from
+        if ((deblock == null && dering == null) || !deblockReady) return from
         if (PictureSize(width, height) != eyeSize()) return from
         // Where the picture shown starts in the decoder's frame: the 3D eye, then the black bars cropped inside it.
         val video = PictureSize(
@@ -2174,21 +2069,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         if (deblock != null) {
             for (pass in 0..2) {
                 val into = frames[if (pass % 2 == 0) DEBLOCK_A else DEBLOCK_B].ensure(width, height, deep)
-                into.bind()
-                run(deblockProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                    GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uSize"), width, height)
-                    GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uOrigin"), originX, originY)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPass"), pass)
-                    GLES20.glUniform1i(
-                        GLES20.glGetUniformLocation(p, "uStrong"),
-                        if (deblock.filter == Deblock.Filter.STRONG) 1 else 0,
-                    )
-                    GLES30.glUniform4i(
-                        GLES20.glGetUniformLocation(p, "uThresholds"),
-                        Deblock.threshold(deblock.alpha), Deblock.threshold(deblock.beta),
-                        Deblock.threshold(deblock.gamma), Deblock.threshold(deblock.delta),
-                    )
-                }
+                restoration.deblock(source, into, originX, originY, pass, deblock)
                 source = into
             }
         }
@@ -2197,25 +2078,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             val blocksHigh = (height - originY) / 8
             if (blocksWide <= 0 || blocksHigh <= 0) return source
             val blocks = frames[CDEF_BLOCKS].ensure(blocksWide, blocksHigh)
-            blocks.bind()
-            run(cdefDirectionProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uSize"), width, height)
-                GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uOrigin"), originX, originY)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrimary"), dering.primary)
-            }
             val into = frames[if (source === frames[DEBLOCK_A]) DEBLOCK_B else DEBLOCK_A].ensure(width, height, deep)
-            into.bind()
-            run(cdefProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, blocks.texture)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uDirections"), 1)
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-                GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uSize"), width, height)
-                GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uOrigin"), originX, originY)
-                GLES30.glUniform2i(GLES20.glGetUniformLocation(p, "uBlocks"), blocksWide, blocksHigh)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uSecondary"), dering.secondary)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uDamping"), dering.damping)
-            }
+            restoration.dering(source, blocks, into, originX, originY, dering)
             source = into
         }
         return source
@@ -2236,12 +2100,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         keptSteady[0] = keptSteady[1]
         keptSteady[1] = keptSteady[2]
         val target = frames[keptRing[2]].ensure(keptWidth, keptHeight)
-        target.bind()
-        run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / keptWidth, 1f / keptHeight)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), picture.sharpness)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), picture.clarity)
-        }
+        restoration.sharpen(source, target, picture.sharpness, picture.clarity)
         keptAt[2] = System.nanoTime()
         keptSteady[2] = blendTimeline.arrived(keptAt[2])
         kept = minOf(kept + 1, 3)

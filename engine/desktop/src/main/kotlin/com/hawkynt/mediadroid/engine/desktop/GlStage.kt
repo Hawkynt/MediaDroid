@@ -21,6 +21,7 @@ import com.hawkynt.mediadroid.shaders.Shaders
 import com.hawkynt.mediadroid.stage.Colouring
 import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Passes
+import com.hawkynt.mediadroid.stage.Restoration
 import com.hawkynt.mediadroid.stage.StageTables
 import com.hawkynt.mediadroid.stage.Upscaling
 import org.lwjgl.glfw.GLFW
@@ -61,14 +62,12 @@ class GlStage(
     private val passes = Passes(gl)
     private val upscaling = Upscaling(passes)
     private val colouring = Colouring(gl, passes)
+    private val restoration = Restoration(gl, passes)
     private var obmcTable = 0
     private var noiseTable = 0
 
     // Whether this moment's passes draw into half floats for the last pass to dither (see run).
     private var deep = false
-
-    // Debanding's frame index, which seeds its random numbers: libplacebo's 8-bit counter.
-    private var debandFrame = 0
 
     // HDR's peak as measured over the pictures so far, and the transfer it was measured for.
     private val peakDetect = PeakDetect()
@@ -584,17 +583,8 @@ class GlStage(
             val next = neighbour(after ?: picture).takeIf { it.width == w && it.height == h } ?: raw
             val intervalMs = before?.let { picture.ptsMs - it.ptsMs } ?: after?.let { it.ptsMs - picture.ptsMs } ?: 0L
             val pal = DotCrawl.Standard.forInterval(intervalMs.toFloat()) == DotCrawl.Standard.PAL
-            val sides = if (pal) {
-                val two = neighbour(earlier ?: picture).takeIf { it.width == w && it.height == h } ?: raw
-                listOf(two.texture to "uEarlier", prev.texture to "uPrev", next.texture to "uNext")
-            } else {
-                listOf(prev.texture to "uPrev", next.texture to "uNext")
-            }
-            pass(if (pal) "dot-crawl-pal.frag" else "dot-crawl.frag", target("combed", w, h, half = deep), raw.texture,
-                sides, nearest = true) { p ->
-                glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
-                glUniform1f(glGetUniformLocation(p, "uThreshold"), threshold)
-            }
+            val two = if (pal) neighbour(earlier ?: picture).takeIf { it.width == w && it.height == h } ?: raw else null
+            restoration.dotCrawl(raw, prev, next, two, target("combed", w, h, half = deep), threshold) as Target
         } ?: raw
         // The pictures either side moved onto it along the motion between them once the search has it — until then
         // read as they are, and filtered again.
@@ -660,36 +650,15 @@ class GlStage(
         val (originX, originY) = Deblock.gridOrigin(part.left, part.top)
         a.deblockParams()?.let { d ->
             for (step in 0..2) {
-                source = pass("deblock-es3.frag", target("deblocked$step", w, h, half = deep), source.texture) { p ->
-                    glUniform2i(glGetUniformLocation(p, "uSize"), w, h)
-                    glUniform2i(glGetUniformLocation(p, "uOrigin"), originX, originY)
-                    glUniform1i(glGetUniformLocation(p, "uPass"), step)
-                    glUniform1i(glGetUniformLocation(p, "uStrong"), if (d.filter == Deblock.Filter.STRONG) 1 else 0)
-                    glUniform4i(
-                        glGetUniformLocation(p, "uThresholds"),
-                        Deblock.threshold(d.alpha), Deblock.threshold(d.beta),
-                        Deblock.threshold(d.gamma), Deblock.threshold(d.delta),
-                    )
-                }
+                source = restoration.deblock(source, target("deblocked$step", w, h, half = deep), originX, originY,
+                    step, d) as Target
             }
         }
         val blocksWide = (w - originX) / 8
         val blocksHigh = (h - originY) / 8
         a.deringParams()?.takeIf { blocksWide > 0 && blocksHigh > 0 }?.let { d ->
-            val blockTarget = target("cdefBlocks", blocksWide, blocksHigh)
-            val blocks = pass("cdef-direction-es3.frag", blockTarget, source.texture) { p ->
-                glUniform2i(glGetUniformLocation(p, "uSize"), w, h)
-                glUniform2i(glGetUniformLocation(p, "uOrigin"), originX, originY)
-                glUniform1i(glGetUniformLocation(p, "uPrimary"), d.primary)
-            }
-            source = pass("cdef-es3.frag", target("deringed", w, h, half = deep), source.texture,
-                listOf(blocks.texture to "uDirections")) { p ->
-                glUniform2i(glGetUniformLocation(p, "uSize"), w, h)
-                glUniform2i(glGetUniformLocation(p, "uOrigin"), originX, originY)
-                glUniform2i(glGetUniformLocation(p, "uBlocks"), blocksWide, blocksHigh)
-                glUniform1i(glGetUniformLocation(p, "uSecondary"), d.secondary)
-                glUniform1i(glGetUniformLocation(p, "uDamping"), d.damping)
-            }
+            source = restoration.dering(source, target("cdefBlocks", blocksWide, blocksHigh),
+                target("deringed", w, h, half = deep), originX, originY, d) as Target
         }
         // 1c. Colour for a black-and-white picture, by the network whose test passed (see colored).
         if (a.colorize != PictureAdjustment.Colorize.OFF) source = colored(source)
@@ -697,47 +666,20 @@ class GlStage(
         a.logo?.let { logo ->
             val rect = logo.rectangle(w, h)
             if (rect.left + rect.width < w && rect.top + rect.height < h) {
-                val masked = target("logoMasked", w, h, half = deep)
-                source = pass("logo-mask.frag", masked, source.texture, nearest = true) { p ->
-                    glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-                    glUniform4f(
-                        glGetUniformLocation(p, "uRect"),
-                        rect.left.toFloat(), rect.top.toFloat(), rect.width.toFloat(), rect.height.toFloat(),
-                    )
-                    glUniform1i(glGetUniformLocation(p, "uMode"), logo.mode.ordinal)
-                }
+                source = restoration.logo(source, target("logoMasked", w, h, half = deep), logo, rect) as Target
             }
         }
         a.debandParams()?.let { d ->
-            debandFrame = (debandFrame + 1) and 0xFF
-            source = pass("deband-es3.frag", target("debanded", w, h, half = deep), source.texture) { p ->
-                glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-                // The picture's top row is where v is 1 (see upload); libplacebo counts rows from the top.
-                glUniform2f(glGetUniformLocation(p, "uRows"), h.toFloat(), -1f)
-                glUniform1f(glGetUniformLocation(p, "uFrame"), debandFrame.toFloat())
-                glUniform1i(glGetUniformLocation(p, "uIterations"), d.iterations)
-                glUniform1f(glGetUniformLocation(p, "uThreshold"), d.threshold / 1000f)
-                glUniform1f(glGetUniformLocation(p, "uRadius"), d.radius)
-                glUniform1f(glGetUniformLocation(p, "uDebandGrain"), d.grain / 1000f)
-            }
+            source = restoration.deband(source, target("debanded", w, h, half = deep), d) as Target
         }
         a.denoiseKernel()?.let { k ->
-            source = pass("denoise.frag", target("denoised", w, h, half = deep), source.texture) { p ->
-                glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
-                glUniform1f(glGetUniformLocation(p, "uRadius"), k.radius)
-                glUniform1f(glGetUniformLocation(p, "uSigmaS2"), 2f * k.radius * k.radius)
-                glUniform1f(glGetUniformLocation(p, "uSigmaR2"), 2f * k.similarity * k.similarity)
-            }
+            source = restoration.denoise(source, target("denoised", w, h, half = deep), k) as Target
         }
         val slot = claim(kept, picture, region(picture, crop, a.stereo), second)
         slot.unsettled = unsettled
         val into = target(slot.name, w, h, half = deep)
         if (a.sharpness > 0f || a.clarity > 0f) {
-            pass("sharpen.frag", into, source.texture) { p ->
-                glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
-                glUniform1f(glGetUniformLocation(p, "uSharpness"), a.sharpness)
-                glUniform1f(glGetUniformLocation(p, "uClarity"), a.clarity)
-            }
+            restoration.sharpen(source, into, a.sharpness, a.clarity)
         } else {
             copy(source, into)
         }
@@ -755,42 +697,13 @@ class GlStage(
         next: Pair<Target, MotionSearch.Vectors?>?,
         params: TemporalDenoise.Params,
     ): Target {
-        val w = raw.width
-        val h = raw.height
-        fun mode(side: Pair<Target, MotionSearch.Vectors?>?) = when {
-            side?.second == null -> 0f
-            side.second!!.cut -> 2f
-            else -> 1f
+        fun side(side: Pair<Target, MotionSearch.Vectors?>?): Restoration.Side {
+            val v = side?.second ?: return Restoration.Side(side?.first ?: raw, obmcTable, 0f)
+            return Restoration.Side(side.first, vectorTexture(v), if (v.cut) 2f else 1f, v.gridWidth, v.gridHeight,
+                v.scale, grid = true)
         }
-        val prevVectors = prev?.second?.let(::vectorTexture) ?: obmcTable
-        val nextVectors = next?.second?.let(::vectorTexture) ?: obmcTable
-        val textures = listOf(
-            (prev?.first ?: raw).texture to "uPrev",
-            (next?.first ?: raw).texture to "uNext",
-            prevVectors to "uPrevVectors",
-            nextVectors to "uNextVectors",
-            obmcTable to "uObmc",
-        )
-        val into = pass("temporal-denoise.frag", target("temporallyDenoised", w, h, half = deep), raw.texture,
-            textures, nearest = true) { p ->
-            glUniform1f(glGetUniformLocation(p, "uA"), TemporalDenoise.threshold(params.a).toFloat())
-            glUniform1f(glGetUniformLocation(p, "uB"), TemporalDenoise.threshold(params.b).toFloat())
-            glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-            glUniform1f(glGetUniformLocation(p, "uPrevMode"), mode(prev))
-            glUniform1f(glGetUniformLocation(p, "uNextMode"), mode(next))
-            for ((side, name) in listOf(prev to "Prev", next to "Next")) {
-                val v = side?.second ?: continue
-                glUniform2f(glGetUniformLocation(p, "u${name}Grid"), v.gridWidth.toFloat(), v.gridHeight.toFloat())
-                glUniform1f(glGetUniformLocation(p, "u${name}Scale"), v.scale.toFloat())
-            }
-        }
-        // The pass leaves what it read nearest at linear; the tables are read texel by texel.
-        for (table in listOf(prevVectors, nextVectors, obmcTable)) {
-            glBindTexture(GL_TEXTURE_2D, table)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-        }
-        return into
+        return restoration.temporalDenoise(raw, side(prev), side(next), obmcTable, params,
+            target("temporallyDenoised", raw.width, raw.height, half = deep)) as Target
     }
 
     // [vectors] as a texture, kept for the few pictures around the one shown.
