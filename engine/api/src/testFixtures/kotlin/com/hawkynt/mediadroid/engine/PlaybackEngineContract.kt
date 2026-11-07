@@ -164,6 +164,8 @@ abstract class PlaybackEngineContract {
 
     @Test
     fun `the tracks and the picture's size are told once known`() {
+        // Media3 tells the size as the first picture reaches an output.
+        engine.videoOutput = output()
         openPaused()
         waitFor("tracks with pictures and sound") {
             heard.all<Recorder.Tracks>().any { told ->
