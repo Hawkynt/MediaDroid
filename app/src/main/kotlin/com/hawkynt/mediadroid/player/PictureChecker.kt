@@ -7,6 +7,7 @@ import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import androidx.media3.decoder.VideoDecoderOutputBuffer
+import com.hawkynt.mediadroid.stage.StageCheck
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -110,15 +111,11 @@ object PictureChecker {
     private fun testFrames(): List<Bitmap> {
         val w = PictureCheck.WIDTH
         val h = PictureCheck.HEIGHT
-        return List(8) { k ->
-            val pixels = IntArray(w * h)
-            for (y in 0 until h) for (x in 0 until w) {
-                val sx = x + k * 4
-                val sy = y + k * 2
-                val r = blotch(sx, sy, 0)
-                val g = blotch(sx, sy, 1)
-                val b = blotch(sx, sy, 2)
-                pixels[y * w + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        return List(StageCheck.PICTURES) { k ->
+            val rgba = StageCheck.picture(k)
+            val pixels = IntArray(w * h) { i ->
+                fun c(n: Int) = rgba[i * 4 + n].toInt() and 0xFF
+                (0xFF shl 24) or (c(0) shl 16) or (c(1) shl 8) or c(2)
             }
             Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888)
         }
@@ -128,25 +125,15 @@ object PictureChecker {
     private fun yuvFrame(frame: Bitmap): ByteArray {
         val w = frame.width
         val h = frame.height
-        val cw = (w + 1) / 2
-        val ch = (h + 1) / 2
         val pixels = IntArray(w * h).also { frame.getPixels(it, 0, w, 0, 0, w, h) }
-        val out = ByteArray(w * h + 2 * cw * ch)
-        fun channel(x: Int, y: Int, shift: Int) =
-            (pixels[y.coerceAtMost(h - 1) * w + x.coerceAtMost(w - 1)] shr shift) and 0xFF
-        for (y in 0 until h) for (x in 0 until w) {
-            val luma = 0.299 * channel(x, y, 16) + 0.587 * channel(x, y, 8) + 0.114 * channel(x, y, 0)
-            out[y * w + x] = (16 + luma * 219 / 255 + 0.5).toInt().toByte()
+        val rgba = ByteArray(w * h * 4)
+        pixels.forEachIndexed { i, p ->
+            rgba[i * 4] = (p shr 16).toByte()
+            rgba[i * 4 + 1] = (p shr 8).toByte()
+            rgba[i * 4 + 2] = p.toByte()
+            rgba[i * 4 + 3] = -1
         }
-        for (y in 0 until ch) for (x in 0 until cw) {
-            val r = channel(2 * x, 2 * y, 16)
-            val g = channel(2 * x, 2 * y, 8)
-            val b = channel(2 * x, 2 * y, 0)
-            val luma = 0.299 * r + 0.587 * g + 0.114 * b
-            out[w * h + y * cw + x] = (128 + (b - luma) / 1.772 * 224 / 255 + 0.5).toInt().toByte()
-            out[w * h + cw * ch + y * cw + x] = (128 + (r - luma) / 1.402 * 224 / 255 + 0.5).toInt().toByte()
-        }
-        return out
+        return StageCheck.planes(rgba)
     }
 
     /** [planes] (see [yuvFrame]) in a decoder's output buffer, as Media3's FFmpeg decoder fills one. */
@@ -161,19 +148,4 @@ object PictureChecker {
         return buffer
     }
 
-    private fun blotch(x: Int, y: Int, channel: Int): Int {
-        val cell = 12
-        val cx = Math.floorDiv(x, cell)
-        val cy = Math.floorDiv(y, cell)
-        val fx = (x - cx * cell).toFloat() / cell
-        val fy = (y - cy * cell).toFloat() / cell
-        fun level(i: Int, j: Int): Float {
-            var v = i * 73856093 xor j * 19349663 xor channel * 83492791
-            v = (v xor (v ushr 13)) * 0x5bd1e995
-            return ((v xor (v ushr 15)) and 0xFF).toFloat()
-        }
-        val top = level(cx, cy) * (1 - fx) + level(cx + 1, cy) * fx
-        val bottom = level(cx, cy + 1) * (1 - fx) + level(cx + 1, cy + 1) * fx
-        return (top * (1 - fy) + bottom * fy).toInt()
-    }
 }
