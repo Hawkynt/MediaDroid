@@ -64,6 +64,12 @@ object PictureTrial {
         /** Keeps the colouriser as passed. */
         fun keepColorizer(passed: NeuralInterpolation.Passed) = Unit
 
+        /**
+         * The colouriser ran wrong or too slowly here: a device that can no more run it later need not offer it (where
+         * the test was ended or the files could not be fetched, it may yet).
+         */
+        fun refuseColorizer() = Unit
+
         /** The stage dry run with [picture] (see PictureCheck); null where it could not be set up. */
         fun dryRun(picture: PictureAdjustment): PictureCheck.DryRun?
     }
@@ -188,9 +194,11 @@ object PictureTrial {
         val best = timings.firstOrNull()
         val ms = best?.msByHeight?.values?.firstOrNull()
         if (best == null || ms == null) {
+            device.refuseColorizer()
             return PictureVerdict(false, "This device cannot run $label right. The colour stays as it was.")
         }
         if (!Colorizing.fastEnough(ms)) {
+            device.refuseColorizer()
             return PictureVerdict(
                 false,
                 "This device is too slow for $label: colouring a picture takes ${duration(ms)} on its fastest unit " +

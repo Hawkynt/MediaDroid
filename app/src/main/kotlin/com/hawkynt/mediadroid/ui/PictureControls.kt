@@ -50,6 +50,11 @@ fun PictureSliders(
      * refuses is not taken, and why shows below its row. Takes everything by default.
      */
     check: PictureTry = { _, _ -> PictureVerdict(true) },
+    /**
+     * The colourisers offered for a black-and-white video (see rememberColorizers); with none but Off, no row shows. A
+     * choice for one video or folder, not a household default.
+     */
+    colorizers: List<PictureAdjustment.Colorize> = listOf(PictureAdjustment.Colorize.OFF),
 ) {
     Column(modifier = modifier) {
         PictureControl.entries.forEach { control ->
@@ -280,6 +285,24 @@ fun PictureSliders(
             }
         }
         motion.Below(picture.interpolation.description)
+        // Colour for black-and-white pictures, tried before it is taken: fetched, tested and timed on this device.
+        if (colorizers.size > 1) {
+            val colouring = remember { Trial() }
+            Text("Colour", fontSize = 16.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                colorizers.forEach { colorize ->
+                    FilterChip(
+                        selected = picture.colorize == colorize,
+                        enabled = colouring.trying == null,
+                        onClick = {
+                            colouring.pick(picture, picture.copy(colorize = colorize), colorize.label, check, take)
+                        },
+                        label = { Text(colorize.label, fontSize = 15.sp) },
+                    )
+                }
+            }
+            colouring.Below(picture.colorize.description)
+        }
         if (logo) LogoRow(picture) { onChange(it); onDone() }
         if (stereo) {
             Text("3D as 2D: one eye", fontSize = 16.sp)

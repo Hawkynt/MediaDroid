@@ -79,6 +79,8 @@ data class PictureOverride(
     val temporalDenoise: Float = 0f,
     /** Dot crawl and rainbows combed out, 0 (off) .. 1. */
     val dotCrawl: Float = 0f,
+    /** PictureAdjustment.Colorize name: colour for a black-and-white video, kept per video or folder only. */
+    val colorize: String = "OFF",
 )
 
 /** How one output screen is set up (see [com.hawkynt.mediadroid.player.ScreenSetup]); names, as kept. */
@@ -153,6 +155,10 @@ data class Settings(
     // The upscalers' models on ncnn whose self-test passed, by NeuralEnlarging.Choice.key ("WAIFU2X",
     // "REALCUGAN:se-up4x-denoise3x+tta"), the same way: "GPU|576=…".
     var neuralEnlargers: Map<String, String> = emptyMap(),
+    // DDColor's self-test where it passed, the same way ("GPU|256=…"); null before. Refused once as too slow or wrong
+    // on this device, colour is no longer offered.
+    var neuralColorizer: String? = null,
+    var neuralColorizerRefused: Boolean = false,
     var bingeWatching: Boolean = true,        // a finished episode starts the next one
     var skipIntroCredits: Boolean = true,     // jump over known intros, end at the credits
     var useCutout: Boolean = false,           // the player's picture may reach into the camera cutout
@@ -176,6 +182,10 @@ data class Settings(
         choice: com.hawkynt.mediadroid.player.NeuralEnlarging.Choice,
     ): com.hawkynt.mediadroid.player.NeuralInterpolation.Passed? =
         neuralEnlargers[choice.key]?.let { com.hawkynt.mediadroid.player.NeuralInterpolation.Passed.decode(it) }
+
+    /** What DDColor's self-test found where it passed; null otherwise. */
+    val colorizerPassed: com.hawkynt.mediadroid.player.NeuralInterpolation.Passed?
+        get() = neuralColorizer?.let { com.hawkynt.mediadroid.player.NeuralInterpolation.Passed.decode(it) }
 
     /** The upscalers' models on ncnn this household's device passed. */
     val neuralEnlargersOffered: Set<com.hawkynt.mediadroid.player.NeuralEnlarging.Choice>
@@ -433,6 +443,8 @@ class StateStore(context: Context) {
         shader = it.shader,
         temporalDenoise = it.temporalDenoise,
         dotCrawl = it.dotCrawl,
+        colorize = runCatching { PictureAdjustment.Colorize.valueOf(it.colorize) }
+            .getOrDefault(PictureAdjustment.Colorize.OFF),
     )
 
     private fun overrideOf(picture: PictureAdjustment): PictureOverride = PictureOverride(
@@ -461,6 +473,7 @@ class StateStore(context: Context) {
         shader = picture.shader,
         temporalDenoise = picture.temporalDenoise,
         dotCrawl = picture.dotCrawl,
+        colorize = picture.colorize.name,
     )
 
     /**

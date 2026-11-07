@@ -16,6 +16,7 @@ import android.os.HandlerThread
 import android.view.Surface
 import androidx.media3.decoder.VideoDecoderOutputBuffer
 import com.hawkynt.mediadroid.shaders.Shaders
+import com.hawkynt.mediadroid.stage.Colouring
 import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Passes
 import com.hawkynt.mediadroid.stage.Upscaling
@@ -77,8 +78,20 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     // The passes as :stage runs them (Passes), on this thread's context, the film grain and its seed handed to each;
     // the upscalers' among them (Upscaling).
-    private val passes = Passes(AndroidGles(), grain = { grainNow }, seed = { seed })
+    private val gl = AndroidGles()
+    private val passes = Passes(gl, grain = { grainNow }, seed = { seed })
     private val upscalers = Upscaling(passes)
+
+    // Colour for black-and-white pictures (Colouring): DDColor on a thread of its own, its colour laid under each
+    // picture.
+    private val colouring = Colouring(gl, passes)
+
+    /**
+     * Where DDColor's self-test passed and what one run took there (NeuralChecks.colorizer); null while colour is not
+     * offered, when a picture asking for colour is shown as it is.
+     */
+    @Volatile
+    var colorizer: NeuralInterpolation.Passed? = null
 
     // Whether the graphics chip can draw into half-float textures, which Anime4K's and ACNet's values outside 0..1
     // need, and Anime4K's programs built.
@@ -378,7 +391,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val peakBufferSizes = IntArray(2)
     private val peakPending = IntArray(2)
     private var peakSlot = 0
-    private val frames = Array(EARLIEST + 1) { Frame() }
+    private val frames = Array(COLOURED + 1) { Frame() }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -1065,6 +1078,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(yuvSplineProgram)
             krigPrograms.forEach { GLES20.glDeleteProgram(it) }
             passes.release()
+            colouring.close()
+            colouring.releaseFrames()
             acnetBuilt = null
             GLES20.glDeleteTextures(3, yuvTextures, 0)
             releaseWindow()
@@ -2067,6 +2082,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      */
     private fun denoised(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
         var source = deblocked(picture, from, width, height)
+        // Colour for a black-and-white picture after deblocking, as on the desktop, so the filters after it see it.
+        if (picture.colorize != PictureAdjustment.Colorize.OFF) source = coloured(picture, source, width, height)
         // A station logo hidden after deblocking, so the filters after it see the picture without it.
         picture.logo?.let { logo ->
             val rect = logo.rectangle(width, height)
@@ -2123,6 +2140,20 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * Step 3's start: deblocking, then deringing, as far as [picture] asks for them, over [from] — on the decoded
      * picture's own block grid, so not where the picture was brought down to 1080p (its blocks no longer 8 pixels).
      */
+    /**
+     * [from] in colour by DDColor on the unit its self-test passed on (Colouring), once its first colour is in; [from]
+     * itself before, without a passed test, or where the chip draws no half floats (the colour's own texture).
+     */
+    private fun coloured(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
+        val passed = colorizer ?: return from
+        val context = appContext ?: return from
+        if (!halfTargets) return from
+        val unit = runCatching { NeuralUpscaler.Unit.valueOf(passed.unit) }.getOrNull() ?: return from
+        val net = { NeuralColorizer.open(context, unit)?.let { Colouring.network(it) } }
+        return colouring.colored(from, passed, net) { frames[COLOURED].ensure(width, height, deepInput(picture)) }
+            as Frame
+    }
+
     private fun deblocked(picture: PictureAdjustment, from: Frame, width: Int, height: Int): Frame {
         val deblock = picture.deblockParams()
         val dering = picture.deringParams()
@@ -3493,6 +3524,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** A fourth frame for the temporal history, taking turns with frames[8] to [10] (see earliest). */
         private const val EARLIEST = DOT_CRAWL + 1
+
+        /** The picture in colour (see coloured). */
+        private const val COLOURED = EARLIEST + 1
 
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()

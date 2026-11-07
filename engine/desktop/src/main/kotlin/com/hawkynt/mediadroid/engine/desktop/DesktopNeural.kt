@@ -1,7 +1,7 @@
 package com.hawkynt.mediadroid.engine.desktop
 
-import com.hawkynt.mediadroid.player.Colorizing
 import com.hawkynt.mediadroid.player.ModelFolder
+import com.hawkynt.mediadroid.player.NativeColorizer
 import com.hawkynt.mediadroid.player.NativeInterpolation
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralModels
@@ -75,11 +75,10 @@ class DesktopNeural(val models: File) {
     }
 
     /** DDColor on the GPU or the CPU ([gpu]), or null where it cannot run there or its files are not in place. */
-    fun colorizer(gpu: Boolean): Colorizer? {
+    fun colorizer(gpu: Boolean): NativeColorizer? {
         if (!loaded || (gpu && !hasGpu)) return null
         if (!ready(NeuralModels.DDCOLOR)) return null
-        val handle = NativeInterpolation.openColorizer(null, folder(NeuralModels.DDCOLOR).path, gpu)
-        return if (handle == 0L) null else Colorizer(handle, gpu)
+        return NativeColorizer.open(folder(NeuralModels.DDCOLOR).path, gpu)
     }
 
     companion object {
@@ -89,30 +88,6 @@ class DesktopNeural(val models: File) {
         /** Whether [upscaler] is a network the desktop runs on ncnn: every neural one, Real-ESRGAN included. */
         fun onNcnn(upscaler: PictureAdjustment.Upscaler): Boolean =
             upscaler.isEnlarger || upscaler == PictureAdjustment.Upscaler.NEURAL
-    }
-
-    /** A colouriser: the network's grey input in (Colorizing.input), the a and b of Lab at 256 × 256 out. */
-    class Colorizer internal constructor(private var handle: Long, val gpu: Boolean) : AutoCloseable {
-        private val plane = Colorizing.SIZE * Colorizing.SIZE
-        private val input = ByteBuffer.allocateDirect(3 * plane * 4).order(java.nio.ByteOrder.nativeOrder())
-            .asFloatBuffer()
-        private val output = ByteBuffer.allocateDirect(2 * plane * 4).order(java.nio.ByteOrder.nativeOrder())
-            .asFloatBuffer()
-
-        /** The a and b planes [grey] gets (a fresh array); null where the network failed. */
-        fun run(grey: FloatArray): FloatArray? {
-            input.clear()
-            input.put(grey)
-            input.flip()
-            output.clear()
-            if (NativeInterpolation.colorize(handle, input, output) != 0) return null
-            return FloatArray(2 * plane).also { output.get(it) }
-        }
-
-        override fun close() {
-            if (handle != 0L) NativeInterpolation.closeColorizer(handle)
-            handle = 0L
-        }
     }
 
     /** A frame interpolation network: two RGBA frames in, the in-between halfway as RGB bytes out. */

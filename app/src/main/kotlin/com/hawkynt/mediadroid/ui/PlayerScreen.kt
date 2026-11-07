@@ -1260,6 +1260,7 @@ fun PlayerScreen(
             active.neuralMotion = settings.neuralMotionOffered.associateWith { settings.neuralMotionPassed(it)!! }
             active.neuralEnlargers =
                 settings.neuralEnlargersOffered.associateWith { settings.neuralEnlargerPassed(it)!! }
+            active.colorizer = settings.colorizerPassed
             active.neuralUnit = if (settings.neuralUpscaling) {
                 runCatching {
                     com.hawkynt.mediadroid.player.NeuralUpscaler.Unit.valueOf(settings.neuralUnit)
@@ -1783,6 +1784,7 @@ fun PlayerScreen(
                 onPicture = { picture = it },
                 onPictureDone = { store.savePicture(queue[index].videoPath, picture) },
                 check = pictureCheck(context, store),
+                colorizers = rememberColorizers(context, store),
                 onResetPicture = {
                     store.savePicture(queue[index].videoPath, null)
                     picture = store.pictureFor(queue[index].videoPath)
@@ -2299,6 +2301,8 @@ private fun PlayerPanel(
     onResetPicture: () -> Unit,
     /** Tries a choice of deinterlacing, upscaling or smooth motion before it is taken (see pictureCheck). */
     check: PictureTry = { _, _ -> PictureVerdict(true) },
+    /** The colourisers offered for this video (see rememberColorizers). */
+    colorizers: List<PictureAdjustment.Colorize> = listOf(PictureAdjustment.Colorize.OFF),
     onAudioTrack: () -> Unit,
     onSubtitleTrack: () -> Unit,
     /** Picks a second subtitle track, shown at the top beside the first. */
@@ -2384,6 +2388,7 @@ private fun PlayerPanel(
         }
         PictureSliders(
             picture, onChange = onPicture, onDone = onPictureDone, stereo = true, logo = true, check = check,
+            colorizers = colorizers,
         )
         // The picture for every video in the folder, as one: a folder of VHS rips starting deinterlaced.
         OutlinedButton(onClick = onUseForFolder, modifier = Modifier.padding(top = 8.dp)) {
