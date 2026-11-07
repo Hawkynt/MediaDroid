@@ -55,6 +55,8 @@ fun PictureSliders(
      * choice for one video or folder, not a household default.
      */
     colorizers: List<PictureAdjustment.Colorize> = listOf(PictureAdjustment.Colorize.OFF),
+    /** Which upscalers offer their networks' models and eight-way run: the enlargers on ncnn by default. */
+    neuralModels: (PictureAdjustment.Upscaler) -> Boolean = { it.isEnlarger },
 ) {
     Column(modifier = modifier) {
         PictureControl.entries.forEach { control ->
@@ -208,7 +210,7 @@ fun PictureSliders(
             }
         }
         // A network's models — noise levels, strengths, scales — and its eight-way run, each tried like the rest.
-        val choice = NeuralEnlarging.choice(picture)?.takeIf { picture.upscaler.isEnlarger }
+        val choice = NeuralEnlarging.choice(picture)?.takeIf { neuralModels(picture.upscaler) }
         if (choice != null) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val models = NeuralEnlarging.models(picture.upscaler)

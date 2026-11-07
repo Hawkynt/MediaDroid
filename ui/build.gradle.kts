@@ -32,10 +32,19 @@ kotlin {
             // The art on the walls, from files the platform hands over (MediaArt).
             implementation(libs.coil.compose)
             implementation(project(":core:player"))
+            // The engine's report and tracks, for the info sheet.
+            implementation(project(":engine:api"))
             // The household's memory, one model on every platform; the screens read and change it.
             api(project(":core:state"))
             // A network source tried from its dialog before it is kept.
             implementation(project(":core:sources"))
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
+        // The engine that decodes nothing, for the player's session (PlayerSessionTest).
+        getByName("desktopTest").dependencies {
+            implementation(project.dependencies.testFixtures(project(":engine:api")))
         }
     }
 }
@@ -44,4 +53,12 @@ kotlin {
 compose.resources {
     publicResClass = true
     packageOfResClass = "com.hawkynt.mediadroid.ui.resources"
+}
+
+// The screens' own logic is tested on the desktop JVM; `./gradlew test`, the gate's fast tier, runs it like every
+// other module's tests.
+tasks.register("test") {
+    group = "verification"
+    description = "Runs the :ui tests on the desktop JVM"
+    dependsOn("desktopTest")
 }

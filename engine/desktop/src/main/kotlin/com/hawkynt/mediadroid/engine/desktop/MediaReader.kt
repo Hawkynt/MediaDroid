@@ -1,6 +1,8 @@
 package com.hawkynt.mediadroid.engine.desktop
 
+import com.hawkynt.mediadroid.engine.PlaybackReport
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.TrackFormat
 import com.hawkynt.mediadroid.library.FsFile
 import com.hawkynt.mediadroid.player.AssEvents
 import com.hawkynt.mediadroid.player.AssFonts
@@ -194,8 +196,30 @@ class MediaReader(
      */
     val palColour: Boolean
 
-    /** The file's video, audio and subtitle streams as tracks, id the stream's index. */
+    /** The file's video, audio and subtitle streams as tracks, id the stream's index, each with its format. */
     val tracks: List<Track>
+
+    /**
+     * What FFmpeg read of the file, for the engine's report: the demuxer, the file's tags, and the picture's and the
+     * sound's formats as coded and decoded.
+     */
+    val facts: Facts
+
+    /**
+     * What FFmpeg read of the file: its [demuxer], its [tags]; the picture's codec, colour space, range and pixel
+     * format; the sound's sample rate, channels and sample format (null or 0 without one, or where it does not say).
+     */
+    data class Facts(
+        val demuxer: String?,
+        val tags: PlaybackReport.FileTags,
+        val videoCodec: String?,
+        val colorSpace: String?,
+        val range: String?,
+        val pixelFormat: String?,
+        val sampleRate: Int,
+        val channels: Int,
+        val sampleFormat: String?,
+    )
 
     /**
      * The hardware decoder the picture is decoded on, null for software: from the first picture on, what actually
@@ -253,7 +277,12 @@ class MediaReader(
             // A teletext stream: a track for each subtitle page its descriptor lists, none for the rest.
             teletextPages(i)?.map { page ->
                 Track(Teletext.trackId(i, page), kind, page.language.trim(), "Teletext ${page.label}")
-            } ?: listOf(Track("$i", kind, language?.takeIf { it != "und" }, title, i == videoIndex || i == audioIndex))
+            } ?: listOf(
+                Track(
+                    "$i", kind, language?.takeIf { it != "und" }, title, i == videoIndex || i == audioIndex,
+                    format = formatOf(i, kind),
+                ),
+            )
         }.flatten()
         if (videoIndex >= 0) video = openVideoDecoder(decoders)
         if (audioIndex >= 0) audio = openDecoder(audioIndex)
@@ -285,6 +314,63 @@ class MediaReader(
             val guessed = avformat.av_guess_sample_aspect_ratio(format, format.streams(videoIndex), null)
             if (guessed.num() > 0 && guessed.den() > 0) guessed.num().toFloat() / guessed.den() else 1f
         }
+        facts = readFacts()
+    }
+
+    /** Stream [index]'s format as the file holds it: FFmpeg's codec name, the picture's size, the sound's layout. */
+    private fun formatOf(index: Int, kind: Track.Kind): TrackFormat {
+        val parameters = format.streams(index).codecpar()
+        val codec = avcodec.avcodec_get_name(parameters.codec_id())?.string
+        return when (kind) {
+            Track.Kind.VIDEO -> {
+                val rate = format.streams(index).avg_frame_rate()
+                TrackFormat(
+                    "video/x-ffmpeg-$codec", codec, parameters.width(), parameters.height(),
+                    if (rate.num() > 0 && rate.den() > 0) rate.num().toFloat() / rate.den() else 0f,
+                )
+            }
+            Track.Kind.AUDIO -> TrackFormat(
+                "audio/x-ffmpeg-$codec", codec,
+                channels = parameters.ch_layout().nb_channels(), sampleRate = parameters.sample_rate(),
+            )
+            Track.Kind.TEXT -> TrackFormat(codec?.let { SUBTITLE_MIME_TYPES[it] ?: it }, codec)
+        }
+    }
+
+    private fun readFacts(): Facts {
+        fun tag(vararg keys: String): String? = keys.firstNotNullOfOrNull { key ->
+            avutil.av_dict_get(format.metadata(), key, null, 0)?.value()?.string?.takeIf { it.isNotBlank() }
+        }
+        val video = videoIndex.takeIf { it >= 0 }?.let { format.streams(it).codecpar() }
+        val sound = audioIndex.takeIf { it >= 0 }?.let { format.streams(it).codecpar() }
+        return Facts(
+            demuxer = format.iformat()?.name()?.string,
+            tags = PlaybackReport.FileTags(
+                title = tag("title"),
+                artist = tag("artist", "album_artist"),
+                album = tag("album"),
+                genre = tag("genre"),
+                year = tag("date", "year", "creation_time")?.take(4)?.toIntOrNull(),
+                writer = tag("composer"),
+                description = tag("description", "comment", "synopsis"),
+            ),
+            videoCodec = video?.let { avcodec.avcodec_get_name(it.codec_id())?.string },
+            colorSpace = when (video?.color_space()) {
+                avutil.AVCOL_SPC_BT709 -> "BT.709"
+                avutil.AVCOL_SPC_BT470BG, avutil.AVCOL_SPC_SMPTE170M -> "BT.601"
+                avutil.AVCOL_SPC_BT2020_NCL, avutil.AVCOL_SPC_BT2020_CL -> "BT.2020"
+                else -> null
+            },
+            range = when (video?.color_range()) {
+                avutil.AVCOL_RANGE_MPEG -> "limited range"
+                avutil.AVCOL_RANGE_JPEG -> "full range"
+                else -> null
+            },
+            pixelFormat = video?.format()?.takeIf { it >= 0 }?.let { avutil.av_get_pix_fmt_name(it)?.string },
+            sampleRate = sound?.sample_rate() ?: 0,
+            channels = sound?.ch_layout()?.nb_channels() ?: 0,
+            sampleFormat = sound?.format()?.takeIf { it >= 0 }?.let { avutil.av_get_sample_fmt_name(it)?.string },
+        )
     }
 
     /** The subtitle pages of stream [index] where it is DVB teletext, else null. */
@@ -695,6 +781,21 @@ class MediaReader(
     companion object {
         /** The rate all sound is resampled to for the output. */
         const val SAMPLE_RATE = 48_000
+
+        /** FFmpeg's subtitle codecs by the MIME types the info sheet names them by (PlaybackChain.subtitleFormat). */
+        val SUBTITLE_MIME_TYPES = mapOf(
+            "subrip" to "application/x-subrip",
+            "srt" to "application/x-subrip",
+            "ass" to "text/x-ssa",
+            "ssa" to "text/x-ssa",
+            "webvtt" to "text/vtt",
+            "mov_text" to "application/x-quicktime-tx3g",
+            "ttml" to "application/ttml+xml",
+            "hdmv_pgs_subtitle" to "application/pgs",
+            "dvd_subtitle" to "application/vobsub",
+            "dvb_subtitle" to "application/dvbsubs",
+            Teletext.FFMPEG_CODEC to Teletext.MIME_TYPE,
+        )
 
         /** NV12's chroma, U and V by turns, as its two planes. */
         internal fun deinterleave(uv: ByteArray): Pair<ByteArray, ByteArray> {

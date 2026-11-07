@@ -5,7 +5,8 @@ package com.hawkynt.mediadroid.engine
  * [kind], [language] (ISO 639 as the file names it, or null) and [label] (the file's or sidecar's name for it, or
  * null); [selected] when it is the one playing; [source] the file it comes from — 0 the video itself, n the n-th of
  * the files beside it of its kind ([MediaRequest.audio] for sound, [MediaRequest.subtitles] for subtitles); [second]
- * when it is the subtitle track shown second, at the top ([PlaybackEngine.secondSubtitle]).
+ * when it is the subtitle track shown second, at the top ([PlaybackEngine.secondSubtitle]); [format] how the file holds
+ * it, where the engine has read that (for the info sheet).
  */
 data class Track(
     val id: String,
@@ -15,6 +16,7 @@ data class Track(
     val selected: Boolean = false,
     val source: Int = 0,
     val second: Boolean = false,
+    val format: TrackFormat? = null,
 ) {
     enum class Kind { AUDIO, TEXT, VIDEO }
 }

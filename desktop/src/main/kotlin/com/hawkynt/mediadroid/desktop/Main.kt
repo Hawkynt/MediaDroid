@@ -24,11 +24,13 @@ import java.io.File
 /** What the window shows: the library, or the player on a queue of videos. */
 sealed interface Screen {
     data object Library : Screen
-    data class Player(val queue: List<Playing>, val index: Int) : Screen
+    /** [autoAdvance]: the next video starts when one ends (a film's parts always, episodes with binge-watching). */
+    data class Player(
+        val queue: List<com.hawkynt.mediadroid.ui.Playable>,
+        val index: Int,
+        val autoAdvance: Boolean = true,
+    ) : Screen
 }
-
-/** A video to play, and the title to show over it. */
-data class Playing(val title: String, val video: String)
 
 /** The window as it was left (WindowPlace), else 1280 × 800 in the middle of the screen. */
 private fun windowState(saved: String?): WindowState {
@@ -72,13 +74,20 @@ fun main(args: Array<String>) = application {
     val files = remember { DesktopMediaFiles(places, probe) }
     // The walls' pictures: this computer's as they are, the network sources' copied once into the app-data folder.
     val art = remember { DesktopMediaArt(places, File(folder, "art"), probe) }
+    // What Settings shows here, and the mpv shaders its default picture offers, read once now.
+    val settings = remember {
+        ShaderFolder.load(ShaderFolder.of(store.state.data.settings.shaderFolder, folder))
+        DesktopSettingsPlatform(store, folder)
+    }
     // The media keys and the system's now-playing panel, for the app's whole life (MPRIS, SMTC).
     val mediaKeys = remember { MediaKeys() }
     val state = remember { windowState(store.window) }
     val opened = remember { args.firstOrNull()?.let(::File)?.takeIf { it.isFile } }
     var screen by remember {
         mutableStateOf(
-            opened?.let { Screen.Player(listOf(Playing(it.nameWithoutExtension, it.path)), 0) } ?: Screen.Library,
+            opened?.let {
+                Screen.Player(listOf(com.hawkynt.mediadroid.ui.Playable(it.nameWithoutExtension, null, it.path, null)), 0)
+            } ?: Screen.Library,
         )
     }
     var library by remember { mutableStateOf<Library?>(null) }
@@ -107,9 +116,10 @@ fun main(args: Array<String>) = application {
                     art = art,
                     keeper = keeper,
                     files = files,
+                    settings = settings,
                     library = library,
                     onLibrary = { library = it },
-                    onPlay = { queue, index -> screen = Screen.Player(queue, index) },
+                    onPlay = { queue, index, autoAdvance -> screen = Screen.Player(queue, index, autoAdvance) },
                 )
                 is Screen.Player -> {
                     val player = @androidx.compose.runtime.Composable { native: NativePicture? ->
@@ -119,6 +129,7 @@ fun main(args: Array<String>) = application {
                             mediaKeys = mediaKeys,
                             queue = s.queue,
                             startIndex = s.index,
+                            autoAdvance = s.autoAdvance,
                             fullScreen = state.placement == WindowPlacement.Fullscreen,
                             screen = { OutputScreen.of(window) },
                             onFullScreen = {

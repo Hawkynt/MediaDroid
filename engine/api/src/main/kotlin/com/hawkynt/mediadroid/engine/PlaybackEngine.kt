@@ -47,6 +47,13 @@ interface PlaybackEngine : AutoCloseable {
     /** The picture of what is open, once known; null before, or without a picture. */
     val videoFormat: VideoFormat? get() = null
 
+    /**
+     * How what is open plays, as the engine knows it — the file's tags, the files read, the picture, sound and
+     * subtitles as decoded and output (see [PlaybackReport]) — once it plays; null before, or for an engine that
+     * cannot tell.
+     */
+    val report: PlaybackReport? get() = null
+
     /** Playback speed, 1 for normal. */
     var speed: Float
 
