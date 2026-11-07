@@ -87,7 +87,11 @@ class PlayerSessionTest {
 
     @Test
     fun `intros are skipped and the credits end the video while skipping is on, never while it is off`() {
-        val chapters = listOf(Chapter(0, 30_000, "Intro"), Chapter(30_000, 550_000, "Episode"), Chapter(550_000, 600_000, "Credits"))
+        val chapters = listOf(
+            Chapter(0, 30_000, "Intro"),
+            Chapter(30_000, 550_000, "Episode"),
+            Chapter(550_000, 600_000, "Credits"),
+        )
         val s = session()
         engine.open(MediaRequest(s.current.videoPath, startMs = 0))
         s.begin(chapters)
@@ -136,5 +140,23 @@ class PlayerSessionTest {
         engine.select(Track.Kind.TEXT, "t1")
         s.tracksChanged(engine.tracks, "deu")
         assertEquals("t1", engine.tracks.first { it.kind == Track.Kind.TEXT && it.selected }.id)
+    }
+
+    @Test
+    fun `the sleep timer fades the sound over its last seconds and pauses when it runs out`() {
+        val s = session()
+        s.play()
+        s.sleepIn(15, nowMs = 1_000)
+        assertFalse(s.sleepTick(1_000 + 15 * 60_000 - 5_000))
+        assertEquals(0.5f, s.sleepVolume)
+        assertEquals(1, PlaybackMath.sleepMinutesLeft(s.sleepLeftMs))
+        assertTrue(s.sleepTick(1_000 + 15 * 60_000))
+        assertFalse(engine.isPlaying)
+        assertNull(s.sleepAtMs)
+        assertEquals(1f, s.sleepVolume)
+        s.sleepAtEndOfVideo()
+        assertTrue(s.sleepAtEnd)
+        s.sleepOff()
+        assertFalse(s.sleepAtEnd)
     }
 }

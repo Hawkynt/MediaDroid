@@ -101,8 +101,8 @@ fun GearPanel(
                 )
             }
         }
-        val fitText = (if (fit == PictureFit.PANORAMIC) "A narrow picture fills a wide screen: the middle as it is, the " +
-            "sides stretched. " else "") + fitHint
+        val panoramic = "A narrow picture fills a wide screen: the middle as it is, the sides stretched. "
+        val fitText = (if (fit == PictureFit.PANORAMIC) panoramic else "") + fitHint
         if (fitText.isNotBlank()) {
             Text(
                 fitText.trim(),
@@ -177,6 +177,45 @@ fun GearPanel(
         }
         end()
     }
+}
+
+/**
+ * The sleep timer (PlayerSession): off, after a number of minutes from [nowMs] (the screen's monotonic clock), or at
+ * the end of this video.
+ */
+@Composable
+fun SleepChoice(session: PlayerSession, nowMs: () -> Long) {
+    PanelTitle("Sleep timer")
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        FilterChip(
+            selected = session.sleepAtMs == null && !session.sleepAtEnd,
+            onClick = { session.sleepOff() },
+            label = { Text("Off", fontSize = 16.sp) },
+        )
+        com.hawkynt.mediadroid.player.PlaybackMath.SLEEP_MINUTES.forEach { minutes ->
+            FilterChip(
+                selected = session.sleepAtMs != null && session.sleepMinutes == minutes,
+                onClick = { session.sleepIn(minutes, nowMs()) },
+                label = { Text("$minutes min", fontSize = 16.sp) },
+            )
+        }
+        FilterChip(
+            selected = session.sleepAtEnd,
+            onClick = { session.sleepAtEndOfVideo() },
+            label = { Text("End of this video", fontSize = 16.sp) },
+        )
+    }
+}
+
+/** What the sleep timer does now, for the player's top bar; null while it is off. */
+fun sleepNote(session: PlayerSession): String? = when {
+    session.sleepAtEnd -> "Sleep at the end"
+    session.sleepAtMs != null ->
+        "Sleep in ${com.hawkynt.mediadroid.player.PlaybackMath.sleepMinutesLeft(session.sleepLeftMs)} min"
+    else -> null
 }
 
 /** What plays again once a video ends: nothing, this video, or the whole queue (PlayerSession.repeat). */

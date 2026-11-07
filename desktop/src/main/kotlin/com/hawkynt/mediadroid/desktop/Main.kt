@@ -86,7 +86,8 @@ fun main(args: Array<String>) = application {
     var screen by remember {
         mutableStateOf(
             opened?.let {
-                Screen.Player(listOf(com.hawkynt.mediadroid.ui.Playable(it.nameWithoutExtension, null, it.path, null)), 0)
+                val video = com.hawkynt.mediadroid.ui.Playable(it.nameWithoutExtension, null, it.path, null)
+                Screen.Player(listOf(video), 0)
             } ?: Screen.Library,
         )
     }

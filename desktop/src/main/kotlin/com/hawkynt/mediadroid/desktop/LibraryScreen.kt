@@ -236,7 +236,9 @@ private fun Walls(
             onPlayMovie = { play(it, null) },
             onPlayShow = { show, episode -> play(show, episode?.videoPath) },
             onPlayTrailer = { movie ->
-                movie.trailerPath?.let { onPlay(listOf(Playable("${movie.title} · Trailer", null, it, movie.posterPath)), 0, false) }
+                movie.trailerPath?.let {
+                    onPlay(listOf(Playable("${movie.title} · Trailer", null, it, movie.posterPath)), 0, false)
+                }
             },
         )
         return

@@ -68,6 +68,53 @@ class PlayerSession(
     /** The sleep timer stops after this video: the queue ends with it. */
     var sleepAtEnd by mutableStateOf(false)
 
+    /** When the sleep timer runs out, on the screen's own clock (see [sleepIn]); null while it is off. */
+    var sleepAtMs by mutableStateOf<Long?>(null)
+        private set
+
+    /** The minutes the sleep timer was set to, and how long it has left as last [counted][sleepTick]. */
+    var sleepMinutes by mutableStateOf<Int?>(null)
+        private set
+    var sleepLeftMs by mutableLongStateOf(0L)
+        private set
+
+    /** The sleep timer set to [minutes] from [nowMs] (a monotonic clock in milliseconds); the video's end forgotten. */
+    fun sleepIn(minutes: Int, nowMs: Long) {
+        sleepAtEnd = false
+        sleepMinutes = minutes
+        sleepLeftMs = minutes * 60_000L
+        sleepAtMs = nowMs + minutes * 60_000L
+    }
+
+    /** The sleep timer stops at the end of this video instead ([finishCurrent]). */
+    fun sleepAtEndOfVideo() {
+        sleepAtMs = null
+        sleepAtEnd = true
+    }
+
+    /** No sleep timer. */
+    fun sleepOff() {
+        sleepAtMs = null
+        sleepAtEnd = false
+    }
+
+    /**
+     * The sleep timer at [nowMs]: how loud the sound plays now (PlaybackMath.sleepFade: fading over its last seconds,
+     * 1 without a timer); run out, the video pauses and the timer is off. Returns true when it just ran out.
+     */
+    fun sleepTick(nowMs: Long): Boolean {
+        val at = sleepAtMs ?: return false
+        val left = at - nowMs
+        sleepLeftMs = left
+        if (left > 0) return false
+        engine.pause()
+        sleepAtMs = null
+        return true
+    }
+
+    /** How loud the sound plays under the sleep timer: fading over its last seconds, else 1. */
+    val sleepVolume: Float get() = if (sleepAtMs == null) 1f else PlaybackMath.sleepFade(sleepLeftMs)
+
     /** A track picked by hand: the household's subtitle language steps back for this video. */
     var manualTrackPick by mutableStateOf(false)
 
