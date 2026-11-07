@@ -26,6 +26,32 @@ cmake -S "$HERE" -B "$B" -DORACLE_DIR="$O" >/dev/null && cmake --build "$B" -j >
   { echo "build failed"; exit 2; }
 C=$B/shader_check
 Q=$B/shader_oracle
+# The real picture stage (engine/desktop's StageRender: :stage's passes through the desktop's Gles, OpenGL 4.3) beside
+# shader_check, for every command that draws with the stage's own passes: shader_check, on OpenGL ES 3.2 as the phones
+# run it, is held to the originals; the real stage is held to shader_check within what desktop OpenGL's arithmetic
+# moves (STAGE_LIMITS, measured on Mesa's llvmpipe; STAGE_LIMITS=report prints the differences without failing).
+# The real stage needs a display for its context (xvfb-run where there is none).
+(cd "$HERE/../.." && ./gradlew -q :engine:desktop:stageRenderClasspath) || { echo "stage build failed"; exit 2; }
+CP=$(cat "$HERE/../../engine/desktop/build/stage-render.classpath")
+declare -A limits=(
+  [gsr]="24 0.04" [fsr]="33 0.12" [fsr-easu]="22 0.015" [fsr-rcas]="1 0.1" [nis]="50 0.7" [ewa]="1 0.04"
+  [lanczos]="1 0.03" [xbrz]="0 0" [anime4k]="2 0.1" [acnet]="2 0.06" [temporal]="0 0" [deinterlace]="0 0"
+  [logo]="1 0.006" [deblock]="0 0" [cdef]="0 0" [temporal-denoise]="0 0" [deband]="1 0.18" [chroma]="2 0.1"
+)
+stage() {  # stage <shader_check command…>: shader_check draws it, then the real stage, and the two are compared
+  "$C" "$@" || return
+  # Deband with the picture's top row at v = 0 is no way the stages hold a picture: shader_check's alone.
+  if [ "$1" = deband ] && [ "${SHADER_CHECK_DEBAND:-}" = top ]; then return; fi
+  local args=("$@") at=2
+  case "$1" in temporal|temporal-denoise) at=4 ;; chroma) at=5 ;; esac
+  local out=${args[$at]} ours=${args[$at]%.ppm}-stage.ppm
+  args[$at]=$ours
+  java -cp "$CP" com.hawkynt.mediadroid.engine.desktop.StageRenderKt "${args[@]}" ||
+    { echo "the real stage could not run: $*"; failed=1; return; }
+  echo -n "  the real stage beside it ($1): "
+  if [ "${STAGE_LIMITS:-}" = report ]; then "$C" compare "$ours" "$out" 255 255 || true
+  else "$C" compare "$ours" "$out" ${limits[$1]} || { echo "  FAILED"; failed=1; }; fi
+}
 failed=0
 check() {  # check <label> <a> <b> <max> <mean> [border]
   echo -n "$1: "
@@ -48,46 +74,46 @@ placebo() {  # placebo <in> <out> <libplacebo options> [input filters]: through 
 
 # GSR: Qualcomm's shader beside ours on Mesa.
 for size in "480 360" "640 480" "1080 810"; do
-  "$C" gsr "$W/picture.ppm" "$W/gsr.ppm" $size
+  stage gsr "$W/picture.ppm" "$W/gsr.ppm" $size
   "$C" gsr-qualcomm "$O/sgsr1_shader_mobile.frag" "$W/picture.ppm" "$W/gsr-qualcomm.ppm" $size
   check "GSR ${size/ /×} against Qualcomm's" "$W/gsr.ppm" "$W/gsr-qualcomm.ppm" 1 0.01
 done
-"$C" gsr "$W/picture.ppm" "$W/gsr.ppm" 640 480
+stage gsr "$W/picture.ppm" "$W/gsr.ppm" 640 480
 differs "GSR against bilinear" "$W/gsr.ppm" "$W/plain-2x.ppm"
 
 # FSR: AMD's ffx_fsr1.h on full floats; each half alone, then the two. AMD's RCAS reads past the picture's edge, so the
 # outermost pixels are left out of the comparisons RCAS takes part in.
 for size in "480 360" "640 480" "1080 810"; do
-  "$C" fsr-easu "$W/picture.ppm" "$W/easu.ppm" $size
+  stage fsr-easu "$W/picture.ppm" "$W/easu.ppm" $size
   "$Q" fsr-amd-easu "$O" "$W/picture.ppm" "$W/easu-amd.ppm" $size
   check "FSR EASU ${size/ /×} against AMD's" "$W/easu.ppm" "$W/easu-amd.ppm" 1 0.01
-  "$C" fsr "$W/picture.ppm" "$W/fsr.ppm" $size
+  stage fsr "$W/picture.ppm" "$W/fsr.ppm" $size
   "$Q" fsr-amd "$O" "$W/picture.ppm" "$W/fsr-amd.ppm" $size
   # EASU's 1-step roundings in the 8-bit frame between the passes, sharpened by RCAS.
   check "FSR ${size/ /×} against AMD's" "$W/fsr.ppm" "$W/fsr-amd.ppm" 5 0.01 1
 done
 # The GLSL ES 3.00 variants (floats' bits read directly, as on ES 3 chips) have to agree just the same.
 for size in "480 360" "1080 810"; do
-  SHADER_CHECK_FSR=es3 "$C" fsr-easu "$W/picture.ppm" "$W/easu-es3.ppm" $size
+  SHADER_CHECK_FSR=es3 stage fsr-easu "$W/picture.ppm" "$W/easu-es3.ppm" $size
   "$Q" fsr-amd-easu "$O" "$W/picture.ppm" "$W/easu-amd.ppm" $size
   check "FSR EASU (ES 3.00) ${size/ /×} against AMD's" "$W/easu-es3.ppm" "$W/easu-amd.ppm" 1 0.01
-  SHADER_CHECK_FSR=es3 "$C" fsr "$W/picture.ppm" "$W/fsr-es3.ppm" $size
+  SHADER_CHECK_FSR=es3 stage fsr "$W/picture.ppm" "$W/fsr-es3.ppm" $size
   "$Q" fsr-amd "$O" "$W/picture.ppm" "$W/fsr-amd.ppm" $size
   check "FSR (ES 3.00) ${size/ /×} against AMD's" "$W/fsr-es3.ppm" "$W/fsr-amd.ppm" 5 0.01 1
 done
-SHADER_CHECK_FSR=es3 "$C" fsr-rcas "$W/easu-amd.ppm" "$W/rcas-es3.ppm"
+SHADER_CHECK_FSR=es3 stage fsr-rcas "$W/easu-amd.ppm" "$W/rcas-es3.ppm"
 "$Q" fsr-amd-rcas "$O" "$W/easu-amd.ppm" "$W/rcas-amd.ppm" 0 0
 check "FSR RCAS (ES 3.00) on the same picture against AMD's" "$W/rcas-es3.ppm" "$W/rcas-amd.ppm" 0 0 1
-"$C" fsr-rcas "$W/easu-amd.ppm" "$W/rcas.ppm"
+stage fsr-rcas "$W/easu-amd.ppm" "$W/rcas.ppm"
 "$Q" fsr-amd-rcas "$O" "$W/easu-amd.ppm" "$W/rcas-amd.ppm" 0 0
 check "FSR RCAS on the same picture against AMD's" "$W/rcas.ppm" "$W/rcas-amd.ppm" 0 0 1
-"$C" fsr "$W/picture.ppm" "$W/fsr.ppm" 640 480
+stage fsr "$W/picture.ppm" "$W/fsr.ppm" 640 480
 differs "FSR against bilinear" "$W/fsr.ppm" "$W/plain-2x.ppm"
 
 # NIS: NVIDIA's NIS_Scaler.h; its tile loader wraps an unsigned index at the top and left, so the border is left out
 # (as NisTest does).
 for size in "400 300" "480 360" "560 420" "640 480"; do
-  "$C" nis "$W/picture.ppm" "$W/nis.ppm" $size
+  stage nis "$W/picture.ppm" "$W/nis.ppm" $size
   "$Q" nis-nvidia "$O" "$W/picture.ppm" "$W/nis-nvidia.ppm" $size
   check "NIS ${size/ /×} against NVIDIA's" "$W/nis.ppm" "$W/nis-nvidia.ppm" 1 0.02 8
 done
@@ -103,7 +129,7 @@ for name in shapes noise gradient; do
   ffmpeg -loglevel error -y -i "$ref/$name.png" -pix_fmt rgb24 "$W/xbrz-$name.ppm"
   for factor in 2 3 4 5 6; do
     ffmpeg -loglevel error -y -i "$ref/$name-${factor}x.png" -pix_fmt rgb24 "$W/xbrz-ref.ppm"
-    "$C" xbrz "$W/xbrz-$name.ppm" "$W/xbrz.ppm" $factor "$W/xbrz-table.bin"
+    stage xbrz "$W/xbrz-$name.ppm" "$W/xbrz.ppm" $factor "$W/xbrz-table.bin"
     check "xBRZ $name ${factor}× against the original" "$W/xbrz.ppm" "$W/xbrz-ref.ppm" 0 0
   done
 done
@@ -124,7 +150,7 @@ for size in "720 576" "720 480"; do
       ffmpeg -loglevel error -y -framerate 25 -i "$W/field%d.ppm" -start_number 0 \
         -vf "format=gbrp,$method=mode=send_field:parity=$parity:deint=all,format=rgb24" "$W/ffmpeg-%d.ppm"
       for second in 0 1; do
-        "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/temporal.ppm" $method $tff $second
+        stage temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/temporal.ppm" $method $tff $second
         check "${method^^} ${size/ /×} $parity field $((second + 1)) against FFmpeg" "$W/temporal.ppm" \
           "$W/ffmpeg-$((2 + second)).ppm" 0 0
       done
@@ -166,7 +192,7 @@ if command -v gst-launch-1.0 >/dev/null && command -v cc >/dev/null; then
       for second in 0 1; do
         python3 -I "$HERE/planes.py" join "$W/greedyh-gstreamer.ppm" $((2 + second)) $w $h \
           "$W/greedyh-0.yuv" "$W/greedyh-1.yuv" "$W/greedyh-2.yuv"
-        "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/greedyh.ppm" greedyh $tff $second
+        stage temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/greedyh.ppm" greedyh $tff $second
         check "Greedy HM ${size/ /×} $parity field $((second + 1)) against GStreamer" "$W/greedyh.ppm" \
           "$W/greedyh-gstreamer.ppm" 0 0
       done
@@ -198,7 +224,7 @@ g = open(sys.argv[1], 'rb').read()
 open(sys.argv[2], 'wb').write(b'P6\n%s %s\n255\n' % (sys.argv[3].encode(), sys.argv[4].encode()) +
                               bytes(v for v in g for _ in range(3)))
 PY
-        "$C" temporal "$W/grey-field0.ppm" "$W/grey-field1.ppm" "$W/grey-field2.ppm" "$W/g2f.ppm" greedy2frame \
+        stage temporal "$W/grey-field0.ppm" "$W/grey-field1.ppm" "$W/grey-field2.ppm" "$W/g2f.ppm" greedy2frame \
           $tff $second
         top=$([ $((tff ^ (1 - second))) = 1 ] && echo 1 || echo 0)
         python3 -I - "$W/g2f.ppm" "$W/g2f-xine.ppm" $top <<'PY'
@@ -271,7 +297,7 @@ for c in range(3):
     rgb[c::3] = planes[c]
 open(f'{d}/toms-gstreamer.ppm', 'wb').write(b'P6\n%d %d\n255\n' % (w, h) + bytes(rgb))
 PY
-      "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/toms.ppm" tomsmocomp $tff $second
+      stage temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/toms.ppm" tomsmocomp $tff $second
       check "TomsMoComp ${size/ /×} $parity field $((second + 1)) against GStreamer's search" "$W/toms.ppm" \
         "$W/toms-gstreamer.ppm" 0 0
     done
@@ -292,7 +318,7 @@ for size in "720 576" "720 480"; do
       field=$([ $((tff ^ second)) = 1 ] && echo top || echo bottom)
       ffmpeg -loglevel error -y -i "$W/field1.ppm" \
         -vf "format=gbrp,field=$field,scale=$w:$h:flags=bilinear+accurate_rnd,format=rgb24" "$W/console-ffmpeg.ppm"
-      "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/console.ppm" oldconsole $tff $second
+      stage temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/console.ppm" oldconsole $tff $second
       parity=$([ $tff = 1 ] && echo tff || echo bff)
       check "Old console ${size/ /×} $parity field $((second + 1)) ($field) stretched, against FFmpeg" \
         "$W/console.ppm" "$W/console-ffmpeg.ppm" 1 0.5
@@ -307,12 +333,12 @@ px = parts[4][-w * h * 3:]
 rows = [px[(y - y % 2) * w * 3:(y - y % 2 + 1) * w * 3] for y in range(h)]
 open(sys.argv[2], 'wb').write(b'P6\n%d %d\n255\n' % (w, h) + b''.join(rows))
 PY
-  "$C" temporal "$W/doubled.ppm" "$W/doubled.ppm" "$W/doubled.ppm" "$W/console-still.ppm" oldconsole-average 1 0
-  "$C" temporal "$W/doubled.ppm" "$W/doubled.ppm" "$W/doubled.ppm" "$W/console-alone.ppm" oldconsole 1 0
+  stage temporal "$W/doubled.ppm" "$W/doubled.ppm" "$W/doubled.ppm" "$W/console-still.ppm" oldconsole-average 1 0
+  stage temporal "$W/doubled.ppm" "$W/doubled.ppm" "$W/doubled.ppm" "$W/console-alone.ppm" oldconsole 1 0
   check "Old console averaging ${size/ /×} a still picture changes nothing" "$W/console-still.ppm" \
     "$W/console-alone.ppm" 0 0
-  "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/console-average.ppm" oldconsole-average 1 0
-  "$C" temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/console.ppm" oldconsole 1 0
+  stage temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/console-average.ppm" oldconsole-average 1 0
+  stage temporal "$W/field0.ppm" "$W/field1.ppm" "$W/field2.ppm" "$W/console.ppm" oldconsole 1 0
   differs "Old console averaging moving fields" "$W/console-average.ppm" "$W/console.ppm"
 done
 
@@ -372,7 +398,7 @@ for case in "chroma-fixture 64 48" "chroma-picture 320 240"; do
   for filter in spline36 krig; do
     shader=$([ $filter = krig ] && echo "$O/KrigBilateral.glsl" || echo spline36)
     "$B/placebo_oracle" chroma "$W/$1.yuv" "$2" "$3" "$shader" "$W/$1-$filter-libplacebo.ppm" rgb 2>/dev/null
-    "$C" chroma "$W/$1.yuv" "$2" "$3" $filter "$W/$1-$filter.ppm"
+    stage chroma "$W/$1.yuv" "$2" "$3" $filter "$W/$1-$filter.ppm"
     check "Chroma $filter, $1, against libplacebo" "$W/$1-$filter.ppm" "$W/$1-$filter-libplacebo.ppm" 2 0.2
     differs "Chroma $filter, $1, against bilinear" "$W/$1-$filter.ppm" "$W/$1-bilinear.ppm"
   done
@@ -393,10 +419,10 @@ planes "$L/input.yuv" "$W/logo-input.ppm"
 for rect in "69 5 20 12" "1 1 30 18" "60 40 35 23" "40 20 3 2"; do
   planes "$L/$(echo $rect | tr ' ' -).yuv" "$W/logo-ffmpeg.ppm"
   # shellcheck disable=SC2086
-  "$C" logo "$W/logo-input.ppm" "$W/logo.ppm" $rect blur
+  stage logo "$W/logo-input.ppm" "$W/logo.ppm" $rect blur
   check "Logo masking ($rect) against FFmpeg's delogo" "$W/logo.ppm" "$W/logo-ffmpeg.ppm" 1 0.01
 done
-"$C" logo "$W/logo-input.ppm" "$W/logo.ppm" 69 5 20 12 blur
+stage logo "$W/logo-input.ppm" "$W/logo.ppm" 69 5 20 12 blur
 differs "Logo masking against the picture it was given" "$W/logo.ppm" "$W/logo-input.ppm"
 # Deblocking and deringing: against FFmpeg's own deblock filters (with every row of a vertical edge judged, see
 # core/player's Deblock) and dav1d's own CDEF, run by core/player's harnesses on an MPEG-2 picture — their captured
@@ -406,13 +432,13 @@ R="$HERE/../../core/player/src/test/resources"
 for case in "weak 0.098 0.05 0.05 0.05" "strong 0.098 0.05 0.05 0.05" "strong 0.196 0.1 0.1 0.1" \
   "weak 0.05 0.025 0.025 0.025"; do
   # shellcheck disable=SC2086
-  "$C" deblock "$R/deblock/input.ppm" "$W/deblock.ppm" $case
+  stage deblock "$R/deblock/input.ppm" "$W/deblock.ppm" $case
   check "Deblock ($case) against FFmpeg's filters" "$W/deblock.ppm" "$R/deblock/$(echo $case | tr ' ' -).ppm" 0 0
 done
 differs "Deblock against the picture it was given" "$W/deblock.ppm" "$R/deblock/input.ppm"
 for case in "8 2 5" "15 4 6" "4 0 3" "0 2 4" "3 1 4"; do
   # shellcheck disable=SC2086
-  "$C" cdef "$R/cdef/input.ppm" "$W/cdef.ppm" $case
+  stage cdef "$R/cdef/input.ppm" "$W/cdef.ppm" $case
   check "CDEF ($case) against dav1d's" "$W/cdef.ppm" "$R/cdef/$(echo $case | tr ' ' -).ppm" 0 0
 done
 differs "CDEF against the picture it was given" "$W/cdef.ppm" "$R/cdef/input.ppm"
@@ -423,7 +449,7 @@ differs "CDEF against the picture it was given" "$W/cdef.ppm" "$R/cdef/input.ppm
 T="$HERE/../../core/player/src/test/resources/temporal-denoise"
 for case in "0.02 0.04" "0.08 0.16"; do
   # shellcheck disable=SC2086
-  "$C" temporal-denoise "$T/frame1.ppm" "$T/frame2.ppm" "$T/frame3.ppm" "$W/temporal-denoise.ppm" $case
+  stage temporal-denoise "$T/frame1.ppm" "$T/frame2.ppm" "$T/frame3.ppm" "$W/temporal-denoise.ppm" $case
   check "Temporal denoising ($case) against FFmpeg's atadenoise" "$W/temporal-denoise.ppm" \
     "$T/$(echo $case | tr ' ' -).ppm" 0 0
 done
@@ -441,7 +467,7 @@ for v in (200, 50):
 PY
 for tff in 1 0; do
   first=$([ $tff = 1 ] && echo 200 || echo 50)
-  "$C" deinterlace "$W/fields.ppm" "$W/bob.ppm" 3 $tff
+  stage deinterlace "$W/fields.ppm" "$W/bob.ppm" 3 $tff
   order=$([ $tff = 1 ] && echo top || echo bottom)
   check "Bob keeps the first field ($order first)" "$W/bob.ppm" "$W/flat$first.ppm" 0 0 1
 done
@@ -458,16 +484,16 @@ for name in band picture; do
     "$B/placebo_oracle" deband "$W/$name.ppm" "$W/deband-libplacebo.ppm" $case
     for rows in bottom top; do
       # shellcheck disable=SC2086
-      SHADER_CHECK_DEBAND=$rows "$C" deband "$W/$name.ppm" "$W/deband.ppm" $case
+      SHADER_CHECK_DEBAND=$rows stage deband "$W/$name.ppm" "$W/deband.ppm" $case
       check "Deband $name ($case), top row at v = $([ $rows = top ] && echo 0 || echo 1), against libplacebo" \
         "$W/deband.ppm" "$W/deband-libplacebo.ppm" 1 0.01
     done
   done
   "$B/placebo_oracle" deband "$W/$name.ppm" "$W/deband-libplacebo.ppm" 1 3 16 0 0
-  SHADER_CHECK_DEBAND=es1 "$C" deband "$W/$name.ppm" "$W/deband-es1.ppm" 1 3 16 0 0
+  SHADER_CHECK_DEBAND=es1 stage deband "$W/$name.ppm" "$W/deband-es1.ppm" 1 3 16 0 0
   check "Deband $name (GLSL ES 1.00, other random numbers) against libplacebo" "$W/deband-es1.ppm" \
     "$W/deband-libplacebo.ppm" 2 0.2
-  "$C" deband "$W/$name.ppm" "$W/deband.ppm" 4 6 16 0 0
+  stage deband "$W/$name.ppm" "$W/deband.ppm" 4 6 16 0 0
   differs "Deband $name against the picture it was given" "$W/deband.ppm" "$W/$name.ppm"
 done
 
@@ -533,7 +559,7 @@ done
 # (ours pulls into the four nearest pixels' range, libplacebo's weighs a soft minimum and maximum: not the same rule).
 for size in "480 360" "640 480"; do
   for kernel in lanczos ewa; do
-    "$C" $kernel "$W/picture.ppm" "$W/$kernel.ppm" $size 0
+    stage $kernel "$W/picture.ppm" "$W/$kernel.ppm" $size 0
     scaler=$([ $kernel = ewa ] && echo ewa_lanczossharp || echo lanczos)
     scale="libplacebo=w=${size% *}:h=${size#* }:upscaler=$scaler:antiringing=0:dithering=none:sigmoid=false"
     ffmpeg -loglevel error -y -i "$W/picture.ppm" -vf "format=gbrp,$scale:format=gbrp,format=rgb24" \
@@ -545,7 +571,7 @@ done
 differs "Lanczos against bilinear" "$W/lanczos.ppm" "$W/plain-2x.ppm"
 
 # Anime4K: its mpv shader in libplacebo, on RGB, where its MAIN hook sees the same values the stage does.
-"$C" anime4k "$W/picture.ppm" "$W/anime4k.ppm"
+stage anime4k "$W/picture.ppm" "$W/anime4k.ppm"
 placebo "$W/picture.ppm" "$W/anime4k-libplacebo.ppm" "custom_shader_path=$O/Anime4K_Upscale_CNN_x2_S.glsl"
 check "Anime4K against libplacebo" "$W/anime4k.ppm" "$W/anime4k-libplacebo.ppm" 1 0.1
 differs "Anime4K against bilinear" "$W/anime4k.ppm" "$W/plain-2x.ppm"
@@ -553,10 +579,10 @@ differs "Anime4K against bilinear" "$W/anime4k.ppm" "$W/plain-2x.ppm"
 # ACNet: its mpv shader in libplacebo on YUV (16 bits, BT.709, full range), the chroma scaled bilinearly, as the
 # stage's doubling does it — grey first (the network alone), then in colour (the luma put back into the picture).
 yuv="scale=out_color_matrix=bt709:out_range=full,format=yuv444p16le"
-"$C" acnet "$W/grey.ppm" "$W/acnet-grey.ppm"
+stage acnet "$W/grey.ppm" "$W/acnet-grey.ppm"
 placebo "$W/grey.ppm" "$W/acnet-grey-libplacebo.ppm" "custom_shader_path=$O/acnet_f8b4.glsl" "$yuv"
 check "ACNet, grey, against libplacebo" "$W/acnet-grey.ppm" "$W/acnet-grey-libplacebo.ppm" 1 0.05
-"$C" acnet "$W/picture.ppm" "$W/acnet.ppm"
+stage acnet "$W/picture.ppm" "$W/acnet.ppm"
 placebo "$W/picture.ppm" "$W/acnet-libplacebo.ppm" \
   "custom_shader_path=$O/acnet_f8b4.glsl:extra_opts='plane_upscaler=bilinear'" "$yuv"
 check "ACNet, colour, against libplacebo" "$W/acnet.ppm" "$W/acnet-libplacebo.ppm" 1 0.05

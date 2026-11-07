@@ -933,19 +933,6 @@ class GlStage(
     // The enlarged picture, in half floats where this moment is dithered.
     private fun up(w: Int, h: Int): Target = target("up", w, h, half = deep)
 
-    /** :stage's pass ([Passes.draw]) of the shader [shader] names (SHADERS), its own uniforms set by [body]. */
-    private fun pass(
-        shader: String,
-        into: Target,
-        input: Int,
-        extra: List<Pair<Int, String>> = emptyList(),
-        nearest: Boolean = false,
-        body: (Int) -> Unit = {},
-    ): Target {
-        passes.draw(SHADERS.getValue(shader), into, input, extra, nearest) { body(program) }
-        return into
-    }
-
     // [half]: 16-bit floats, for a network's layers, whose values reach past 0..1, and for a picture to be dithered;
     // [deep]: 16-bit values, for HDR's.
     private fun target(name: String, w: Int, h: Int, half: Boolean = false, deep: Boolean = false): Target =
@@ -1220,8 +1207,5 @@ class GlStage(
         // filtered — the one on screen and the next, both fields of one at field rate.
         const val UPLOADED = 6
         const val KEPT = 4
-        val SHADERS = mapOf(
-            "blend.frag" to Shaders.VIDEO_BLEND,
-        )
     }
 }

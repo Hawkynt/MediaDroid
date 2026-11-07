@@ -154,10 +154,16 @@ class Restoration(private val gl: Gles, private val passes: Passes) {
 
     /**
      * [from] debanded into [into] (Deband, libplacebo's): GLSL ES 3.00's pass, which draws libplacebo's own random
-     * numbers, where [es3]; else GLSL ES 1.00's. Each call is the next frame of its random numbers.
+     * numbers, where [es3]; else GLSL ES 1.00's. Each call is the next frame of its random numbers, or [frame].
      */
-    fun deband(from: DrawTarget, into: DrawTarget, d: Deband.Params, es3: Boolean = true): DrawTarget {
-        debandFrame = (debandFrame + 1) and 0xFF
+    fun deband(
+        from: DrawTarget,
+        into: DrawTarget,
+        d: Deband.Params,
+        es3: Boolean = true,
+        frame: Int = (debandFrame + 1) and 0xFF,
+    ): DrawTarget {
+        debandFrame = frame and 0xFF
         return passes.draw(if (es3) Shaders.VIDEO_DEBAND_ES3 else Shaders.VIDEO_DEBAND, into, from.texture) {
             set("uSize", from.width.toFloat(), from.height.toFloat())
             // The picture's top row is where v is 1; libplacebo counts rows from the top.

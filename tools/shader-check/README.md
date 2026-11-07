@@ -42,6 +42,27 @@ oracle that bilinear scaling would pass as well proves nothing.
    EGL comes first, `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json`.
 2. `tools/shader-check/oracle.sh <work folder>` — fetches, builds, compares; fails when a comparison does not hold.
 
+The real stage runs beside it: every command that draws with the stage's own passes (the upscalers, the
+deinterlacers, logo masking, deblocking, deringing, temporal denoising, debanding, chroma upscaling) is drawn a second
+time by engine/desktop's `StageRender` — `:stage`'s passes through the desktop's `Gles`, OpenGL 4.3, exactly as
+GlStage runs them and VideoFilterStage runs them on a phone's OpenGL ES — and held to `shader_check`'s picture, which
+the originals are held to. It needs a JDK and a display for its context (`xvfb-run` where there is none);
+`STAGE_LIMITS=report` prints the differences without failing. On Mesa 26.2's llvmpipe, per 8-bit value:
+
+| The real stage beside shader_check | Max | Mean |
+|------------------------------------|-----|------|
+| YADIF, BWDIF, Greedy HM, Greedy 2-Frame, TomsMoComp, Old console; Auto, Blend, Bob; xBRZ; deblocking, deringing, temporal denoising | 0 | 0 |
+| Lanczos, EWA, logo masking, debanding | 1 | ≤ 0.18 |
+| Anime4K, ACNet, spline36, KrigBilateral | 2 | ≤ 0.1 |
+| FSR's RCAS | 1 | 0.09 |
+| GSR, FSR's EASU, FSR both passes | ≤ 33 | ≤ 0.12 |
+| NIS | 50 | 0.64 |
+
+The large maxima are a few pixels each, the means stay small: the same passes with the same uniforms round
+differently on desktop OpenGL and on OpenGL ES there. `mediump` held at another precision on one side is the likely
+cause; it is not established. The desktop's GSR, FSR and NIS are held to the originals through this picture only, at
+these limits.
+
 On an Intel HD Graphics 520 laptop (Mesa 26.2, libplacebo 7.360), per 8-bit value:
 
 | Check | Max | Mean |

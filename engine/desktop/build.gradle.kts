@@ -92,3 +92,16 @@ tasks.register<JavaExec>("stageDigests") {
     args(providers.gradleProperty("out").getOrElse(layout.buildDirectory.file("stage-digests.txt").get().asFile.path))
     dependsOn("testClasses")
 }
+
+// The real stage as tools/shader-check's oracle.sh drives it (StageRender): the classpath to run it with, written to
+// build/stage-render.classpath (with the test classes built), as java -cp "$(cat …)" runs it once per command.
+tasks.register("stageRenderClasspath") {
+    group = "verification"
+    description = "Writes the classpath tools/shader-check runs the stage's StageRender with"
+    dependsOn("testClasses")
+    val classpath = sourceSets["test"].runtimeClasspath
+    val out = layout.buildDirectory.file("stage-render.classpath")
+    inputs.files(classpath)
+    outputs.file(out)
+    doLast { out.get().asFile.writeText(classpath.files.joinToString(File.pathSeparator)) }
+}
