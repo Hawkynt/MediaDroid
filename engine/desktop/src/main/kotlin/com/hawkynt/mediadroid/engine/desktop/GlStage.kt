@@ -1,12 +1,10 @@
 package com.hawkynt.mediadroid.engine.desktop
 
-import com.hawkynt.mediadroid.imaging.Xbrz
 import com.hawkynt.mediadroid.player.Colorizing
 import com.hawkynt.mediadroid.player.Deblock
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.DotCrawl
 import com.hawkynt.mediadroid.player.Dither
-import com.hawkynt.mediadroid.player.Ewa
 import com.hawkynt.mediadroid.player.MotionAdaptive
 import com.hawkynt.mediadroid.player.MotionInterpolation
 import com.hawkynt.mediadroid.player.MpvShader
@@ -14,7 +12,6 @@ import com.hawkynt.mediadroid.player.MpvShaders
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.OldGame
-import com.hawkynt.mediadroid.player.Nis
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCrop
@@ -22,14 +19,16 @@ import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.player.TemporalDenoise
 import com.hawkynt.mediadroid.player.ToneMap
 import com.hawkynt.mediadroid.shaders.Shaders
+import com.hawkynt.mediadroid.stage.DrawTarget
+import com.hawkynt.mediadroid.stage.Passes
+import com.hawkynt.mediadroid.stage.StageTables
+import com.hawkynt.mediadroid.stage.Upscaling
 import org.lwjgl.glfw.GLFW
 import org.lwjgl.opengl.GL
 import org.lwjgl.opengl.GL43.*
 import org.lwjgl.system.MemoryUtil
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
-import kotlin.math.ceil
-import kotlin.math.pow
 
 /**
  * The picture stage on the desktop: the Android stage's shaders (:stage) on OpenGL 4.3 — which compiles GLSL ES 1.00
@@ -54,12 +53,12 @@ class GlStage(
 
     private val thread = Executors.newSingleThreadExecutor { Thread(it, "mediadroid-stage").apply { isDaemon = true } }
     private var window = 0L
-    private val programs = HashMap<String, Int>()
     private val targets = HashMap<String, Target>()
     private var vao = 0
-    private var nisTable = 0
-    private var ewaTable = 0
-    private var xbrzTable = 0
+
+    // The passes as :stage runs them, on this context; the upscalers' among them.
+    private val passes = Passes(LwjglGles { vao })
+    private val upscaling = Upscaling(passes)
     private var obmcTable = 0
     private var noiseTable = 0
 
@@ -115,7 +114,13 @@ class GlStage(
     private var noiseCounted: MotionSearch.Vectors? = null
 
     /** A texture with its framebuffer; [format] its internal format (GL_RGBA8, GL_RGBA16F, GL_RGBA16). */
-    private class Target(val texture: Int, val framebuffer: Int, val width: Int, val height: Int, val format: Int)
+    private class Target(
+        override val texture: Int,
+        override val framebuffer: Int,
+        override val width: Int,
+        override val height: Int,
+        val format: Int,
+    ) : DrawTarget
 
     /**
      * A picture held on the graphics card: which, its 3D eye or field, whether in half floats, and when it was last
@@ -177,11 +182,8 @@ class GlStage(
         glVertexAttribPointer(0, 2, GL_FLOAT, false, 16, 0)
         glEnableVertexAttribArray(1)
         glVertexAttribPointer(1, 2, GL_FLOAT, false, 16, 8)
-        nisTable = nisTable()
-        ewaTable = ewaTable()
-        xbrzTable = xbrzTable()
-        obmcTable = obmcTable()
-        noiseTable = noiseTable()
+        obmcTable = passes.table(StageTables.OBMC_SIZE, StageTables.OBMC_SIZE, StageTables.obmc())
+        noiseTable = passes.table(Dither.SIZE, Dither.SIZE, StageTables.noise())
         // OpenGL 4.3 has compute shaders, which mpv user shaders' compute passes need.
         MpvShaders.compute = true
         ready = true
@@ -703,8 +705,7 @@ class GlStage(
 
     // [vectors] as a texture, kept for the few pictures around the one shown.
     private fun vectorTexture(vectors: MotionSearch.Vectors): Int = denoiseVectors.getOrPut(vectors) {
-        val bytes = MemoryUtil.memAlloc(vectors.bytes.size).put(vectors.bytes).flip()
-        table(vectors.gridWidth, vectors.gridHeight, bytes)
+        passes.table(vectors.gridWidth, vectors.gridHeight, vectors.bytes)
     }.also {
         while (denoiseVectors.size > DENOISE_VECTORS) {
             val oldest = denoiseVectors.keys.first()
@@ -761,8 +762,7 @@ class GlStage(
         }
         if (along !== vectorsShown) {
             if (vectorTexture != 0) glDeleteTextures(vectorTexture)
-            val bytes = MemoryUtil.memAlloc(along.bytes.size).put(along.bytes).flip()
-            vectorTexture = table(along.gridWidth, along.gridHeight, bytes)
+            vectorTexture = passes.table(along.gridWidth, along.gridHeight, along.bytes)
             vectorsShown = along
         }
         val textures = listOf(earlier.texture to "uPrevious", vectorTexture to "uVectors", obmcTable to "uObmc")
@@ -1044,53 +1044,26 @@ class GlStage(
         val upscaler = picture.upscaler
         val w = from.width
         val h = from.height
-        val inSize: (Int) -> Unit = { p -> glUniform2f(glGetUniformLocation(p, "uInSize"), w.toFloat(), h.toFloat()) }
-        val midW = minOf(outW, w * 2)
-        val midH = minOf(outH, h * 2)
+        val mid by lazy { up(Upscaling.twice(w, outW), Upscaling.twice(h, outH)) }
+        fun net(name: String) = target(name, w, h, half = true)
         return when (upscaler) {
-            PictureAdjustment.Upscaler.LANCZOS -> pass("lanczos.frag", up(outW, outH), from.texture) { p ->
-                inSize(p)
-                glUniform1f(glGetUniformLocation(p, "uAntiring"), ANTIRING)
+            PictureAdjustment.Upscaler.LANCZOS -> upscaling.lanczos(from, up(outW, outH))
+            PictureAdjustment.Upscaler.GSR -> upscaling.gsr(from, up(outW, outH))
+            PictureAdjustment.Upscaler.FSR ->
+                upscaling.rcas(upscaling.easu(from, target("easu", outW, outH, half = deep)), up(outW, outH))
+            PictureAdjustment.Upscaler.EWA -> upscaling.ewa(from, mid)
+            PictureAdjustment.Upscaler.NIS -> upscaling.nis(from, mid)
+            PictureAdjustment.Upscaler.ANIME4K -> upscaling.anime4k(from, net("netA"), net("netB"), up(w * 2, h * 2))
+            PictureAdjustment.Upscaler.ACNET ->
+                upscaling.acnet(from, net("netA"), net("netB"), net("netC"), net("netD"), up(w * 2, h * 2))
+            PictureAdjustment.Upscaler.XBRZ -> {
+                val factor = Upscaling.xbrzFactor(w, h, outW, outH)
+                upscaling.xbrz(from, target("xbrzCorners", w + 1, h + 1), target("xbrzDecisions", w, h),
+                    up(w * factor, h * factor), factor)
             }
-            PictureAdjustment.Upscaler.GSR -> pass("sgsr.frag", up(outW, outH), from.texture, body = inSize)
-            PictureAdjustment.Upscaler.FSR -> {
-                val easu = pass("fsr-easu-es3.frag", target("easu", outW, outH, half = deep), from.texture,
-                    body = inSize)
-                pass("fsr-rcas-es3.frag", up(outW, outH), easu.texture) { p ->
-                    glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / outW, 1f / outH)
-                    glUniform1f(glGetUniformLocation(p, "uSharp"), 2f.pow(-0.2f))
-                }
-            }
-            PictureAdjustment.Upscaler.EWA -> pass("ewa.frag", up(midW, midH), from.texture,
-                listOf(ewaTable to "uTable")) { p ->
-                inSize(p)
-                glUniform1f(glGetUniformLocation(p, "uRadius"), Ewa.RADIUS.toFloat())
-                glUniform1f(glGetUniformLocation(p, "uAntiring"), ANTIRING)
-            }
-            PictureAdjustment.Upscaler.NIS -> pass("nis.frag", up(midW, midH), from.texture,
-                listOf(nisTable to "uCoef")) { p ->
-                val c = Nis.Config(NIS_SHARPNESS)
-                inSize(p)
-                glUniform2f(glGetUniformLocation(p, "uOutSize"), midW.toFloat(), midH.toFloat())
-                glUniform2f(glGetUniformLocation(p, "uScale"), w.toFloat() / midW, h.toFloat() / midH)
-                fun set(name: String, v: Float) = glUniform1f(glGetUniformLocation(p, name), v)
-                set("uDetectRatio", c.detectRatio)
-                set("uDetectThres", c.detectThres)
-                set("uMinContrastRatio", c.minContrastRatio)
-                set("uRatioNorm", c.ratioNorm)
-                set("uSharpStartY", c.sharpStartY)
-                set("uSharpScaleY", c.sharpScaleY)
-                set("uSharpStrengthMin", c.sharpStrengthMin)
-                set("uSharpStrengthScale", c.sharpStrengthScale)
-                set("uSharpLimitMin", c.sharpLimitMin)
-                set("uSharpLimitScale", c.sharpLimitScale)
-            }
-            PictureAdjustment.Upscaler.ANIME4K -> anime4k(from)
-            PictureAdjustment.Upscaler.ACNET -> acnet(from)
-            PictureAdjustment.Upscaler.XBRZ -> xbrz(from, outW, outH)
             else -> NeuralEnlarging.choice(picture)?.takeIf { DesktopNeural.onNcnn(upscaler) }
                 ?.let { enlarged(it, from) } ?: from
-        }
+        } as Target
     }
 
     /**
@@ -1284,71 +1257,10 @@ class GlStage(
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, into.width, into.height, GL_RGB, GL_UNSIGNED_BYTE, rgb)
     }
 
-    // Anime4K: four convolutions at the picture's size into half-float textures taking turns, then twice the size —
-    // the picture's bilinear doubling plus the detail the network adds. As VideoFilterStage runs it.
-    private fun anime4k(from: Target): Target {
-        val w = from.width
-        val h = from.height
-        val texel: (Int) -> Unit = { p -> glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h) }
-        var input = from
-        ANIME4K.forEachIndexed { i, shader ->
-            input = pass(shader, target(if (i % 2 == 0) "netA" else "netB", w, h, half = true), input.texture,
-                body = texel)
-        }
-        return pass("anime4k/depth-to-space.frag", up(w * 2, h * 2), from.texture,
-            listOf(input.texture to "uLast")) { p ->
-            glUniform2f(glGetUniformLocation(p, "uLastSize"), w.toFloat(), h.toFloat())
-        }
-    }
-
-    // ACNet: eleven convolutions over eight channels — a layer is two half-float textures, one pass each, the layers
-    // taking turns between two pairs — then the network's luma put into the picture's bilinear doubling.
-    private fun acnet(from: Target): Target {
-        val w = from.width
-        val h = from.height
-        val pairs = arrayOf(arrayOf("netA", "netB"), arrayOf("netC", "netD"))
-        ACNET.forEachIndexed { i, shader ->
-            // The head (0) into the first pair, each body block (1 to 4) from one pair into the other, the last
-            // convolution (5) into the second; every layer's two halves read the whole layer before.
-            val layer = if (i < 2) 0 else (i - 2) / 2 + 1
-            val into = pairs[layer % 2]
-            val prior = pairs[1 - layer % 2]
-            val input = if (layer == 0) from.texture else target(prior[0], w, h, half = true).texture
-            val extra = buildList {
-                if (layer > 0) add(target(prior[1], w, h, half = true).texture to "uTex1")
-                if (i == ACNET.lastIndex) add(from.texture to "uPicture")
-            }
-            pass(shader, target(into[i % 2], w, h, half = true), input, extra) { p ->
-                glUniform2f(glGetUniformLocation(p, "uTexel"), 1f / w, 1f / h)
-            }
-        }
-        return pass("acnet/pixel-shuffle.frag", up(w * 2, h * 2), from.texture,
-            listOf(target(pairs[1][0], w, h, half = true).texture to "uLast")) { p ->
-            glUniform2f(glGetUniformLocation(p, "uLastSize"), w.toFloat(), h.toFloat())
-        }
-    }
-
-    // xBRZ by the whole factor that reaches the shown size, 2 to 6: the corners where pixels meet, what each pixel
-    // draws in its corners, then the enlarged picture — every texel read as it is.
-    private fun xbrz(from: Target, outW: Int, outH: Int): Target {
-        val w = from.width
-        val h = from.height
-        val factor = ceil(minOf(outW.toFloat() / w, outH.toFloat() / h)).toInt().coerceIn(Xbrz.FACTORS)
-        val size: (Int) -> Unit = { p -> glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat()) }
-        val corners = pass("xbrz/corners.frag", target("xbrzCorners", w + 1, h + 1), from.texture, nearest = true,
-            body = size)
-        val decisions = pass("xbrz/decisions.frag", target("xbrzDecisions", w, h), from.texture,
-            listOf(corners.texture to "uCorners"), nearest = true, body = size)
-        return pass("xbrz/scale.frag", up(w * factor, h * factor), from.texture,
-            listOf(decisions.texture to "uDecisions", xbrzTable to "uTable"), nearest = true) { p ->
-            size(p)
-            glUniform1f(glGetUniformLocation(p, "uFactor"), factor.toFloat())
-        }
-    }
-
     // The enlarged picture, in half floats where this moment is dithered.
     private fun up(w: Int, h: Int): Target = target("up", w, h, half = deep)
 
+    /** :stage's pass ([Passes.draw]) of the shader [shader] names (SHADERS), its own uniforms set by [body]. */
     private fun pass(
         shader: String,
         into: Target,
@@ -1357,51 +1269,8 @@ class GlStage(
         nearest: Boolean = false,
         body: (Int) -> Unit = {},
     ): Target {
-        val p = program(shader)
-        glBindFramebuffer(GL_FRAMEBUFFER, into.framebuffer)
-        glViewport(0, 0, into.width, into.height)
-        glUseProgram(p)
-        val bound = listOf(input to "uTex") + extra
-        bound.forEachIndexed { unit, (texture, name) ->
-            glActiveTexture(GL_TEXTURE0 + unit)
-            glBindTexture(GL_TEXTURE_2D, texture)
-            if (unit == 0 || nearest) {
-                val filter = if (nearest) GL_NEAREST else GL_LINEAR
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter)
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter)
-            }
-            glUniform1i(glGetUniformLocation(p, name), unit)
-        }
-        glUniformMatrix4fv(glGetUniformLocation(p, "uTexMatrix"), false, IDENTITY)
-        glUniform1f(glGetUniformLocation(p, "uGrain"), 0f)
-        body(p)
-        glBindVertexArray(vao)
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
-        if (nearest) bound.forEach { (texture, _) ->
-            glBindTexture(GL_TEXTURE_2D, texture)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        }
+        passes.draw(SHADERS.getValue(shader), into, input, extra, nearest) { body(program) }
         return into
-    }
-
-    private fun program(shader: String): Int = programs.getOrPut(shader) {
-        val fragment = SHADERS.getValue(shader)
-        val es3 = fragment.startsWith("#version 300 es")
-        val vertex = if (es3) Shaders.VIDEO_VERTEX_ES3 else Shaders.VIDEO_VERTEX
-        fun compile(type: Int, source: String): Int = glCreateShader(type).also {
-            glShaderSource(it, if (source.startsWith("#version")) source else "#version 100\n$source")
-            glCompileShader(it)
-            check(glGetShaderi(it, GL_COMPILE_STATUS) != 0) { "$shader: " + glGetShaderInfoLog(it) }
-        }
-        glCreateProgram().also {
-            glAttachShader(it, compile(GL_VERTEX_SHADER, vertex))
-            glAttachShader(it, compile(GL_FRAGMENT_SHADER, fragment))
-            glBindAttribLocation(it, 0, "aPosition")
-            glBindAttribLocation(it, 1, "aTexCoord")
-            glLinkProgram(it)
-            check(glGetProgrami(it, GL_LINK_STATUS) != 0) { "$shader: " + glGetProgramInfoLog(it) }
-        }
     }
 
     // [half]: 16-bit floats, for a network's layers, whose values reach past 0..1, and for a picture to be dithered;
@@ -1708,77 +1577,6 @@ class GlStage(
         return MediaReader.Picture(ptsMs, w, h, rgba)
     }
 
-    private fun nisTable(): Int {
-        val bytes = MemoryUtil.memAlloc(6 * Nis.PHASES * 4)
-        fun put(c: Float) {
-            val v = (((c + 1f) / 2.5f) * 65535f + 0.5f).toInt().coerceIn(0, 65535)
-            bytes.put((v shr 8).toByte()).put((v and 0xFF).toByte())
-        }
-        for (phase in 0 until Nis.PHASES) for (tap in 0 until 6) {
-            put(Nis.scaleCoefficient(phase, tap))
-            put(Nis.sharpenCoefficient(phase, tap))
-        }
-        bytes.flip()
-        return table(6, Nis.PHASES, bytes)
-    }
-
-    private fun ewaTable(): Int {
-        val size = 512
-        val bytes = MemoryUtil.memAlloc(size * 4)
-        for (w in Ewa.table(size)) {
-            val v = (((w + 0.25f) / 1.25f) * 65535f).toInt().coerceIn(0, 65535)
-            bytes.put((v shr 8).toByte()).put((v and 0xFF).toByte()).put(0).put(0)
-        }
-        bytes.flip()
-        return table(size, 1, bytes)
-    }
-
-    // xBRZ's patterns (Xbrz.weights) as a XBRZ_TABLE_WIDTH × 25 texture: a row per factor from 2 and pattern, a texel
-    // per cell of the block, its share of the neighbour's colour as m in red and n in green.
-    private fun xbrzTable(): Int {
-        val rows = Xbrz.FACTORS.count() * Xbrz.Pattern.entries.size
-        val bytes = MemoryUtil.memAlloc(XBRZ_TABLE_WIDTH * rows * 4)
-        for (factor in Xbrz.FACTORS) for (pattern in Xbrz.Pattern.entries) {
-            val weights = Xbrz.weights(factor, pattern)
-            for (cell in 0 until XBRZ_TABLE_WIDTH) {
-                val m = if (cell < factor * factor) weights[cell * 2] else 0
-                val n = if (cell < factor * factor) weights[cell * 2 + 1] else 1
-                bytes.put(m.toByte()).put(n.toByte()).put(0).put(0)
-            }
-        }
-        bytes.flip()
-        return table(XBRZ_TABLE_WIDTH, rows, bytes)
-    }
-
-    // The overlapped blocks' weights (MotionInterpolation.obmcWeight) as a 32 × 32 texture, in red.
-    private fun obmcTable(): Int {
-        val bytes = MemoryUtil.memAlloc(32 * 32 * 4)
-        for (i in 0 until 32 * 32) bytes.put(MotionInterpolation.obmcWeight(i).toByte()).put(0).put(0).put(0)
-        bytes.flip()
-        return table(32, 32, bytes)
-    }
-
-    // libplacebo's blue-noise matrix for the dither pass, its ranks over red and green (Dither.noiseRgba).
-    private fun noiseTable(): Int {
-        val rgba = Dither.noiseRgba()
-        val bytes = MemoryUtil.memAlloc(rgba.size)
-        bytes.put(rgba).flip()
-        return table(Dither.SIZE, Dither.SIZE, bytes)
-    }
-
-    private fun table(w: Int, h: Int, bytes: ByteBuffer): Int {
-        val texture = glGenTextures()
-        glBindTexture(GL_TEXTURE_2D, texture)
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, bytes)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-        MemoryUtil.memFree(bytes)
-        return texture
-    }
-
     override fun close() {
         thread.submit {
             interpolatorOpen?.close()
@@ -1800,9 +1598,6 @@ class GlStage(
 
     private companion object {
         val IDENTITY = floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f)
-        const val ANTIRING = 0.5f
-        const val NIS_SHARPNESS = 0.5f
-        const val XBRZ_TABLE_WIDTH = 36
 
         // The pixel-buffer objects pictures are read back through, and how long one wait on a fence lasts.
         const val PBO_BUFFERS = 2
@@ -1823,8 +1618,6 @@ class GlStage(
         // filtered — the one on screen and the next, both fields of one at field rate.
         const val UPLOADED = 6
         const val KEPT = 4
-        val ANIME4K = (1..4).map { "anime4k/conv-$it.frag" }
-        val ACNET = (1..11).map { "acnet/conv-$it.frag" }
         val SHADERS = mapOf(
             "temporal.frag" to Shaders.VIDEO_TEMPORAL,
             "mc-smooth.frag" to Shaders.VIDEO_MC_SMOOTH,
@@ -1855,32 +1648,6 @@ class GlStage(
             "adjust.frag" to Shaders.VIDEO_ADJUST,
             "blend.frag" to Shaders.VIDEO_BLEND,
             "motion.frag" to Shaders.VIDEO_MOTION,
-            "lanczos.frag" to Shaders.VIDEO_LANCZOS,
-            "sgsr.frag" to Shaders.VIDEO_SGSR,
-            "fsr-easu-es3.frag" to Shaders.VIDEO_FSR_EASU_ES3,
-            "fsr-rcas-es3.frag" to Shaders.VIDEO_FSR_RCAS_ES3,
-            "ewa.frag" to Shaders.VIDEO_EWA,
-            "nis.frag" to Shaders.VIDEO_NIS,
-            "anime4k/conv-1.frag" to Shaders.ANIME4K_CONV_1,
-            "anime4k/conv-2.frag" to Shaders.ANIME4K_CONV_2,
-            "anime4k/conv-3.frag" to Shaders.ANIME4K_CONV_3,
-            "anime4k/conv-4.frag" to Shaders.ANIME4K_CONV_4,
-            "anime4k/depth-to-space.frag" to Shaders.ANIME4K_DEPTH_TO_SPACE,
-            "acnet/conv-1.frag" to Shaders.ACNET_CONV_1,
-            "acnet/conv-2.frag" to Shaders.ACNET_CONV_2,
-            "acnet/conv-3.frag" to Shaders.ACNET_CONV_3,
-            "acnet/conv-4.frag" to Shaders.ACNET_CONV_4,
-            "acnet/conv-5.frag" to Shaders.ACNET_CONV_5,
-            "acnet/conv-6.frag" to Shaders.ACNET_CONV_6,
-            "acnet/conv-7.frag" to Shaders.ACNET_CONV_7,
-            "acnet/conv-8.frag" to Shaders.ACNET_CONV_8,
-            "acnet/conv-9.frag" to Shaders.ACNET_CONV_9,
-            "acnet/conv-10.frag" to Shaders.ACNET_CONV_10,
-            "acnet/conv-11.frag" to Shaders.ACNET_CONV_11,
-            "acnet/pixel-shuffle.frag" to Shaders.ACNET_PIXEL_SHUFFLE,
-            "xbrz/corners.frag" to Shaders.XBRZ_CORNERS,
-            "xbrz/decisions.frag" to Shaders.XBRZ_DECISIONS,
-            "xbrz/scale.frag" to Shaders.XBRZ_SCALE,
         )
     }
 }
