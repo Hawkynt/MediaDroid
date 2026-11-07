@@ -43,9 +43,14 @@ import kotlin.math.pow
  * motion between them (Motion, with MotionSearch), enlarged (Lanczos, FSR, EWA, NIS, GSR, Anime4K, ACNet, xBRZ; the
  * neural ones plain for now) at the strength chosen, colour-corrected, and dithered to 8 bits where it holds more
  * (Dither). Each picture is filtered once and kept while it is on screen or next. The passes and their uniforms are the
- * Android stage's (VideoFilterStage), the shaders those tools/shader-check holds to their originals.
+ * Android stage's (VideoFilterStage), the shaders those tools/shader-check holds to their originals. The picture is
+ * read back for the window as [presentation] says (Presentation); with a [shareWith] window, the stage's context shares
+ * its textures with that window's, for [processTexture].
  */
-class GlStage : AutoCloseable {
+class GlStage(
+    private val presentation: Presentation = Presentation.chosen(),
+    private val shareWith: Long = 0L,
+) : AutoCloseable {
 
     private val thread = Executors.newSingleThreadExecutor { Thread(it, "mediadroid-stage").apply { isDaemon = true } }
     private var window = 0L
@@ -68,6 +73,23 @@ class GlStage : AutoCloseable {
     private val peakDetect = PeakDetect()
     private var peakTransfer: ToneMap.Transfer? = null
     private var out: ByteBuffer? = null
+
+    // The pixel-buffer objects pictures are read back through (Presentation.PBO, PBO_LAGGED): each one's buffer, the
+    // bytes it holds, its fence and what is being read into it; the picture handed out last.
+    private val readbackRing = ReadbackRing(
+        PBO_BUFFERS,
+        if (presentation == Presentation.PBO_LAGGED) 1 else 0,
+    )
+    private val pbos = IntArray(PBO_BUFFERS)
+    private val pboBytes = IntArray(PBO_BUFFERS)
+    private val pboFences = LongArray(PBO_BUFFERS)
+    private val pboPictures = arrayOfNulls<LongArray>(PBO_BUFFERS)
+    private var handedOut: MediaReader.Picture? = null
+
+    // The textures processTexture hands to the window in turn, and each one's size.
+    private val shared = IntArray(SHARED_TEXTURES)
+    private val sharedSizes = arrayOfNulls<IntArray>(SHARED_TEXTURES)
+    private var sharedNext = 0
 
     // The pictures uploaded (their 3D eye) and the pictures filtered at their own size, each by the picture it holds.
     private val uploaded = Array(UPLOADED) { Slot("raw$it") }
@@ -117,6 +139,10 @@ class GlStage : AutoCloseable {
     @Volatile var ready = false
         private set
 
+    /** What handing the last picture to the window took on the stage's thread, in nanoseconds (the read-back). */
+    @Volatile var presentNanos = 0L
+        private set
+
     /** The OpenGL driver's own name for what draws (GL_RENDERER): "llvmpipe (…)" for Mesa in software. */
     @Volatile var renderer = ""
         private set
@@ -136,7 +162,7 @@ class GlStage : AutoCloseable {
         GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MAJOR, 4)
         GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MINOR, 3)
         GLFW.glfwWindowHint(GLFW.GLFW_OPENGL_PROFILE, GLFW.GLFW_OPENGL_CORE_PROFILE)
-        window = GLFW.glfwCreateWindow(16, 16, "MediaDroid stage", 0, 0)
+        window = GLFW.glfwCreateWindow(16, 16, "MediaDroid stage", 0, shareWith)
         if (window == 0L) return
         GLFW.glfwMakeContextCurrent(window)
         GL.createCapabilities()
@@ -189,8 +215,41 @@ class GlStage : AutoCloseable {
     ): MediaReader.Picture = if (!ready) {
         moment.shown
     } else {
-        thread.submit<MediaReader.Picture> { run(moment, adjustment, width, height, crop, warp) }.get()
+        thread.submit<MediaReader.Picture> {
+            readBack(run(moment, adjustment, width, height, crop, warp), moment.shown.ptsMs)
+        }.get()
     }
+
+    /** Whether a picture drawn is still being read back (Presentation.PBO_LAGGED): [latest] hands it out. */
+    val behind: Boolean get() = presentation == Presentation.PBO_LAGGED && readbackRing.inFlight > 0
+
+    /**
+     * The newest picture read back: under Presentation.PBO_LAGGED the one the last [process] drew, collected now (for a
+     * window that asks for no new picture — paused, a still); otherwise the one [process] handed out. Null before any.
+     */
+    fun latest(): MediaReader.Picture? = if (!ready) {
+        null
+    } else {
+        thread.submit<MediaReader.Picture?> {
+            while (readbackRing.inFlight > 0) collect(readbackRing.finish())
+            handedOut
+        }.get()
+    }
+
+    /**
+     * A picture as [process] draws it, left on the graphics card for a window whose context shares the stage's
+     * ([shareWith]): one of [SHARED_TEXTURES] textures in turn, RGBA8, its bottom row the picture's top, and the fence
+     * the window waits on (glWaitSync) before drawing it.
+     */
+    fun processTexture(moment: Moment, adjustment: PictureAdjustment, width: Int, height: Int): SharedPicture? =
+        if (!ready || shareWith == 0L) {
+            null
+        } else {
+            thread.submit<SharedPicture> { share(run(moment, adjustment, width, height, null, ScreenWarp.None)) }.get()
+        }
+
+    /** A texture the stage drew into for a sharing window ([processTexture]); [slot] which of them. */
+    class SharedPicture(val slot: Int, val texture: Int, val width: Int, val height: Int, val fence: Long)
 
     // The part of [picture] the stage works on: inside the [crop] where it fits the picture, of that the [stereo] eye.
     private fun region(
@@ -222,7 +281,7 @@ class GlStage : AutoCloseable {
         outH: Int,
         crop: PictureCrop?,
         warp: ScreenWarp,
-    ): MediaReader.Picture {
+    ): Target {
         this.crop = crop
         // Where the picture holds more than the 8 bits it is read back in — HDR's tone-mapped floats, the colour
         // correction's or debanding's results — every pass draws into half floats and the last one dithers (Dither);
@@ -304,7 +363,7 @@ class GlStage : AutoCloseable {
             glUniformMatrix3fv(glGetUniformLocation(p, "uWarp"), false, warp.matrix)
             glUniform1f(glGetUniformLocation(p, "uWarped"), 1f)
         }
-        if (!deep) return download(shown, m.shown.ptsMs)
+        if (!deep) return shown
         // Dithered to 8 bits, the last pass before the picture is read back: libplacebo's blue noise
         // (glsl/video/dither.glsl).
         val dithered = pass(
@@ -313,7 +372,7 @@ class GlStage : AutoCloseable {
             // The frame's top row is where v is 1 (see upload); libplacebo counts rows from the top.
             glUniform2f(glGetUniformLocation(p, "uRows"), outH.toFloat(), -1f)
         }
-        return download(dithered, m.shown.ptsMs)
+        return dithered
     }
 
     /**
@@ -1379,6 +1438,85 @@ class GlStage : AutoCloseable {
         }
     }
 
+    /** [from] read back for the window as [presentation] says, timed into [presentNanos]. */
+    private fun readBack(from: Target, ptsMs: Long): MediaReader.Picture {
+        val began = System.nanoTime()
+        val picture = when (presentation) {
+            Presentation.SYNC -> download(from, ptsMs)
+            Presentation.PBO, Presentation.PBO_LAGGED -> throughBuffers(from, ptsMs)
+        }
+        presentNanos = System.nanoTime() - began
+        return picture
+    }
+
+    /**
+     * [from] read back into the next pixel-buffer object, fenced; the read-backs [readbackRing] says are due collected —
+     * this one at once under Presentation.PBO, the one before under PBO_LAGGED — and the newest handed out.
+     */
+    private fun throughBuffers(from: Target, ptsMs: Long): MediaReader.Picture {
+        val w = from.width
+        val h = from.height
+        val slot = readbackRing.start()
+        if (pbos[slot] == 0) pbos[slot] = glGenBuffers()
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[slot])
+        if (pboBytes[slot] < w * h * 4) {
+            glBufferData(GL_PIXEL_PACK_BUFFER, w.toLong() * h * 4, GL_STREAM_READ)
+            pboBytes[slot] = w * h * 4
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, from.framebuffer)
+        glPixelStorei(GL_PACK_ALIGNMENT, 1)
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, 0L)
+        pboFences[slot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+        pboPictures[slot] = longArrayOf(w.toLong(), h.toLong(), ptsMs)
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0)
+        glFlush()
+        while (readbackRing.mustCollect) collect(readbackRing.finish())
+        return checkNotNull(handedOut)
+    }
+
+    /** The read-back in pixel-buffer object [slot] waited for, mapped, its rows turned top first: [handedOut]. */
+    private fun collect(slot: Int) {
+        val fence = pboFences[slot]
+        while (glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, FENCE_WAIT_NANOS) == GL_TIMEOUT_EXPIRED) Unit
+        glDeleteSync(fence)
+        val (w, h) = pboPictures[slot]!!.let { it[0].toInt() to it[1].toInt() }
+        val ptsMs = pboPictures[slot]!![2]
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[slot])
+        val mapped = checkNotNull(glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, w.toLong() * h * 4, GL_MAP_READ_BIT))
+        val rgba = ByteArray(w * h * 4)
+        for (y in 0 until h) {
+            mapped.position((h - 1 - y) * w * 4)
+            mapped.get(rgba, y * w * 4, w * 4)
+        }
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER)
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0)
+        handedOut = MediaReader.Picture(ptsMs, w, h, rgba)
+    }
+
+    /** [from] copied into the next of the textures shared with the window, fenced. */
+    private fun share(from: Target): SharedPicture {
+        val slot = sharedNext
+        sharedNext = (sharedNext + 1) % SHARED_TEXTURES
+        val size = sharedSizes[slot]
+        if (shared[slot] == 0 || size == null || size[0] != from.width || size[1] != from.height) {
+            if (shared[slot] != 0) glDeleteTextures(shared[slot])
+            shared[slot] = glGenTextures()
+            glBindTexture(GL_TEXTURE_2D, shared[slot])
+            glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, from.width, from.height)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            sharedSizes[slot] = intArrayOf(from.width, from.height)
+        }
+        val began = System.nanoTime()
+        glCopyImageSubData(
+            from.texture, GL_TEXTURE_2D, 0, 0, 0, 0, shared[slot], GL_TEXTURE_2D, 0, 0, 0, 0, from.width, from.height, 1,
+        )
+        val fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+        glFlush()
+        presentNanos = System.nanoTime() - began
+        return SharedPicture(slot, shared[slot], from.width, from.height, fence)
+    }
+
     private fun download(from: Target, ptsMs: Long): MediaReader.Picture {
         val w = from.width
         val h = from.height
@@ -1474,6 +1612,11 @@ class GlStage : AutoCloseable {
             interpolatorOpen?.close()
             enlargerOpen?.close()
             colorThread.submit { colorizerOpen?.close() }
+            // The buffers and shared textures outlive this context where a window shares its objects.
+            if (ready) {
+                pbos.filter { it != 0 }.forEach(::glDeleteBuffers)
+                shared.filter { it != 0 }.forEach(::glDeleteTextures)
+            }
             if (window != 0L) GLFW.glfwDestroyWindow(window)
             out?.let(MemoryUtil::memFree)
         }.get()
@@ -1488,6 +1631,13 @@ class GlStage : AutoCloseable {
         const val ANTIRING = 0.5f
         const val NIS_SHARPNESS = 0.5f
         const val XBRZ_TABLE_WIDTH = 36
+
+        // The pixel-buffer objects pictures are read back through, and how long one wait on a fence lasts.
+        const val PBO_BUFFERS = 2
+        const val FENCE_WAIT_NANOS = 100_000_000L
+
+        /** How many textures a sharing window is handed in turn: one drawn, one shown, one spare. */
+        const val SHARED_TEXTURES = 3
 
         /** Every how many columns Adaptive and Old console weigh a picture's luma, as on Android. */
         const val ADAPTIVE_COLUMN_STEP = 4

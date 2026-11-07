@@ -439,6 +439,14 @@ fun PlayerScreen(
                     changed = true
                 }
             }
+            // The stage hands out each picture a call late while the next is read back (Presentation.PBO_LAGGED): one
+            // still being read back is collected at the next refresh, so a paused picture or a still shows too.
+            if (!changed && stage.behind) {
+                withContext(Dispatchers.Default) { stage.latest() }?.let {
+                    staged = it
+                    changed = true
+                }
+            }
             staged?.let { base ->
                 // Off the window's thread: libass's first font lookup, or a heavy sign, takes its time.
                 // The place and the part shown are for what the stage drew; a picture straight from the decoder

@@ -161,7 +161,7 @@ class NativeNeuralTest {
         assertTrue("off by $mean on average, $max at most", mean <= 0.8 && max <= 12)
         assertNotNull(NeuralTestProcess.test(models, "colorizer", "DDCOLOR", "CPU", quiet))
         assumeTrue("no display", System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null)
-        GlStage().use { stage ->
+        GlStage(Presentation.SYNC).use { stage ->
             assumeTrue(stage.ready)
             // The check picture, grey, as a video frame: once the colour thread's first run is in, it comes out in
             // colour, its lightness kept.
@@ -250,7 +250,7 @@ class NativeNeuralTest {
     @Test
     fun `the stage enlarges with a network whose test passed`() {
         assumeTrue("no display", System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null)
-        GlStage().use { stage ->
+        GlStage(Presentation.SYNC).use { stage ->
             assumeTrue(stage.ready)
             val w = 48
             val h = 32

@@ -84,6 +84,14 @@ jobs:
           else
             ./gradlew :engine:desktop:test :desktop:test -PnativeLibrary --no-daemon
           fi
+      # How the stage's picture reaches the window (#287): every candidate at 1080p and 4K, on llvmpipe — a check that
+      # each still runs and a record to compare against, never the decision (that is measured on real graphics,
+      # README "Platform support"). The table goes into the run's summary.
+      - name: Presentation benchmark (Linux, llvmpipe)
+        if: matrix.system == 'linux'
+        run: |
+          xvfb-run -a -s "-screen 0 1920x1080x24" ./gradlew :desktop:presentationBench -Pframes=120 --no-daemon
+          cat desktop/build/reports/presentation.md >> "$GITHUB_STEP_SUMMARY"
       - name: Keep the test reports of a failed run
         if: failure()
         uses: actions/upload-artifact@v4
