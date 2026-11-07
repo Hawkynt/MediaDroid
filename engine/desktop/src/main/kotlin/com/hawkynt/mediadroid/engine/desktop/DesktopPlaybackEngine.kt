@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.engine.desktop
 
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
+import com.hawkynt.mediadroid.engine.PlaybackReport
 import com.hawkynt.mediadroid.engine.PlaybackState
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
@@ -17,6 +18,7 @@ import com.hawkynt.mediadroid.player.LoudnessChain
 import com.hawkynt.mediadroid.player.PictureCrop
 import com.hawkynt.mediadroid.player.PlaybackMath
 import com.hawkynt.mediadroid.player.SubtitleLook
+import org.bytedeco.ffmpeg.global.avutil
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArrayList
@@ -61,6 +63,8 @@ class DesktopPlaybackEngine(
     @Volatile private var settlingMs: Long? = null
     @Volatile private var pendingAudio: String? = null
     @Volatile private var soundFiles: List<String> = emptyList()
+    // What was opened last, for the report's files.
+    @Volatile private var openedRequest: MediaRequest? = null
     @Volatile private var selectedSound: String? = null
     @Volatile private var baseMs = 0L
     @Volatile private var pendingSpeed: Float? = null
@@ -142,16 +146,21 @@ class DesktopPlaybackEngine(
         openedPath = request.path
         hasSound = opened.tracks.any { it.kind == Track.Kind.AUDIO }
         soundFiles = request.audio
+        openedRequest = request
         selectedSound = opened.tracks.firstOrNull { it.kind == Track.Kind.AUDIO && it.selected }?.id
         // Subtitle files beside the video, read whole now: they are small.
         sidecars = request.subtitles.mapIndexedNotNull { i, file ->
             runCatching {
                 readerOf(file.path).use { r ->
-                    val index = r.tracks.first { it.kind == Track.Kind.TEXT }.id.toInt()
+                    val own = r.tracks.first { it.kind == Track.Kind.TEXT }
+                    val index = own.id.toInt()
                     r.selectText(index)
                     val read = generateSequence { r.read() }.toList()
                     Sidecar(
-                        Track("sidecar:$i", Track.Kind.TEXT, file.language, file.label, source = i + 1),
+                        Track(
+                            "sidecar:$i", Track.Kind.TEXT, file.language, file.label, source = i + 1,
+                            format = own.format,
+                        ),
                         read.filterIsInstance<MediaReader.Cue>(),
                         r.assHeader(index),
                         read.filterIsInstance<MediaReader.AssEvent>(),
@@ -612,6 +621,63 @@ class DesktopPlaybackEngine(
                     null -> VideoFormat.Transfer.SDR
                 },
                 it.bitDepth,
+            )
+        }
+
+    override val report: PlaybackReport?
+        get() {
+            val reader = reader ?: return null
+            val request = openedRequest ?: return null
+            val facts = reader.facts
+            val subtitleFiles = request.subtitles.size
+            val sound = selectedSound
+            val text = selectedText
+            return PlaybackReport(
+                tags = facts.tags,
+                inputs = listOf(PlaybackReport.Input(request.path, facts.demuxer?.let { "FFmpeg $it" })) +
+                    request.subtitles.map { PlaybackReport.Input(it.path, "FFmpeg") } +
+                    request.audio.map { PlaybackReport.Input(it, "FFmpeg") },
+                video = reader.takeIf { it.width > 0 && it.height > 0 }?.let {
+                    PlaybackReport.Video(
+                        codecs = facts.videoCodec,
+                        width = it.width,
+                        height = it.height,
+                        pixelAspect = it.pixelAspect,
+                        frameRate = it.frameRate,
+                        bitDepth = it.bitDepth,
+                        colorSpace = facts.colorSpace,
+                        transfer = when (it.hdr) {
+                            com.hawkynt.mediadroid.player.ToneMap.Transfer.PQ -> "PQ (HDR10)"
+                            com.hawkynt.mediadroid.player.ToneMap.Transfer.HLG -> "HLG"
+                            null -> "SDR"
+                        },
+                        range = facts.range,
+                        decodedFormat = facts.pixelFormat,
+                    )
+                },
+                audio = sound?.let { id ->
+                    val file = id.removePrefix(SOUND_FILE).takeIf { id.startsWith(SOUND_FILE) }?.toIntOrNull()
+                    PlaybackReport.Audio(
+                        input = file?.let { 1 + subtitleFiles + it } ?: 0,
+                        sampleRate = if (file == null) facts.sampleRate else 0,
+                        channels = if (file == null) facts.channels else 0,
+                        sinkEncoding = "16-bit PCM",
+                        sinkSampleRate = MediaReader.SAMPLE_RATE,
+                        sinkChannels = 2,
+                        decodedFormat = if (file == null) facts.sampleFormat else null,
+                        pcmFormat = "16-bit PCM",
+                    )
+                },
+                subtitles = text?.let { id ->
+                    val track = tracks.firstOrNull { it.kind == Track.Kind.TEXT && it.id == id }
+                    PlaybackReport.Subtitles(
+                        input = track?.source ?: 0,
+                        mimeType = track?.format?.mimeType,
+                        language = track?.language,
+                        libass = ass != null,
+                    )
+                },
+                player = "MediaDroid's FFmpeg player (FFmpeg ${avutil.av_version_info().string})",
             )
         }
 

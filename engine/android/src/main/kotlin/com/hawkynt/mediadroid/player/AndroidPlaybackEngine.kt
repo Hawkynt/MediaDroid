@@ -12,9 +12,11 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
+import com.hawkynt.mediadroid.engine.PlaybackReport
 import com.hawkynt.mediadroid.engine.PlaybackState
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.TrackFormat
 import com.hawkynt.mediadroid.engine.VideoFormat
 import com.hawkynt.mediadroid.engine.VideoOutput
 import com.hawkynt.mediadroid.library.FsFile
@@ -282,6 +284,13 @@ class AndroidPlaybackEngine(
     var audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig? = null
         private set
 
+    /** What was opened last, for the report's files. */
+    private var request: MediaRequest? = null
+
+    /** The decoders at work, by their own names, for the report: FFmpeg's say what they decode to. */
+    @Volatile private var videoDecoder: String? = null
+    @Volatile private var audioDecoder: String? = null
+
     /** The ReplayGain of the file and audio track playing, if its tags carry one. */
     val replayGainDb: Float? get() = fileLoudness?.tagGainDb
 
@@ -293,6 +302,24 @@ class AndroidPlaybackEngine(
                     audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig,
                 ) {
                     this@AndroidPlaybackEngine.audioTrackConfig = audioTrackConfig
+                }
+
+                override fun onVideoDecoderInitialized(
+                    eventTime: AnalyticsListener.EventTime,
+                    decoderName: String,
+                    initializedTimestampMs: Long,
+                    initializationDurationMs: Long,
+                ) {
+                    videoDecoder = decoderName
+                }
+
+                override fun onAudioDecoderInitialized(
+                    eventTime: AnalyticsListener.EventTime,
+                    decoderName: String,
+                    initializedTimestampMs: Long,
+                    initializationDurationMs: Long,
+                ) {
+                    audioDecoder = decoderName
                 }
             },
         )
@@ -339,6 +366,7 @@ class AndroidPlaybackEngine(
 
     override fun open(request: MediaRequest, autoPlay: Boolean) {
         openedPath = request.path
+        this.request = request
         secondSubtitle = null
         fileLoudness = FileLoudness(request.path, null)
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
@@ -402,6 +430,107 @@ class AndroidPlaybackEngine(
                     else -> VideoFormat.Transfer.SDR
                 },
                 format?.colorInfo?.lumaBitdepth?.takeIf { it > 0 } ?: 8,
+            )
+        }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    override val report: PlaybackReport?
+        get() {
+            val request = request ?: return null
+            val videoFormat = exo.videoFormat
+            val audioFormat = exo.audioFormat
+            if (videoFormat == null && audioFormat == null) return null
+            val subtitleFiles = request.subtitles.size
+            val audioFiles = request.audio.size
+            val playing = { type: Int -> exo.currentTracks.groups.firstOrNull { it.type == type && it.isSelected } }
+            val inputOf = { type: Int -> inputOf(playing(type)?.mediaTrackGroup?.id, subtitleFiles, audioFiles) }
+            val textGroup = playing(C.TRACK_TYPE_TEXT)
+            val textFormat = textGroup?.let { group ->
+                (0 until group.length).firstOrNull(group::isTrackSelected)?.let(group::getTrackFormat)
+            }
+            val size = exo.videoSize
+            val audioTrack = audioTrackConfig
+            val encoding = audioTrack?.encoding
+            val tags = exo.mediaMetadata
+            val location = request.path
+            return PlaybackReport(
+                tags = PlaybackReport.FileTags(
+                    title = tags.title?.toString(),
+                    displayTitle = tags.displayTitle?.toString(),
+                    subtitle = tags.subtitle?.toString(),
+                    artist = tags.artist?.toString(),
+                    album = tags.albumTitle?.toString(),
+                    genre = tags.genre?.toString(),
+                    year = tags.recordingYear ?: tags.releaseYear,
+                    writer = tags.writer?.toString(),
+                    description = tags.description?.toString(),
+                ),
+                // The file itself, then its subtitle files and its audio files, in the order they are merged in.
+                inputs = (listOf(location) + request.subtitles.map { it.path } + request.audio).mapIndexed { i, file ->
+                    PlaybackReport.Input(
+                        file,
+                        DemuxerLog.of(playableUri(file).toString())
+                            ?: if (i in 1..subtitleFiles) "SubtitleExtractor" else null,
+                    )
+                },
+                video = videoFormat?.let {
+                    val profile = com.hawkynt.mediadroid.library.CodecProfile.of(it.codecs)
+                    PlaybackReport.Video(
+                        input = inputOf(C.TRACK_TYPE_VIDEO),
+                        codecs = it.codecs,
+                        width = size.width.takeIf { w -> w > 0 } ?: it.width,
+                        height = size.height.takeIf { h -> h > 0 } ?: it.height,
+                        pixelAspect = size.pixelWidthHeightRatio,
+                        frameRate = it.frameRate.takeIf { rate -> rate > 0f } ?: 0f,
+                        bitDepth = it.colorInfo?.lumaBitdepth?.takeIf { d -> d > 0 }
+                            ?: if (profile?.contains("10") == true) 10 else 8,
+                        colorSpace = when (it.colorInfo?.colorSpace) {
+                            C.COLOR_SPACE_BT709 -> "BT.709"
+                            C.COLOR_SPACE_BT601 -> "BT.601"
+                            C.COLOR_SPACE_BT2020 -> "BT.2020"
+                            else -> null
+                        },
+                        transfer = when (it.colorInfo?.colorTransfer) {
+                            C.COLOR_TRANSFER_SDR, C.COLOR_TRANSFER_GAMMA_2_2 -> "SDR"
+                            C.COLOR_TRANSFER_ST2084 -> "PQ (HDR10)"
+                            C.COLOR_TRANSFER_HLG -> "HLG"
+                            else -> null
+                        },
+                        range = when (it.colorInfo?.colorRange) {
+                            C.COLOR_RANGE_LIMITED -> "limited range"
+                            C.COLOR_RANGE_FULL -> "full range"
+                            else -> null
+                        },
+                        decodedFormat = ffmpegFormat(videoDecoder, location, "video"),
+                    )
+                },
+                audio = audioFormat?.let {
+                    PlaybackReport.Audio(
+                        input = inputOf(C.TRACK_TYPE_AUDIO),
+                        sampleRate = it.sampleRate.coerceAtLeast(0),
+                        channels = it.channelCount.coerceAtLeast(0),
+                        sinkEncoding = encoding?.let(::encodingName),
+                        sinkSampleRate = audioTrack?.sampleRate ?: 0,
+                        sinkChannels = audioTrack?.let { t -> Integer.bitCount(t.channelConfig) } ?: 0,
+                        passthrough = encoding != null &&
+                            !androidx.media3.common.util.Util.isEncodingLinearPcm(encoding),
+                        offload = audioTrack?.offload == true,
+                        decodedFormat = ffmpegFormat(audioDecoder, location, "audio"),
+                        pcmFormat = DelayedAudioSink.lastInput?.pcmEncoding
+                            ?.takeIf { e -> e != androidx.media3.common.Format.NO_VALUE }
+                            ?.let(::encodingName),
+                    )
+                },
+                subtitles = textFormat?.let {
+                    PlaybackReport.Subtitles(
+                        input = inputOf(C.TRACK_TYPE_TEXT),
+                        mimeType = subtitleMimeType(it),
+                        language = it.language,
+                        // SSA reaches Media3's renderers raw only where libass takes it (AssSubtitles).
+                        libass = AssSubtitles.available && AssEvents.isAss(it.sampleMimeType, it.codecs),
+                    )
+                },
+                player = "Media3 ExoPlayer ${androidx.media3.common.MediaLibraryInfo.VERSION}",
             )
         }
 
@@ -634,8 +763,83 @@ class AndroidPlaybackEngine(
                 val source = group.mediaTrackGroup.id.substringBefore(':', "").toIntOrNull() ?: 0
                 (0 until group.length).map { i ->
                     val format = group.getTrackFormat(i)
-                    Track("$g:$i", kind, format.language, format.label, group.isTrackSelected(i), source)
+                    Track(
+                        "$g:$i", kind, format.language, format.label, group.isTrackSelected(i), source,
+                        format = formatOf(format, kind),
+                    )
                 }
             }
+
+        /** A Media3 track format as the engine's: a subtitle track's own format, never Media3's cues. */
+        fun formatOf(format: androidx.media3.common.Format, kind: Track.Kind): TrackFormat = TrackFormat(
+            mimeType = if (kind == Track.Kind.TEXT) subtitleMimeType(format) else format.sampleMimeType,
+            codecs = format.codecs,
+            width = format.width.coerceAtLeast(0),
+            height = format.height.coerceAtLeast(0),
+            frameRate = format.frameRate.coerceAtLeast(0f),
+            channels = format.channelCount.coerceAtLeast(0),
+            sampleRate = format.sampleRate.coerceAtLeast(0),
+        )
+
+        /**
+         * A subtitle track's own format: subtitles Media3 parses while extracting are cues by then and a file beside
+         * the video left to libass is unread by Media3 (text/x-unknown); codecs keeps their format in both.
+         */
+        private fun subtitleMimeType(format: androidx.media3.common.Format): String? =
+            if (format.sampleMimeType == androidx.media3.common.MimeTypes.APPLICATION_MEDIA3_CUES ||
+                format.sampleMimeType == AssEvents.UNKNOWN_MIME_TYPE
+            ) {
+                format.codecs
+            } else {
+                format.sampleMimeType
+            }
+
+        /**
+         * FFmpeg's own pixel or sample format of the [kind] stream at [location], when FFmpeg both demuxed and
+         * decodes it; other decoders do not say what they decode to.
+         */
+        private fun ffmpegFormat(decoder: String?, location: String, kind: String): String? {
+            if (decoder == null || !(decoder.startsWith("ffmpeg", ignoreCase = true) || decoder.contains("Ffmpeg"))) {
+                return null
+            }
+            return DemuxerLog.formatOf(playableUri(location).toString(), kind)
+        }
+
+        /**
+         * The input a track group comes from, by the prefixes Media3 gives merged sources' group ids: with
+         * [subtitles] subtitle files the video is `0:` and subtitle file k `k:`; with [audio] audio files merged
+         * around that, the video is `0:0:`, subtitle file k `0:k:` and audio file j `j:`.
+         */
+        private fun inputOf(groupId: String?, subtitles: Int, audio: Int): Int {
+            val prefixes = groupId?.split(':')?.dropLast(1)?.map { it.toIntOrNull() ?: return 0 } ?: return 0
+            return when {
+                audio > 0 -> {
+                    val outer = prefixes.getOrNull(0) ?: return 0
+                    if (outer > 0) subtitles + outer else if (subtitles > 0) prefixes.getOrNull(1) ?: 0 else 0
+                }
+                subtitles > 0 -> prefixes.getOrNull(0) ?: 0
+                else -> 0
+            }
+        }
+
+        /** A `C.ENCODING_*` as people call it. */
+        private fun encodingName(encoding: Int): String = when (encoding) {
+            C.ENCODING_PCM_8BIT -> "8-bit PCM"
+            C.ENCODING_PCM_16BIT, C.ENCODING_PCM_16BIT_BIG_ENDIAN -> "16-bit PCM"
+            C.ENCODING_PCM_24BIT, C.ENCODING_PCM_24BIT_BIG_ENDIAN -> "24-bit PCM"
+            C.ENCODING_PCM_32BIT, C.ENCODING_PCM_32BIT_BIG_ENDIAN -> "32-bit PCM"
+            C.ENCODING_PCM_FLOAT -> "float PCM"
+            C.ENCODING_AC3 -> "Dolby Digital"
+            C.ENCODING_E_AC3 -> "Dolby Digital Plus"
+            C.ENCODING_E_AC3_JOC -> "Dolby Digital Plus with Atmos"
+            C.ENCODING_AC4 -> "Dolby AC-4"
+            C.ENCODING_DOLBY_TRUEHD -> "Dolby TrueHD"
+            C.ENCODING_DTS -> "DTS"
+            C.ENCODING_DTS_HD -> "DTS-HD"
+            C.ENCODING_MP3 -> "MP3"
+            C.ENCODING_AAC_LC -> "AAC"
+            C.ENCODING_OPUS -> "Opus"
+            else -> "encoding $encoding"
+        }
     }
 }

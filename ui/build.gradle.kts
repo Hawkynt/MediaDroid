@@ -32,6 +32,8 @@ kotlin {
             // The art on the walls, from files the platform hands over (MediaArt).
             implementation(libs.coil.compose)
             implementation(project(":core:player"))
+            // The engine's report and tracks, for the info sheet.
+            implementation(project(":engine:api"))
             // The household's memory, one model on every platform; the screens read and change it.
             api(project(":core:state"))
             // A network source tried from its dialog before it is kept.

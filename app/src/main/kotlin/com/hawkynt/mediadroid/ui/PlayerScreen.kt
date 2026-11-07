@@ -1995,25 +1995,30 @@ fun PlayerScreen(
             LockOverlay(stamp = lockHintStamp, onTouch = { lockHintStamp++ }, onUnlock = { locked = false })
         }
         if (infoOpen) {
+            val report = engine.report
+            val mode = (presentation?.takeIf { it.isShowing }?.display ?: hostView.display)?.mode
             PlaybackInfoDialog(
                 playing = queue[index],
-                engine = engine,
+                report = report,
+                tracks = engine.tracks,
                 videoPath = queue[index].videoPath,
                 graph = com.hawkynt.mediadroid.player.PlaybackChain.of(
                     playbackFacts(
                         location = queue[index].videoPath,
-                        engine = engine,
+                        report = report,
                         videoDecoder = videoDecoder,
                         audioDecoder = audioDecoder,
                         picture = shownPicture,
                         fit = fit.label,
                         zoom = zoom,
-                        screen = presentation?.takeIf { it.isShowing }?.display ?: hostView.display,
-                        screenName = if (presentation?.isShowing == true) {
+                        screen = if (presentation?.isShowing == true) {
                             externalDisplay?.name ?: "the other screen"
                         } else {
                             "this screen"
                         },
+                        screenWidth = mode?.physicalWidth ?: 0,
+                        screenHeight = mode?.physicalHeight ?: 0,
+                        refreshHz = mode?.refreshRate ?: 0f,
                         loudnessDb = settings.loudness + loudnessBoostDb,
                         nightMode = nightMode,
                         evenLoudness = settings.evenLoudness,
@@ -2024,7 +2029,6 @@ fun PlayerScreen(
                         device = audioOutput.name,
                         subtitleDelayMs = subtitleLook.delayMs,
                         speedFactor = judderFactor,
-                        sidecars = sidecars,
                     ),
                 ),
                 statisticsShown = statisticsShown,

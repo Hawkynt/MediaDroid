@@ -10,11 +10,11 @@ package com.hawkynt.mediadroid.engine
 class FakePlaybackEngine(
     private val length: Long = 10_000,
     private val ownTracks: List<Track> = listOf(
-        Track("v", Track.Kind.VIDEO, null, null, selected = true),
-        Track("a1", Track.Kind.AUDIO, "eng", "English", selected = true),
-        Track("a2", Track.Kind.AUDIO, "deu", "Deutsch"),
-        Track("t1", Track.Kind.TEXT, "eng", "English"),
-        Track("t2", Track.Kind.TEXT, "deu", "Deutsch"),
+        Track("v", Track.Kind.VIDEO, null, null, selected = true, format = PICTURE),
+        Track("a1", Track.Kind.AUDIO, "eng", "English", selected = true, format = SOUND),
+        Track("a2", Track.Kind.AUDIO, "deu", "Deutsch", format = SOUND),
+        Track("t1", Track.Kind.TEXT, "eng", "English", format = TrackFormat("application/x-subrip")),
+        Track("t2", Track.Kind.TEXT, "deu", "Deutsch", format = TrackFormat("application/x-subrip")),
     ),
     private val videoSize: Pair<Int, Int> = 1920 to 1080,
     override val tuning: PlaybackTuning = PlaybackTuning.Mutable(),
@@ -121,6 +121,17 @@ class FakePlaybackEngine(
     override val videoFormat: VideoFormat?
         get() = if (opened == null) null else VideoFormat(videoSize.first, videoSize.second, frameRate = frameRate)
 
+    override val report: PlaybackReport?
+        get() = opened?.let { request ->
+            PlaybackReport(
+                inputs = (listOf(request.path) + request.subtitles.map { it.path } + request.audio)
+                    .map { PlaybackReport.Input(it) },
+                video = PlaybackReport.Video(width = videoSize.first, height = videoSize.second, frameRate = frameRate),
+                audio = PlaybackReport.Audio(sampleRate = SOUND.sampleRate, channels = SOUND.channels),
+                player = "FakePlaybackEngine",
+            )
+        }
+
     override var speed: Float = 1f
 
     override var volume: Float = 1f
@@ -184,5 +195,11 @@ class FakePlaybackEngine(
     companion object {
         /** The start of a path this engine cannot open. */
         const val UNREADABLE = "unreadable:"
+
+        /** The picture of what is open, as its tracks carry it. */
+        val PICTURE = TrackFormat("video/avc", "avc1.640028", width = 1920, height = 1080, frameRate = 25f)
+
+        /** The sound of what is open, as its tracks carry it. */
+        val SOUND = TrackFormat("audio/ac3", channels = 6, sampleRate = 48_000)
     }
 }
