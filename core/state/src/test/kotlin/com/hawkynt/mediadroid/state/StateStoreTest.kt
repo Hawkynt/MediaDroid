@@ -160,4 +160,32 @@ class StateStoreTest {
         store.saveResume("/a.mkv", 0, 6_000_000)
         assertNull(store.resumeFor("/a.mkv"))
     }
+
+    @Test
+    fun `a short look into a video leaves no resume point, a longer one does, and one under way moves on`() {
+        val store = StateStore(Memory())
+        // Some seconds into an episode: not something to continue.
+        store.saveResume("/e1.mkv", 20_000, 2_400_000, playedMs = 20_000)
+        assertNull(store.resumeFor("/e1.mkv"))
+        // Three minutes played: it is.
+        store.saveResume("/e1.mkv", 180_000, 2_400_000, playedMs = StateStore.MIN_PLAYED_MS)
+        assertEquals(180_000L, store.resumeFor("/e1.mkv")?.positionMs)
+        // Under way already, a short stretch more still moves the point on.
+        store.saveResume("/e1.mkv", 200_000, 2_400_000, playedMs = 20_000)
+        assertEquals(200_000L, store.resumeFor("/e1.mkv")?.positionMs)
+        // A short clip resumes once half of it has played.
+        store.saveResume("/clip.mkv", 70_000, 120_000, playedMs = 60_000)
+        assertEquals(70_000L, store.resumeFor("/clip.mkv")?.positionMs)
+    }
+
+    @Test
+    fun `a resume point can be forgotten, and only that one`() {
+        val store = StateStore(Memory())
+        store.saveResume("/a.mkv", 600_000, 6_000_000)
+        store.saveResume("/b.mkv", 600_000, 6_000_000)
+        store.forgetResume("/a.mkv")
+        assertNull(store.resumeFor("/a.mkv"))
+        assertEquals(600_000L, store.resumeFor("/b.mkv")?.positionMs)
+        assertNull(StateStore(Memory(null)).resumeFor("/a.mkv"))
+    }
 }

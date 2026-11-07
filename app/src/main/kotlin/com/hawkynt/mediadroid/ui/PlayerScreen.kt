@@ -691,6 +691,20 @@ fun PlayerScreen(
         engine.subtitlesOn = subtitlesOn
     }
 
+    // The time the current item has actually played this time — not where it stands — for whether it is worth a
+    // resume point at all (StateStore.saveResume): counted while it plays, at its speed, from nothing for each item.
+    var playedMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(index) { playedMs = 0L }
+    LaunchedEffect(engine) {
+        var last = System.currentTimeMillis()
+        while (true) {
+            delay(1_000)
+            val now = System.currentTimeMillis()
+            if (engine.isPlaying) playedMs += ((now - last) * speed).toLong()
+            last = now
+        }
+    }
+
     /** Remembers how far the current item got: watched once only its tail or credits are left. */
     fun saveProgress(position: Long = engine.positionMs, duration: Long = engine.durationMs) {
         if (duration <= 0 || position <= 0) return
@@ -700,7 +714,7 @@ fun PlayerScreen(
         if (PlaybackMath.isWatched(position, duration, creditsStartMs)) {
             store.markWatched(path)
         } else {
-            store.saveResume(path, position, duration)
+            store.saveResume(path, position, duration, playedMs)
         }
     }
 

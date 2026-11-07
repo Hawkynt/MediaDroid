@@ -183,7 +183,11 @@ fun BrowseScreen(
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
                         ) {
                             items(continueItems, key = { it.playable.videoPath }) { entry ->
-                                ContinueCard(entry, onClick = { onPlay(entry.item, entry.playable.videoPath) })
+                                ContinueCard(
+                                    entry,
+                                    onClick = { onPlay(entry.item, entry.playable.videoPath) },
+                                    onForget = { store.forgetResume(entry.playable.videoPath) },
+                                )
                             }
                         }
                     }
@@ -596,6 +600,13 @@ private fun rememberContinueItems(library: Library, store: StateStore): List<Con
     return resume.entries.mapNotNull { (path, info) ->
         val progress = progressOf(info.positionMs, info.durationMs)
         val movie = library.movies.firstOrNull { path in it.allParts }
+        // Watched already (ticked, or its NFO says so): a resume point from a later look is nothing to continue.
+        val nfoWatched = movie?.let { m ->
+            (m.versions.firstOrNull { path in it.parts } ?: m).playcount > 0
+        } ?: library.shows.firstNotNullOfOrNull { s ->
+            s.seasons.firstNotNullOfOrNull { se -> se.episodes.firstOrNull { it.videoPath == path } }
+        }?.watched ?: false
+        if (store.isWatched(path, nfoWatched)) return@mapNotNull null
         if (movie != null) {
             val version = movie.versions.firstOrNull { path in it.parts } ?: movie
             val playable = version.playQueue().first { it.videoPath == path }
@@ -670,9 +681,11 @@ fun ResumeBar(progress: Float, modifier: Modifier = Modifier) {
 fun progressOf(positionMs: Long, durationMs: Long): Float =
     if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 
+/** One card of Continue watching; held (or the remote's OK held), it offers to drop out of the row ([onForget]). */
 @Composable
-private fun ContinueCard(entry: ContinueEntry, onClick: () -> Unit) {
+private fun ContinueCard(entry: ContinueEntry, onClick: () -> Unit, onForget: () -> Unit) {
     val shape = RoundedCornerShape(10.dp)
+    var menu by remember { mutableStateOf(false) }
     Column(modifier = Modifier.width(240.dp)) {
         Box(
             modifier = Modifier
@@ -680,8 +693,17 @@ private fun ContinueCard(entry: ContinueEntry, onClick: () -> Unit) {
                 .aspectRatio(16f / 9f)
                 .clip(shape)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                .focusClickable(shape = shape, onClick = onClick),
+                .focusClickable(shape = shape, onLongClick = { menu = true }, onClick = onClick),
         ) {
+            androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Remove from Continue watching", fontSize = 16.sp) },
+                    onClick = {
+                        menu = false
+                        onForget()
+                    },
+                )
+            }
             PosterImage(
                 entry.playable.posterPath,
                 videoFallback = entry.playable.videoPath,
