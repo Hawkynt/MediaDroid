@@ -35,7 +35,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hawkynt.mediadroid.data.LibraryStore
 import com.hawkynt.mediadroid.data.SourceAccess
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.data.StorageRoot
 import com.hawkynt.mediadroid.data.StorageRoots
 import com.hawkynt.mediadroid.library.BrowseFilter
@@ -57,41 +57,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** One thing the player can play, with enough context to label itself and skip its intro. */
-data class Playable(
-    val title: String,
-    val subtitle: String?,
-    val videoPath: String,
-    val posterPath: String?,
-    val intro: com.hawkynt.mediadroid.nfo.TimeRange? = null,
-    val credits: com.hawkynt.mediadroid.nfo.TimeRange? = null,
-    /** What the NFO says: watched unless the household unticked it. */
-    val nfoWatched: Boolean = false,
-    /** What it is about, from the NFO or the file's own tags; null when nothing says. */
-    val plot: String? = null,
-    /** The NFO's facts beyond the plot: year, length, genres, director, cast. */
-    val facts: List<String> = emptyList(),
-)
-
-sealed interface Screen {
-    /** A wall; with a [row], the full wall of one home row ("See all") instead of the home. */
-    data class Browse(val section: LibrarySection, val row: HomeRow? = null) : Screen
-    data class Places(val kind: PlaceKind) : Screen
-    /** The Files browser at [dir]; null lists the storage volumes. */
-    data class Files(val dir: String? = null) : Screen
-    data object Search : Screen
-    data object Filters : Screen
-    data object Settings : Screen
-    data class Details(val item: MediaItem) : Screen
-    /** The player; leaving it goes to [returnTo], else to the wall last browsed. */
-    data class Player(
-        val queue: List<Playable>,
-        val startIndex: Int,
-        val autoAdvance: Boolean,
-        val returnTo: Screen? = null,
-    ) : Screen
-}
-
 /** Authorities whose tree document ids [StorageVolumes] can turn back into file paths. */
 private val LocalStorageAuthorities = setOf(
     "com.android.externalstorage.documents",
@@ -109,6 +74,16 @@ private val LocalStorageAuthorities = setOf(
  */
 @Composable
 fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
+    // The shared screens' pictures and facts, read the Android way.
+    val context = LocalContext.current
+    val art = remember { com.hawkynt.mediadroid.data.AndroidMediaArt(context) }
+    CompositionLocalProvider(com.hawkynt.mediadroid.ui.platform.LocalMediaArt provides art) {
+        AppShell(store, demo)
+    }
+}
+
+@Composable
+private fun AppShell(store: StateStore, demo: Boolean) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // Stored locations on network sources resolve against the saved sources, for player and pictures.
@@ -555,39 +530,6 @@ fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
         }
     }
 }
-
-/** The movie's files in order; a multi-part movie labels them `Part 1 of 2`. */
-fun Movie.playQueue(): List<Playable> = parts.mapIndexed { i, part ->
-    Playable(
-        title = title,
-        subtitle = if (parts.size > 1) "Part ${i + 1} of ${parts.size}" else year?.toString(),
-        videoPath = part,
-        posterPath = posterPath,
-        intro = intro.takeIf { i == 0 },
-        credits = credits.takeIf { i == parts.lastIndex },
-        nfoWatched = playcount > 0,
-        plot = plot,
-        facts = aboutOf(this).let { listOfNotNull(it.line) + it.facts },
-    )
-}
-
-/** All episodes in binge order, labelled `S04 · E09 · Title`. */
-fun Show.playQueue(): List<Playable> =
-    seasons.sortedBy { it.number }.flatMap { season ->
-        season.episodes.sortedBy { it.number }.map { episode ->
-            Playable(
-                title = episode.title ?: "Episode ${episode.number}",
-                subtitle = "S%02d · E%02d".format(season.number, episode.number),
-                videoPath = episode.videoPath,
-                posterPath = episode.thumbPath ?: posterPath,
-                intro = episode.intro,
-                credits = episode.credits,
-                nfoWatched = episode.watched,
-                plot = episode.plot,
-                facts = listOf(title),
-            )
-        }
-    }
 
 /** A cloud folder's name as its provider shows it, else the provider's own name. */
 private fun cloudFolderName(context: android.content.Context, tree: Uri): String = runCatching {

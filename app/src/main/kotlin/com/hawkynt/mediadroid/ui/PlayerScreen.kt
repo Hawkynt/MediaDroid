@@ -9,7 +9,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.res.painterResource
 import com.hawkynt.mediadroid.player.PlaybackMath
 import kotlin.math.roundToInt
 import android.view.View
@@ -81,6 +80,11 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.hawkynt.mediadroid.R
+import com.hawkynt.mediadroid.ui.resources.Res
+import com.hawkynt.mediadroid.ui.resources.ic_phonelink_lock
+import com.hawkynt.mediadroid.ui.resources.ic_photo_camera
+import com.hawkynt.mediadroid.ui.resources.ic_tv
+import org.jetbrains.compose.resources.painterResource
 import com.hawkynt.mediadroid.engine.PlaybackEngine
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.engine.VideoFormat
@@ -88,7 +92,7 @@ import com.hawkynt.mediadroid.player.AndroidPlaybackEngine
 import com.hawkynt.mediadroid.player.PlaybackQueue
 import com.hawkynt.mediadroid.player.PlayerPanel
 import com.hawkynt.mediadroid.player.PlayerWindow
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.data.screenKey
 import com.hawkynt.mediadroid.player.PictureFit
 import com.hawkynt.mediadroid.player.PictureLayout
@@ -1527,7 +1531,7 @@ fun PlayerScreen(
                             },
                         ) {
                             Icon(
-                                painterResource(R.drawable.ic_tv),
+                                painterResource(Res.drawable.ic_tv),
                                 contentDescription =
                                     if (onSecondScreen) "Back to this screen" else "Play on the other screen",
                                 tint = if (onSecondScreen) MaterialTheme.colorScheme.primary else Color.White,
@@ -1547,7 +1551,7 @@ fun PlayerScreen(
                             },
                         ) {
                             Icon(
-                                painterResource(R.drawable.ic_phonelink_lock),
+                                painterResource(Res.drawable.ic_phonelink_lock),
                                 contentDescription = "Darken this phone",
                                 tint = Color.White,
                             )
@@ -1598,7 +1602,7 @@ fun PlayerScreen(
                         },
                     ) {
                         Icon(
-                            painterResource(R.drawable.ic_photo_camera),
+                            painterResource(Res.drawable.ic_photo_camera),
                             contentDescription = "Take a picture",
                             tint = Color.White,
                         )

@@ -28,7 +28,7 @@ class DesktopStoreTest {
     private val nas = Source("nas", "NAS", SourceKind.SMB, host = "nas", path = "/media", user = "me")
 
     @Test
-    fun `everything set is kept as JSON in settings_json and reads back in a new store`() {
+    fun `everything set is kept as JSON in state_json and reads back in a new store`() {
         val data = folder.newFolder("data")
         DesktopStore(data).apply {
             libraryFolder = "/home/me/Videos"
@@ -44,8 +44,8 @@ class DesktopStoreTest {
             setResume("/v/a.mkv", 42_000)
             markWatched("/v/b.mkv")
         }
-        val json = Json.parseToJsonElement(File(data, "settings.json").readText()).jsonObject
-        assertEquals("/home/me/Videos", json["library"]?.jsonPrimitive?.content)
+        val json = Json.parseToJsonElement(File(data, "state.json").readText()).jsonObject
+        assertEquals("/home/me/Videos", json["rootPath"]?.jsonPrimitive?.content)
         assertFalse(File(data, "state.properties").exists())
 
         val again = DesktopStore(data)
@@ -158,8 +158,8 @@ class DesktopStoreTest {
         assertEquals(1_500, again.subtitleDelayMs("/v/a.mkv"))
         assertEquals(0, again.subtitleDelayMs("/v/b.mkv"))
         assertEquals(0, again.subtitleDelayMs("/v/c.mkv"))
-        val json = Json.parseToJsonElement(File(data, "settings.json").readText()).jsonObject
-        assertEquals("{\"/v/a.mkv\":1500}", json["subtitleDelays"].toString())
+        val json = Json.parseToJsonElement(File(data, "state.json").readText()).jsonObject
+        assertEquals("{\"/v/a.mkv\":{\"delayMs\":1500}}", json["subtitles"].toString())
     }
 
     @Test
@@ -168,8 +168,8 @@ class DesktopStoreTest {
         assertFalse(DesktopStore(data).softwareDecoding)
         DesktopStore(data).softwareDecoding = true
         assertTrue(DesktopStore(data).softwareDecoding)
-        val json = Json.parseToJsonElement(File(data, "settings.json").readText()).jsonObject
-        assertEquals("true", json["softwareDecoding"]?.jsonPrimitive?.content)
+        val json = Json.parseToJsonElement(File(data, "state.json").readText()).jsonObject
+        assertEquals("true", json["settings"]?.jsonObject?.get("softwareVideoDecoding")?.jsonPrimitive?.content)
     }
 
     @Test
@@ -219,27 +219,38 @@ class DesktopStoreTest {
         assertEquals(listOf(nas), store.sources)
         assertEquals(1234L, store.resumeMs("/v/a.mkv"))
         assertTrue(store.watched("/v/b.mkv"))
-        assertTrue(File(data, "settings.json").exists())
+        assertTrue(File(data, "state.json").exists())
         assertFalse(File(data, "state.properties").exists())
         assertTrue(File(data, "state.properties.old").exists())
         assertEquals("/home/me/Videos", DesktopStore(data).libraryFolder)
     }
 
     @Test
-    fun `a damaged settings file starts from the defaults and is kept aside, not lost`() {
+    fun `a damaged state file starts from the defaults and is kept aside, not lost`() {
         val data = folder.newFolder("data")
-        File(data, "settings.json").writeText("{ not json")
+        File(data, "state.json").writeText("{ not json")
         val store = DesktopStore(data)
         assertNull(store.libraryFolder)
         store.speed = 1.25f
-        assertEquals("{ not json", File(data, "settings.json.damaged").readText())
+        assertEquals("{ not json", File(data, "state.json.damaged").readText())
         assertEquals(1.25f, DesktopStore(data).speed)
     }
 
     @Test
-    fun `settings written by a later version with fields this one does not know still read`() {
+    fun `a damaged settings file of an earlier version is kept aside, and the app starts afresh`() {
         val data = folder.newFolder("data")
-        File(data, "settings.json").writeText("""{"library":"/x","speed":0.75,"somethingNew":{"a":1}}""")
+        File(data, "settings.json").writeText("{ not json")
+        assertNull(DesktopStore(data).libraryFolder)
+        assertEquals("{ not json", File(data, "settings.json.damaged").readText())
+        assertFalse(File(data, "settings.json").exists())
+    }
+
+    @Test
+    fun `state written by a later version with fields this one does not know still reads`() {
+        val data = folder.newFolder("data")
+        File(data, "state.json").writeText(
+            """{"rootPath":"/x","settings":{"defaultSpeed":0.75,"later":1},"somethingNew":{"a":1}}""",
+        )
         val store = DesktopStore(data)
         assertEquals("/x", store.libraryFolder)
         assertEquals(0.75f, store.speed)
@@ -289,8 +300,102 @@ class DesktopStoreTest {
         // Back to the defaults: nothing is kept for them.
         again.setAspect("/v/dvd.mkv", AspectOverride.AUTO)
         again.setScreenSetup("projector", ScreenSetup.Default)
-        val text = File(data, "settings.json").readText()
+        val text = File(data, "state.json").readText()
         assertFalse(text.contains("/v/dvd.mkv"))
         assertFalse(text.contains("projector"))
+    }
+
+    @Test
+    fun `the settings file of earlier versions is taken over once, into the model every platform keeps, and moved aside`() {
+        val data = folder.newFolder("data")
+        File(data, "settings.json").writeText(
+            """
+            {
+              "library": "/home/me/Videos",
+              "picture": { "brightness": 0.25, "deinterlace": "BWDIF", "colorize": "DDCOLOR", "cropBlackBars": false },
+              "subtitleLanguage": "de",
+              "speed": 1.5,
+              "sound": { "loudnessDb": -4.0, "evenLoudness": true, "audioDelayMs": -150 },
+              "window": "1.0,2.0,3.0,4.0,true",
+              "sources": [${Json.encodeToString(Source.serializer(), nas)}],
+              "resume": { "/v/a.mkv": 42000 },
+              "watched": [ "/v/b.mkv" ],
+              "neuralMotion": { "DAIN": "GPU|480=6.5" },
+              "aspects": { "/v/dvd.mkv": "SIXTEEN_NINE" },
+              "screens": { "projector": { "shape": "LENS_133", "mirror": true } },
+              "subtitleDelays": { "/v/a.mkv": 1500 },
+              "colourSystems": { "/v/tape.mkv": "PAL" },
+              "logos": { "/v/News": { "corner": "TOP_RIGHT", "size": 0.2, "mode": "DIM" } },
+              "folderPictures": {
+                "|/home/me/Videos/VHS": { "noise": -0.5 },
+                "nas|Films": { "brightness": -0.1 }
+              },
+              "softwareDecoding": true,
+              "somethingNew": 1
+            }
+            """.trimIndent(),
+        )
+        val store = DesktopStore(data)
+        assertEquals("/home/me/Videos", store.libraryFolder)
+        assertEquals(listOf(nas), store.sources)
+        assertEquals(0.25f, store.picture.brightness)
+        assertEquals(PictureAdjustment.Deinterlace.BWDIF, store.picture.deinterlace)
+        assertEquals(PictureAdjustment.Colorize.DDCOLOR, store.picture.colorize)
+        assertFalse(store.picture.cropBlackBars)
+        assertEquals("de", store.subtitleLanguage)
+        assertEquals(1.5f, store.speed)
+        assertEquals(SoundSettings(loudnessDb = -4f, evenLoudness = true, audioDelayMs = -150), store.sound)
+        assertEquals("1.0,2.0,3.0,4.0,true", store.window)
+        assertEquals(42_000L, store.resumeMs("/v/a.mkv"))
+        assertTrue(store.watched("/v/b.mkv"))
+        assertEquals("GPU", store.motionPassed(PictureAdjustment.Interpolation.DAIN)?.unit)
+        assertEquals(AspectOverride.SIXTEEN_NINE, store.aspectOf("/v/dvd.mkv"))
+        assertEquals(ScreenShape.LENS_133, store.screenSetup("projector").shape)
+        assertTrue(store.screenSetup("projector").mirror)
+        assertEquals(1_500, store.subtitleDelayMs("/v/a.mkv"))
+        assertEquals(PictureAdjustment.ColourSystem.PAL, store.colourSystemFor("/v/tape.mkv"))
+        assertEquals(PictureAdjustment.ColourSystem.PAL, store.pictureFor("/v/tape.mkv").colourSystem)
+        assertEquals(LogoMask(LogoMask.Corner.TOP_RIGHT, 0.2f, LogoMask.Mode.DIM), store.logoFor("/v/News/1.mkv"))
+        assertTrue(store.softwareDecoding)
+        // This computer's folder now lies under the media folder, as on Android; a share's stays as it was.
+        val vhs = com.hawkynt.mediadroid.library.FolderPlace(com.hawkynt.mediadroid.state.PRIMARY_SOURCE, "VHS")
+        assertEquals(vhs, store.pictureFolderOf("/home/me/Videos/VHS/1990/tape.mkv"))
+        assertEquals(-0.5f, store.pictureFor("/home/me/Videos/VHS/1990/tape.mkv").noise)
+        assertEquals(-0.1f, store.pictureFor("smb://nas/media/Films/x.mkv").brightness)
+        // Moved aside, and the model's file is what is read from now on — the very model the Android app keeps.
+        assertFalse(File(data, "settings.json").exists())
+        assertTrue(File(data, "settings.json.old").exists())
+        val kept = com.hawkynt.mediadroid.state.StateStore.decode(File(data, "state.json").readText())!!
+        assertEquals("/home/me/Videos", kept.rootPath)
+        assertEquals(1.5f, kept.settings.defaultSpeed)
+        assertEquals(42_000L, kept.resume["/v/a.mkv"]?.positionMs)
+        assertEquals(1.5f, DesktopStore(data).speed)
+    }
+
+    @Test
+    fun `the media folder and the sources beside it are one list, the media folder first, as on Android`() {
+        val data = folder.newFolder("data")
+        val store = DesktopStore(data).apply {
+            sources = listOf(nas)
+            libraryFolder = "/home/me/Videos"
+        }
+        assertEquals(listOf(nas), store.sources)
+        assertEquals(listOf(com.hawkynt.mediadroid.state.PRIMARY_SOURCE, "nas"), store.allSources.map { it.id })
+        assertEquals("/home/me/Videos", store.allSources.first().path)
+        store.libraryFolder = "/media/films"
+        assertEquals("/media/films", DesktopStore(data).allSources.first().path)
+        store.sources = emptyList()
+        assertEquals(listOf(com.hawkynt.mediadroid.state.PRIMARY_SOURCE), DesktopStore(data).allSources.map { it.id })
+    }
+
+    @Test
+    fun `turning subtitles off keeps the language for the household's next pick, as Android's setting does`() {
+        val data = folder.newFolder("data")
+        DesktopStore(data).subtitleLanguage = "de"
+        DesktopStore(data).subtitleLanguage = ""
+        val again = DesktopStore(data)
+        assertEquals("", again.subtitleLanguage)
+        assertFalse(again.state.data.settings.subtitlesOn)
+        assertEquals("de", again.state.data.settings.subtitleLanguage)
     }
 }

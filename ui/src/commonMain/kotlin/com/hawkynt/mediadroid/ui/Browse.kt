@@ -66,8 +66,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -75,9 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
-import com.hawkynt.mediadroid.data.ArtCache
-import com.hawkynt.mediadroid.data.StateStore
-import com.hawkynt.mediadroid.data.ThumbnailStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.library.BrowseFilter
 import com.hawkynt.mediadroid.library.HomeRow
 import com.hawkynt.mediadroid.library.HomeRows
@@ -88,6 +86,8 @@ import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
 import com.hawkynt.mediadroid.library.SortOrder
+import com.hawkynt.mediadroid.library.WallMode
+import com.hawkynt.mediadroid.ui.platform.LocalMediaArt
 import com.hawkynt.mediadroid.ui.theme.focusClickable
 import java.io.File
 import kotlinx.coroutines.launch
@@ -135,7 +135,7 @@ fun BrowseScreen(
     var mode by remember { mutableStateOf(store.wallMode) }
 
     // Phones get two or three posters across; tablets and TVs as many as fit.
-    val compact = LocalConfiguration.current.screenWidthDp < 600
+    val compact = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() } < 600.dp
     val gutter = if (compact) 16.dp else 24.dp
 
     // Long walls in title order get an A–Z rail; a jump lands on the grid item after the home above it.
@@ -656,7 +656,7 @@ fun resumeProgress(item: MediaItem, store: StateStore): Float? {
 
 /** A thin bar along the bottom of a picture showing how much of it is watched. */
 @Composable
-internal fun ResumeBar(progress: Float, modifier: Modifier = Modifier) {
+fun ResumeBar(progress: Float, modifier: Modifier = Modifier) {
     LinearProgressIndicator(
         progress = { progress },
         color = MaterialTheme.colorScheme.primary,
@@ -667,7 +667,7 @@ internal fun ResumeBar(progress: Float, modifier: Modifier = Modifier) {
     )
 }
 
-internal fun progressOf(positionMs: Long, durationMs: Long): Float =
+fun progressOf(positionMs: Long, durationMs: Long): Float =
     if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 
 @Composable
@@ -795,11 +795,11 @@ fun PosterImage(
     videoFallback: String? = null,
     contentScale: ContentScale = ContentScale.Fit,
 ) {
-    val context = LocalContext.current
+    val art = LocalMediaArt.current
     // A picture on a network source shows from its cached copy, fetched once.
     val remote = path != null && !path.startsWith("/")
     val cached by produceState<File?>(null, path) {
-        if (remote) value = ArtCache.fileFor(context, path!!)
+        if (remote) value = art.picture(path!!)
     }
     val picture = if (remote) cached else path?.let(::File)?.takeIf { it.exists() }
     if (picture != null) {
@@ -817,15 +817,15 @@ fun PosterImage(
 }
 
 /**
- * A still from the video itself, loaded as a promise through [ThumbnailStore]
+ * A still from the video itself, loaded as a promise through the platform's MediaArt
  * and cached on disk — the picture a poster would have been.
  */
 @Composable
 fun VideoFrameImage(videoPath: String, fallbackLetter: String? = null, contentScale: ContentScale = ContentScale.Crop) {
-    val context = LocalContext.current
+    val art = LocalMediaArt.current
     var frame by remember(videoPath) { mutableStateOf<File?>(null) }
     LaunchedEffect(videoPath) {
-        frame = ThumbnailStore.of(context).thumbnailFor(videoPath)
+        frame = art.still(videoPath)
     }
     if (frame != null) {
         AsyncImage(
@@ -853,9 +853,6 @@ private fun LetterBox(fallbackLetter: String?) {
     }
 }
 
-/** How the wall lays out its titles. */
-enum class WallMode(val label: String) { POSTERS("Posters"), LIST("List"), DETAILS("Details") }
-
 /** Whether a title's files all lie on a source that cannot be reached right now; the app provides it. */
 val LocalAway = staticCompositionLocalOf<(MediaItem) -> Boolean> { { false } }
 
@@ -864,7 +861,7 @@ private const val AWAY_ALPHA = 0.4f
 
 /** The line a title whose source is away carries. */
 @Composable
-internal fun AwayNote(item: MediaItem, modifier: Modifier = Modifier) {
+fun AwayNote(item: MediaItem, modifier: Modifier = Modifier) {
     if (LocalAway.current(item)) {
         Text("Not reachable right now", fontSize = 13.sp, color = MaterialTheme.colorScheme.error, modifier = modifier)
     }

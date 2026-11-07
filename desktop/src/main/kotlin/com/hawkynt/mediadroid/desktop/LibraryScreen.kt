@@ -1,6 +1,5 @@
 package com.hawkynt.mediadroid.desktop
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -8,33 +7,29 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -45,24 +40,50 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hawkynt.mediadroid.library.BrowseFilter
 import com.hawkynt.mediadroid.library.Library
-import com.hawkynt.mediadroid.library.LibraryQuery
+import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
 import com.hawkynt.mediadroid.player.BingeQueue
+import com.hawkynt.mediadroid.ui.BrowseScreen
+import com.hawkynt.mediadroid.ui.FiltersScreen
+import com.hawkynt.mediadroid.ui.PlacesScreen
+import com.hawkynt.mediadroid.ui.SearchScreen
+import com.hawkynt.mediadroid.ui.Sidebar
+import com.hawkynt.mediadroid.ui.platform.LocalMediaArt
+import com.hawkynt.mediadroid.ui.platform.MediaArt
+import com.hawkynt.mediadroid.ui.playQueue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.swing.JFileChooser
+import com.hawkynt.mediadroid.ui.Screen as Shown
 
-/** The library: pick a folder once, then every movie and show as a wall of covers. */
+/**
+ * The library: pick a folder once, then the walls both apps share (:ui) — Movies and TV Shows with their home rows,
+ * Genres and Years, Search and Filters, beside the sidebar. A movie plays at once, a show opens its episodes; the
+ * media folder and the network sources are under Settings.
+ */
 @Composable
 fun LibraryScreen(
+    store: DesktopStore,
+    places: DesktopLibrary,
+    art: MediaArt,
+    library: Library?,
+    onLibrary: (Library) -> Unit,
+    onPlay: (List<Playing>, Int) -> Unit,
+) {
+    CompositionLocalProvider(LocalMediaArt provides art) {
+        Library(store, places, library, onLibrary, onPlay)
+    }
+}
+
+@Composable
+private fun Library(
     store: DesktopStore,
     places: DesktopLibrary,
     library: Library?,
@@ -71,7 +92,6 @@ fun LibraryScreen(
 ) {
     var folder by remember { mutableStateOf(store.libraryFolder) }
     var scanning by remember { mutableStateOf(false) }
-    var openShow by remember { mutableStateOf<Show?>(null) }
     // MEDIADROID_SHOW=sources: the network sources open from the start (documentation and checks).
     var showSources by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "sources") }
     // Moves on whenever the places change: the library is scanned again.
@@ -84,6 +104,13 @@ fun LibraryScreen(
         onLibrary(withContext(Dispatchers.IO) { places.scan() })
         scanning = false
     }
+    val changeFolder: () -> Unit = {
+        chooseFolder()?.let {
+            store.libraryFolder = it
+            folder = it
+            generation++
+        }
+    }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         when {
             nothingYet -> Column(
@@ -92,33 +119,24 @@ fun LibraryScreen(
             ) {
                 Text("Your movies and shows are already organized.", fontSize = 24.sp, color = Color.White)
                 Spacer(Modifier.padding(8.dp))
-                Button(onClick = {
-                    chooseFolder()?.let {
-                        store.libraryFolder = it
-                        folder = it
-                        generation++
-                    }
-                }) {
+                Button(onClick = changeFolder) {
                     Icon(Icons.Default.Folder, null)
                     Spacer(Modifier.width(8.dp))
                     Text("Choose media folder", fontSize = 18.sp)
                 }
                 TextButton(onClick = { showSources = true }) { Text("Or add a network source", fontSize = 16.sp) }
             }
-            scanning || library == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-            openShow != null -> ShowScreen(store, openShow!!, onBack = { openShow = null }, onPlay = onPlay)
-            else -> Wall(store, library, onOpen = { item ->
-                when (item) {
-                    is Movie -> onPlay(listOf(Playing(item.title, item.videoPath)), 0)
-                    is Show -> openShow = item
-                }
-            }, onSources = { showSources = true }, onFolder = {
-                chooseFolder()?.let {
-                    store.libraryFolder = it
-                    folder = it
-                    generation++
-                }
-            })
+            library == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+            else -> Walls(
+                store = store,
+                places = places,
+                library = library,
+                scanning = scanning,
+                onRefresh = { generation++ },
+                onPlay = onPlay,
+                onSources = { showSources = true },
+                onFolder = changeFolder,
+            )
         }
         if (showSources) {
             SourcesPanel(places, onChanged = { generation++ }, onClose = { showSources = false })
@@ -126,83 +144,150 @@ fun LibraryScreen(
     }
 }
 
+/** The shared walls and places beside the shared sidebar, as the Android app shows them. */
 @Composable
-private fun Wall(
+private fun Walls(
     store: DesktopStore,
+    places: DesktopLibrary,
     library: Library,
-    onOpen: (MediaItem) -> Unit,
+    scanning: Boolean,
+    onRefresh: () -> Unit,
+    onPlay: (List<Playing>, Int) -> Unit,
     onSources: () -> Unit,
     onFolder: () -> Unit,
 ) {
-    val all: List<MediaItem> = remember(library) { (library.movies + library.shows).sortedBy { it.title.lowercase() } }
-    var query by remember { mutableStateOf("") }
-    var genres by remember { mutableStateOf(emptySet<String>()) }
-    val facets = remember(all) { LibraryQuery.genreFacets(all) }
-    val items = remember(all, query, genres) { LibraryQuery.filterByGenres(LibraryQuery.search(all, query), genres) }
-    Column(Modifier.fillMaxSize().padding(24.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "MediaDroid",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.width(24.dp))
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = { Text("Search titles") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                singleLine = true,
-                modifier = Modifier.width(360.dp),
-            )
-            Spacer(Modifier.weight(1f))
-            Text("${library.movies.size} movies · ${library.shows.size} shows", color = Color.Gray)
-            TextButton(onClick = onSources) { Text("Network sources") }
-            TextButton(onClick = onFolder) {
-                Text(if (store.libraryFolder == null) "Choose folder" else "Change folder")
+    val state = store.state
+    var screen by remember { mutableStateOf<Shown>(Shown.Browse(LibrarySection.MOVIES)) }
+    var openShow by remember { mutableStateOf<Show?>(null) }
+    var filter by remember { mutableStateOf(BrowseFilter()) }
+    // Each wall keeps its own order, remembered across launches.
+    var sorts by remember { mutableStateOf(LibrarySection.entries.associateWith { state.sortFor(it) }) }
+    var searchQuery by remember { mutableStateOf("") }
+    // Which section the Genres and Years places group; follows the wall last browsed.
+    var placeSection by remember { mutableStateOf(LibrarySection.MOVIES) }
+    // Scroll positions outlive a visit to a show's episodes, so Back lands where you were.
+    val movieGrid = rememberLazyGridState()
+    val showGrid = rememberLazyGridState()
+    val searchGrid = rememberLazyGridState()
+    val rowGrid = rememberLazyGridState()
+
+    openShow?.let { show ->
+        ShowScreen(store, show, onBack = { openShow = null }, onPlay = onPlay)
+        return
+    }
+
+    fun navigate(target: Shown) {
+        screen = target
+        if (target is Shown.Browse) placeSection = target.section
+    }
+
+    // A movie plays from the file asked for (else its first), a show from its episode asked for (else it opens).
+    fun play(item: MediaItem, path: String?) {
+        when (item) {
+            is Movie -> {
+                val queue = item.playQueue()
+                onPlay(queue.map { Playing(item.title, it.videoPath) }, queue.indexOfFirst { it.videoPath == path }
+                    .coerceAtLeast(0))
+            }
+            is Show -> {
+                val queue = showQueue(item)
+                val start = queue.indexOfFirst { it.video == path }
+                if (start >= 0) onPlay(queue, start) else openShow = item
             }
         }
-        if (facets.isNotEmpty()) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
-                items(facets) { (genre, count) ->
-                    FilterChip(
-                        selected = genre in genres,
-                        onClick = { genres = if (genre in genres) genres - genre else genres + genre },
-                        label = { Text("$genre · $count") },
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.padding(8.dp))
-        if (items.isEmpty()) Text("Nothing matches.", color = Color.Gray, fontSize = 18.sp)
-        LazyVerticalGrid(GridCells.Adaptive(170.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            items(items, key = { it.key }) { item ->
-                Cover(item, watched = item is Movie && store.watched(item.videoPath)) { onOpen(item) }
+    }
+
+    fun open(item: MediaItem) = when (item) {
+        is Movie -> play(item, null)
+        is Show -> openShow = item
+    }
+
+    Row(Modifier.fillMaxSize()) {
+        Sidebar(
+            expanded = state.data.sidebarExpanded ?: true,
+            current = screen,
+            scanning = scanning,
+            onToggle = {
+                state.data.sidebarExpanded = !(state.data.sidebarExpanded ?: true)
+                state.save()
+            },
+            onNavigate = ::navigate,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxHeight(),
+            files = false,
+        )
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+            when (val s = screen) {
+                is Shown.Browse -> BrowseScreen(
+                    library = library,
+                    section = s.section,
+                    store = state,
+                    filter = filter.copy(sort = sorts.getValue(s.section)),
+                    rootPath = store.libraryFolder ?: places.networkSources.joinToString { it.name },
+                    row = s.row,
+                    gridState = when {
+                        s.row != null -> rowGrid
+                        s.section == LibrarySection.MOVIES -> movieGrid
+                        else -> showGrid
+                    },
+                    onOpen = ::open,
+                    onPlay = ::play,
+                    onClearFilter = { filter = BrowseFilter() },
+                    onSeeAll = { navigate(Shown.Browse(s.section, it)) },
+                )
+                is Shown.Places -> PlacesScreen(
+                    library = library,
+                    store = state,
+                    kind = s.kind,
+                    section = placeSection,
+                    onSectionChange = { placeSection = it },
+                    onOpen = { section, placeFilter ->
+                        filter = placeFilter
+                        navigate(Shown.Browse(section))
+                    },
+                )
+                Shown.Search -> SearchScreen(
+                    library = library,
+                    store = state,
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    gridState = searchGrid,
+                    onOpen = ::open,
+                )
+                Shown.Filters -> FiltersScreen(
+                    library = library,
+                    filter = filter,
+                    onFilterChange = { filter = it },
+                    sorts = sorts,
+                    onSortChange = { section, order ->
+                        sorts = sorts + (section to order)
+                        state.saveSort(section, order)
+                    },
+                )
+                Shown.Settings -> MediaPlaces(store, places, onSources = onSources, onFolder = onFolder)
+                else -> Unit
             }
         }
     }
 }
 
+/** Where the library is read from: the media folder and the network sources, each changed from here. */
 @Composable
-private fun Cover(item: MediaItem, watched: Boolean, onClick: () -> Unit) {
-    Column(Modifier.clickable(onClick = onClick)) {
-        Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF2A2A40)),
-        ) {
-            val art = Art.load(item.posterPath)
-            if (art != null) {
-                Image(art, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            } else {
-                Text(item.title, Modifier.align(Alignment.Center).padding(12.dp), color = Color.White, fontSize = 18.sp)
-            }
-            if (watched) Icon(Icons.Default.CheckCircle, "Watched", Modifier.align(Alignment.TopEnd).padding(6.dp),
-                tint = MaterialTheme.colorScheme.primary)
+private fun MediaPlaces(store: DesktopStore, places: DesktopLibrary, onSources: () -> Unit, onFolder: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Media folder", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text(store.libraryFolder ?: "None chosen yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(onClick = onFolder) {
+            Text(if (store.libraryFolder == null) "Choose folder" else "Change folder")
         }
-        Text(item.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 15.sp,
-            modifier = Modifier.padding(top = 6.dp))
-        item.year?.let { Text("$it", color = Color.Gray, fontSize = 13.sp) }
+        Spacer(Modifier.padding(4.dp))
+        Text("Network sources", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        val sources = places.networkSources
+        Text(
+            if (sources.isEmpty()) "None added yet." else sources.joinToString { it.name },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = onSources) { Text("Network sources") }
     }
 }
 

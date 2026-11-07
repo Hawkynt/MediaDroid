@@ -35,11 +35,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.data.LibraryStore
-import com.hawkynt.mediadroid.data.PRIMARY_SOURCE
+import com.hawkynt.mediadroid.state.PRIMARY_SOURCE
 import com.hawkynt.mediadroid.data.rememberSmbServers
 import com.hawkynt.mediadroid.data.SecretStore
 import com.hawkynt.mediadroid.data.SourceAccess
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.library.Source
 import com.hawkynt.mediadroid.library.SourceKind
 import com.hawkynt.mediadroid.sources.SftpFs
