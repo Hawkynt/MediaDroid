@@ -721,10 +721,6 @@ fun PlayerScreen(
     // Child lock: while locked every touch and key but volume is ignored; holding the lock symbol unlocks.
     var locked by remember { mutableStateOf(false) }
     var lockHintStamp by remember { mutableIntStateOf(0) }
-    // Sleep timer: a moment on the clock (elapsedRealtime) or "at the end of this video"; never kept.
-    var sleepAt by remember { mutableStateOf<Long?>(null) }
-    var sleepLeftMs by remember { mutableStateOf(0L) }
-    var sleepChoice by remember { mutableStateOf<Int?>(null) }
     // A device decoder that cannot attach to the picture's surface gets a fresh one, once per item until a
     // frame shows (see routeVideo below for how); the item it was tried for.
     val freshSurface = remember { arrayOfNulls<() -> Unit>(1) }
@@ -801,19 +797,16 @@ fun PlayerScreen(
         playerView?.markChapters(starts)
     }
 
-    LaunchedEffect(sleepAt) {
-        val at = sleepAt ?: run {
+    // Sleep timer: a moment on the clock (elapsedRealtime) or "at the end of this video"; never kept.
+    LaunchedEffect(session.sleepAtMs) {
+        if (session.sleepAtMs == null) {
             engine.volume = 1f
             return@LaunchedEffect
         }
         while (true) {
-            val left = at - android.os.SystemClock.elapsedRealtime()
-            sleepLeftMs = left
-            engine.volume = PlaybackMath.sleepFade(left)
-            if (left <= 0) {
-                engine.pause()
-                engine.volume = 1f
-                sleepAt = null
+            val ranOut = session.sleepTick(android.os.SystemClock.elapsedRealtime())
+            engine.volume = session.sleepVolume
+            if (ranOut) {
                 show("Sleep timer: paused")
                 break
             }
@@ -1395,15 +1388,7 @@ fun PlayerScreen(
             )
         }
         feedback?.takeIf { !inPip }?.let {
-            Text(
-                it,
-                color = if (feedbackBoosted) com.hawkynt.mediadroid.ui.theme.MediaDroidColors.Amber else Color.White,
-                fontSize = 22.sp,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
-            )
+            FeedbackNote(it, Modifier.align(Alignment.Center), accent = feedbackBoosted)
         }
         scrub?.takeIf { controlsVisible && !inPip }?.let {
             SeekPreviewCard(it, engine.durationMs, seekPreviews, clock(it.positionMs))
@@ -1462,12 +1447,7 @@ fun PlayerScreen(
                         maxLines = 1,
                         modifier = Modifier.weight(1f),
                     )
-                    val sleepNote = when {
-                        session.sleepAtEnd -> "Sleep at the end"
-                        sleepAt != null -> "Sleep in ${PlaybackMath.sleepMinutesLeft(sleepLeftMs)} min"
-                        else -> null
-                    }
-                    sleepNote?.let { Text(it, color = Color.White, fontSize = 15.sp, maxLines = 1) }
+                    sleepNote(session)?.let { Text(it, color = Color.White, fontSize = 15.sp, maxLines = 1) }
                     if (externalDisplay != null) {
                         IconButton(
                             onClick = {
@@ -1829,40 +1809,7 @@ fun PlayerScreen(
                         }
                     }
 
-                    PanelTitle("Sleep timer")
-                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                    androidx.compose.foundation.layout.FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        FilterChip(
-                            selected = sleepAt == null && !session.sleepAtEnd,
-                            onClick = {
-                                sleepAt = null
-                                session.sleepAtEnd = false
-                            },
-                            label = { Text("Off", fontSize = 16.sp) },
-                        )
-                        PlaybackMath.SLEEP_MINUTES.forEach { minutes ->
-                            FilterChip(
-                                selected = sleepAt != null && sleepChoice == minutes,
-                                onClick = {
-                                    session.sleepAtEnd = false
-                                    sleepChoice = minutes
-                                    sleepLeftMs = minutes * 60_000L
-                                    sleepAt = android.os.SystemClock.elapsedRealtime() + minutes * 60_000L
-                                },
-                                label = { Text("$minutes min", fontSize = 16.sp) },
-                            )
-                        }
-                        FilterChip(
-                            selected = session.sleepAtEnd,
-                            onClick = {
-                                sleepAt = null
-                                session.sleepAtEnd = true
-                            },
-                            label = { Text("End of this video", fontSize = 16.sp) },
-                        )
-                    }
+                    SleepChoice(session) { android.os.SystemClock.elapsedRealtime() }
 
                     RepeatChoice(session.repeat) { session.repeat = it }
                 },

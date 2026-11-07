@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -103,6 +104,22 @@ fun TrackDialog(
                 if (choices.isEmpty()) Text("This file has only one such track.", fontSize = 18.sp)
             }
         },
+    )
+}
+
+/**
+ * A short confirmation over the picture — "+15 s", "Volume 40 %", a chapter's name — in the accent colour where
+ * [accent] (a level past the device's maximum).
+ */
+@Composable
+fun FeedbackNote(text: String, modifier: Modifier = Modifier, accent: Boolean = false) {
+    Text(
+        text,
+        color = if (accent) com.hawkynt.mediadroid.ui.theme.MediaDroidColors.Amber else Color.White,
+        fontSize = 22.sp,
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.6f), androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .padding(horizontal = 20.dp, vertical = 10.dp),
     )
 }
 
