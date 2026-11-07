@@ -26,8 +26,9 @@ class Conversion(private val passes: Passes) {
     /**
      * A 4:2:0 picture's planes as the chroma passes read them: the luma, Cb and Cr textures, the luma's [width] ×
      * [height] and the rows' strides in texels ([lumaStride], [chromaStride]), the [color] matrix to RGB with its
-     * [foot] (16/255 for limited range, else 0), [chroma] the chroma's share in the spline pass (1: as it is), and the
-     * [matrix] the luma and chroma are read through.
+     * [foot] (16/255 for limited range, else 0), [chroma] the chroma's share in the spline pass (1: as it is), the
+     * [matrix] the luma and chroma are read through, and the chroma's own [chromaWidth] × [chromaHeight] — half the
+     * luma's, unless the luma has been enlarged before (an mpv user shader's `LUMA` hooks, MpvHooks.planes).
      */
     class Planes(
         val luma: Int,
@@ -41,10 +42,9 @@ class Conversion(private val passes: Passes) {
         val foot: Float,
         val matrix: FloatArray,
         val chroma: Float = 1f,
-    ) {
-        val chromaWidth: Int get() = (width + 1) / 2
-        val chromaHeight: Int get() = (height + 1) / 2
-    }
+        val chromaWidth: Int = (width + 1) / 2,
+        val chromaHeight: Int = (height + 1) / 2,
+    )
 
     private fun Passes.Uniforms.colour(p: Planes) {
         matrix3("uColor", p.color)

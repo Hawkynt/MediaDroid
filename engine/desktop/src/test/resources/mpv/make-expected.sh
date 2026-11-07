@@ -9,7 +9,8 @@
 # frame), and libplacebo 7.360's own renderer running each shader on them, on Mesa's OpenGL (llvmpipe), through
 # tools/shader-check/placebo.cpp: <shader>.ppm at twice the picture's size; FSRCNNX and RAVU on the grey picture,
 # handed over as YCbCr planes so their LUMA hooks run, and FSRCNNX once more on planes.yuv (a decoder's limited-range
-# planes, its LUMA hooks on the Y plane); KrigBilateral on chroma.yuv and lookup-1d on the picture, at its size.
+# planes, its LUMA hooks on the Y plane), again with spline36 as the plane upscaler and with KrigBilateral after it
+# (the chroma it leaves enlarged); KrigBilateral on chroma.yuv and lookup-1d on the picture, at its size.
 # Needs libplacebo's and Mesa's EGL development files.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
@@ -38,5 +39,9 @@ export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
   yuv compute
 "$work/placebo_oracle" chroma "$here/chroma.yuv" 64 48 "$here/KrigBilateral.glsl" "$here/krig.ppm" rgb
 "$work/placebo_oracle" planes "$here/planes.yuv" 64 48 "$here/FSRCNNX_x2_8-0-4-1.glsl" "$here/fsrcnnx-planes.ppm" 128 96
+"$work/placebo_oracle" planes "$here/planes.yuv" 64 48 "$here/FSRCNNX_x2_8-0-4-1.glsl" \
+  "$here/fsrcnnx-planes-spline36.ppm" 128 96 spline36
+"$work/placebo_oracle" planes "$here/planes.yuv" 64 48 "$here/FSRCNNX_x2_8-0-4-1.glsl,$here/KrigBilateral.glsl" \
+  "$here/fsrcnnx-planes-krig.ppm" 128 96
 "$work/placebo_oracle" hook "$here/picture.ppm" "$here/lookup-1d.glsl" "$here/lookup-1d.ppm" 64 48
 "$work/placebo_oracle" hook "$here/picture.ppm" "$here/st2094-10.glsl" "$here/st2094-10.ppm" 128 96 compute

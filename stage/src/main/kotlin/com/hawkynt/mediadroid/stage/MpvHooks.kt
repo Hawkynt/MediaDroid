@@ -77,7 +77,9 @@ class MpvHooks(
      * `CHROMA` on the Cb and Cr planes ([cb], [cr], read through [chromaMatrix]) as one texture at their own size, its
      * passes binding the `LUMA` hooked before them; both rows from the top as mpv holds them. Then the hooked Y and
      * chroma to RGB by [colour] and its [foot] at the hooked Y's size (the chroma read bilinearly where the passes
-     * left it smaller) into the frame [into] hands over for that size, read through [matrix].
+     * left it smaller) into the frame [into] hands over for that size, read through [matrix] — or, where no `CHROMA`
+     * pass ran and there is a [chromaUpscaler] (mpv's `--cscale`: the household's spline36 or KrigBilateral), the
+     * chroma planes enlarged by it to the hooked Y's size, given the hooked Y and that frame.
      */
     fun planes(
         shader: MpvShader,
@@ -90,14 +92,16 @@ class MpvHooks(
         colour: FloatArray,
         foot: Float,
         matrix: FloatArray,
+        chromaUpscaler: ((y: DrawTarget, into: DrawTarget) -> DrawTarget)? = null,
         into: (width: Int, height: Int) -> DrawTarget,
     ): DrawTarget {
         val textures = HashMap<String, DrawTarget>()
         textures["LUMA"] = luma
-        textures[MpvShader.CHROMA] = passes.draw(
+        val planes = passes.draw(
             Shaders.VIDEO_MPV_CHROMA, frame("mpvChroma", (luma.width + 1) / 2, (luma.height + 1) / 2), cb,
             listOf(cr to "uV"), matrix = chromaMatrix,
         )
+        textures[MpvShader.CHROMA] = planes
         hookFrame++
         val writes = HashMap<String, Int>()
         for (stage in MpvShader.PLANES) {
@@ -108,6 +112,7 @@ class MpvHooks(
         }
         val y = textures.getValue("LUMA")
         val chroma = textures.getValue(MpvShader.CHROMA)
+        if (chroma === planes && chromaUpscaler != null) return chromaUpscaler(y, into(y.width, y.height))
         return passes.draw(Shaders.VIDEO_MPV_CHROMA_RGB, into(y.width, y.height), y.texture,
             listOf(chroma.texture to "uChroma"), matrix = matrix) {
             matrix3("uColor", colour)
