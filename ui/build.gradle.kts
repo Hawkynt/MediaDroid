@@ -39,6 +39,9 @@ kotlin {
             // A network source tried from its dialog before it is kept.
             implementation(project(":core:sources"))
         }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
     }
 }
 
@@ -46,4 +49,12 @@ kotlin {
 compose.resources {
     publicResClass = true
     packageOfResClass = "com.hawkynt.mediadroid.ui.resources"
+}
+
+// The screens' own logic is tested on the desktop JVM; `./gradlew test`, the gate's fast tier, runs it like every
+// other module's tests.
+tasks.register("test") {
+    group = "verification"
+    description = "Runs the :ui tests on the desktop JVM"
+    dependsOn("desktopTest")
 }
