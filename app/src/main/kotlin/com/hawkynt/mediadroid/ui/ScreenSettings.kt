@@ -52,7 +52,7 @@ fun ScreenSettings(store: StateStore) {
         fontSize = 15.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    ScreenSetupRows("This device's screen", BUILT_IN_SCREEN, store)
+    ScreenSetupRows("This device's screen", BUILT_IN_SCREEN, null, store)
     // The patterns on this screen, through the stage with the default picture and this screen's setup.
     var patterns by remember { mutableStateOf(false) }
     OutlinedButton(onClick = { patterns = true }, modifier = Modifier.padding(top = 8.dp)) {
@@ -67,15 +67,36 @@ fun ScreenSettings(store: StateStore) {
     if (patterns) {
         TestPatternScreen(store.defaultPicture(), store.screenSetup(BUILT_IN_SCREEN)) { patterns = false }
     }
-    external?.let { ScreenSetupRows(it.name, screenKey(it), store) }
+    external?.let { ScreenSetupRows(it.name, screenKey(it), it, store) }
 }
 
-/** One screen's setup, [key] as [StateStore.screenSetup] keeps it, under its [name]. */
+/**
+ * One screen's setup, [key] as [StateStore.screenSetup] keeps it, under its [name]; [display] the external display it
+ * is (null: this device's own screen), where the keystone's grid is shown.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ScreenSetupRows(name: String, key: String, store: StateStore) {
-    val setup = store.screenSetup(key)
-    fun save(changed: ScreenSetup) = store.saveScreenSetup(key, changed)
+private fun ScreenSetupRows(name: String, key: String, display: android.view.Display?, store: StateStore) {
+    // Read again once the grid closes: it kept what it changed in the store itself.
+    var version by remember { mutableStateOf(0) }
+    val setup = remember(version) { store.screenSetup(key) }
+    fun save(changed: ScreenSetup) {
+        store.saveScreenSetup(key, changed)
+        version++
+    }
+    var grid by remember { mutableStateOf(false) }
+    if (grid) {
+        val done: () -> Unit = {
+            grid = false
+            version++
+        }
+        val keep: (ScreenSetup) -> Unit = { store.saveScreenSetup(key, it) }
+        if (display == null) {
+            TestPatternScreen(store.defaultPicture(), setup, keystone = keep, onClose = done)
+        } else {
+            KeystoneOnProjector(display, store.defaultPicture(), setup, keep, done)
+        }
+    }
     Text(name, fontSize = 18.sp, modifier = Modifier.padding(top = 12.dp))
     Text("Shape as seen", fontSize = 16.sp, modifier = Modifier.padding(top = 4.dp))
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -93,7 +114,7 @@ private fun ScreenSetupRows(name: String, key: String, store: StateStore) {
         fontSize = 14.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    ProjectorRows(setup, ::save)
+    ProjectorRows(setup, ::save) { grid = true }
     SwitchLine(
         "OLED screen: burn-in care",
         "The picture, its black bars and the subtitles drift a few pixels every half minute, too slowly to see, " +
@@ -107,7 +128,7 @@ private fun ScreenSetupRows(name: String, key: String, store: StateStore) {
  * corrected on two axes — with a sketch of where the picture lands on the panel, since the video is not playing here.
  */
 @Composable
-private fun ProjectorRows(setup: ScreenSetup, save: (ScreenSetup) -> Unit) {
+private fun ProjectorRows(setup: ScreenSetup, save: (ScreenSetup) -> Unit, onGrid: () -> Unit) {
     Text("Projector", fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
     SwitchLine("Rear projection", "The picture mirrored, for a screen lit from behind.", setup.mirror) {
         save(setup.copy(mirror = it))
@@ -132,6 +153,7 @@ private fun ProjectorRows(setup: ScreenSetup, save: (ScreenSetup) -> Unit) {
                 fontSize = 14.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            OutlinedButton(onClick = onGrid) { Text("Correct with the grid", fontSize = 16.sp) }
             if (vertical != 0f || horizontal != 0f) {
                 TextButton(
                     onClick = {
@@ -158,7 +180,7 @@ private fun SwitchLine(label: String, detail: String, checked: Boolean, onChange
 
 /** One keystone, -[Keystone.LIMIT]..[Keystone.LIMIT], saved when let go; what either side does said beside it. */
 @Composable
-private fun KeystoneSlider(
+fun KeystoneSlider(
     label: String,
     above: String,
     below: String,
@@ -204,5 +226,37 @@ private fun KeystoneSketch(vertical: Float, horizontal: Float, modifier: Modifie
         }
         drawPath(path, picture.copy(alpha = 0.5f))
         drawPath(path, picture, style = Stroke(width = 2f))
+    }
+}
+
+/**
+ * The keystone set with the grid on a projector attached as [display]: the grid there (PatternPresentation), drawn with
+ * [setup] as it changes, and the keystone's controls on the phone, each change handed to [keep].
+ */
+@Composable
+private fun KeystoneOnProjector(
+    display: android.view.Display,
+    picture: com.hawkynt.mediadroid.player.PictureAdjustment,
+    setup: ScreenSetup,
+    keep: (ScreenSetup) -> Unit,
+    onClose: () -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var live by remember { mutableStateOf(setup) }
+    val presentation = remember(display) { PatternPresentation(context, display, picture, setup) }
+    androidx.compose.runtime.DisposableEffect(presentation) {
+        presentation.show()
+        onDispose { presentation.release() }
+    }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
+        KeystoneControls(
+            live,
+            onChange = {
+                live = it
+                presentation.show(it)
+                keep(it)
+            },
+            onDone = onClose,
+        )
     }
 }

@@ -122,4 +122,14 @@ class ScreenWarpTest {
         assertEquals(-Keystone.LIMIT, setup.keystoneHorizontal, 0f)
         assertTrue(setup.mirror)
     }
+
+    @Test
+    fun `a keystone nudged by the remote moves half a percent a press, and no further than the limit`() {
+        assertEquals(0.005f, Keystone.nudge(0f, 1), 1e-6f)
+        assertEquals(-0.015f, Keystone.nudge(0f, -3), 1e-6f)
+        assertEquals(0.1f, Keystone.nudge(0.095f, 1), 1e-6f)
+        assertEquals(0.1f, Keystone.nudge(0.1003f, 0), 1e-6f)
+        assertEquals(Keystone.LIMIT, Keystone.nudge(Keystone.LIMIT, 1), 1e-6f)
+        assertEquals(-Keystone.LIMIT, Keystone.nudge(-0.398f, -5), 1e-6f)
+    }
 }
