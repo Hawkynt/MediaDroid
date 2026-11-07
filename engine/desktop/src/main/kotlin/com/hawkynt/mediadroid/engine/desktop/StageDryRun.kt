@@ -3,6 +3,7 @@ package com.hawkynt.mediadroid.engine.desktop
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.PictureCheck
 import com.hawkynt.mediadroid.player.YuvMatrix
+import com.hawkynt.mediadroid.stage.StageCheck
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -54,7 +55,7 @@ object StageDryRun {
         height: Int,
         refreshHz: Double,
     ): PictureCheck.DryRun? = runCatching {
-        val frames = testFrames()
+        val frames = List(StageCheck.PICTURES) { StageCheck.picture(it) }
         val film = if (picture.deinterlace == PictureAdjustment.Deinterlace.FILM) Film() else null
         val intervalMs = frameMs
         val refreshMs = 1000.0 / refreshHz.coerceIn(24.0, 240.0)
@@ -90,12 +91,7 @@ object StageDryRun {
             val next = decoded[0].first
             val after = decoded[1].first
             val span = (next.ptsMs - shown.ptsMs).toDouble().coerceAtLeast(1.0)
-            val phases = when {
-                picture.interpolation != PictureAdjustment.Interpolation.OFF ->
-                    generateSequence(0.0) { it + refreshMs }.takeWhile { it < span }.map { it / span }.toList()
-                picture.isFieldRate -> listOf(0.0, 0.5)
-                else -> listOf(0.0)
-            }
+            val phases = StageCheck.phases(picture, span, refreshMs)
             var work = filmMs
             for (phase in phases) {
                 // In real time, as the window would ask: Motion's search runs alongside meanwhile.
@@ -116,60 +112,16 @@ object StageDryRun {
         PictureCheck.DryRun(measured, late + stage.motionLate - lateBefore, workTotal / measured.coerceAtLeast(1))
     }.getOrNull()
 
-    /**
-     * Test pictures at 576p, as Android's check plays: smooth random blotches about 12 pixels across, moving 4 pixels
-     * across and 2 down a picture, so motion has something to find and the pictures differ as video does.
-     */
-    private fun testFrames(): List<ByteArray> {
-        val w = PictureCheck.WIDTH
-        val h = PictureCheck.HEIGHT
-        return List(8) { k ->
-            val rgba = ByteArray(w * h * 4)
-            for (y in 0 until h) for (x in 0 until w) {
-                val i = (y * w + x) * 4
-                for (c in 0 until 3) rgba[i + c] = blotch(x + k * 4, y + k * 2, c).toByte()
-                rgba[i + 3] = -1
-            }
-            rgba
-        }
-    }
-
     /** [rgba] (a test picture) as limited-range BT.601 4:2:0 planes, as a decoder hands an SD picture over. */
     private fun planesOf(rgba: ByteArray): MediaReader.Planes {
         val w = PictureCheck.WIDTH
         val h = PictureCheck.HEIGHT
-        val cw = (w + 1) / 2
-        val ch = (h + 1) / 2
-        fun c(x: Int, y: Int, k: Int) =
-            rgba[(y.coerceAtMost(h - 1) * w + x.coerceAtMost(w - 1)) * 4 + k].toInt() and 0xFF
-        fun luma(x: Int, y: Int) = 0.299 * c(x, y, 0) + 0.587 * c(x, y, 1) + 0.114 * c(x, y, 2)
-        val y = ByteArray(w * h) { (16 + luma(it % w, it / w) * 219 / 255 + 0.5).toInt().toByte() }
-        val u = ByteArray(cw * ch) {
-            val x = it % cw * 2
-            val row = it / cw * 2
-            (128 + (c(x, row, 2) - luma(x, row)) / 1.772 * 224 / 255 + 0.5).toInt().toByte()
-        }
-        val v = ByteArray(cw * ch) {
-            val x = it % cw * 2
-            val row = it / cw * 2
-            (128 + (c(x, row, 0) - luma(x, row)) / 1.402 * 224 / 255 + 0.5).toInt().toByte()
-        }
-        return MediaReader.Planes(y, u, v, YuvMatrix.BT601, fullRange = false)
+        val c = ((w + 1) / 2) * ((h + 1) / 2)
+        val all = StageCheck.planes(rgba)
+        return MediaReader.Planes(
+            all.copyOfRange(0, w * h), all.copyOfRange(w * h, w * h + c), all.copyOfRange(w * h + c, w * h + 2 * c),
+            YuvMatrix.BT601, fullRange = false,
+        )
     }
 
-    private fun blotch(x: Int, y: Int, channel: Int): Int {
-        val cell = 12
-        val cx = Math.floorDiv(x, cell)
-        val cy = Math.floorDiv(y, cell)
-        val fx = (x - cx * cell).toFloat() / cell
-        val fy = (y - cy * cell).toFloat() / cell
-        fun level(i: Int, j: Int): Float {
-            var v = i * 73856093 xor j * 19349663 xor channel * 83492791
-            v = (v xor (v ushr 13)) * 0x5bd1e995
-            return ((v xor (v ushr 15)) and 0xFF).toFloat()
-        }
-        val top = level(cx, cy) * (1 - fx) + level(cx + 1, cy) * fx
-        val bottom = level(cx, cy + 1) * (1 - fx) + level(cx + 1, cy + 1) * fx
-        return (top * (1 - fy) + bottom * fy).toInt()
-    }
 }
