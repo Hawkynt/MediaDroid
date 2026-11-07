@@ -493,6 +493,33 @@ class GlStageTest {
     }
 
     @Test
+    fun `a LUMA-only mpv shader on the planes keeps the chroma upscaler chosen, as mpv's --cscale does`() {
+        val shader = "FSRCNNX_x2_8-0-4-1.glsl"
+        MpvShaders.load(mapOf(shader to requireNotNull(javaClass.getResourceAsStream("/mpv/$shader")).use {
+            String(it.readBytes())
+        }))
+        val picture = decodedPlanes()
+        val bilinear = stage.process(picture, PictureAdjustment(shader = shader), 128, 96)
+        // libplacebo with spline36 as the plane upscaler, and with KrigBilateral.glsl run after FSRCNNX: its CHROMA
+        // passes guided by the doubled Y plane.
+        for ((chroma, fixture) in listOf(
+            PictureAdjustment.Chroma.SPLINE36 to "fsrcnnx-planes-spline36.ppm",
+            PictureAdjustment.Chroma.KRIG to "fsrcnnx-planes-krig.ppm",
+        )) {
+            val theirs = mpvPicture(fixture)
+            fun off(out: MediaReader.Picture) = out.rgba.indices.filter { it % 4 != 3 }
+                .map { abs((out.rgba[it].toInt() and 255) - (theirs.rgba[it].toInt() and 255)) }
+            val d = off(stage.process(picture, PictureAdjustment(shader = shader, chroma = chroma), 128, 96))
+            // Within one step, mean 0.04 for both.
+            assertTrue("$chroma: off by ${d.max()} at worst", d.max() <= 1)
+            assertTrue("$chroma: off by ${d.average()} on average", d.average() <= 0.1)
+            // The bilinear chroma lies 1.3 (spline36) and 3.8 (KrigBilateral) from them on average.
+            val plain = off(bilinear).average()
+            assertTrue("$chroma: bilinear chroma's $plain against ${d.average()}", plain > 10 * d.average())
+        }
+    }
+
+    @Test
     fun `an mpv shader's one-dimensional integer and 16-bit textures and its uniform buffer read as libplacebo's`() =
         checkMpv("lookup-1d.glsl", "picture.ppm", "lookup-1d.ppm", 1, 0.05)
 

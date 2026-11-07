@@ -192,8 +192,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var yuvChroma = 1f
 
     // The FFmpeg decoder's planes as uploaded: the picture's size, its strides, and the chroma upscaling the frame last
-    // taken has been drawn with (see chromaUpscaled: the upscaler, or the mpv shader hooking the chroma), null until it
-    // is.
+    // taken has been drawn with (see chromaUpscaled: the upscaler, or the mpv shader hooking the planes with it), null
+    // until it is.
     private var yuvWidth = 0
     private var yuvHeight = 0
     private val yuvStrides = IntArray(2)
@@ -1002,15 +1002,16 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      */
     private fun chromaUpscaled(chroma: PictureAdjustment.Chroma, shader: MpvShader? = null): Frame {
         val full = frames[CHROMA_FULL].ensure(yuvWidth, yuvHeight)
-        val drawn = shader ?: chroma
-        if (chromaDrawn === drawn) return full
+        // A shader hooking only LUMA leaves the chroma to the upscaler: both decide the picture.
+        val drawn = if (shader == null) chroma else shader to chroma
+        if (chromaDrawn == drawn) return full
         chromaDrawn = drawn
         val bound = IntArray(1)
         val viewport = IntArray(4)
         GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING, bound, 0)
         GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, viewport, 0)
         if (shader != null) {
-            chromaHooked(shader, full)
+            chromaHooked(shader, chroma, full)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, bound[0])
             GLES20.glViewport(viewport[0], viewport[1], viewport[2], viewport[3])
             return full
@@ -2425,9 +2426,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * (MpvHooks.planes): `LUMA` on the Y plane where [lumaOnPlanes], then `CHROMA` on the Cb and Cr planes as one
      * texture at their own size, its passes binding that `LUMA`, both rows from the top as mpv holds them, the stride's
      * padding cut off; then the Y plane and the hooked chroma — read bilinearly where the passes left it smaller — to
-     * RGB into [into], its top row where v is 1. The bound framebuffer and viewport are the caller's to give back.
+     * RGB into [into], its top row where v is 1; where no `CHROMA` pass ran, the chroma planes enlarged by [chroma]
+     * instead, as mpv's `--cscale` (KrigBilateral guided by the hooked Y). The bound framebuffer and viewport are the
+     * caller's to give back.
      */
-    private fun chromaHooked(shader: MpvShader, into: Frame) {
+    private fun chromaHooked(shader: MpvShader, chroma: PictureAdjustment.Chroma, into: Frame) {
         val chromaWidth = (yuvWidth + 1) / 2
         val chromaHeight = (yuvHeight + 1) / 2
         fun part(of: Float) = floatArrayOf(of, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f)
@@ -2439,9 +2442,27 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         // The FFmpeg decoder hands over limited range (a full-range source squeezed into it). The size shown is the
         // screen's, which a pass's WHEN may weigh the planes against.
         val sizes = MpvHooks.Sizes(query(EGL14.EGL_WIDTH), query(EGL14.EGL_HEIGHT), videoWidth, videoHeight)
+        val upscaler = if (chroma == PictureAdjustment.Chroma.BILINEAR) {
+            null
+        } else {
+            { y: DrawTarget, whole: DrawTarget ->
+                // The hooked Y without the stride's padding beside the chroma planes with theirs.
+                val planes = Conversion.Planes(
+                    y.texture, yuvTextures[1], yuvTextures[2], y.width, y.height, y.width, yuvStrides[1], yuvColor,
+                    16f / 255f, flip, chromaWidth.toFloat() / yuvStrides[1], chromaWidth, chromaHeight,
+                )
+                if (chroma == PictureAdjustment.Chroma.KRIG && krigReady) {
+                    val first = frames[CHROMA_LOW].ensure(y.width, chromaHeight, half = true)
+                    val second = frames[CHROMA_LOWER].ensure(chromaWidth, chromaHeight, half = true)
+                    conversion.krig(planes, first, second, whole)
+                } else {
+                    conversion.spline(planes, whole)
+                }
+            }
+        }
         mpvHooks.planes(
             shader, luma, yuvTextures[1], yuvTextures[2], chromaPart, sizes, lumaOnPlanes(shader), yuvColor,
-            16f / 255f, flip,
+            16f / 255f, flip, upscaler,
         ) { _, _ -> into }
     }
 

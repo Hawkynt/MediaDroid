@@ -29,10 +29,13 @@
 //                     shown at <width> x <height> (bilinear where the shader leaves scaling to do); with [yuv] the
 //                     picture is handed over as full-range BT.709 YCbCr planes, so the shader's LUMA hooks run; with
 //                     [compute] libplacebo may use compute shaders, which a shader's //!COMPUTE passes need
-//   placebo_oracle planes <in.yuv> <width> <height> <shader.glsl> <out.ppm> <out width> <out height> [compute]
+//   placebo_oracle planes <in.yuv> <width> <height> <shader.glsl>[,<shader.glsl>...] <out.ppm> <out width>
+//                     <out height> [compute] [spline36]
 //                     a yuv420p frame as a decoder hands it over (limited range BT.709, chroma sited at the centre)
-//                     through an mpv user shader in libplacebo's renderer, its LUMA and CHROMA hooks on the planes
-//                     themselves; out in 8-bit RGB at <out width> x <out height>, bilinear wherever scaling is left
+//                     through mpv user shaders in libplacebo's renderer, in the order given, their LUMA and CHROMA
+//                     hooks on the planes themselves; out in 8-bit RGB at <out width> x <out height>, bilinear wherever
+//                     scaling is left — the chroma planes too unless [spline36] makes that their upscaler (mpv's
+//                     --cscale=spline36)
 //
 // The picture as one RGBA texture (8 or 16 bits), top row first, as libplacebo's own frames are.
 #include <EGL/egl.h>
@@ -414,9 +417,10 @@ int chroma(char** argv) {
     return 0;
 }
 
-// An mpv user shader through libplacebo's renderer on a decoder's yuv420p frame (limited range BT.709, the chroma
-// sited at the centre), out in RGB at the size asked for: the planes hooked as mpv hooks them.
-int planes(char** argv) {
+// mpv user shaders through libplacebo's renderer on a decoder's yuv420p frame (limited range BT.709, the chroma
+// sited at the centre), out in RGB at the size asked for: the planes hooked as mpv hooks them, the chroma left
+// unhooked enlarged by bilinear or [spline36].
+int planes(char** argv, bool spline36) {
     const int w = std::atoi(argv[1]);
     const int h = std::atoi(argv[2]);
     const int cw = (w + 1) / 2;
@@ -453,22 +457,31 @@ int planes(char** argv) {
     for (int i = 0; i < 3; i++) target.planes[0].component_mapping[i] = i;
     target.repr = pl_color_repr_rgb;
     target.color = pl_color_space_bt709;
-    const std::string shader = readFile(argv[3]);
-    const pl_hook* hook = pl_mpv_user_shader_parse(gpu, shader.data(), shader.size());
-    if (!hook) fail(std::string("libplacebo cannot read ") + argv[3]);
+    std::vector<const pl_hook*> hooks;
+    const std::string files = argv[3];
+    for (size_t at = 0; at <= files.size();) {
+        size_t end = files.find(',', at);
+        if (end == std::string::npos) end = files.size();
+        const std::string file = files.substr(at, end - at);
+        const std::string shader = readFile(file);
+        const pl_hook* hook = pl_mpv_user_shader_parse(gpu, shader.data(), shader.size());
+        if (!hook) fail("libplacebo cannot read " + file);
+        hooks.push_back(hook);
+        at = end + 1;
+    }
     pl_render_params params{};
     params.color_map_params = &pl_color_map_default_params;
     params.color_adjustment = &pl_color_adjustment_neutral;
     params.upscaler = &pl_filter_bilinear;
     params.downscaler = &pl_filter_bilinear;
-    params.plane_upscaler = &pl_filter_bilinear;
+    params.plane_upscaler = spline36 ? &pl_filter_spline36 : &pl_filter_bilinear;
     params.disable_linear_scaling = true;
-    params.hooks = &hook;
-    params.num_hooks = 1;
+    params.hooks = hooks.data();
+    params.num_hooks = int(hooks.size());
     pl_renderer renderer = pl_renderer_create(logger, gpu);
     if (!pl_render_image(renderer, &image, &target, &params)) fail("the render failed");
     writePpm(argv[4], readBack(out, ow, oh));
-    pl_mpv_user_shader_destroy(&hook);
+    for (const pl_hook*& hook : hooks) pl_mpv_user_shader_destroy(&hook);
     pl_renderer_destroy(&renderer);
     pl_tex_destroy(gpu, &out);
     for (pl_tex& t : planes) pl_tex_destroy(gpu, &t);
@@ -558,8 +571,11 @@ int main(int argc, char** argv) {
         else if (word == "compute") compute = true;
         else words = false;
     }
-    if (mode == "planes" && argc == 10) {
-        if (std::string(argv[9]) == "compute") compute = true;
+    bool spline36 = false;
+    for (int i = 9; mode == "planes" && i < argc; i++) {
+        const std::string word = argv[i];
+        if (word == "compute") compute = true;
+        else if (word == "spline36") spline36 = true;
         else words = false;
     }
     startPlacebo(compute);
@@ -572,8 +588,8 @@ int main(int argc, char** argv) {
         result = chroma(argv + 2);
     else if (mode == "hook" && argc >= 7 && argc <= 9 && words)
         result = hook(argv + 2, yuv);
-    else if (mode == "planes" && (argc == 9 || argc == 10) && words)
-        result = planes(argv + 2);
+    else if (mode == "planes" && argc >= 9 && argc <= 11 && words)
+        result = planes(argv + 2, spline36);
     else fail("usage: see the head of tools/shader-check/placebo.cpp");
     pl_opengl_destroy(&gl);
     pl_log_destroy(&logger);

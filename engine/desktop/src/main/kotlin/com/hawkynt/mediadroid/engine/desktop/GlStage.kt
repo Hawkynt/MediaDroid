@@ -1086,7 +1086,8 @@ class GlStage(
      * the Y plane where [lumaOnPlanes], `CHROMA` on the Cb and Cr planes as one texture at their own size, both rows
      * from the top as mpv holds them; then the hooked Y and chroma (the chroma read bilinearly where the passes left
      * it smaller) to RGB by [colour] and [foot] at the hooked Y's size, its top row where v is 1 ([flip]) as uploaded
-     * pictures are held.
+     * pictures are held. Where no `CHROMA` pass ran, the chroma planes are enlarged to the hooked Y's size by the
+     * [chroma] upscaler chosen, as mpv's `--cscale` (KrigBilateral guided by the hooked Y).
      */
     private fun planesHooked(
         shader: MpvShader,
@@ -1097,9 +1098,27 @@ class GlStage(
         foot: Float,
     ): Target {
         val luma = SampledTexture(planeTextures[0], w, h)
+        val cw = (w + 1) / 2
+        val ch = (h + 1) / 2
+        val upscaler = if (chroma == PictureAdjustment.Chroma.BILINEAR) {
+            null
+        } else {
+            { y: DrawTarget, whole: DrawTarget ->
+                val yuv = Conversion.Planes(
+                    y.texture, planeTextures[1], planeTextures[2], y.width, y.height, y.width, cw, colour, foot, flip,
+                    chromaWidth = cw, chromaHeight = ch,
+                )
+                if (chroma == PictureAdjustment.Chroma.SPLINE36) {
+                    conversion.spline(yuv, whole)
+                } else {
+                    val low = target("chroma-low", y.width, ch, half = true)
+                    conversion.krig(yuv, low, target("chroma-lower", cw, ch, half = true), whole)
+                }
+            }
+        }
         return mpvHooks.planes(
             shader, luma, planeTextures[1], planeTextures[2], Passes.IDENTITY, MpvHooks.Sizes(hookOutW, hookOutH, w, h),
-            lumaOnPlanes, colour, foot, flip,
+            lumaOnPlanes, colour, foot, flip, upscaler,
         ) { width, height -> target("chroma-whole", width, height) } as Target
     }
 
