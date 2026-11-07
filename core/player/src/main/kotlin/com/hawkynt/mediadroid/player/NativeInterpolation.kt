@@ -65,6 +65,22 @@ object NativeInterpolation {
         after: ByteBuffer?,
     ): Int
 
+    /**
+     * The network's motion between the RGBA frames [earlier] and [later] ([width] × [height]) at [time] instead of its
+     * picture, where it hands one back (NeuralInterpolation.handsFlow): into [out] (native order, at least
+     * [width] × [height] × 5 floats) the flows towards the earlier and the later frame, four floats a pixel (earlier
+     * x, y, later x, y, in pixels of this size), then the blend mask's logits, one a pixel; 0 when it ran.
+     */
+    external fun flow(
+        handle: Long,
+        earlier: ByteBuffer,
+        later: ByteBuffer,
+        width: Int,
+        height: Int,
+        time: Float,
+        out: ByteBuffer,
+    ): Int
+
     /** Frees the network. */
     external fun close(handle: Long)
 

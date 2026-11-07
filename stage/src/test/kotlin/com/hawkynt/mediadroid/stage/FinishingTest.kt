@@ -37,6 +37,27 @@ class FinishingTest {
     }
 
     @Test
+    fun `RIFE's flow from a quarter of the size warps the frames at theirs, grown four times each way`() {
+        finishing.warp(FakeTarget(1, 64, 48), FakeTarget(2, 64, 48), 3, 4, FakeTarget(5, 64, 48), 16, 12)
+        assertTrue(gl.calls.contains("uScale = 4.0, 4.0"))
+        assertTrue(gl.calls.contains("uSize = 64.0, 48.0"))
+        assertTrue(gl.calls.contains("uPrevious = 1"))
+        assertTrue(gl.calls.contains("uFlow = 2"))
+        assertTrue(gl.calls.contains("uMask = 3"))
+    }
+
+    @Test
+    fun `float tables are made once per size and refilled after`() {
+        val passes = Passes(gl)
+        val data = java.nio.ByteBuffer.allocateDirect(16 * 12 * 4 * 4)
+        val first = passes.floats(0, 16, 12, 4, data)
+        assertEquals(first, passes.floats(first, 16, 12, 4, data))
+        assertEquals(1, gl.calls.count { it.startsWith("texImage") })
+        assertEquals(1, gl.calls.count { it.startsWith("texSubImage") })
+        assertTrue(passes.floats(first, 32, 24, 4, java.nio.ByteBuffer.allocateDirect(32 * 24 * 16)) != first)
+    }
+
+    @Test
     fun `the colour correction carries the warp`() {
         finishing.adjust(FakeTarget(1, 8, 8), FakeTarget(2, 8, 8), PictureAdjustment.Neutral, ScreenWarp.None)
         assertTrue(gl.calls.contains("uWarp = matrix3"))

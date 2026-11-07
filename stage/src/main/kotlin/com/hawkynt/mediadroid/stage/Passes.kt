@@ -147,12 +147,45 @@ class Passes(
         return texture
     }
 
+    // The float tables' sizes and channels, by texture: refilled in place while they stay.
+    private val floatShapes = HashMap<Int, Triple<Int, Int, Int>>()
+
+    /**
+     * A table of [width] × [height] floats with [channels] (1 or 4) a texel — [data]: native-order floats, rows from
+     * the bottom — as a half-float texture read linearly, clamped at its edges; [reuse] (a table this made before, 0
+     * for none) refilled where it has that shape, else a new one made in its place.
+     */
+    fun floats(reuse: Int, width: Int, height: Int, channels: Int, data: ByteBuffer): Int {
+        val format = if (channels == 1) Gles.RED else Gles.RGBA
+        val shape = Triple(width, height, channels)
+        gl.pixelStorei(Gles.UNPACK_ALIGNMENT, 4)
+        if (reuse != 0 && floatShapes[reuse] == shape) {
+            gl.bindTexture(Gles.TEXTURE_2D, reuse)
+            gl.texSubImage2D(width, height, format, Gles.FLOAT, data)
+            return reuse
+        }
+        if (reuse != 0 && floatShapes.remove(reuse) != null) {
+            tables.remove(reuse)
+            gl.deleteTexture(reuse)
+        }
+        val texture = gl.genTexture()
+        gl.bindTexture(Gles.TEXTURE_2D, texture)
+        gl.texImage2D(if (channels == 1) Gles.R16F else Gles.RGBA16F, width, height, format, Gles.FLOAT, data)
+        sampling(Gles.LINEAR)
+        gl.texParameteri(Gles.TEXTURE_2D, Gles.TEXTURE_WRAP_S, Gles.CLAMP_TO_EDGE)
+        gl.texParameteri(Gles.TEXTURE_2D, Gles.TEXTURE_WRAP_T, Gles.CLAMP_TO_EDGE)
+        tables += texture
+        floatShapes[texture] = shape
+        return texture
+    }
+
     /** Deletes the programs built and the tables made, before the context goes; built anew if used again. */
     fun release() {
         programs.values.forEach(gl::deleteProgram)
         programs.clear()
         tables.forEach(gl::deleteTexture)
         tables.clear()
+        floatShapes.clear()
     }
 
     /** A pass's uniforms on [program], by name; a name the program does not use is passed over. */

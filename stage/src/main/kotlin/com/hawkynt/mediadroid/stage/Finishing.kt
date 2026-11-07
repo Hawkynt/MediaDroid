@@ -2,13 +2,15 @@ package com.hawkynt.mediadroid.stage
 
 import com.hawkynt.mediadroid.player.Dither
 import com.hawkynt.mediadroid.player.MotionInterpolation
+import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.shaders.Shaders
 
 /**
  * The passes that finish a picture: two pictures mixed (blend.frag: smooth motion's blending, an upscaler's strength, a
- * plain copy) or built along the motion between them (motion.frag: Motion, MotionInterpolation), the colour correction
+ * plain copy) or built along the motion between them (motion.frag: Motion, MotionInterpolation; rife-warp-es3.frag:
+ * RIFE's flow), the colour correction
  * with the projector's warp and the panorama (adjust.frag), and the dither to 8 bits (dither-es3.frag, dither.frag,
  * libplacebo's blue noise, its table made on first use).
  */
@@ -51,6 +53,30 @@ class Finishing(private val passes: Passes) {
         set("uGrid", gridWidth.toFloat(), gridHeight.toFloat())
         set("uSearch", (into.width / scale).toFloat(), (into.height / scale).toFloat())
         set("uScale", scale.toFloat())
+    }
+
+    /**
+     * RIFE's in-between of [earlier] and [later] at their own size into [into] (rife-warp-es3.frag): its [flow] and
+     * [mask] (float textures of [flowWidth] × [flowHeight], NeuralInterpolation.handsFlow) grown to the frames' size,
+     * each frame warped along its flow and the two blended by the mask. GLSL ES 3.00.
+     */
+    fun warp(
+        earlier: DrawTarget,
+        later: DrawTarget,
+        flow: Int,
+        mask: Int,
+        into: DrawTarget,
+        flowWidth: Int,
+        flowHeight: Int,
+    ): DrawTarget = passes.draw(
+        Shaders.VIDEO_RIFE_WARP_ES3, into, later.texture,
+        listOf(earlier.texture to "uPrevious", flow to "uFlow", mask to "uMask"),
+    ) {
+        val (sx, sy) = NeuralInterpolation.flowScale(
+            NeuralInterpolation.Size(into.width, into.height), NeuralInterpolation.Size(flowWidth, flowHeight),
+        )
+        set("uSize", into.width.toFloat(), into.height.toFloat())
+        set("uScale", sx, sy)
     }
 
     /** [from] colour-corrected as [picture] says into [into], its geometry bent by [warp] (ScreenWarp). */

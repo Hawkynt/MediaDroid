@@ -35,6 +35,34 @@ class NeuralInterpolationTest {
         )
     }
 
+    @Test
+    fun `RIFE hands back its flow, so its self-test starts at 240p, the other networks at 480p`() {
+        assertTrue(NeuralInterpolation.handsFlow(PictureAdjustment.Interpolation.RIFE))
+        assertFalse(NeuralInterpolation.handsFlow(PictureAdjustment.Interpolation.DAIN))
+        assertEquals(
+            listOf(NeuralInterpolation.Size(426, 240), NeuralInterpolation.Size(640, 360)) +
+                NeuralInterpolation.TEST_SIZES,
+            NeuralInterpolation.testSizes(PictureAdjustment.Interpolation.RIFE),
+        )
+        val cain = NeuralInterpolation.testSizes(PictureAdjustment.Interpolation.CAIN)
+        assertEquals(NeuralInterpolation.TEST_SIZES, cain)
+    }
+
+    @Test
+    fun `a flow worked out at 240p serves 1080p material where the device keeps up with nothing larger`() {
+        val slow = mapOf(240 to 9.0, 360 to 25.0)
+        assertEquals(NeuralInterpolation.Size(426, 240), NeuralInterpolation.workingSize(1920, 1080, slow))
+        assertEquals(NeuralInterpolation.Size(426, 240), NeuralInterpolation.workingSize(640, 360, slow))
+    }
+
+    @Test
+    fun `the flow is brought to the picture's own size, each side by its own ratio`() {
+        assertEquals(
+            Pair(1920f / 426f, 1080f / 240f),
+            NeuralInterpolation.flowScale(NeuralInterpolation.Size(1920, 1080), NeuralInterpolation.Size(426, 240)),
+        )
+    }
+
     private val device = mapOf(480 to 5.0, 576 to 7.0, 720 to 11.0, 1080 to 24.0)
 
     @Test
@@ -84,6 +112,8 @@ class NeuralInterpolationTest {
     fun `a network slower than the budget on a small picture is too slow for any larger`() {
         // The check's 128 x 128 picture: 25 ms there, and 480p has 25 times the pixels.
         assertEquals(25.0 * 854 * 480 / (128 * 128), NeuralInterpolation.estimate(25.0, 128 * 128), 1e-9)
+        val small = NeuralInterpolation.Size(426, 240)
+        assertEquals(25.0 * 426 * 240 / (128 * 128), NeuralInterpolation.estimate(25.0, 128 * 128, small), 1e-9)
         assertTrue(NeuralInterpolation.tooSlowAlready(25.0))
         assertFalse(NeuralInterpolation.tooSlowAlready(15.0))
     }

@@ -40,6 +40,22 @@ class NeuralChecksTest {
     }
 
     @Test
+    fun `a network handing back its flow is timed from 240p up`() {
+        val net = NeuralChecks.Between { _, _, w, h, earlierId, _, _, _ ->
+            if (earlierId == 0L) {
+                rgb(NeuralChecks.testFrame(w, h, 1), w, h)
+            } else {
+                if (h > 240) Thread.sleep(NeuralInterpolation.BUDGET_MS.toLong() + 5)
+                ByteBuffer.allocateDirect(w * h * 3)
+            }
+        }
+        val sizes = NeuralInterpolation.testSizes(PictureAdjustment.Interpolation.RIFE)
+        val timing = requireNotNull(NeuralChecks.interpolator(net, "GPU", progress, sizes = sizes))
+        assertEquals(listOf(240, 360), timing.msByHeight.keys.toList())
+        assertTrue(NeuralInterpolation.fastEnough(timing.msByHeight.getValue(240)))
+    }
+
+    @Test
     fun `a network that only repeats a frame computes wrong and is not timed`() {
         val net = NeuralChecks.Between { earlier, _, w, h, _, _, _, _ -> rgb(earlier, w, h) }
         assertNull(NeuralChecks.interpolator(net, "GPU", progress))

@@ -919,18 +919,36 @@ class GlStage(
         val net = interpolator(network) ?: return null
         val times = neural?.motion?.get(network)?.msByHeight ?: return null
         val size = NeuralInterpolation.workingSize(earlier.width, earlier.height, times) ?: return null
-        val into = target("inBetween", size.width, size.height)
+        // A network handing back its flow: worked out at that size, the frames warped by it at their own.
+        val flows = NeuralInterpolation.handsFlow(network)
+        val into = if (flows) {
+            target("inBetween", earlier.width, earlier.height)
+        } else {
+            target("inBetween", size.width, size.height)
+        }
         if (betweenFor?.first === shown && betweenFor?.second === next) return into
         val a = read(scaled(earlier, "netEarlier", size))
         val b = read(scaled(later, "netLater", size))
-        val rgb = net.run(a, b, size.width, size.height, idOf(shown), idOf(next))
+        val made = if (flows) {
+            net.flow(a, b, size.width, size.height)?.let { flow ->
+                flowTexture = passes.floats(flowTexture, size.width, size.height, 4, flow.duplicate())
+                val mask = flow.duplicate().apply { position(size.width * size.height * 4 * Float.SIZE_BYTES) }.slice()
+                maskTexture = passes.floats(maskTexture, size.width, size.height, 1, mask)
+                finishing.warp(earlier, later, flowTexture, maskTexture, into, size.width, size.height)
+            }
+        } else {
+            net.run(a, b, size.width, size.height, idOf(shown), idOf(next))?.let { uploadRgb(into, it) }
+        }
         MemoryUtil.memFree(a)
         MemoryUtil.memFree(b)
-        rgb ?: return null
-        uploadRgb(into, rgb)
+        made ?: return null
         betweenFor = shown to next
         return into
     }
+
+    // RIFE's flow and mask as the warp reads them (Passes.floats), refilled pair by pair.
+    private var flowTexture = 0
+    private var maskTexture = 0
 
     /** [from] enlarged by [choice]'s network, two, three or four times its size; null where it does not run. */
     private fun enlarged(choice: NeuralEnlarging.Choice, from: Target): Target? {
