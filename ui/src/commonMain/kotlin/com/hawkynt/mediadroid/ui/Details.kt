@@ -107,10 +107,7 @@ fun DetailsScreen(
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(item.title, fontSize = 30.sp, fontWeight = FontWeight.Bold)
                 AwayNote(item)
-                val subtitle = buildString {
-                    item.year?.let { append("$it  ·  ") }
-                    append(item.genres.joinToString(" · "))
-                }
+                val subtitle = yearAndGenres(item.year, item.genres)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     item.minAge?.let {
                         AgeBadge(it)
@@ -497,3 +494,6 @@ private fun FileSection(location: String) {
     }
 }
 
+/** The line under a title: its year and its genres, each part only when it has one, so no dot is left hanging. */
+internal fun yearAndGenres(year: Int?, genres: List<String>): String =
+    listOfNotNull(year?.toString(), genres.joinToString(" · ").ifEmpty { null }).joinToString("  ·  ")
