@@ -433,30 +433,46 @@ adds only its shell and its playback engine ([#291](https://github.com/Hawkynt/M
 - How the stage's picture reaches the window was measured, not assumed ([#287](https://github.com/Hawkynt/MediaDroid/issues/287);
   `./gradlew :desktop:presentationBench`, `-Poffscreen` where the display presents nothing): the stage draws a new
   1080p or 4K picture whenever a 60 Hz clock asks for one, each picture uploaded fresh as a decoded one is, and Skia on
-  OpenGL draws it with a control bar over it, as Compose Desktop draws on Linux. The cost is what presenting adds to a
-  picture, read-back and drawing together; the stage's filters are left out. On an Intel UHD (Tiger Lake GT1, Mesa
-  26.2 iris), off screen because the session was locked, 600 pictures each:
+  OpenGL draws it with a control bar over it, as Compose Desktop draws on Linux — or, for the native candidate, the
+  stage shows it in its own window under a see-through one with the bar, as the player does. The cost is what
+  presenting adds to a picture, read-back or copy and drawing together, as the processor issues them; "Stage" is all
+  the stage took for it, upload and passes included — the read-back candidates wait for the graphics card there, the
+  shared one waits outside it. On an Intel UHD (Tiger Lake GT1, Mesa 26.2 iris), off screen because the session was
+  locked ([#378](https://github.com/Hawkynt/MediaDroid/issues/378)), 600 pictures each:
 
-  | Candidate | Picture | Mean ms | p95 ms | Max ms | Dropped |
-  | --- | --- | ---: | ---: | ---: | ---: |
-  | `glReadPixels` into memory (before) | 1080p | 11.47 | 12.99 | 14.94 | 107 |
-  | pixel-buffer object, waited for | 1080p | 8.83 | 10.18 | 12.55 | 1 |
-  | **two pixel-buffer objects, one picture late** | 1080p | **3.59** | 4.20 | 5.93 | 0 |
-  | the stage's texture shared with Skia | 1080p | 0.24 | 0.30 | 0.39 | 0 |
-  | `glReadPixels` into memory (before) | 4K | 28.31 | 31.92 | 34.22 | 1205 |
-  | pixel-buffer object, waited for | 4K | 24.30 | 28.30 | 30.90 | 1029 |
-  | two pixel-buffer objects, one picture late | 4K | 16.04 | 17.46 | 25.83 | 600 |
-  | the stage's texture shared with Skia | 4K | 0.26 | 0.36 | 0.47 | 17 |
+  | Candidate | Picture | Mean ms | p95 ms | Max ms | Stage ms | Dropped |
+  | --- | --- | ---: | ---: | ---: | ---: | ---: |
+  | `glReadPixels` into memory | 1080p | 11.11 | 12.75 | 15.35 | 11.31 | 53 |
+  | pixel-buffer object, waited for | 1080p | 8.83 | 10.14 | 16.68 | 8.85 | 2 |
+  | two pixel-buffer objects, one picture late (before) | 1080p | 3.53 | 4.04 | 5.87 | 3.30 | 0 |
+  | the stage's texture shared with Skia | 1080p | 0.26 | 0.31 | 0.46 | 1.85 | 0 |
+  | **the stage's own window** | 1080p | **0.37** | 0.46 | 0.64 | 1.89 | 0 |
+  | `glReadPixels` into memory | 4K | 28.51 | 32.15 | 35.21 | 33.59 | 1203 |
+  | pixel-buffer object, waited for | 4K | 24.34 | 28.41 | 30.92 | 30.06 | 1155 |
+  | two pixel-buffer objects, one picture late (before) | 4K | 16.21 | 17.53 | 26.78 | 13.53 | 600 |
+  | the stage's texture shared with Skia | 4K | 0.27 | 0.37 | 0.49 | 6.16 | 24 |
+  | **the stage's own window** | 4K | **0.34** | 0.45 | 0.62 | 15.33 | 21 |
 
-  The desktop presents through **two pixel-buffer objects**: each picture is read back while the one before is
-  handed over, so nobody waits for the graphics card. It is the one candidate within the 4 ms budget at 1080p that
-  Compose Desktop's public API allows, and the picture stays in memory, where the subtitles, the histogram and the
-  snapshot read it. It costs one screen refresh of delay, and the newest picture is collected at the next refresh. The
-  plain read-back stays as a fallback (`-Dmediadroid.presentation=sync` or `MEDIADROID_PRESENTATION=sync`), and the
-  dry run uses it, so a check waits for what the stage really takes. Only texture sharing holds 4K at 60 here. Compose
-  keeps its own Skia context internal and draws through Direct3D 12 on Windows, so sharing waits for that, or for a
-  native surface under the controls. Not measured yet: the pacing on a real screen's refresh (the session was
-  locked) and Windows on real graphics. The CI runs the benchmark on llvmpipe as a regression record only.
+  The desktop presents through **the stage's own window** (`PictureWindow`): an OpenGL window sharing the stage's
+  textures, put inside the player's window as a child (an X11 child window on Linux — XWayland under Wayland —, a
+  Win32 child on Windows), so it moves, hides and goes full screen with it, and swapped at the screen's refresh on a
+  thread of its own. The stage copies each picture into one of three textures and fences it; the window draws the
+  newest at its place with libass's subtitles over it and fences that in turn, so neither waits for the other on the
+  processor and the stage never writes into a texture still being drawn. Compose's controls sit in a see-through window
+  over it, owned by the player's window and kept on its content as it moves and resizes. Nothing is read back: a
+  snapshot reads back the picture on screen once, the histogram twice a second while it shows. Texture sharing with
+  Compose's own Skia is out of reach — Compose keeps its Skia context internal, draws through Direct3D 12 on Windows,
+  and Skiko offers no way in. Presenting now costs about a third of a millisecond at 4K; what stays is the stage's own
+  work (the 4K upload and its pass, some 15 ms a picture on this chip — 21 of 600 pictures late), so 4K at 60 holds on
+  a stronger chip than this one, and here with room to spare only without filters to add. Where the see-through window
+  cannot be had — X11 without a compositing manager (the `_NET_WM_CM_S0` selection unowned; Java's own answer is no
+  guide there), no X11 or Win32 to put the window into — or `-Dmediadroid.presentation=pbo-lagged` (or
+  `MEDIADROID_PRESENTATION=pbo-lagged`) asks for it, the player draws the picture read back through two pixel-buffer
+  objects in Compose's own window, as before; `sync` falls back further to the plain read-back, which the dry run uses
+  so a check waits for what the stage really takes. Not measured yet: the pacing on a real screen's refresh — vsync
+  and tearing of the stage's window under the compositor (`./gradlew :desktop:presentationBench` without `-Poffscreen`
+  on an unlocked desktop) — and Windows on real graphics; the CI's Windows build runs on Mesa's software OpenGL. The CI
+  runs the benchmark on llvmpipe as a regression record only.
 - The picture is decoded on the graphics chip through FFmpeg's hardware decoding — D3D11VA, else DXVA2, on Windows;
   NVDEC, else VA-API, on Linux — and copied back for the stage. Whatever the chip cannot decode (a codec or profile it
   lacks, a driver that opens and then decodes nothing) FFmpeg decodes in software, the next device tried first; a chip

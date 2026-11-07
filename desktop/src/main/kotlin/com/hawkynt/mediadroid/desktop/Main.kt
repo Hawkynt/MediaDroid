@@ -1,5 +1,7 @@
 package com.hawkynt.mediadroid.desktop
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.getValue
@@ -108,26 +110,48 @@ fun main(args: Array<String>) = application {
                     onLibrary = { library = it },
                     onPlay = { queue, index -> screen = Screen.Player(queue, index) },
                 )
-                is Screen.Player -> PlayerScreen(
-                    store = store,
-                    places = places,
-                    mediaKeys = mediaKeys,
-                    queue = s.queue,
-                    startIndex = s.index,
-                    fullScreen = state.placement == WindowPlacement.Fullscreen,
-                    screen = { OutputScreen.of(window) },
-                    onFullScreen = {
-                        state.placement = if (state.placement == WindowPlacement.Fullscreen) {
-                            WindowPlacement.Floating
-                        } else {
-                            WindowPlacement.Fullscreen
+                is Screen.Player -> {
+                    val player = @androidx.compose.runtime.Composable { native: NativePicture? ->
+                        PlayerScreen(
+                            store = store,
+                            places = places,
+                            mediaKeys = mediaKeys,
+                            queue = s.queue,
+                            startIndex = s.index,
+                            fullScreen = state.placement == WindowPlacement.Fullscreen,
+                            screen = { OutputScreen.of(window) },
+                            onFullScreen = {
+                                state.placement = if (state.placement == WindowPlacement.Fullscreen) {
+                                    WindowPlacement.Floating
+                                } else {
+                                    WindowPlacement.Fullscreen
+                                }
+                            },
+                            onExit = {
+                                state.placement = WindowPlacement.Floating
+                                screen = Screen.Library
+                            },
+                            native = native,
+                        )
+                    }
+                    // The picture shown by the stage in a window of its own inside this one, the player's controls in
+                    // a see-through window over it (NativePicture); where that cannot be had, or the window's own
+                    // picture is to be written (MEDIADROID_SNAPSHOT), the player draws the picture read back here.
+                    val native = remember {
+                        if (System.getenv("MEDIADROID_SNAPSHOT") != null) null else NativePicture.of(window)
+                    }
+                    if (native == null) {
+                        player(null)
+                    } else {
+                        androidx.compose.foundation.layout.Box(
+                            androidx.compose.ui.Modifier.fillMaxSize()
+                                .background(Color.Black),
+                        )
+                        PictureOverlay(native, window) {
+                            MaterialTheme(colorScheme = MediaDroidColors) { player(native) }
                         }
-                    },
-                    onExit = {
-                        state.placement = WindowPlacement.Floating
-                        screen = Screen.Library
-                    },
-                )
+                    }
+                }
             }
         }
     }

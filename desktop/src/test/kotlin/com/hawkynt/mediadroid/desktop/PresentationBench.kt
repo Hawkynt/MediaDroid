@@ -4,7 +4,9 @@ import com.hawkynt.mediadroid.engine.desktop.FramePacing
 import com.hawkynt.mediadroid.engine.desktop.GlStage
 import com.hawkynt.mediadroid.engine.desktop.MediaReader
 import com.hawkynt.mediadroid.engine.desktop.Moment
+import com.hawkynt.mediadroid.engine.desktop.PictureWindow
 import com.hawkynt.mediadroid.engine.desktop.Presentation
+import com.hawkynt.mediadroid.player.PicturePlacement
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import org.jetbrains.skia.BackendRenderTarget
 import org.jetbrains.skia.BackendTexture
@@ -24,6 +26,8 @@ import org.jetbrains.skia.Surface
 import org.jetbrains.skia.SurfaceColorFormat
 import org.jetbrains.skia.SurfaceOrigin
 import org.lwjgl.glfw.GLFW
+import org.lwjgl.glfw.GLFWNativeWin32
+import org.lwjgl.glfw.GLFWNativeX11
 import org.lwjgl.opengl.GL
 import org.lwjgl.opengl.GL43C
 import java.io.File
@@ -34,7 +38,9 @@ import java.io.File
  * candidate hands it to a window drawn by Skia on OpenGL, as Compose Desktop draws on Linux, with a control bar over
  * it, shown at the screen's refresh (swap interval 1). The candidates: the stage's read-backs (Presentation: SYNC, PBO,
  * PBO_LAGGED), each picture then put into a Skia bitmap and drawn as the player's PictureBitmap has Compose draw it;
- * and SHARED, the stage's texture drawn by Skia straight from a context sharing the stage's (Image.adoptTextureFrom).
+ * SHARED, the stage's texture drawn by Skia straight from a context sharing the stage's (Image.adoptTextureFrom); and
+ * NATIVE, the stage showing it in its own window (PictureWindow) put inside this one, a see-through window with the
+ * control bar over both, as the player does (#378).
  * Per picture: what presenting cost — the stage's read-back or copy plus the window's taking and drawing it, flushed;
  * the stage's filters and the picture's upload are the same for all and left out — as mean, 95th percentile and worst;
  * and the pacing against the clock (FramePacing: dropped, doubled). A table on standard output and in
@@ -107,12 +113,17 @@ class PresentationBench(
     private val offscreen: Pair<Int, Int>?,
 ) : AutoCloseable {
 
-    /** How a candidate hands the stage's picture over: by a read-back, or as the stage's own texture. */
+    /**
+     * How a candidate hands the stage's picture over: by a read-back, as the stage's own texture drawn by Skia, or
+     * shown by the stage in a window of its own (NATIVE: PictureWindow inside this window, a see-through window with
+     * the control bar over it, as the player does it — NativePicture).
+     */
     enum class Candidate(val presentation: Presentation?) {
         SYNC(Presentation.SYNC),
         PBO(Presentation.PBO),
         PBO_LAGGED(Presentation.PBO_LAGGED),
         SHARED(null),
+        NATIVE(Presentation.NATIVE),
     }
 
     private val period = 1_000_000_000L / 60
@@ -122,6 +133,7 @@ class PresentationBench(
 
     /** One row of the table: [candidate] presenting [frames] pictures of [w] × [h], after a second's warm-up. */
     fun run(candidate: Candidate, w: Int, h: Int, frames: Int): String {
+        if (candidate == Candidate.NATIVE) return runNative(w, h, frames)
         val sources = List(4) { pictureOf(w, h, it) }
         val stage = GlStage(candidate.presentation ?: Presentation.SYNC, shareWith = window)
         check(stage.ready) { "no stage" }
@@ -208,6 +220,110 @@ class PresentationBench(
         val pacing = FramePacing.of(content, shown, period)
         return "| ${candidate.name.lowercase().replace('_', '-')} | ${w}×$h | %.2f | %.2f | %.2f | %.2f | %d | %d |"
             .format(c.meanMs, c.p95Ms, c.maxMs, s.meanMs, pacing.dropped, pacing.doubled)
+    }
+
+    /**
+     * NATIVE's row: the stage fed at the clock as for the others; its window — inside this one and under a see-through
+     * window with the control bar, on screen; hidden and unsynchronised off screen — swaps on its own thread, which
+     * reports each picture it showed. Cost: the stage's copy into the shared texture plus the window's drawing it, as
+     * the CPU issued them (as SHARED's); pacing: the pictures the window swapped in, against the clock.
+     */
+    private fun runNative(w: Int, h: Int, frames: Int): String {
+        val sources = List(4) { pictureOf(w, h, it) }
+        val fw = IntArray(1)
+        val fh = IntArray(1)
+        if (offscreen != null) {
+            fw[0] = offscreen.first
+            fh[0] = offscreen.second
+        } else {
+            GLFW.glfwGetFramebufferSize(window, fw, fh)
+        }
+        // The see-through window first, while no other thread works with GLFW.
+        val overlay = if (offscreen == null) overlayWindow(fw[0], fh[0]) else 0L
+        val stage = GlStage(Presentation.NATIVE, shareWith = window)
+        check(stage.ready) { "no stage" }
+        val shown = checkNotNull(stage.openWindow(vsync = offscreen == null)) { "no picture window" }
+        if (offscreen == null) {
+            val parent = if (System.getProperty("os.name").startsWith("Windows")) {
+                GLFWNativeWin32.glfwGetWin32Window(window)
+            } else {
+                GLFWNativeX11.glfwGetX11Window(window)
+            }
+            check(WindowEmbedding.embed(shown.handle, parent)) { "the picture window could not be embedded" }
+        }
+        shown.resize(fw[0], fh[0])
+        if (offscreen == null) shown.show()
+        val place = PicturePlacement.shown(fw[0], fh[0], 0, 0, w, h, 0, 0)
+        shown.scene(PictureWindow.Scene(place, w, h))
+        val warm = 60
+        // Per picture fed: its time, what the stage took and what its copy took; per picture shown: its time, what
+        // drawing it took, when its swap returned.
+        val fed = java.util.concurrent.ConcurrentHashMap<Long, LongArray>()
+        val presented = java.util.concurrent.ConcurrentLinkedQueue<LongArray>()
+        shown.onPresented = { pts, drawNanos, at -> presented.add(longArrayOf(pts, drawNanos, at)) }
+        var last = -1
+        val start = System.nanoTime()
+        while (last < warm + frames) {
+            val due = ((System.nanoTime() - start) / period).toInt()
+            if (due > last) {
+                last = due
+                val moment = Moment(MediaReader.Picture(due.toLong(), w, h, sources[due % sources.size]))
+                val began = System.nanoTime()
+                checkNotNull(stage.processTexture(moment, PictureAdjustment.Neutral, w, h))
+                if (due >= warm) fed[due.toLong()] = longArrayOf(System.nanoTime() - began, stage.presentNanos)
+            }
+            val now = System.nanoTime()
+            val next = start + (((now - start) / period) + 1) * period
+            val waitNanos = next - System.nanoTime()
+            if (waitNanos > 0) Thread.sleep(waitNanos / 1_000_000, (waitNanos % 1_000_000).toInt())
+        }
+        // The last pictures swapped in.
+        Thread.sleep(200)
+        shown.onPresented = null
+        stage.close()
+        if (overlay != 0L) GLFW.glfwDestroyWindow(overlay)
+        val rows = presented.filter { fed.containsKey(it[0]) }
+        val costs = rows.map { fed.getValue(it[0])[1] + it[1] }.toLongArray()
+        val c = FramePacing.Costs.of(costs)
+        val s = FramePacing.Costs.of(fed.values.map { it[0] }.toLongArray())
+        val pacing = FramePacing.of(rows.map { it[0].toInt() }.toIntArray(), rows.map { it[2] }.toLongArray(), period)
+        return "| native | ${w}×$h | %.2f | %.2f | %.2f | %.2f | %d | %d |"
+            .format(c.meanMs, c.p95Ms, c.maxMs, s.meanMs, pacing.dropped, pacing.doubled)
+    }
+
+    /**
+     * The see-through window over the picture, as the player's controls are: clear but for the least alpha and the
+     * control bar, drawn once and left — what it costs is the compositor's blending, every refresh.
+     */
+    private fun overlayWindow(width: Int, height: Int): Long {
+        val caps = GL.getCapabilities()
+        GLFW.glfwDefaultWindowHints()
+        GLFW.glfwWindowHint(GLFW.GLFW_TRANSPARENT_FRAMEBUFFER, GLFW.GLFW_TRUE)
+        GLFW.glfwWindowHint(GLFW.GLFW_DECORATED, GLFW.GLFW_FALSE)
+        GLFW.glfwWindowHint(GLFW.GLFW_FLOATING, GLFW.GLFW_TRUE)
+        GLFW.glfwWindowHint(GLFW.GLFW_FOCUS_ON_SHOW, GLFW.GLFW_FALSE)
+        val overlay = GLFW.glfwCreateWindow(width, height, "MediaDroid overlay", 0, 0)
+        check(overlay != 0L) { "no see-through window" }
+        val x = IntArray(1)
+        val y = IntArray(1)
+        GLFW.glfwGetWindowPos(window, x, y)
+        GLFW.glfwSetWindowPos(overlay, x[0], y[0])
+        GLFW.glfwMakeContextCurrent(overlay)
+        GL.createCapabilities()
+        GLFW.glfwSwapInterval(0)
+        // Premultiplied, as compositors take it: black at alpha 1/255 everywhere, the bar at 0.69.
+        GL43C.glClearColor(0f, 0f, 0f, 1f / 255)
+        GL43C.glClear(GL43C.GL_COLOR_BUFFER_BIT)
+        GL43C.glEnable(GL43C.GL_SCISSOR_TEST)
+        GL43C.glScissor(24, 24, width - 48, 72)
+        GL43C.glClearColor(0.086f, 0.086f, 0.086f, 0.69f)
+        GL43C.glClear(GL43C.GL_COLOR_BUFFER_BIT)
+        GL43C.glDisable(GL43C.GL_SCISSOR_TEST)
+        GLFW.glfwShowWindow(overlay)
+        GLFW.glfwSwapBuffers(overlay)
+        GLFW.glfwMakeContextCurrent(window)
+        GL.setCapabilities(caps)
+        return overlay
     }
 
     private var surface: Surface? = null
