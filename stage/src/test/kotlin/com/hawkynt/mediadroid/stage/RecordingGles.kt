@@ -67,6 +67,7 @@ class RecordingGles(private val failing: String? = null) : Gles {
         type: Int,
         pixels: ByteBuffer,
     ) = log("texImage3D $width x $height x $depth")
+    override fun texStorage2D(internalFormat: Int, width: Int, height: Int) = log("texStorage $width x $height")
     override fun dispatchCompute(x: Int, y: Int, z: Int) = log("dispatch $x $y $z")
     override fun bindImageTexture(unit: Int, texture: Int, format: Int) = log("image $unit $texture")
     override fun memoryBarrier(bits: Int) = log("barrier $bits")

@@ -27,6 +27,8 @@ class LwjglGlesTest {
         assertEquals(GL43.GL_UNPACK_ALIGNMENT, Gles.UNPACK_ALIGNMENT)
         assertEquals(GL43.GL_PACK_ALIGNMENT, Gles.PACK_ALIGNMENT)
         assertEquals(GL43.GL_COMPUTE_SHADER, Gles.COMPUTE_SHADER)
+        assertEquals(GL43.GL_RGBA16, Gles.RGBA16)
+        assertEquals(GL43.GL_UNSIGNED_SHORT, Gles.UNSIGNED_SHORT)
         assertEquals(GL43.GL_TEXTURE_3D, Gles.TEXTURE_3D)
         assertEquals(GL43.GL_TEXTURE_WRAP_R, Gles.TEXTURE_WRAP_R)
         assertEquals(GL43.GL_REPEAT, Gles.REPEAT)

@@ -70,6 +70,8 @@ internal class AndroidGles : Gles {
     ) = android.opengl.GLES30.glTexImage3D(
         android.opengl.GLES30.GL_TEXTURE_3D, 0, internalFormat, width, height, depth, 0, format, type, pixels,
     )
+    override fun texStorage2D(internalFormat: Int, width: Int, height: Int) =
+        android.opengl.GLES30.glTexStorage2D(GLES20.GL_TEXTURE_2D, 1, internalFormat, width, height)
     override fun dispatchCompute(x: Int, y: Int, z: Int) = android.opengl.GLES31.glDispatchCompute(x, y, z)
     override fun bindImageTexture(unit: Int, texture: Int, format: Int) = android.opengl.GLES31.glBindImageTexture(
         unit, texture, 0, false, 0, android.opengl.GLES31.GL_WRITE_ONLY, format,

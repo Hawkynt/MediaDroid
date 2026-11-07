@@ -23,10 +23,12 @@ import com.hawkynt.mediadroid.stage.Conversion
 import com.hawkynt.mediadroid.stage.Deinterlacing
 import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Finishing
+import com.hawkynt.mediadroid.stage.Gles
 import com.hawkynt.mediadroid.stage.MpvHooks
 import com.hawkynt.mediadroid.stage.Passes
 import com.hawkynt.mediadroid.stage.Restoration
 import com.hawkynt.mediadroid.stage.SampledTexture
+import com.hawkynt.mediadroid.stage.StageFrame
 import com.hawkynt.mediadroid.stage.StageTables
 import com.hawkynt.mediadroid.stage.Upscaling
 import org.lwjgl.glfw.GLFW
@@ -35,6 +37,9 @@ import org.lwjgl.opengl.GL43.*
 import org.lwjgl.system.MemoryUtil
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
+
+/** The stage's frames: :stage's (StageFrame), each by its name. */
+private typealias Target = StageFrame
 
 /**
  * The picture stage on the desktop: the Android stage's shaders (:stage) on OpenGL 4.3 — which compiles GLSL ES 1.00
@@ -132,15 +137,6 @@ class GlStage(
     private val denoiseVectors = LinkedHashMap<MotionSearch.Vectors, Int>()
     internal val noiseLevel = TemporalDenoise.NoiseLevel()
     private var noiseCounted: MotionSearch.Vectors? = null
-
-    /** A texture with its framebuffer; [format] its internal format (GL_RGBA8, GL_RGBA16F, GL_RGBA16). */
-    private class Target(
-        override val texture: Int,
-        override val framebuffer: Int,
-        override val width: Int,
-        override val height: Int,
-        val format: Int,
-    ) : DrawTarget
 
     /**
      * A picture held on the graphics card: which, its 3D eye or field, whether in half floats, and when it was last
@@ -351,7 +347,13 @@ class GlStage(
             if (sharedRead == 0) sharedRead = glGenFramebuffers()
             glBindFramebuffer(GL_FRAMEBUFFER, sharedRead)
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, shared[slot], 0)
-            download(Target(shared[slot], sharedRead, size[0], size[1], GL_RGBA8), sharedPts[slot])
+            val read = object : DrawTarget {
+                override val texture = shared[slot]
+                override val framebuffer = sharedRead
+                override val width = size[0]
+                override val height = size[1]
+            }
+            download(read, sharedPts[slot])
         }.get()
     }
 
@@ -946,32 +948,8 @@ class GlStage(
 
     // [half]: 16-bit floats, for a network's layers, whose values reach past 0..1, and for a picture to be dithered;
     // [deep]: 16-bit values, for HDR's.
-    private fun target(name: String, w: Int, h: Int, half: Boolean = false, deep: Boolean = false): Target {
-        val format = if (half) GL_RGBA16F else if (deep) GL_RGBA16 else GL_RGBA8
-        targets[name]?.let { if (it.width == w && it.height == h && it.format == format) return it else free(it) }
-        val texture = glGenTextures()
-        glBindTexture(GL_TEXTURE_2D, texture)
-        if (half) {
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_HALF_FLOAT, null as ByteBuffer?)
-        } else if (deep) {
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16, w, h, 0, GL_RGBA, GL_UNSIGNED_SHORT, null as ByteBuffer?)
-        } else {
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, null as ByteBuffer?)
-        }
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-        val framebuffer = glGenFramebuffers()
-        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer)
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0)
-        return Target(texture, framebuffer, w, h, format).also { targets[name] = it }
-    }
-
-    private fun free(t: Target) {
-        glDeleteFramebuffers(t.framebuffer)
-        glDeleteTextures(t.texture)
-    }
+    private fun target(name: String, w: Int, h: Int, half: Boolean = false, deep: Boolean = false): Target =
+        targets.getOrPut(name) { StageFrame(gl, Gles.RGBA8) }.ensure(w, h, half = half, deep = deep)
 
     // The stage holds its frames with the picture's top row where v is 1, as on Android: rows uploaded bottom first,
     // only those of [region] (inside the black bars, the 3D eye), which [into] is the size of — so the peak below is
@@ -1179,7 +1157,7 @@ class GlStage(
         return SharedPicture(slot, shared[slot], from.width, from.height, fence, ptsMs).also { shownIn?.post(it) }
     }
 
-    private fun download(from: Target, ptsMs: Long): MediaReader.Picture {
+    private fun download(from: DrawTarget, ptsMs: Long): MediaReader.Picture {
         val w = from.width
         val h = from.height
         val buffer = out?.takeIf { it.capacity() >= w * h * 4 } ?: MemoryUtil.memAlloc(w * h * 4).also {

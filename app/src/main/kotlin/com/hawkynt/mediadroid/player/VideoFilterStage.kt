@@ -23,6 +23,7 @@ import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Finishing
 import com.hawkynt.mediadroid.stage.MpvHooks
 import com.hawkynt.mediadroid.stage.SampledTexture
+import com.hawkynt.mediadroid.stage.StageFrame
 import com.hawkynt.mediadroid.stage.Passes
 import com.hawkynt.mediadroid.stage.Restoration
 import com.hawkynt.mediadroid.stage.Upscaling
@@ -31,6 +32,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.CountDownLatch
+
+/** The stage's frames: :stage's (StageFrame). */
+private typealias Frame = StageFrame
 
 /**
  * The picture filters' own GL stage between the decoder and the screen, for what a colour matrix
@@ -394,7 +398,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val peakBufferSizes = IntArray(2)
     private val peakPending = IntArray(2)
     private var peakSlot = 0
-    private val frames = Array(COLOURED + 1) { Frame() }
+    private val frames = Array(COLOURED + 1) { Frame(gl) }
 
     // Temporal deinterlacing: the last three decoded frames (frames[8] to [10], taking turns), oldest
     // first, with when each was due; the picture shown is the middle one, one frame behind.
@@ -2369,7 +2373,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * immutable storage, which OpenGL ES 3.1 needs of a compute pass's output image.
      */
     private fun mpvFrame(name: String, w: Int, h: Int) =
-        mpvFrames.getOrPut(name) { Frame() }.ensure(w, h, half = true, storage = es31)
+        mpvFrames.getOrPut(name) { Frame(gl) }.ensure(w, h, half = true, storage = es31)
 
     /**
      * The FFmpeg decoder's frame last taken through [shader]'s CHROMA hooks, as mpv runs them and as GlStage does:
@@ -2709,77 +2713,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         GLES20.glDisableVertexAttribArray(position)
         if (coordinate >= 0) GLES20.glDisableVertexAttribArray(coordinate)
-    }
-
-    /** A texture with its framebuffer, sized on demand. */
-    private class Frame : DrawTarget {
-        override var texture = 0
-        override var framebuffer = 0
-        override var width = 0
-            private set
-        override var height = 0
-            private set
-
-        /** Whether the texture holds half floats (values outside 0..1, see Anime4K) rather than bytes. */
-        var half = false
-            private set
-
-        /**
-         * Draws into this frame from here on, over the whole of it: the framebuffer bound and the viewport set to
-         * the frame's own size together, so a pass never inherits the viewport of the one before — a smaller one
-         * (Film's luma packing) left part of the frame stale, a larger one (the screen's) drew a corner zoomed.
-         */
-        fun bind() {
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, framebuffer)
-            GLES20.glViewport(0, 0, width, height)
-        }
-
-        /** Whether the texture is immutable storage (glTexStorage2D), as a compute pass's output image must be. */
-        private var storage = false
-
-        fun ensure(w: Int, h: Int, half: Boolean = false, storage: Boolean = false): Frame {
-            if (w == width && h == height && half == this.half && storage == this.storage && texture != 0) return this
-            release()
-            val ids = IntArray(1)
-            GLES20.glGenTextures(1, ids, 0)
-            texture = ids[0]
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
-            this.storage = storage && half
-            if (half && storage) {
-                GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, GLES30.GL_RGBA16F, w, h)
-            } else if (half) {
-                GLES30.glTexImage2D(
-                    GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA16F, w, h, 0, GLES30.GL_RGBA, GLES30.GL_HALF_FLOAT, null,
-                )
-            } else {
-                GLES20.glTexImage2D(
-                    GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, w, h, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null,
-                )
-            }
-            this.half = half
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-            GLES20.glGenFramebuffers(1, ids, 0)
-            framebuffer = ids[0]
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, framebuffer)
-            GLES20.glFramebufferTexture2D(
-                GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, texture, 0,
-            )
-            width = w
-            height = h
-            return this
-        }
-
-        fun release() {
-            if (texture != 0) GLES20.glDeleteTextures(1, intArrayOf(texture), 0)
-            if (framebuffer != 0) GLES20.glDeleteFramebuffers(1, intArrayOf(framebuffer), 0)
-            texture = 0
-            framebuffer = 0
-            width = 0
-            height = 0
-        }
     }
 
     companion object {

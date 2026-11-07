@@ -45,6 +45,9 @@ interface Gles {
     /** A 2D texture's storage, [pixels] its texels from the bottom row (null: left undefined). */
     fun texImage2D(internalFormat: Int, width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer?)
 
+    /** A 2D texture's immutable storage, one level of [internalFormat] (OpenGL ES 3.0). */
+    fun texStorage2D(internalFormat: Int, width: Int, height: Int)
+
     /** A 3D texture's storage (an mpv user shader's own textures), [pixels] its texels layer by layer. */
     fun texImage3D(
         internalFormat: Int,
@@ -107,6 +110,8 @@ interface Gles {
         const val UNPACK_ALIGNMENT = 0x0CF5
         const val PACK_ALIGNMENT = 0x0D05
         const val COMPUTE_SHADER = 0x91B9
+        const val RGBA16 = 0x805B
+        const val UNSIGNED_SHORT = 0x1403
         const val TEXTURE_3D = 0x806F
         const val TEXTURE_WRAP_R = 0x8072
         const val REPEAT = 0x2901
