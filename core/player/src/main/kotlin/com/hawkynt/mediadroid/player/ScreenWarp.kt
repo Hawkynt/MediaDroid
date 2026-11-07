@@ -29,6 +29,13 @@ object Keystone {
     /** How far either keystone goes: 40 % of the edge. */
     const val LIMIT = 0.4f
 
+    /** One press of a remote's arrow: half a percent, as the sliders step. */
+    const val STEP = 0.005f
+
+    /** [value] moved by [steps] presses ([STEP] each, onto the steps' grid), kept within ±[LIMIT]. */
+    fun nudge(value: Float, steps: Int): Float =
+        ((kotlin.math.round(value / STEP) + steps) * STEP).coerceIn(-LIMIT, LIMIT)
+
     /**
      * The corners the picture is drawn into, in the screen's coordinates: bottom left, bottom right, top right, top
      * left, as x and y pairs.

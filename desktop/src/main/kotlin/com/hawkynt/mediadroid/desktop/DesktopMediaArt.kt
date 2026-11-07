@@ -1,5 +1,6 @@
 package com.hawkynt.mediadroid.desktop
 
+import com.hawkynt.mediadroid.nfo.StreamDetails
 import com.hawkynt.mediadroid.ui.platform.MediaArt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -9,10 +10,14 @@ import java.security.MessageDigest
 /**
  * The shared screens' pictures on the desktop: a picture on this computer as it is, one on a network source copied
  * once into [cache] (the app-data folder's `art/`), named by its location and kept while the source's file stays
- * the same size; a file's size from wherever it lies. Stills from the videos and probing the files are not offered
- * here yet.
+ * the same size; a file's size from wherever it lies; a video's still, stream details and tracks as FFmpeg reads
+ * them ([probe]).
  */
-class DesktopMediaArt(private val places: DesktopLibrary, private val cache: File) : MediaArt {
+class DesktopMediaArt(
+    private val places: DesktopLibrary,
+    private val cache: File,
+    private val probe: DesktopMediaProbe? = null,
+) : MediaArt {
 
     override suspend fun picture(location: String): File? = withContext(Dispatchers.IO) {
         File(location).takeIf { it.isFile }?.let { return@withContext it }
@@ -29,6 +34,12 @@ class DesktopMediaArt(private val places: DesktopLibrary, private val cache: Fil
             target
         }.getOrNull()
     }
+
+    override suspend fun still(video: String): File? = probe?.still(video)
+
+    override suspend fun streamDetails(video: String): StreamDetails? = probe?.streamDetails(video)
+
+    override suspend fun tracks(location: String): List<String>? = probe?.tracks(location)
 
     override suspend fun fileSize(location: String): Long? =
         withContext(Dispatchers.IO) { runCatching { places.file(location).length() }.getOrNull() }
