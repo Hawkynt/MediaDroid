@@ -124,7 +124,7 @@ fun main(args: Array<String>) = application {
                 )
                 is Screen.Player -> {
                     val player = @androidx.compose.runtime.Composable { native: NativePicture? ->
-                        PlayerScreen(
+                        DesktopPlayer(
                             store = store,
                             places = places,
                             mediaKeys = mediaKeys,

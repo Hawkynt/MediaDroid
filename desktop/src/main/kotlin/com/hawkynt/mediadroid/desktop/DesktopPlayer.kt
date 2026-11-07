@@ -2,7 +2,6 @@ package com.hawkynt.mediadroid.desktop
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,7 +27,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableStateOf
@@ -41,37 +39,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.key.Key
 import com.hawkynt.mediadroid.ui.PlayerCommand
-import com.hawkynt.mediadroid.ui.PlayerKeys
-import com.hawkynt.mediadroid.ui.ChapterDialog
-import com.hawkynt.mediadroid.ui.FeedbackNote
-import com.hawkynt.mediadroid.ui.GearPanel
-import com.hawkynt.mediadroid.ui.HistogramOverlay
-import com.hawkynt.mediadroid.ui.PlaybackInfoDialog
-import com.hawkynt.mediadroid.ui.SleepChoice
-import com.hawkynt.mediadroid.ui.SubtitleLookRows
-import com.hawkynt.mediadroid.ui.StatisticsOverlay
+import com.hawkynt.mediadroid.ui.PlayerPlatform
+import com.hawkynt.mediadroid.ui.PlayerScreen
+import com.hawkynt.mediadroid.ui.PlayerScreenState
+import com.hawkynt.mediadroid.ui.PictureTry
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.ui.input.key.KeyEvent
 import com.hawkynt.mediadroid.ui.playbackFacts
-import com.hawkynt.mediadroid.ui.sleepNote
 import com.hawkynt.mediadroid.ui.Playable
-import com.hawkynt.mediadroid.ui.PlayerSession
-import com.hawkynt.mediadroid.ui.PlayerTopBar
-import com.hawkynt.mediadroid.ui.RepeatChoice
-import androidx.compose.material3.Button
-import com.hawkynt.mediadroid.ui.TrackDialog
 import com.hawkynt.mediadroid.ui.clock
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -85,14 +71,10 @@ import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
-import com.hawkynt.mediadroid.engine.Tracks
 import com.hawkynt.mediadroid.engine.desktop.DesktopPlaybackEngine
 import com.hawkynt.mediadroid.engine.desktop.MediaReader
-import com.hawkynt.mediadroid.library.Chapters
-import com.hawkynt.mediadroid.library.Sidecars
 import com.hawkynt.mediadroid.player.AssPicture
 import com.hawkynt.mediadroid.player.AutoCrop
-import com.hawkynt.mediadroid.player.ChapterSteps
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.library.FolderDefaults
 import com.hawkynt.mediadroid.player.BurnInDrift
@@ -117,10 +99,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** The player: the picture letterboxed in the window, controls that fade, keys for everything. */
+/**
+ * The desktop's player: the shared [PlayerScreen] over the desktop's picture stage — the frame loop that runs each
+ * picture through the stage (GlStage) and shows it in this window, or in the stage's own window beneath this one
+ * (NativePicture) — its own bottom bar, the window (full screen, the screen kept on), the media keys and the system's
+ * now-playing panel, and the rows only the desktop offers: its sound, the histogram, video decoding, this monitor's
+ * setup and test patterns.
+ */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-fun PlayerScreen(
+fun DesktopPlayer(
     store: DesktopStore,
     places: DesktopLibrary,
     mediaKeys: MediaKeys,
@@ -152,19 +140,20 @@ fun PlayerScreen(
             softwareDecoding = store.softwareDecoding
         }
     }
-    // The queue, where each video starts and what comes after it, as the phone plays it (PlayerSession): binge-
-    // watching, intros skipped and credits ending a video as Settings say, resume points, repeats.
-    val session = remember {
-        PlayerSession(
+    // The queue, each video's picture and subtitles' look, what is open over the player — as on the phone
+    // (PlayerScreenState). MEDIADROID_SHOW=panel or info: the gear or the info sheet open from the start
+    // (documentation and checks).
+    val state = remember {
+        PlayerScreenState(
             queue, startIndex, store.state, engine, autoAdvance,
-            skipping = store.state.data.settings.skipIntroCredits,
+            panelAtStart = System.getenv("MEDIADROID_SHOW") == "panel",
+            infoAtStart = System.getenv("MEDIADROID_SHOW") == "info",
         )
     }
+    val session = state.session
     val index = session.index
     val playing = session.current
-    // The subtitle delay each video keeps, as on Android.
-    // How each video's subtitles look — delay, size, raised, a box behind them — its own, else the household's (Settings).
-    var subtitleLook by remember(index) { mutableStateOf(store.state.subtitleLookFor(playing.videoPath)) }
+    val subtitleLook = state.subtitleLook
     tuning.subtitleDelayMs = subtitleLook.delayMs
     val bitmap = remember { PictureBitmap() }
     // The picture stage (deinterlacing, upscalers, colour) on the graphics card, made once per player.
@@ -181,7 +170,7 @@ fun PlayerScreen(
     val neural = remember { com.hawkynt.mediadroid.engine.desktop.DesktopNeural(File(AppFolder.current(), "models")) }
     // Colour is offered where DDColor's files can be had: passed here before, in place, or reachable in the model
     // repository — so its chip appears by itself once they are published.
-    val colorizers by androidx.compose.runtime.produceState(
+    val offeredColorizers by androidx.compose.runtime.produceState(
         com.hawkynt.mediadroid.player.Colorizing.offered(store.colorizerPassed != null),
     ) {
         val ddcolor = com.hawkynt.mediadroid.player.NeuralModels.DDCOLOR
@@ -197,25 +186,15 @@ fun PlayerScreen(
     remember { ShaderFolder.load(ShaderFolder.of(store.state.data.settings.shaderFolder, AppFolder.current())) }
     // The picture this video plays with: its own (its shape and colour system with it), else its folder's, else the
     // household's (FolderDefaults), as on the phone.
-    var picture by remember { mutableStateOf(store.pictureFor(playing.videoPath)) }
-    // The folder or share whose picture that is, if any has one.
-    var pictureFolder by remember { mutableStateOf(store.pictureFolderOf(playing.videoPath)) }
-    LaunchedEffect(index) {
-        picture = store.pictureFor(playing.videoPath)
-        pictureFolder = store.pictureFolderOf(playing.videoPath)
-    }
+    val picture = state.picture
     // The setup of the screen the window is on (a lens, a projector).
     var screenSetup by remember { mutableStateOf(store.screenSetup(screen().key)) }
-    // MEDIADROID_SHOW=panel: the picture panel open from the start (documentation and checks).
-    var panel by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "panel") }
     var canvas by remember { mutableStateOf(IntSize.Zero) }
-    // How the picture fills the window, for this player only, as the phone's gear; and the size it is drawn at.
-    var fit by remember { mutableStateOf(PictureFit.FIT) }
+    val statistics = state.statistics
     // A test pattern shown instead of the video, the video paused meanwhile; null for the video.
     var pattern by remember { mutableStateOf<TestPattern?>(null) }
-    // The histogram of the picture on screen, off until switched on in the panel; its last count.
-    var histogramShown by remember { mutableStateOf(false) }
-    var histogram by remember { mutableStateOf<Histogram?>(null) }
+    // The histogram of the picture on screen, off until switched on in the panel.
+    val histogramShown = state.histogramShown
     // How the stage bends the picture now, for the text subtitles over it.
     var overlayWarp by remember { mutableStateOf(ScreenWarp.None) }
     // Burn-in care on an OLED screen (BurnInDrift): the drift's step, counted from the player's start, and where the
@@ -261,108 +240,25 @@ fun PlayerScreen(
     }
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
-    var isPlaying by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var tracks by remember { mutableStateOf(emptyList<Track>()) }
-    // A sound file's track named as the picker shows a sidecar: `EN`, `DE · commentary`.
-    var trackPicker by remember { mutableStateOf<TrackPicker?>(null) }
-    val soundNames = remember(index) {
-        sidecarsOf(places, playing.videoPath).filter { it.kind == Sidecars.Kind.AUDIO }
-            .associate { it.name to it.describe() }
-    }
+    val isPlaying = state.playing
     var subtitle by remember { mutableStateOf<String?>(null) }
     // The line of the subtitle track shown second, at the top.
     var secondLine by remember { mutableStateOf<String?>(null) }
     var controlsUntil by remember { mutableLongStateOf(System.currentTimeMillis() + CONTROLS_MS) }
-    // The file's own chapters, and the part repeated between two marks — as on the phone.
-    val chapters = session.chapters
-    var chapterPicker by remember { mutableStateOf(false) }
-    // A short confirmation over the picture: a chapter's name, a repeat marked, the sleep timer run out.
-    var feedback by remember { mutableStateOf<String?>(null) }
-    var feedbackStamp by remember { mutableIntStateOf(0) }
-    fun show(text: String) {
-        feedback = text
-        feedbackStamp++
-    }
-    LaunchedEffect(feedbackStamp) {
-        delay(FEEDBACK_MS)
-        feedback = null
-    }
-    // What is playing (the info sheet), and the statistics over the picture it switches on, for this player only;
-    // MEDIADROID_SHOW=info opens it from the start (documentation and checks).
-    var infoOpen by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "info") }
-    var statisticsShown by remember { mutableStateOf(false) }
-    val statistics = remember { com.hawkynt.mediadroid.player.PlaybackStatistics() }
-    LaunchedEffect(index) { statistics.clear() }
-    // The sleep timer, as on the phone: the sound fades over its last seconds, then the video pauses.
-    val baseVolume = remember { engine.volume }
-    LaunchedEffect(session.sleepAtMs) {
-        if (session.sleepAtMs == null) {
-            engine.volume = baseVolume
-            return@LaunchedEffect
-        }
-        while (true) {
-            val ranOut = session.sleepTick(System.nanoTime() / 1_000_000)
-            engine.volume = baseVolume * session.sleepVolume
-            if (ranOut) {
-                show("Sleep timer: paused")
-                break
-            }
-            delay(250)
-        }
-    }
-    val abLoop = session.abLoop
     val focus = remember { FocusRequester() }
 
-    fun next() = session.next()
-
-    // The video before in the queue; a few seconds in, or on the first, its start again.
-    fun previous() = session.previous()
-
+    // The engine and the stage close after the shared screen has kept the progress (it leaves the composition first).
     DisposableEffect(Unit) {
         onDispose {
-            session.saveProgress()
             engine.close()
             stage.close()
         }
     }
-    // Intros skipped, the credits ending the video, the progress kept (PlayerSession.tick); the time played counted,
-    // for whether a video is worth a resume point.
-    LaunchedEffect(Unit) {
-        var last = System.currentTimeMillis()
-        while (true) {
-            delay(500)
-            val now = System.currentTimeMillis()
-            session.countPlayed(now - last, engine.speed)
-            last = now
-            session.tick()
-        }
-    }
-    // A subtitle picked becomes the household's language for the next videos; off stays off.
-    fun pick(kind: Track.Kind, id: String?, byHand: Boolean = true) {
-        if (byHand) session.manualTrackPick = true
-        engine.select(kind, id)
-        if (kind == Track.Kind.TEXT) {
-            store.subtitleLanguage = engine.tracks.firstOrNull { it.id == id }?.language.orEmpty()
-        }
-    }
-
+    // Another video: nothing of the last one is drawn again.
     LaunchedEffect(index) {
-        error = null
-        tracks = emptyList()
         frame = null
         shownPicture[0] = null
         openedAnew[0] = true
-        val read = withContext(Dispatchers.IO) {
-            runCatching { Chapters.read(places.file(playing.videoPath)) }.getOrNull()
-        }.orEmpty()
-        // Where it was left, never back into a known intro.
-        val startMs = session.begin(read)
-        // Off the window's thread: on a network source, finding the files beside it and opening it take round trips.
-        runCatching {
-            withContext(Dispatchers.IO) { engine.open(requestFor(places, playing.videoPath, startMs, store.state.data.settings.audioLanguage)) }
-        }
-            .onFailure { error = it.message ?: it.toString() }
     }
     // Film is undone in the engine, before the pictures queue up (see Film).
     LaunchedEffect(picture.deinterlace) { engine.film = picture.deinterlace == PictureAdjustment.Deinterlace.FILM }
@@ -438,11 +334,11 @@ fun PlayerScreen(
             val showing = pattern
             if (showing != null && canvas.width > 0 && canvas.height > 0 && stage.ready) {
                 val setup = store.screenSetup(screen().key)
-                val look = listOf(showing, canvas, picture, setup)
+                val look = listOf(showing, canvas, state.picture, setup)
                 if (look != lastLook) {
                     lastLook = look
                     lastShown = null
-                    val pictureNow = picture
+                    val pictureNow = state.picture
                     val w = canvas.width
                     val h = canvas.height
                     val shownPattern = still?.takeIf { it.width == w && it.height == h && stillOf == showing }
@@ -464,7 +360,8 @@ fun PlayerScreen(
                 }
             } else engine.moment(aheadMs)?.let { moment ->
                 // The picture as shown: smoothed where Even frames finds no even rate (EvenFrames).
-                val picture = evenFrames.shown(picture)
+                val picture = evenFrames.shown(state.picture)
+                val fit = state.fit
                 val raw = moment.shown
                 val nowMs = System.currentTimeMillis()
                 if (engine.openedPath != cropVideo || !picture.cropBlackBars || !stage.ready) {
@@ -628,7 +525,7 @@ fun PlayerScreen(
                         )
                     }
                     // Its pixels read back only for what asks for them: a snapshot, the histogram twice a second.
-                    val wanted = demand.wanted(System.currentTimeMillis(), histogramShown)
+                    val wanted = demand.wanted(System.currentTimeMillis(), state.histogramShown)
                     if (wanted.any) {
                         withContext(Dispatchers.Default) { stage.readBackShown() }?.let { read ->
                             bent.blendInto(read.rgba, read.width, read.height)
@@ -636,7 +533,7 @@ fun PlayerScreen(
                             shownPicture[0] = read
                             if (wanted.snapshot) saveSnapshot(read)
                             if (wanted.histogram) {
-                                histogram = withContext(Dispatchers.Default) {
+                                state.histogram = withContext(Dispatchers.Default) {
                                     Histogram.of(read.rgba, read.width, read.height)
                                 }
                             }
@@ -656,9 +553,9 @@ fun PlayerScreen(
                     frame = bitmap.of(shown)
                     // Counted twice a second off the window's thread, as the stage drew the picture.
                     val nowMs = System.currentTimeMillis()
-                    if (histogramShown && nowMs - histogramAtMs >= HISTOGRAM_MS) {
+                    if (state.histogramShown && nowMs - histogramAtMs >= HISTOGRAM_MS) {
                         histogramAtMs = nowMs
-                        histogram = withContext(Dispatchers.Default) {
+                        state.histogram = withContext(Dispatchers.Default) {
                             Histogram.of(shown.rgba, shown.width, shown.height)
                         }
                     }
@@ -666,17 +563,8 @@ fun PlayerScreen(
             }
             position = engine.positionMs
             duration = engine.durationMs
-            session.keepRepeating()
-            val wereEmpty = tracks.none { it.kind == Track.Kind.TEXT }
-            tracks = engine.tracks
-            // A video's subtitles start in the household's language, as on the phone.
-            if (wereEmpty) session.tracksChanged(tracks, store.subtitleLanguage)
             subtitle = engine.subtitle()
             secondLine = engine.secondSubtitleLine()
-            val wasPlaying = isPlaying
-            isPlaying = engine.isPlaying
-            // At its end: the next one, the same again, or the queue is over (PlayerSession.finishCurrent).
-            if (wasPlaying && !isPlaying && duration > 0 && position >= duration - 100) session.finishCurrent()
             // Done well within a refresh: the next frame is asked for at once, so the gap to it is one refresh.
             if (System.nanoTime() - began < refresh.periodNs / 2) refresh.askedAgain()
         }
@@ -705,8 +593,8 @@ fun PlayerScreen(
                 MediaCommand.PAUSE -> engine.pause()
                 MediaCommand.PLAY_PAUSE -> togglePlay()
                 MediaCommand.STOP -> onExit()
-                MediaCommand.NEXT -> next()
-                MediaCommand.PREVIOUS -> previous()
+                MediaCommand.NEXT -> session.next()
+                MediaCommand.PREVIOUS -> session.previous()
             }
         }
         onDispose {
@@ -718,18 +606,11 @@ fun PlayerScreen(
         mediaKeys.show(NowPlaying(playing.title, isPlaying, index > 0, session.hasNext, duration))
     }
 
-    var speed by remember { mutableStateOf(store.speed) }
-    fun changeSpeed(value: Float) {
-        val clamped = (kotlin.math.round(value * 20f) / 20f).coerceIn(PlaybackMath.SPEED_MIN, PlaybackMath.SPEED_MAX)
-        speed = clamped
-        engine.speed = clamped * evenFrames.speedFactor
-        store.speed = clamped
-    }
     // Every few seconds, and at once for a new speed: the film's rate, the speed and the screen's refresh again.
-    LaunchedEffect(speed) {
+    LaunchedEffect(state.speed) {
         while (true) {
-            evenFrames.plan(engine.frameRate, speed, refresh.periodNs)
-            engine.speed = speed * evenFrames.speedFactor
+            evenFrames.plan(engine.frameRate, state.speed, refresh.periodNs)
+            engine.speed = state.speed * evenFrames.speedFactor
             delay(EVEN_FRAMES_MS)
         }
     }
@@ -739,338 +620,140 @@ fun PlayerScreen(
         if (pictureWindow != null) demand.askSnapshot() else shownPicture[0]?.let(::saveSnapshot)
     }
 
-    // , and . : one picture back or on, paused there; Page Up and Down: the next and the previous chapter (mpv's keys).
-    fun stepFrame(forward: Boolean) = session.stepFrame(forward)
-
-    fun jumpChapter(forward: Boolean) {
-        session.jumpChapter(forward)?.let(::show)
+    val check: PictureTry = { candidate, say ->
+        withContext(Dispatchers.Default) { PictureTrial.check(candidate, trial, say) }
     }
+    val platform = object : PlayerPlatform {
+        override val commands = PlayerCommand.entries.toSet()
+        override val subtitlesByTrack = true
+        override val controlsVisible = controlsShown
 
-    // S: the next subtitle track, after the last one off again.
-    fun nextSubtitles() {
-        val text = engine.tracks.filter { it.kind == Track.Kind.TEXT }
-        val at = text.indexOfFirst { it.selected }
-        pick(Track.Kind.TEXT, text.getOrNull(at + 1)?.id)
-    }
+        override fun showControls() {
+            controlsUntil = System.currentTimeMillis() + CONTROLS_MS
+        }
 
-    Box(
+        override fun hideControls() = Unit
+
+        override fun fileOf(location: String) = places.file(location)
+
+        // Off the window's thread: on a network source, finding the files beside it and opening it take round trips.
+        override suspend fun open(request: MediaRequest) = withContext(Dispatchers.IO) { engine.open(request) }
+
+        override fun snapshot() = snapshot()
+        override fun fullScreen() = onFullScreen()
+        override fun leave() = onExit()
+        override fun back() = if (fullScreen) onFullScreen() else onExit()
+
+        // Any key brings the controls up for a while.
+        override fun onKey(event: KeyEvent): Boolean {
+            if (event.type == KeyEventType.KeyDown) showControls()
+            return false
+        }
+
+        override fun facts(): com.hawkynt.mediadroid.player.PlaybackChain.Facts {
+            val shownOn = screen()
+            return playbackFacts(
+                location = playing.videoPath,
+                report = engine.report,
+                videoDecoder = engine.hardwareDecoder?.label ?: "FFmpeg",
+                audioDecoder = "FFmpeg",
+                picture = state.picture,
+                fit = state.fit.label,
+                zoom = 1f,
+                screen = shownOn.name,
+                screenWidth = (shownOn.height * shownOn.aspect).toInt(),
+                screenHeight = shownOn.height,
+                refreshHz = 0f,
+                loudnessDb = sound.loudnessDb,
+                nightMode = nightMode,
+                evenLoudness = sound.evenLoudness,
+                replayGainDb = null,
+                speed = state.speed,
+                delayMs = sound.audioDelayMs,
+                spatial = false,
+                device = "this computer's output",
+                subtitleDelayMs = subtitleLook.delayMs,
+            )
+        }
+
+        override fun trackName(track: Track) = com.hawkynt.mediadroid.desktop.trackName(track)
+
+        // Kept as the household's speed; played with Even frames' small change.
+        override fun onSpeed(speed: Float): Float {
+            val clamped = (kotlin.math.round(speed * 20f) / 20f)
+                .coerceIn(PlaybackMath.SPEED_MIN, PlaybackMath.SPEED_MAX)
+            engine.speed = clamped * evenFrames.speedFactor
+            store.speed = clamped
+            return clamped
+        }
+
+        override val speedFactor get() = evenFrames.speedFactor
+        override val pictureCheck = check
+        override val colorizers = offeredColorizers
+        override val neuralModels = DesktopNeuralModels
+        override val overlayPlace = Modifier.offset { IntOffset(drift.first, drift.second) }
+            .padding(top = 72.dp, start = 12.dp)
+
         // Over the stage's own window the screen is see-through — all but invisibly tinted, so a window system that
         // passes clicks through clear pixels (Win32's layered windows) still hands them to the controls.
-        Modifier.fillMaxSize().background(if (pictureWindow != null) SEE_THROUGH else Color.Black)
-            .focusRequester(focus).focusable()
+        override val background = if (pictureWindow != null) SEE_THROUGH else Color.Black
+
+        override val screenModifier = Modifier.focusRequester(focus).focusable()
             .onPointerEvent(PointerEventType.Move) { controlsUntil = System.currentTimeMillis() + CONTROLS_MS }
-            .onKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
-                controlsUntil = System.currentTimeMillis() + CONTROLS_MS
-                when (PlayerKeys.commandOf(event.key) ?: return@onKeyEvent false) {
-                    PlayerCommand.PLAY_PAUSE -> togglePlay()
-                    PlayerCommand.SEEK_FORWARD ->
-                        engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, true))
-                    PlayerCommand.SEEK_BACK ->
-                        engine.seekTo(PlaybackMath.seekBy(engine.positionMs, engine.durationMs, false))
-                    PlayerCommand.FULL_SCREEN -> onFullScreen()
-                    PlayerCommand.NEXT -> next()
-                    PlayerCommand.PANEL -> panel = !panel
-                    PlayerCommand.NEXT_SUBTITLES -> nextSubtitles()
-                    PlayerCommand.SNAPSHOT -> snapshot()
-                    PlayerCommand.FRAME_BACK -> stepFrame(false)
-                    PlayerCommand.FRAME_FORWARD -> stepFrame(true)
-                    PlayerCommand.CHAPTER_NEXT -> jumpChapter(true)
-                    PlayerCommand.CHAPTER_BACK -> jumpChapter(false)
-                    PlayerCommand.REPEAT -> show(session.markRepeat())
-                    PlayerCommand.SLOWER -> changeSpeed(speed - SPEED_STEP)
-                    PlayerCommand.FASTER -> changeSpeed(speed + SPEED_STEP)
-                    PlayerCommand.LEAVE -> if (fullScreen) onFullScreen() else onExit()
-                }
-                true
-            },
-    ) {
-        Canvas(Modifier.fillMaxSize().onSizeChanged { canvas = it }) {
-            frame?.let { drawShown(it, shownSize, IntOffset(drift.first, drift.second)) }
-        }
-        val drifted = Modifier.offset { IntOffset(drift.first, drift.second) }
-        // The text subtitles bent as the picture is (ScreenWarp.overlayMatrix): read the right way round on a
-        // rear-projection screen, on the picture on a keystoned one.
-        Box(
-            Modifier.fillMaxSize().drawWithContent {
-                val bend = overlayWarp
-                if (!bend.bendsOverlays) {
+
+        @Composable
+        override fun BoxScope.Stage() {
+            Canvas(Modifier.fillMaxSize().onSizeChanged { canvas = it }) {
+                frame?.let { drawShown(it, shownSize, IntOffset(drift.first, drift.second)) }
+            }
+            val drifted = Modifier.offset { IntOffset(drift.first, drift.second) }
+            // The text subtitles bent as the picture is (ScreenWarp.overlayMatrix): read the right way round on a
+            // rear-projection screen, on the picture on a keystoned one.
+            Box(
+                Modifier.fillMaxSize().drawWithContent {
+                    val bend = overlayWarp
+                    if (!bend.bendsOverlays) {
+                        drawContent()
+                        return@drawWithContent
+                    }
+                    drawContext.canvas.save()
+                    drawContext.canvas.concat(composeMatrix(bend.overlayMatrix(size.width, size.height)))
                     drawContent()
-                    return@drawWithContent
-                }
-                drawContext.canvas.save()
-                drawContext.canvas.concat(composeMatrix(bend.overlayMatrix(size.width, size.height)))
-                drawContent()
-                drawContext.canvas.restore()
-            },
-        ) {
-            // Sized and raised by the window's height as the phone sizes them by its screen's (SubtitleLook).
-            val density = androidx.compose.ui.platform.LocalDensity.current
-            val textSize = with(density) { (subtitleLook.textSizeFraction * canvas.height).toSp() }
-            val above = with(density) { (subtitleLook.bottomPaddingFraction * canvas.height).toDp() }
-            subtitle?.let { line ->
-                SubtitleLine(
-                    line,
-                    subtitleLook,
-                    textSize,
-                    Modifier.align(Alignment.BottomCenter).then(drifted).padding(start = 48.dp, end = 48.dp,
-                        bottom = if (controlsShown) maxOf(120.dp, above) else above),
-                )
-            }
-            secondLine?.let { line ->
-                SubtitleLine(
-                    line,
-                    subtitleLook,
-                    textSize,
-                    Modifier.align(Alignment.TopCenter).then(drifted)
-                        .padding(start = 48.dp, end = 48.dp, top = 40.dp),
-                )
-            }
-        }
-        if (statisticsShown || histogramShown) {
-            // The statistics, and beneath them the histogram — on the left, beside the gear's picture controls.
-            Column(Modifier.align(Alignment.TopStart).then(drifted).padding(top = 72.dp, start = 12.dp)) {
-                if (statisticsShown) StatisticsOverlay(statistics, Modifier)
-                if (histogramShown) {
-                    HistogramOverlay(histogram, Modifier.padding(top = if (statisticsShown) 8.dp else 0.dp))
-                }
-            }
-        }
-        feedback?.let { FeedbackNote(it, Modifier.align(Alignment.Center)) }
-        if (panel) {
-            // Clicking beside the panel closes it, as on the phone.
-            Box(Modifier.fillMaxSize().clickable(interactionSource = null, indication = null) { panel = false })
-            val video = playing.videoPath
-            GearPanel(
-                speed = speed,
-                onSpeed = ::changeSpeed,
-                fit = fit,
-                onFit = { fit = it },
-                fitHint = "",
-                subtitlesOn = tracks.any { it.kind == Track.Kind.TEXT && it.selected },
-                onSubtitles = { on ->
-                    val text = Tracks.of(engine.tracks, Track.Kind.TEXT)
-                    val chosen = if (on) {
-                        Tracks.preferredText(text, store.subtitleLanguage) ?: text.firstOrNull()
-                    } else {
-                        null
-                    }
-                    pick(Track.Kind.TEXT, chosen?.id)
+                    drawContext.canvas.restore()
                 },
-                // This video's picture, as on the phone: live while a slider moves, kept when it is let go. The
-                // household's lives in Settings.
-                picture = picture,
-                onPicture = { picture = it },
-                onPictureDone = { store.savePicture(video, picture) },
-                onResetPicture = {
-                    store.savePicture(video, null)
-                    picture = store.pictureFor(video)
-                },
-                check = { candidate, say ->
-                    withContext(Dispatchers.Default) { PictureTrial.check(candidate, trial, say) }
-                },
-                colorizers = colorizers,
-                neuralModels = DesktopNeuralModels,
-                folder = FolderDefaults.label(store.folderOf(video), store.allSources),
-                pictureFolder = pictureFolder?.let { FolderDefaults.label(it, store.allSources) },
-                onUseForFolder = {
-                    store.setFolderPicture(store.folderOf(video), picture)
-                    // The video follows its folder's picture now, its 3D eye and shape kept as its own.
-                    store.savePicture(video, picture)
-                    picture = store.pictureFor(video)
-                    pictureFolder = store.pictureFolderOf(video)
-                },
-                onForgetFolder = {
-                    pictureFolder?.let { store.setFolderPicture(it, null) }
-                    picture = store.pictureFor(video)
-                    pictureFolder = store.pictureFolderOf(video)
-                },
-                onAudioTrack = { trackPicker = TrackPicker.SOUND },
-                onSubtitleTrack = { trackPicker = TrackPicker.SUBTITLES },
-                onSecondSubtitleTrack = { trackPicker = TrackPicker.SECOND },
-                onClose = { panel = false },
-                modifier = Modifier.align(Alignment.CenterEnd),
-                sections = {
-                    DesktopSoundRows(
-                        sound,
-                        onSound = {
-                            sound = it
-                            store.sound = it
-                        },
-                        nightMode = nightMode,
-                        onNightMode = { nightMode = it },
-                    )
-                },
-                afterPictureSize = {
-                    DesktopHistogramRow(histogramShown) {
-                        histogramShown = it
-                        if (!it) histogram = null
-                    }
-                },
-                end = {
-                    SubtitleLookRows(
+            ) {
+                // Sized and raised by the window's height as the phone sizes them by its screen's (SubtitleLook).
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val textSize = with(density) { (subtitleLook.textSizeFraction * canvas.height).toSp() }
+                val above = with(density) { (subtitleLook.bottomPaddingFraction * canvas.height).toDp() }
+                subtitle?.let { line ->
+                    SubtitleLine(
+                        line,
                         subtitleLook,
-                        onLook = {
-                            subtitleLook = it
-                            store.state.saveSubtitleLook(video, it)
-                        },
-                        onReset = {
-                            store.state.saveSubtitleLook(video, null)
-                            subtitleLook = store.state.subtitleLookFor(video)
-                        },
+                        textSize,
+                        Modifier.align(Alignment.BottomCenter).then(drifted).padding(
+                            start = 48.dp,
+                            end = 48.dp,
+                            bottom = if (controlsShown) maxOf(120.dp, above) else above,
+                        ),
                     )
-                    SleepChoice(session) { System.nanoTime() / 1_000_000 }
-                    RepeatChoice(session.repeat) { session.repeat = it }
-                    DesktopDecodingRows(
-                        softwareDecoding,
-                        onSoftware = {
-                            softwareDecoding = it
-                            store.softwareDecoding = it
-                            engine.softwareDecoding = it
-                        },
-                        hardwareDecoder = engine.hardwareDecoder?.label,
+                }
+                secondLine?.let { line ->
+                    SubtitleLine(
+                        line,
+                        subtitleLook,
+                        textSize,
+                        Modifier.align(Alignment.TopCenter).then(drifted)
+                            .padding(start = 48.dp, end = 48.dp, top = 40.dp),
                     )
-                    DesktopScreenRows(
-                        screen().name,
-                        screenSetup,
-                        onSetup = {
-                            screenSetup = it
-                            store.setScreenSetup(screen().key, it)
-                        },
-                        pattern = pattern,
-                        onPattern = { pattern = it },
-                    )
-                },
-            )
-        }
-        if (chapterPicker) {
-            ChapterDialog(
-                chapters = chapters,
-                current = ChapterSteps.current(chapters, engine.positionMs),
-                onDismiss = { chapterPicker = false },
-                onPick = { start ->
-                    engine.seekTo(start)
-                    chapterPicker = false
-                },
-            )
-        }
-        if (infoOpen) {
-            val report = engine.report
-            val shownOn = screen()
-            PlaybackInfoDialog(
-                playing = playing,
-                report = report,
-                tracks = engine.tracks,
-                videoPath = playing.videoPath,
-                graph = com.hawkynt.mediadroid.player.PlaybackChain.of(
-                    playbackFacts(
-                        location = playing.videoPath,
-                        report = report,
-                        videoDecoder = engine.hardwareDecoder?.label ?: "FFmpeg",
-                        audioDecoder = "FFmpeg",
-                        picture = picture,
-                        fit = fit.label,
-                        zoom = 1f,
-                        screen = shownOn.name,
-                        screenWidth = (shownOn.height * shownOn.aspect).toInt(),
-                        screenHeight = shownOn.height,
-                        refreshHz = 0f,
-                        loudnessDb = sound.loudnessDb,
-                        nightMode = nightMode,
-                        evenLoudness = sound.evenLoudness,
-                        replayGainDb = null,
-                        speed = speed,
-                        delayMs = sound.audioDelayMs,
-                        spatial = false,
-                        device = "this computer's output",
-                        subtitleDelayMs = subtitleLook.delayMs,
-                    ),
-                ),
-                statisticsShown = statisticsShown,
-                onStatistics = { statisticsShown = it },
-                onDismiss = { infoOpen = false },
-                histogramShown = histogramShown,
-                onHistogram = {
-                    histogramShown = it
-                    if (!it) histogram = null
-                },
-            )
-        }
-        when (trackPicker) {
-            TrackPicker.SOUND -> TrackDialog(
-                tracks = tracks,
-                kind = Track.Kind.AUDIO,
-                // A sound file's track named as the picker shows a sidecar: `EN`, `DE · commentary`.
-                labelFor = { t -> if (t.source > 0) soundNames[t.label] ?: trackName(t) else trackName(t) },
-                marked = { it.selected },
-                onDismiss = { trackPicker = null },
-                onPick = { picked ->
-                    picked?.let { pick(Track.Kind.AUDIO, it.id) }
-                    trackPicker = null
-                },
-            )
-            TrackPicker.SUBTITLES -> TrackDialog(
-                tracks = tracks,
-                kind = Track.Kind.TEXT,
-                labelFor = ::trackName,
-                noneLabel = "Off",
-                marked = { it.selected },
-                onDismiss = { trackPicker = null },
-                onPick = { picked ->
-                    pick(Track.Kind.TEXT, picked?.id)
-                    trackPicker = null
-                },
-            )
-            TrackPicker.SECOND -> TrackDialog(
-                tracks = Tracks.secondText(tracks),
-                kind = Track.Kind.TEXT,
-                labelFor = ::trackName,
-                noneLabel = "None",
-                marked = { it.second },
-                onDismiss = { trackPicker = null },
-                onPick = { picked ->
-                    engine.secondSubtitle = picked?.id
-                    trackPicker = null
-                },
-            )
-            null -> Unit
-        }
-        snapshotNote?.takeIf { now < snapshotNoteUntil }?.let { note ->
-            Text(
-                note, color = Color.White, fontSize = 16.sp,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 72.dp)
-                    .background(Color(0xCC000000), MaterialTheme.shapes.small).padding(12.dp),
-            )
-        }
-        // The queue is over, as on the phone.
-        if (session.finished) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Button(onClick = onExit) { Text("All done — back to the library", fontSize = 22.sp) }
+                }
             }
         }
-        error?.let {
-            Text("This video cannot be played: $it", color = Color.White, fontSize = 20.sp,
-                modifier = Modifier.align(Alignment.Center).padding(32.dp))
-        }
-        if (controlsShown) {
-            // The phone's top bar: back, what plays (and the chapter it is in), the sleep timer, frame steps while
-            // paused, repeating a part, the chapters, a snapshot, what is playing and the gear.
-            PlayerTopBar(
-                title = playing.title + (playing.subtitle?.let { "  ·  $it" } ?: "") +
-                    (ChapterSteps.current(chapters, position)?.let { "  ·  " + ChapterSteps.name(chapters, it) } ?: ""),
-                note = sleepNote(session),
-                paused = !isPlaying,
-                abLoop = abLoop,
-                hasChapters = chapters.isNotEmpty(),
-                onBack = onExit,
-                onStepFrame = ::stepFrame,
-                onRepeat = { show(session.markRepeat()) },
-                onChapters = { chapterPicker = true },
-                onSnapshot = ::snapshot,
-                onInfo = { infoOpen = true },
-                onGear = { panel = !panel },
-                modifier = Modifier.align(Alignment.TopStart),
-            )
+
+        // The time bar, play and pause, the next video, the time, full screen.
+        @Composable
+        override fun BoxScope.Controls() {
+            if (!controlsShown) return
             Column(
                 Modifier.fillMaxWidth().align(Alignment.BottomStart)
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))).padding(16.dp),
@@ -1085,46 +768,87 @@ fun PlayerScreen(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { togglePlay() }) {
-                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause",
-                            tint = Color.White, modifier = Modifier.size(36.dp))
+                        Icon(
+                            if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause",
+                            tint = Color.White, modifier = Modifier.size(36.dp),
+                        )
                     }
-                    if (index + 1 < queue.size) {
-                        IconButton(onClick = { next() }) { Icon(Icons.Default.SkipNext, "Next", tint = Color.White) }
+                    if (session.hasNext) {
+                        IconButton(onClick = { session.next() }) {
+                            Icon(Icons.Default.SkipNext, "Next", tint = Color.White)
+                        }
                     }
                     Text("${clock(position)} · ${clock(duration)}", color = Color.White, fontSize = 15.sp)
                     Spacer(Modifier.weight(1f))
                     IconButton(onClick = onFullScreen) {
-                        Icon(if (fullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                            "Full screen", tint = Color.White)
+                        Icon(
+                            if (fullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                            "Full screen", tint = Color.White,
+                        )
                     }
                 }
             }
         }
+
+        // Loudness, even loudness, night mode and the audio delay of this computer's output.
+        @Composable
+        override fun ColumnScope.GearSections() {
+            DesktopSoundRows(
+                sound,
+                onSound = {
+                    sound = it
+                    store.sound = it
+                },
+                nightMode = nightMode,
+                onNightMode = { nightMode = it },
+            )
+        }
+
+        @Composable
+        override fun ColumnScope.GearAfterPictureSize() {
+            DesktopHistogramRow(state.histogramShown) {
+                state.histogramShown = it
+                if (!it) state.histogram = null
+            }
+        }
+
+        // Video decoding with the decoder in use, this monitor's setup and its test patterns.
+        @Composable
+        override fun ColumnScope.GearEnd() {
+            DesktopDecodingRows(
+                softwareDecoding,
+                onSoftware = {
+                    softwareDecoding = it
+                    store.softwareDecoding = it
+                    engine.softwareDecoding = it
+                },
+                hardwareDecoder = engine.hardwareDecoder?.label,
+            )
+            DesktopScreenRows(
+                screen().name,
+                screenSetup,
+                onSetup = {
+                    screenSetup = it
+                    store.setScreenSetup(screen().key, it)
+                },
+                pattern = pattern,
+                onPattern = { pattern = it },
+            )
+        }
+
+        // What the last snapshot became: its file, or why there is none.
+        @Composable
+        override fun BoxScope.Overlays() {
+            snapshotNote?.takeIf { now < snapshotNoteUntil }?.let { note ->
+                Text(
+                    note, color = Color.White, fontSize = 16.sp,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 72.dp)
+                        .background(Color(0xCC000000), MaterialTheme.shapes.small).padding(12.dp),
+                )
+            }
+        }
     }
-}
-
-/** Which track picker is open over the player. */
-private enum class TrackPicker { SOUND, SUBTITLES, SECOND }
-
-/** The subtitle and sound files beside [video] (Sidecars), by name — on this computer or a network source. */
-private fun sidecarsOf(places: DesktopLibrary, video: String): List<Sidecars.Sidecar> {
-    val file = places.file(video)
-    return Sidecars.of(file.name, file.parentFile?.listFiles()?.map { it.name }.orEmpty())
-}
-
-/**
- * What to open for [video]: from [startMs], with the subtitle and sound files beside it, starting in the household's
- * [audioLanguage] where it has a sound in it.
- */
-private fun requestFor(places: DesktopLibrary, video: String, startMs: Long, audioLanguage: String): MediaRequest {
-    val folder = places.file(video).parentFile
-    fun pathOf(name: String) = folder?.child(name)?.path ?: name
-    val sidecars = sidecarsOf(places, video)
-    val subtitles = sidecars.filter { it.kind == Sidecars.Kind.SUBTITLES }.map {
-        MediaRequest.SubtitleFile(pathOf(it.name), it.mimeType, it.language, it.describe(), it.forced)
-    }
-    val audio = sidecars.filter { it.kind == Sidecars.Kind.AUDIO }.map { pathOf(it.name) }
-    return MediaRequest(video, subtitles = subtitles, audio = audio, startMs = startMs, audioLanguage = audioLanguage)
+    PlayerScreen(state, platform)
 }
 
 /**
@@ -1185,12 +909,6 @@ private const val SNAPSHOT_NOTE_MS = 5_000L
 
 /** How often Even frames looks at the film's rate, the speed and the screen's refresh again. */
 private const val EVEN_FRAMES_MS = 3_000L
-
-/** How long a confirmation stays over the picture. */
-private const val FEEDBACK_MS = 800L
-
-/** How much [ and ] change the speed. */
-private const val SPEED_STEP = 0.05f
 
 /** The player's background over the stage's own window: black at the least alpha there is. */
 private val SEE_THROUGH = Color(0x01000000)

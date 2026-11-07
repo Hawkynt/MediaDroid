@@ -563,7 +563,7 @@ private fun AppShell(store: StateStore, demo: Boolean) {
                     .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
             }
             key(player) {
-                PlayerScreen(
+                PhonePlayer(
                     queue = player.queue,
                     startIndex = player.startIndex,
                     store = store,
