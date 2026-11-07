@@ -27,8 +27,8 @@ cores carry no Android dependency on purpose: the parsing, search and binge logi
 device, and the screens sit on top of them. The bar is a household where nobody has to be taught the app — usable by a
 six-year-old and a grandparent, instant even on cheap hardware.
 
-The same app is coming to **Windows and Linux** ([#291](https://github.com/Hawkynt/MediaDroid/issues/291); README
-"Platform support"). The split, phase by phase: `:engine:api` (plain JVM — the playback engine the screens talk to),
+The same app runs on **Windows and Linux** ([#291](https://github.com/Hawkynt/MediaDroid/issues/291); README
+"Platform support"). The split: `:engine:api` (plain JVM — the playback engine the screens talk to),
 `:engine:android` (Media3 behind it), `:stage` (plain JVM — the picture stage's passes against an OpenGL ES interface,
 the shaders with it), `native/` (one CMake tree for the ncnn networks on Android, Windows and Linux), `:ui` (every
 screen in Compose Multiplatform's commonMain), `:engine:desktop` (FFmpeg, the stage's GLSL ES shaders on desktop
