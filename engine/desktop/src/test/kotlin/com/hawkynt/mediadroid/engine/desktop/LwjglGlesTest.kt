@@ -20,7 +20,11 @@ class LwjglGlesTest {
         assertEquals(GL43.GL_LINEAR, Gles.LINEAR)
         assertEquals(GL43.GL_CLAMP_TO_EDGE, Gles.CLAMP_TO_EDGE)
         assertEquals(GL43.GL_RGBA, Gles.RGBA)
+        assertEquals(GL43.GL_RGBA16F, Gles.RGBA16F)
         assertEquals(GL43.GL_UNSIGNED_BYTE, Gles.UNSIGNED_BYTE)
+        assertEquals(GL43.GL_HALF_FLOAT, Gles.HALF_FLOAT)
+        assertEquals(GL43.GL_FLOAT, Gles.FLOAT)
         assertEquals(GL43.GL_UNPACK_ALIGNMENT, Gles.UNPACK_ALIGNMENT)
+        assertEquals(GL43.GL_PACK_ALIGNMENT, Gles.PACK_ALIGNMENT)
     }
 }

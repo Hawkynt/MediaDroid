@@ -55,7 +55,19 @@ class RecordingGles(private val failing: String? = null) : Gles {
     override fun deleteTexture(texture: Int) = log("deleteTexture $texture")
     override fun texImage2D(internalFormat: Int, width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer?) =
         log("texImage $width x $height ${pixels?.remaining()}")
+    override fun texSubImage2D(width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer) =
+        log("texSubImage $width x $height ${pixels.remaining()}")
     override fun pixelStorei(name: Int, value: Int) = log("pixelStore $name $value")
+    override fun genFramebuffer() = next++.also { log("genFramebuffer $it") }
+    override fun deleteFramebuffer(framebuffer: Int) = log("deleteFramebuffer $framebuffer")
+    override fun framebufferTexture2D(texture: Int) = log("attach $texture")
+
+    /** What [readPixels] hands back: by default a picture whose every byte is [readValue]. */
+    var readValue: Byte = 0
+    override fun readPixels(width: Int, height: Int, into: ByteBuffer) {
+        log("read $width x $height")
+        for (i in 0 until width * height * 4) into.put(into.position() + i, readValue)
+    }
     override fun bindFramebuffer(framebuffer: Int) = log("framebuffer $framebuffer")
     override fun viewport(x: Int, y: Int, width: Int, height: Int) = log("viewport $x $y $width $height")
     override fun drawQuad(program: Int) = log("draw $program")

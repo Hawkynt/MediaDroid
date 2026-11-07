@@ -41,7 +41,15 @@ internal class LwjglGles(private val quad: () -> Int) : Gles {
     override fun deleteTexture(texture: Int) = glDeleteTextures(texture)
     override fun texImage2D(internalFormat: Int, width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer?) =
         glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, pixels)
+    override fun texSubImage2D(width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer) =
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, pixels)
     override fun pixelStorei(name: Int, value: Int) = glPixelStorei(name, value)
+    override fun genFramebuffer() = glGenFramebuffers()
+    override fun deleteFramebuffer(framebuffer: Int) = glDeleteFramebuffers(framebuffer)
+    override fun framebufferTexture2D(texture: Int) =
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0)
+    override fun readPixels(width: Int, height: Int, into: ByteBuffer) =
+        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, into)
     override fun bindFramebuffer(framebuffer: Int) = glBindFramebuffer(GL_FRAMEBUFFER, framebuffer)
     override fun viewport(x: Int, y: Int, width: Int, height: Int) = glViewport(x, y, width, height)
     override fun drawQuad(program: Int) {

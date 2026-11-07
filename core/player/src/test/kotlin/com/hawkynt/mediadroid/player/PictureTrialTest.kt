@@ -56,6 +56,11 @@ class PictureTrialTest {
             colorizer = passed
         }
 
+        var colorizerRefused = false
+        override fun refuseColorizer() {
+            colorizerRefused = true
+        }
+
         override fun dryRun(picture: PictureAdjustment): PictureCheck.DryRun? = dryRun.also { dryRuns += picture }
     }
 
@@ -235,6 +240,27 @@ class PictureTrialTest {
         assertEquals("GPU", fast.colorizer?.unit)
         assertTrue(check(colour, fast).keepsUp)
         assertEquals(listOf("DDCOLOR"), fast.tested)
+    }
+
+    @Test
+    fun `colour too slow or wrong on the device is refused for good, a fetch that failed is not`() {
+        val colour = PictureAdjustment(colorize = PictureAdjustment.Colorize.DDCOLOR)
+        val slow = FakeDevice(
+            outcome = NeuralSelfTest.Outcome.Ran(listOf(NeuralSelfTest.Timing("CPU", mapOf(256 to 1500.0)))),
+        )
+        check(colour, slow)
+        assertTrue(slow.colorizerRefused)
+        val wrong = FakeDevice(outcome = NeuralSelfTest.Outcome.Ran(emptyList()))
+        check(colour, wrong)
+        assertTrue(wrong.colorizerRefused)
+        val offline = FakeDevice(ready = false, fetches = false)
+        check(colour, offline)
+        assertFalse(offline.colorizerRefused)
+        val fast = FakeDevice(
+            outcome = NeuralSelfTest.Outcome.Ran(listOf(NeuralSelfTest.Timing("GPU", mapOf(256 to 120.0)))),
+        )
+        check(colour, fast)
+        assertFalse(fast.colorizerRefused)
     }
 
     @Test

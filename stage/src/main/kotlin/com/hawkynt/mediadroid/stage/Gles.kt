@@ -44,10 +44,21 @@ interface Gles {
 
     /** A 2D texture's storage, [pixels] its texels from the bottom row (null: left undefined). */
     fun texImage2D(internalFormat: Int, width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer?)
+
+    /** The bound 2D texture's texels from (0, 0) to [width] × [height] replaced by [pixels], from the bottom row. */
+    fun texSubImage2D(width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer)
     fun pixelStorei(name: Int, value: Int)
+    fun genFramebuffer(): Int
+    fun deleteFramebuffer(framebuffer: Int)
 
     /** Binds [framebuffer] (0: the window's) for drawing. */
     fun bindFramebuffer(framebuffer: Int)
+
+    /** [texture] as the bound framebuffer's colour. */
+    fun framebufferTexture2D(texture: Int)
+
+    /** The bound framebuffer's [width] × [height] pixels from (0, 0) as RGBA bytes into [into], the bottom row first. */
+    fun readPixels(width: Int, height: Int, into: ByteBuffer)
     fun viewport(x: Int, y: Int, width: Int, height: Int)
 
     /**
@@ -69,7 +80,11 @@ interface Gles {
         const val LINEAR = 0x2601
         const val CLAMP_TO_EDGE = 0x812F
         const val RGBA = 0x1908
+        const val RGBA16F = 0x881A
         const val UNSIGNED_BYTE = 0x1401
+        const val HALF_FLOAT = 0x140B
+        const val FLOAT = 0x1406
         const val UNPACK_ALIGNMENT = 0x0CF5
+        const val PACK_ALIGNMENT = 0x0D05
     }
 }

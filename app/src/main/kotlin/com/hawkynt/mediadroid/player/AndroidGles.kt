@@ -56,7 +56,19 @@ internal class AndroidGles : Gles {
     override fun deleteTexture(texture: Int) = GLES20.glDeleteTextures(1, intArrayOf(texture), 0)
     override fun texImage2D(internalFormat: Int, width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer?) =
         GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, pixels)
+    override fun texSubImage2D(width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer) =
+        GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, pixels)
     override fun pixelStorei(name: Int, value: Int) = GLES20.glPixelStorei(name, value)
+    override fun genFramebuffer(): Int {
+        GLES20.glGenFramebuffers(1, one, 0)
+        return one[0]
+    }
+    override fun deleteFramebuffer(framebuffer: Int) = GLES20.glDeleteFramebuffers(1, intArrayOf(framebuffer), 0)
+    override fun framebufferTexture2D(texture: Int) = GLES20.glFramebufferTexture2D(
+        GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, texture, 0,
+    )
+    override fun readPixels(width: Int, height: Int, into: ByteBuffer) =
+        GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, into)
     override fun bindFramebuffer(framebuffer: Int) = GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, framebuffer)
     override fun viewport(x: Int, y: Int, width: Int, height: Int) = GLES20.glViewport(x, y, width, height)
 

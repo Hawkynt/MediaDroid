@@ -3,6 +3,8 @@ package com.hawkynt.mediadroid.ui
 import android.content.Context
 import com.hawkynt.mediadroid.data.ModelStore
 import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.player.Colorizing
+import com.hawkynt.mediadroid.player.ModelFolder
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.NeuralModels
@@ -79,6 +81,16 @@ private class AndroidTrial(private val context: Context, private val store: Stat
         settings.neuralMotion = settings.neuralMotion + (network.name to passed.encode())
     }
 
+    override fun colorizerPassed() = settings.colorizerPassed
+
+    override fun selfTestColorizer() = NeuralTestService.selfTestColorizer(context)
+
+    override fun keepColorizer(passed: NeuralInterpolation.Passed) = save {
+        settings.neuralColorizer = passed.encode()
+    }
+
+    override fun refuseColorizer() = save { settings.neuralColorizerRefused = true }
+
     override fun dryRun(picture: PictureAdjustment): PictureCheck.DryRun? {
         val unit = if (settings.neuralUpscaling) {
             runCatching { NeuralUpscaler.Unit.valueOf(settings.neuralUnit) }.getOrNull()
@@ -87,6 +99,30 @@ private class AndroidTrial(private val context: Context, private val store: Stat
         }
         val motion = settings.neuralMotionOffered.associateWith { settings.neuralMotionPassed(it)!! }
         val enlargers = settings.neuralEnlargersOffered.associateWith { settings.neuralEnlargerPassed(it)!! }
-        return PictureChecker.dryRun(context, picture, unit, motion, enlargers)
+        return PictureChecker.dryRun(context, picture, unit, motion, enlargers, settings.colorizerPassed)
     }
+}
+
+/**
+ * The colourisers a video's picture offers (Colorizing.offered): DDColor where its self-test passed here, its files are
+ * on the device or they can be fetched — so its chip appears by itself once the files are published — but never on a
+ * device its test found too slow or wrong for it.
+ */
+@androidx.compose.runtime.Composable
+fun rememberColorizers(context: Context, store: StateStore): List<PictureAdjustment.Colorize> {
+    val settings = store.data.settings
+    val refused = settings.neuralColorizerRefused
+    val passed = settings.colorizerPassed != null
+    return androidx.compose.runtime.produceState(Colorizing.offered(passed && !refused), passed, refused) {
+        value = if (refused) {
+            Colorizing.offered(false)
+        } else {
+            withContext(Dispatchers.IO) {
+                Colorizing.offered(
+                    passed || ModelStore.ready(context, NeuralModels.DDCOLOR) ||
+                        ModelFolder.reachable(NeuralModels.DDCOLOR),
+                )
+            }
+        }
+    }.value
 }

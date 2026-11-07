@@ -1,6 +1,5 @@
 package com.hawkynt.mediadroid.engine.desktop
 
-import com.hawkynt.mediadroid.player.Colorizing
 import com.hawkynt.mediadroid.player.Deblock
 import com.hawkynt.mediadroid.player.Deinterlacer
 import com.hawkynt.mediadroid.player.DotCrawl
@@ -19,6 +18,7 @@ import com.hawkynt.mediadroid.player.ScreenWarp
 import com.hawkynt.mediadroid.player.TemporalDenoise
 import com.hawkynt.mediadroid.player.ToneMap
 import com.hawkynt.mediadroid.shaders.Shaders
+import com.hawkynt.mediadroid.stage.Colouring
 import com.hawkynt.mediadroid.stage.DrawTarget
 import com.hawkynt.mediadroid.stage.Passes
 import com.hawkynt.mediadroid.stage.StageTables
@@ -57,8 +57,10 @@ class GlStage(
     private var vao = 0
 
     // The passes as :stage runs them, on this context; the upscalers' among them.
-    private val passes = Passes(LwjglGles { vao })
+    private val gl = LwjglGles { vao }
+    private val passes = Passes(gl)
     private val upscaling = Upscaling(passes)
+    private val colouring = Colouring(gl, passes)
     private var obmcTable = 0
     private var noiseTable = 0
 
@@ -1152,83 +1154,16 @@ class GlStage(
         return into
     }
 
-    // Colouring (Colorizing): DDColor runs on a thread of its own, on the latest picture at 256 x 256 whenever it is
-    // free, so playback never waits on it; its results are smoothed over time and laid under every picture, a cut
-    // dropping the colour until the new scene's has come.
-    private val colorThread = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "colorize").apply { isDaemon = true }
-    }
-    private var colorJob: java.util.concurrent.Future<*>? = null
-    private var colorizerOpen: DesktopNeural.Colorizer? = null
-    private var colorizerFor: Pair<Neural, Boolean>? = null
-    private var colorLast: FloatArray? = null
-    private var colorCutAt = 0L
-    private var colorRuns = 0L
-    private val colorSmoother = Colorizing.Smoother()
-
-    // A finished run's colour and the cut count it was started at, handed from the colour thread.
-    @Volatile private var colorDone: Pair<FloatArray, Long>? = null
-
-    /** [from] in colour where the colouriser's test passed and a result is in; [from] itself otherwise. */
+    /**
+     * [from] in colour where the colouriser's test passed and a result is in (Colouring, on the unit the test passed
+     * on); [from] itself otherwise.
+     */
     private fun colored(from: Target): Target {
         val n = neural ?: return from
         val gpu = n.colorizer?.unit?.let { it == "GPU" } ?: return from
-        val size = Colorizing.SIZE
-        val small = target("colorSmall", size, size)
-        copy(from, small)
-        val rgba = read(small)
-        // Read back bottom row first, as the stage holds pictures; the network wants the top first.
-        val top = ByteBuffer.allocateDirect(size * size * 4)
-        for (y in 0 until size) {
-            rgba.limit((size - y) * size * 4).position((size - 1 - y) * size * 4)
-            top.put(rgba)
-        }
-        MemoryUtil.memFree(rgba)
-        top.flip()
-        val grey = Colorizing.input(top, size, size)
-        if (Colorizing.cut(colorLast, grey)) {
-            colorCutAt = ++colorRuns
-            colorSmoother.clear()
-        }
-        colorLast = grey
-        colorDone?.let { (ab, cutAt) ->
-            colorDone = null
-            // A result from before the last cut belongs to the scene before.
-            if (cutAt == colorCutAt) {
-                colorSmoother.add(ab, cut = colorSmoother.current == null)
-                uploadAb(colorSmoother.current!!)
-            }
-        }
-        if (colorJob?.isDone != false) {
-            val key = n to gpu
-            val cutAt = colorCutAt
-            colorJob = colorThread.submit {
-                if (colorizerFor != key) {
-                    colorizerOpen?.close()
-                    colorizerOpen = n.networks.colorizer(gpu)
-                    colorizerFor = key
-                }
-                colorizerOpen?.run(grey)?.let { colorDone = it to cutAt }
-            }
-        }
-        if (colorSmoother.current == null) return from
-        return pass("colorize.frag", target("colored", from.width, from.height, half = deep), from.texture,
-            listOf(target("colorAb", size, size, half = true).texture to "uAb"))
-    }
-
-    // The smoothed colour into the a-and-b texture: its rows turned back to the stage's, bottom first.
-    private fun uploadAb(ab: FloatArray) {
-        val size = Colorizing.SIZE
-        val plane = size * size
-        val texels = MemoryUtil.memAllocFloat(plane * 4)
-        for (y in 0 until size) for (x in 0 until size) {
-            val at = (size - 1 - y) * size + x
-            texels.put(ab[at]).put(ab[plane + at]).put(0f).put(1f)
-        }
-        texels.flip()
-        glBindTexture(GL_TEXTURE_2D, target("colorAb", size, size, half = true).texture)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, size, size, GL_RGBA, GL_FLOAT, texels)
-        MemoryUtil.memFree(texels)
+        return colouring.colored(from, n to gpu, { n.networks.colorizer(gpu)?.let { Colouring.network(it) } }) {
+            target("colored", from.width, from.height, half = deep)
+        } as Target
     }
 
     private fun idOf(picture: MediaReader.Picture): Long = pictureIds.getOrPut(picture) { ++nextId }
@@ -1581,7 +1516,7 @@ class GlStage(
         thread.submit {
             interpolatorOpen?.close()
             enlargerOpen?.close()
-            colorThread.submit { colorizerOpen?.close() }
+            colouring.close()
             // The buffers and shared textures outlive this context where a window shares its objects.
             if (ready) {
                 pbos.filter { it != 0 }.forEach(::glDeleteBuffers)
@@ -1591,7 +1526,6 @@ class GlStage(
             out?.let(MemoryUtil::memFree)
         }.get()
         thread.shutdown()
-        colorThread.shutdown()
         motion.close()
         denoiseMotion.close()
     }
