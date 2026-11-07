@@ -15,13 +15,15 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
 import androidx.media3.decoder.VideoDecoderOutputBuffer
-import com.hawkynt.mediadroid.imaging.Xbrz
 import com.hawkynt.mediadroid.shaders.Shaders
+import com.hawkynt.mediadroid.stage.DrawTarget
+import com.hawkynt.mediadroid.stage.Passes
+import com.hawkynt.mediadroid.stage.Upscaling
+import com.hawkynt.mediadroid.stage.WindowTarget
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.CountDownLatch
-import kotlin.math.ceil
 
 /**
  * The picture filters' own GL stage between the decoder and the screen, for what a colour matrix
@@ -73,31 +75,28 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val yuvTextures = IntArray(3)
     private var yuvProgram = 0
 
-    // Anime4K (see glsl/anime4k): its four convolution passes, the step back up to twice the size, and whether the
-    // graphics chip can draw into half-float textures, which the passes' values outside 0..1 need.
-    private val anime4kPrograms = IntArray(4)
-    private var anime4kDepthToSpace = 0
+    // The passes as :stage runs them (Passes), on this thread's context, the film grain and its seed handed to each;
+    // the upscalers' among them (Upscaling).
+    private val passes = Passes(AndroidGles(), grain = { grainNow }, seed = { seed })
+    private val upscalers = Upscaling(passes)
+
+    // Whether the graphics chip can draw into half-float textures, which Anime4K's and ACNet's values outside 0..1
+    // need, and Anime4K's programs built.
     private var halfTargets = false
 
-    // ACNet (see glsl/acnet): its eleven convolution passes and the pixel shuffle to twice the size — built when first
-    // picked, so the stage starts as quickly as ever; null until then, false where the chip cannot build them.
-    private val acnetPrograms = IntArray(11)
-    private var acnetShuffle = 0
+    // ACNet (see glsl/acnet): its programs built when first picked, so the stage starts as quickly as ever; null until
+    // then, false where the chip cannot build them.
     private var acnetBuilt: Boolean? = null
 
     private fun acnetReady(): Boolean = halfTargets && (acnetBuilt ?: runCatching {
-        listOf(
-            Shaders.ACNET_CONV_1, Shaders.ACNET_CONV_2, Shaders.ACNET_CONV_3, Shaders.ACNET_CONV_4,
-            Shaders.ACNET_CONV_5, Shaders.ACNET_CONV_6, Shaders.ACNET_CONV_7, Shaders.ACNET_CONV_8,
-            Shaders.ACNET_CONV_9, Shaders.ACNET_CONV_10, Shaders.ACNET_CONV_11,
-        ).forEachIndexed { i, fragment -> acnetPrograms[i] = program(Shaders.VIDEO_VERTEX, fragment) }
-        acnetShuffle = program(Shaders.VIDEO_VERTEX, Shaders.ACNET_PIXEL_SHUFFLE)
+        upscalers.build(PictureAdjustment.Upscaler.ACNET)
     }.isSuccess.also { acnetBuilt = it })
 
-    // xBRZ (see glsl/xbrz): its three passes, the table of its patterns' shares, and whether the programs built.
-    private val xbrzPrograms = IntArray(3)
-    private var xbrzTable = 0
+    // Whether xBRZ's programs built (see glsl/xbrz).
     private var xbrzReady = false
+
+    // Whether FSR runs its GLSL ES 3.00 passes (see setUp).
+    private var fsrEs3 = false
 
     // Real-ESRGAN (see NeuralUpscaler): opened on this thread on the unit the household's self-test chose, the
     // picture read back for its tiles, and the RGB texture at four times the size their output goes into.
@@ -356,15 +355,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private var noiseTexture = 0
     private var ditherNow = false
     private var sharpenProgram = 0
-    private var lanczosProgram = 0
-    private var gsrProgram = 0
     private var downscaleProgram = 0
-    private var ewaProgram = 0
-    private var ewaTable = 0
-    private var nisProgram = 0
-    private var nisTable = 0
-    private var easuProgram = 0
-    private var rcasProgram = 0
     private var blendProgram = 0
     private var temporalProgram = 0
 
@@ -1073,13 +1064,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteProgram(yuvProgram)
             GLES20.glDeleteProgram(yuvSplineProgram)
             krigPrograms.forEach { GLES20.glDeleteProgram(it) }
-            anime4kPrograms.forEach { GLES20.glDeleteProgram(it) }
-            GLES20.glDeleteProgram(anime4kDepthToSpace)
-            acnetPrograms.forEach { GLES20.glDeleteProgram(it) }
-            GLES20.glDeleteProgram(acnetShuffle)
+            passes.release()
             acnetBuilt = null
-            xbrzPrograms.forEach { GLES20.glDeleteProgram(it) }
-            GLES20.glDeleteTextures(1, intArrayOf(xbrzTable), 0)
             GLES20.glDeleteTextures(3, yuvTextures, 0)
             releaseWindow()
             GLES20.glDeleteProgram(copyProgram)
@@ -1120,15 +1106,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             if (y2yProgram != 0) GLES20.glDeleteProgram(y2yProgram)
             if (peakBuffers[0] != 0) GLES20.glDeleteBuffers(2, peakBuffers, 0)
             GLES20.glDeleteProgram(sharpenProgram)
-            GLES20.glDeleteProgram(lanczosProgram)
-            GLES20.glDeleteProgram(gsrProgram)
             GLES20.glDeleteProgram(downscaleProgram)
-            GLES20.glDeleteProgram(ewaProgram)
-            GLES20.glDeleteTextures(1, intArrayOf(ewaTable), 0)
-            GLES20.glDeleteProgram(nisProgram)
-            GLES20.glDeleteTextures(1, intArrayOf(nisTable), 0)
-            GLES20.glDeleteProgram(easuProgram)
-            GLES20.glDeleteProgram(rcasProgram)
             GLES20.glDeleteProgram(blendProgram)
             GLES20.glDeleteProgram(motionProgram)
             GLES20.glDeleteProgram(packProgram)
@@ -1250,9 +1228,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             ("GL_EXT_color_buffer_half_float" in extensions || "GL_EXT_color_buffer_float" in extensions)
         // A chip that cannot build Anime4K's programs gets FSR in its place rather than no picture at all.
         halfTargets = halfTargets && runCatching {
-            listOf(Shaders.ANIME4K_CONV_1, Shaders.ANIME4K_CONV_2, Shaders.ANIME4K_CONV_3, Shaders.ANIME4K_CONV_4)
-                .forEachIndexed { i, fragment -> anime4kPrograms[i] = program(Shaders.VIDEO_VERTEX, fragment) }
-            anime4kDepthToSpace = program(Shaders.VIDEO_VERTEX, Shaders.ANIME4K_DEPTH_TO_SPACE)
+            upscalers.build(PictureAdjustment.Upscaler.ANIME4K)
             // The mpv user shaders' compute passes write half floats, on a chip with compute shaders.
             MpvShaders.compute = es31
         }.isSuccess
@@ -1265,11 +1241,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     krigPrograms[i] = linked(program(Shaders.VIDEO_VERTEX_ES3, fragment))
                 }
         }.isSuccess
-        xbrzReady = runCatching {
-            listOf(Shaders.XBRZ_CORNERS, Shaders.XBRZ_DECISIONS, Shaders.XBRZ_SCALE)
-                .forEachIndexed { i, fragment -> xbrzPrograms[i] = program(Shaders.VIDEO_VERTEX, fragment) }
-            xbrzTable = xbrzTable()
-        }.isSuccess
+        xbrzReady = runCatching { upscalers.build(PictureAdjustment.Upscaler.XBRZ) }.isSuccess
         inputSurface = Surface(surfaceTexture)
 
         copyProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_COPY)
@@ -1277,23 +1249,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         deinterlaceProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DEINTERLACE)
         denoiseProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DENOISE)
         sharpenProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_SHARPEN)
-        lanczosProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_LANCZOS)
-        gsrProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_SGSR)
+        upscalers.build(PictureAdjustment.Upscaler.LANCZOS)
+        upscalers.build(PictureAdjustment.Upscaler.GSR)
         downscaleProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DOWNSCALE)
-        ewaProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_EWA)
-        ewaTable = ewaTable()
-        nisProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_NIS)
-        nisTable = nisTable()
+        upscalers.build(PictureAdjustment.Upscaler.EWA)
+        upscalers.build(PictureAdjustment.Upscaler.NIS)
         // FSR reads its floats' bits for AMD's approximate reciprocals where GLSL ES 3.00 can (about half the cost on
         // a Mali G77 at 576p); the GLSL ES 1.00 passes compute the same bits from the floats' fields elsewhere.
-        val fsrEs3 = es3 && runCatching {
-            easuProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_FSR_EASU_ES3))
-            rcasProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_FSR_RCAS_ES3))
-        }.isSuccess
-        if (!fsrEs3) {
-            easuProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_EASU)
-            rcasProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_FSR_RCAS)
-        }
+        fsrEs3 = es3 && runCatching { upscalers.build(PictureAdjustment.Upscaler.FSR, es3 = true) }.isSuccess
+        if (!fsrEs3) upscalers.build(PictureAdjustment.Upscaler.FSR, es3 = false)
         // Debanding draws libplacebo's own random numbers where GLSL ES 3.00 has unsigned integers for them; the
         // GLSL ES 1.00 pass draws others (see glsl/video/deband.frag).
         val debandEs3 = es3 && runCatching {
@@ -2565,75 +2529,23 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, sharpen)
                 source = sharpened
             }
-            val inSize: (Int) -> Unit = { p ->
-                GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uInSize"), width.toFloat(), height.toFloat())
-            }
             if (picture.upscaler == PictureAdjustment.Upscaler.LANCZOS) {
-                toScreen(outWidth, outHeight, adjusting)
-                run(lanczosProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                    inSize(p)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uAntiring"), ANTIRING)
-                }
+                upscalers.lanczos(source, toScreen(outWidth, outHeight, adjusting))
             } else if (picture.upscaler == PictureAdjustment.Upscaler.GSR) {
                 // Snapdragon GSR: one pass straight to the screen's size, any ratio.
-                toScreen(outWidth, outHeight, adjusting)
-                run(gsrProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
-            } else if (picture.upscaler == PictureAdjustment.Upscaler.NIS) {
-                // NVIDIA Image Scaling to at most twice the picture's size, as NIS allows, and the screen's own
-                // bilinear scaling for whatever is left.
-                val midWidth = minOf(outWidth, width * 2)
-                val midHeight = minOf(outHeight, height * 2)
+                upscalers.gsr(source, toScreen(outWidth, outHeight, adjusting))
+            } else if (picture.upscaler == PictureAdjustment.Upscaler.NIS ||
+                picture.upscaler == PictureAdjustment.Upscaler.EWA
+            ) {
+                // NVIDIA Image Scaling or EWA to at most twice the picture's size — as NIS allows, and EWA's 8 × 8 taps
+                // stay affordable — and the screen's own bilinear scaling for whatever is left.
+                val midWidth = Upscaling.twice(width, outWidth)
+                val midHeight = Upscaling.twice(height, outHeight)
                 val enlarged = frames[4].ensure(midWidth, midHeight, ditherNow)
-                enlarged.bind()
-                GLES20.glUseProgram(nisProgram)
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, nisTable)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(nisProgram, "uCoef"), 1)
-                val config = Nis.Config(NIS_SHARPNESS)
-                run(nisProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                    inSize(p)
-                    fun set(name: String, value: Float) =
-                        GLES20.glUniform1f(GLES20.glGetUniformLocation(p, name), value)
-                    GLES20.glUniform2f(
-                        GLES20.glGetUniformLocation(p, "uOutSize"), midWidth.toFloat(), midHeight.toFloat(),
-                    )
-                    // Divided here, as NVIDIA divides: exactly (see glsl/video/nis.frag).
-                    GLES20.glUniform2f(
-                        GLES20.glGetUniformLocation(p, "uScale"),
-                        width.toFloat() / midWidth, height.toFloat() / midHeight,
-                    )
-                    set("uDetectRatio", config.detectRatio)
-                    set("uDetectThres", config.detectThres)
-                    set("uMinContrastRatio", config.minContrastRatio)
-                    set("uRatioNorm", config.ratioNorm)
-                    set("uSharpStartY", config.sharpStartY)
-                    set("uSharpScaleY", config.sharpScaleY)
-                    set("uSharpStrengthMin", config.sharpStrengthMin)
-                    set("uSharpStrengthScale", config.sharpStrengthScale)
-                    set("uSharpLimitMin", config.sharpLimitMin)
-                    set("uSharpLimitScale", config.sharpLimitScale)
-                }
-                toScreen(outWidth, outHeight, adjusting)
-                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / midWidth, 1f / midHeight)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
-                }
-            } else if (picture.upscaler == PictureAdjustment.Upscaler.EWA) {
-                // EWA to at most twice the picture's size — its 8 × 8 taps stay affordable — and the screen's
-                // own bilinear scaling for whatever is left.
-                val midWidth = minOf(outWidth, width * 2)
-                val midHeight = minOf(outHeight, height * 2)
-                val enlarged = frames[4].ensure(midWidth, midHeight, ditherNow)
-                enlarged.bind()
-                GLES20.glUseProgram(ewaProgram)
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ewaTable)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(ewaProgram, "uTable"), 1)
-                run(ewaProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                    inSize(p)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uAntiring"), ANTIRING)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uRadius"), Ewa.RADIUS.toFloat())
+                if (picture.upscaler == PictureAdjustment.Upscaler.NIS) {
+                    upscalers.nis(source, enlarged)
+                } else {
+                    upscalers.ewa(source, enlarged)
                 }
                 toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
@@ -2642,27 +2554,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
                 }
             } else if (picture.upscaler == PictureAdjustment.Upscaler.ANIME4K && halfTargets) {
-                // Anime4K: four convolutions at the picture's size into half-float textures taking turns, then
-                // twice the size — the picture's bilinear doubling plus the detail the network adds — and the
-                // screen's own scaling for whatever is left.
-                var input = source
-                anime4kPrograms.forEachIndexed { i, program ->
-                    val target = frames[if (i % 2 == 0) ANIME4K_A else ANIME4K_B].ensure(width, height, half = true)
-                    target.bind()
-                    run(program, GLES20.GL_TEXTURE_2D, input.texture, identity) { p ->
-                        GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
-                    }
-                    input = target
-                }
+                // Anime4K: four convolutions at the picture's size, then twice the size, and the screen's own scaling
+                // for whatever is left.
                 val enlarged = frames[4].ensure(width * 2, height * 2, ditherNow)
-                enlarged.bind()
-                GLES20.glUseProgram(anime4kDepthToSpace)
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, input.texture)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(anime4kDepthToSpace, "uLast"), 1)
-                run(anime4kDepthToSpace, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uLastSize"), width.toFloat(), height.toFloat())
-                }
+                upscalers.anime4k(source, net(ANIME4K_A, width, height), net(ANIME4K_B, width, height), enlarged)
                 toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 0.5f / width, 0.5f / height)
@@ -2670,45 +2565,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
                 }
             } else if (picture.upscaler == PictureAdjustment.Upscaler.ACNET && acnetReady()) {
-                // ACNet: eleven convolutions at the picture's size over eight channels — a layer is two half-float
-                // textures, written one pass each, the layers taking turns between two pairs — then twice the size:
-                // the network's luma put into the picture's bilinear doubling, and the screen's own scaling for
-                // whatever is left.
-                val pairs = arrayOf(
-                    arrayOf(frames[ANIME4K_A], frames[ANIME4K_B]),
-                    arrayOf(frames[ACNET_C], frames[ACNET_D]),
-                )
-                acnetPrograms.forEachIndexed { i, program ->
-                    // The head (0) into the first pair, each body block (1 to 4) from one pair into the other, the
-                    // last convolution (5) into the second; every layer's two halves read the whole layer before.
-                    val layer = if (i < 2) 0 else (i - 2) / 2 + 1
-                    val into = pairs[layer % 2]
-                    val from = pairs[1 - layer % 2]
-                    into[i % 2].ensure(width, height, half = true).bind()
-                    if (layer > 0) {
-                        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, from[1].texture)
-                    }
-                    if (i == acnetPrograms.lastIndex) {
-                        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-                        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, source.texture)
-                    }
-                    val input = if (layer == 0) source.texture else from[0].texture
-                    run(program, GLES20.GL_TEXTURE_2D, input, identity) { p ->
-                        GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
-                        GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uTex1"), 1)
-                        GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPicture"), 2)
-                    }
-                }
+                // ACNet: eleven convolutions at the picture's size over two pairs of half-float frames (Anime4K's two
+                // and two more), then twice the size, and the screen's own scaling for whatever is left.
                 val enlarged = frames[4].ensure(width * 2, height * 2, ditherNow)
-                enlarged.bind()
-                GLES20.glUseProgram(acnetShuffle)
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, pairs[1][0].texture)
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(acnetShuffle, "uLast"), 1)
-                run(acnetShuffle, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uLastSize"), width.toFloat(), height.toFloat())
-                }
+                upscalers.acnet(
+                    source, net(ANIME4K_A, width, height), net(ANIME4K_B, width, height),
+                    net(ACNET_C, width, height), net(ACNET_D, width, height), enlarged,
+                )
                 toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
                     GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 0.5f / width, 0.5f / height)
@@ -2717,38 +2580,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 }
             } else if (picture.upscaler == PictureAdjustment.Upscaler.XBRZ && xbrzReady) {
                 // xBRZ by the whole factor that reaches the screen's size, 2 to 6, the screen's own scaling then
-                // bringing it the rest of the way: the corners where pixels meet, what each pixel draws in its
-                // corners, then the enlarged picture.
-                val factor = ceil(minOf(outWidth.toFloat() / width, outHeight.toFloat() / height)).toInt()
-                    .coerceIn(Xbrz.FACTORS)
-                val size: (Int) -> Unit = { p ->
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-                }
+                // bringing it the rest of the way.
+                val factor = Upscaling.xbrzFactor(width, height, outWidth, outHeight)
                 val corners = frames[XBRZ_CORNERS].ensure(width + 1, height + 1)
                 val decisions = frames[XBRZ_DECISIONS].ensure(width, height)
                 val enlarged = frames[4].ensure(width * factor, height * factor, ditherNow)
-                exact(source.texture, corners.texture, decisions.texture) {
-                    corners.bind()
-                    run(xbrzPrograms[0], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
-                    decisions.bind()
-                    GLES20.glUseProgram(xbrzPrograms[1])
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, corners.texture)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[1], "uCorners"), 1)
-                    run(xbrzPrograms[1], GLES20.GL_TEXTURE_2D, source.texture, identity, size)
-                    enlarged.bind()
-                    GLES20.glUseProgram(xbrzPrograms[2])
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, decisions.texture)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uDecisions"), 1)
-                    GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, xbrzTable)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(xbrzPrograms[2], "uTable"), 2)
-                    run(xbrzPrograms[2], GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                        size(p)
-                        GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uFactor"), factor.toFloat())
-                    }
-                }
+                upscalers.xbrz(source, corners, decisions, enlarged, factor)
                 toScreen(outWidth, outHeight, adjusting)
                 run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
                     val texelX = 1f / (width * factor)
@@ -2786,13 +2623,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             } else {
                 // FSR 1: edge-adaptive upscaling to the screen's size, then contrast-adaptive sharpening on it.
                 val enlarged = frames[4].ensure(outWidth, outHeight, ditherNow)
-                enlarged.bind()
-                run(easuProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, inSize)
-                toScreen(outWidth, outHeight, adjusting)
-                run(rcasProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / outWidth, 1f / outHeight)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharp"), RCAS_SHARPNESS)
-                }
+                upscalers.easu(source, enlarged, fsrEs3)
+                upscalers.rcas(enlarged, toScreen(outWidth, outHeight, adjusting), fsrEs3)
             }
             // Below full strength the plain picture, as the screen's own scaling gives it, is laid over the
             // upscaled one with that share: the graphics chip mixes the two as it draws.
@@ -3181,32 +3013,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
-     * The EWA weights by distance (see [Ewa]) as a texture of [EWA_TABLE_SIZE] × 1: each weight shifted
-     * and scaled into 0..1 and kept to 16 bits over the red and green channels.
-     */
-    private fun ewaTable(): Int {
-        val weights = Ewa.table(EWA_TABLE_SIZE)
-        val bytes = ByteBuffer.allocateDirect(EWA_TABLE_SIZE * 4).order(ByteOrder.nativeOrder())
-        for (w in weights) {
-            val v = (((w + EWA_OFFSET) / EWA_SPAN) * 65535f).toInt().coerceIn(0, 65535)
-            bytes.put((v shr 8).toByte()).put((v and 0xFF).toByte()).put(0).put(0)
-        }
-        bytes.position(0)
-        val ids = IntArray(1)
-        GLES20.glGenTextures(1, ids, 0)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
-        GLES20.glTexImage2D(
-            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, EWA_TABLE_SIZE, 1, 0, GLES20.GL_RGBA,
-            GLES20.GL_UNSIGNED_BYTE, bytes,
-        )
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        return ids[0]
-    }
-
-    /**
      * The picture's neural network on the unit its self-test chose, opened here on first use or when either changes;
      * null while it is off.
      */
@@ -3425,75 +3231,18 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
-     * xBRZ's patterns (see [Xbrz.weights]) as a [XBRZ_TABLE_WIDTH] × 25 texture: a row per factor from 2 and
-     * pattern, a texel per cell of the block, its share of the neighbour's colour as m in red and n in green.
-     */
-    private fun xbrzTable(): Int {
-        val rows = Xbrz.FACTORS.count() * Xbrz.Pattern.entries.size
-        val bytes = ByteBuffer.allocateDirect(XBRZ_TABLE_WIDTH * rows * 4).order(ByteOrder.nativeOrder())
-        for (factor in Xbrz.FACTORS) for (pattern in Xbrz.Pattern.entries) {
-            val weights = Xbrz.weights(factor, pattern)
-            for (cell in 0 until XBRZ_TABLE_WIDTH) {
-                val m = if (cell < factor * factor) weights[cell * 2] else 0
-                val n = if (cell < factor * factor) weights[cell * 2 + 1] else 1
-                bytes.put(m.toByte()).put(n.toByte()).put(0).put(0)
-            }
-        }
-        bytes.position(0)
-        val ids = IntArray(1)
-        GLES20.glGenTextures(1, ids, 0)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
-        GLES20.glTexImage2D(
-            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, XBRZ_TABLE_WIDTH, rows, 0, GLES20.GL_RGBA,
-            GLES20.GL_UNSIGNED_BYTE, bytes,
-        )
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        return ids[0]
-    }
-
-    /**
-     * NIS's two filter tables (see [Nis]) as a 6 × 64 texture: per phase a row, per tap a texel holding the
-     * scaling tap in red and green and the sharpening tap in blue and alpha — one fetch for both — each
-     * shifted and scaled into 0..1 and kept to 16 bits.
-     */
-    private fun nisTable(): Int {
-        val bytes = ByteBuffer.allocateDirect(6 * Nis.PHASES * 4).order(ByteOrder.nativeOrder())
-        fun put(c: Float) {
-            val v = (((c + NIS_OFFSET) / NIS_SPAN) * 65535f + 0.5f).toInt().coerceIn(0, 65535)
-            bytes.put((v shr 8).toByte()).put((v and 0xFF).toByte())
-        }
-        for (phase in 0 until Nis.PHASES) {
-            for (tap in 0 until 6) {
-                put(Nis.scaleCoefficient(phase, tap))
-                put(Nis.sharpenCoefficient(phase, tap))
-            }
-        }
-        bytes.position(0)
-        val ids = IntArray(1)
-        GLES20.glGenTextures(1, ids, 0)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
-        GLES20.glTexImage2D(
-            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, 6, Nis.PHASES, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes,
-        )
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        return ids[0]
-    }
-
-    /**
      * Draws the picture at the screen's size from here on: onto the screen, or with a colour correction set or the
      * picture to be dithered ([adjusting]) into the frame those last passes read (see output), in half floats for the
      * dithering.
      */
-    private fun toScreen(width: Int, height: Int, adjusting: Boolean) {
+    private fun toScreen(width: Int, height: Int, adjusting: Boolean): DrawTarget {
         onWindow(width, height)
-        if (adjusting) frames[ADJUSTED].ensure(width, height, ditherNow).bind()
+        if (!adjusting) return WindowTarget(width, height)
+        return frames[ADJUSTED].ensure(width, height, ditherNow).also { it.bind() }
     }
+
+    /** Frame [slot] as one of a network's half-float layers at [width] × [height] (Anime4K, ACNet). */
+    private fun net(slot: Int, width: Int, height: Int): Frame = frames[slot].ensure(width, height, half = true)
 
     /** Draws onto the screen from here on. */
     private fun onWindow(width: Int, height: Int) {
@@ -3560,12 +3309,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /** A texture with its framebuffer, sized on demand. */
-    private class Frame {
-        var texture = 0
-        var framebuffer = 0
-        var width = 0
+    private class Frame : DrawTarget {
+        override var texture = 0
+        override var framebuffer = 0
+        override var width = 0
             private set
-        var height = 0
+        override var height = 0
             private set
 
         /** Whether the texture holds half floats (values outside 0..1, see Anime4K) rather than bytes. */
@@ -3748,9 +3497,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()
 
-        /** Width of xBRZ's pattern table, one texel a cell of the largest block — as glsl/xbrz/scale.frag reads it. */
-        private const val XBRZ_TABLE_WIDTH = 36
-
         /** Motion runs two frames behind: a twelfth of a second at 24 frames a second. */
         private const val MAX_MOTION_LATENCY_MS = 250
 
@@ -3768,9 +3514,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** The vector texture's zero: half-vectors of -32..32 kept as bytes around it. */
         private const val VECTOR_ZERO = 128
-
-        /** RCAS strength on AMD's scale of stops below full sharpness (FsrRcasCon): 0.2 stops, exp2(-0.2). */
-        private const val RCAS_SHARPNESS = 0.8705506f
 
         private val QUAD: FloatBuffer = floats(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
         private val QUAD_TEX: FloatBuffer = floats(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
@@ -3806,25 +3549,5 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
         /** Pictures from FFmpeg waiting to be drawn, beyond which the oldest is let go. */
         private const val MAX_YUV_QUEUED = 4
-
-
-        /** NIS's sharpness, on its own 0..1 scale: the middle, NVIDIA's neutral setting. */
-        private const val NIS_SHARPNESS = 0.5f
-
-        /** How NIS's filter taps (-0.62..1.2) map into 0..1 in its table. */
-        private const val NIS_OFFSET = 1f
-        private const val NIS_SPAN = 2.5f
-
-        /** How many distances the EWA table holds, and how its weights (-0.25..1) map into 0..1. */
-        /**
-         * How far Lanczos and EWA pull their result into the range of the four nearest pixels: halfway, so ringing
-         * at hard edges is held back without flattening fine detail.
-         */
-        private const val ANTIRING = 0.5f
-
-        private const val EWA_TABLE_SIZE = 512
-        private const val EWA_OFFSET = 0.25f
-        private const val EWA_SPAN = 1.25f
-
     }
 }

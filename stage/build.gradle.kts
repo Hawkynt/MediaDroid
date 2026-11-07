@@ -8,6 +8,13 @@ kotlin {
     jvmToolchain(21)
 }
 
+dependencies {
+    // The picture's rules the passes follow (PictureAdjustment, Nis, Ewa, Dither …), and xBRZ's patterns.
+    api(project(":core:player"))
+    implementation(project(":core:imaging"))
+    testImplementation(libs.junit)
+}
+
 /**
  * The shaders under src/main/glsl compiled in: one Kotlin string constant per `.vert`, `.frag`, `.agsl` or `.comp`
  * (an ncnn compute shader, handed to the native part) file, named

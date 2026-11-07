@@ -81,3 +81,14 @@ tasks.register<JavaExec>("probe") {
     args(providers.gradleProperty("folder").getOrElse("."))
     dependsOn("testClasses")
 }
+
+// What the stage draws, a digest per case, into a file: ./gradlew :engine:desktop:stageDigests -Pout=<file>, before
+// and after a change that should draw the same pixels (StageDigests).
+tasks.register<JavaExec>("stageDigests") {
+    group = "verification"
+    description = "Writes a digest of what the stage draws for every pass and its variants"
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.hawkynt.mediadroid.engine.desktop.StageDigestsKt")
+    args(providers.gradleProperty("out").getOrElse(layout.buildDirectory.file("stage-digests.txt").get().asFile.path))
+    dependsOn("testClasses")
+}
