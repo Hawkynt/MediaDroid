@@ -46,7 +46,8 @@ class MediaReader(
      * A decoded picture: [rgba] is [width] × [height] × 4 bytes, rows from the top — or, for an HDR video ([hdr] its
      * transfer), its coded BT.2020 values at 16 bits, 8 bytes a pixel (little-endian), for the stage to tone-map.
      * [planes]: the 4:2:0 frame it was converted from, where the reader was asked to keep them ([keepPlanes]) — for the
-     * stage to enlarge its chroma itself.
+     * stage to enlarge its chroma itself. [palColour]: the video's colour tags name PAL's colour
+     * ([MediaReader.palColour]).
      */
     class Picture(
         val ptsMs: Long,
@@ -55,6 +56,7 @@ class MediaReader(
         val rgba: ByteArray,
         val hdr: ToneMap.Transfer? = null,
         val planes: Planes? = null,
+        val palColour: Boolean = false,
     ) {
         /** The picture as 8-bit RGBA: an HDR one's coded values cut to 8 bits, untone-mapped (no stage to map it). */
         fun eightBit(): Picture =
@@ -183,6 +185,12 @@ class MediaReader(
     /** The picture's frames a second (the stream's average), 0 where the file does not say or has no picture. */
     val frameRate: Float
 
+    /**
+     * Whether the video's colour tags name PAL's colour — BT.470 System B/G primaries or transfer (FFmpeg's
+     * `bt470bg`, `gamma28`) — which at NTSC's rate and line count is PAL-M, for the dot-crawl comb (DotCrawl).
+     */
+    val palColour: Boolean
+
     /** The file's video, audio and subtitle streams as tracks, id the stream's index. */
     val tracks: List<Track>
 
@@ -246,6 +254,10 @@ class MediaReader(
             avutil.AVCOL_TRC_SMPTE2084 -> ToneMap.Transfer.PQ
             avutil.AVCOL_TRC_ARIB_STD_B67 -> ToneMap.Transfer.HLG
             else -> null
+        }
+        // The colour matrix is left out: BT.470 B/G's and SMPTE 170M's are the same, and files swap their tags.
+        palColour = videoIndex >= 0 && format.streams(videoIndex).codecpar().let {
+            it.color_primaries() == avutil.AVCOL_PRI_BT470BG || it.color_trc() == avutil.AVCOL_TRC_GAMMA28
         }
         frameRate = if (videoIndex < 0) 0f else {
             val rate = format.streams(videoIndex).avg_frame_rate()
@@ -597,7 +609,7 @@ class MediaReader(
         val data: BytePointer = rgbaFrame.data(0)
         for (y in 0 until h) data.position((y * stride).toLong()).get(out, y * w * bytes, w * bytes)
         data.position(0)
-        return Picture(ptsMs, w, h, out, hdr, if (keepPlanes && !deep) planes(frame, w, h) else null)
+        return Picture(ptsMs, w, h, out, hdr, if (keepPlanes && !deep) planes(frame, w, h) else null, palColour)
     }
 
     /**

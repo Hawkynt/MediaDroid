@@ -669,6 +669,79 @@ class GlStageTest {
         assertTrue(!expected.contentEquals(rgb(frames[2])))
     }
 
+    /**
+     * Pictures [every] ms apart with a residue a quarter turn on per picture at the same place ([step] pictures to the
+     * quarter turn: 1 at frame rate, 2 bobbed to the fields), a stripe lit in the last one only, which the comb must
+     * leave; [palColour] as the file's tags say.
+     */
+    private fun quarterTurns(w: Int, h: Int, count: Int, every: Long, step: Int, palColour: Boolean) =
+        (0 until count).map { k ->
+            MediaReader.Picture(k * every, w, h, ByteArray(w * h * 4) { i ->
+                val x = i / 4 % w
+                val y = i / 4 / w
+                val residue = intArrayOf(6, 3, -6, -3)[(x + y + k / step) % 4]
+                if (i % 4 == 3) -1 else (120 + x + residue + if (x in 20..23 && k == count - 1) 60 else 0).toByte()
+            }, palColour = palColour)
+        }
+
+    private fun worst(out: MediaReader.Picture, expected: ByteArray): Int {
+        var worst = 0
+        for (i in 0 until out.width * out.height) for (c in 0..2) {
+            worst = maxOf(worst, abs((out.rgba[i * 4 + c].toInt() and 255) - (expected[i * 3 + c].toInt() and 255)))
+        }
+        return worst
+    }
+
+    private fun rgbOf(p: MediaReader.Picture) = ByteArray(p.width * p.height * 3) { p.rgba[it / 3 * 4 + it % 3] }
+
+    @Test
+    fun `a PAL-M capture is combed as PAL where its tags say PAL colour or the household chose PAL-M`() {
+        val w = 48
+        val h = 32
+        val threshold = requireNotNull(DotCrawl.threshold(0.5f))
+        for ((tagged, system) in listOf(
+            true to PictureAdjustment.ColourSystem.AUTO,
+            false to PictureAdjustment.ColourSystem.PAL_M,
+        )) {
+            // 29.97 frames a second: NTSC's rate, PAL's colour.
+            val frames = quarterTurns(w, h, 4, 33, 1, tagged)
+            val look = PictureAdjustment(dotCrawl = 0.5f, colourSystem = system)
+            val combed = stage.process(Moment(frames[2], frames[1], frames[3], earlier = frames[0]), look, w, h)
+            val expected = DotCrawl.applyPal(
+                rgbOf(frames[0]), rgbOf(frames[1]), rgbOf(frames[2]), rgbOf(frames[3]), w, h, threshold,
+            )
+            assertTrue("$system: off by ${worst(combed, expected)}", worst(combed, expected) <= 1)
+            assertTrue(!expected.contentEquals(rgbOf(frames[2])))
+        }
+        // Untagged and left to itself, the same capture is taken for NTSC.
+        val frames = quarterTurns(w, h, 4, 33, 1, false)
+        val ntsc = stage.process(
+            Moment(frames[2], frames[1], frames[3], earlier = frames[0]), PictureAdjustment(dotCrawl = 0.5f), w, h,
+        )
+        val expected = DotCrawl.apply(rgbOf(frames[1]), rgbOf(frames[2]), rgbOf(frames[3]), w, h, threshold)
+        assertTrue("off by ${worst(ntsc, expected)}", worst(ntsc, expected) <= 1)
+    }
+
+    @Test
+    fun `a PAL capture bobbed to its fields is combed per field as the reference combs it`() {
+        val w = 48
+        val h = 32
+        // 50 pictures a second, the residue a quarter turn on every two (the same field a frame later).
+        val pictures = quarterTurns(w, h, 7, 20, 2, false)
+        val look = PictureAdjustment(dotCrawl = 0.5f)
+        val moment = Moment(
+            pictures[6], pictures[5], null, earlier = pictures[4],
+            older = listOf(pictures[3], pictures[2], pictures[1], pictures[0]),
+        )
+        val out = stage.process(moment, look, w, h)
+        val expected = DotCrawl.applyPalFields(
+            rgbOf(pictures[0]), rgbOf(pictures[2]), rgbOf(pictures[4]), rgbOf(pictures[6]), w, h,
+            requireNotNull(DotCrawl.threshold(look.dotCrawl)),
+        )
+        assertTrue("off by ${worst(out, expected)}", worst(out, expected) <= 1)
+        assertTrue(!expected.contentEquals(rgbOf(pictures[6])))
+    }
+
     @Test
     fun `temporal denoising moves the pictures either side along the motion, as the reference does`() {
         val w = 256

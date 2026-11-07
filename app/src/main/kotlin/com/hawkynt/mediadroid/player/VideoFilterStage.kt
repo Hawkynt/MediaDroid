@@ -404,9 +404,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     // first, with when each was due; the picture shown is the middle one, one frame behind.
     private val history = intArrayOf(8, 9, 10)
 
-    // The frame before the oldest of those (frames[EARLIEST] or one of [8] to [10], taking turns with them), for PAL's
-    // dot-crawl comb, which reads the frame two before the one shown (DotCrawl).
-    private var earliest = EARLIEST
+    // The frames before the oldest of those, newest first (frames[EARLIEST] on, or ones of [8] to [10], taking turns
+    // with them), for the dot-crawl comb (DotCrawl): PAL's reads the frame two before the one shown, the first; its
+    // comb per field, for a capture bobbed to its fields, the same field's back to six before, all [OLDER] — which
+    // take turns only while it runs ([olderUsed]), so the frames for them are drawn into only then. [olderCount] of
+    // them hold frames of this stretch of playback.
+    private val older = IntArray(OLDER) { EARLIEST + it }
+    private var olderUsed = 1
+    private var olderCount = 0
     private val historyAt = LongArray(3)
     private var historyCount = 0
     // The frames' interval, averaged: decoders hand frames over on the screen's refreshes, so one gap
@@ -1340,6 +1345,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
+     * The dot-crawl comb's standard for [picture] (DotCrawl.Standard): from the frames' interval and its colour system
+     * as chosen; no colour tags reach the stage here.
+     */
+    private fun dotCrawlStandard(picture: PictureAdjustment): DotCrawl.Standard =
+        DotCrawl.Standard.of(frameIntervalNs / 1e6f, picture.colourSystem, palColour = false)
+
+    /**
      * A temporal deinterlacer — YADIF, BWDIF, Greedy HM, Greedy 2-Frame, Adaptive (see
      * [PictureAdjustment.Deinterlace]): a [fresh] frame joins the last three, and the one before it is shown with a
      * field rebuilt from its neighbours — or, Adaptive on a still picture, woven as it is — one frame behind, which
@@ -1353,6 +1365,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         fresh: Boolean,
         secondField: Boolean,
     ): Frame {
+        // The frames before the history take turns back to six before only while the comb runs per field.
+        olderUsed = if (picture.dotCrawl > 0f && dotCrawlStandard(picture) == DotCrawl.Standard.PAL_FIELDS) OLDER else 1
         if (fresh || historyCount == 0) {
             val afresh = remember(width, height)
             if (framesToJudge > 0) judge(width, height)
@@ -1380,13 +1394,21 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         deinterlaceLatencyMs = intervalMs.toInt().coerceIn(0, MAX_LATENCY_MS)
         deinterlaceFrames = if (historyCount >= 2) 1f else 0f
         val woven = frames[2].ensure(width, height, deepInput(picture))
-        // Dot crawl and rainbows combed out of the frame shown, against its neighbours as decoded (DotCrawl); a PAL
-        // capture (a frame every 40 ms) against the frame two before as well.
+        // Dot crawl and rainbows combed out of the frame shown, against its neighbours as decoded (DotCrawl), the
+        // standard from the rate and the household's choice (Media3 tells BT.470 B/G's colour tags from NTSC's no
+        // more than the rate does, so PAL-M is chosen by hand here): NTSC's against the frames either side, PAL's and
+        // PAL-M's against the frame two before as well, per field (a capture bobbed to its fields) against the same
+        // field's frames two, four and six before (DotCrawl.applyPalFields).
         val combed = DotCrawl.threshold(picture.dotCrawl)?.let { threshold ->
             val into = frames[DOT_CRAWL].ensure(width, height, deepInput(picture))
-            val pal = DotCrawl.Standard.forInterval(frameIntervalNs / 1e6f) == DotCrawl.Standard.PAL
-            val earlier = if (historyCount >= 4) frames[earliest] else prev
-            restoration.dotCrawl(cur, prev, next, if (pal) earlier else null, into, threshold)
+            fun before(k: Int) = if (olderCount > k) frames[older[k]] else null
+            when (dotCrawlStandard(picture)) {
+                DotCrawl.Standard.NTSC -> restoration.dotCrawl(cur, prev, next, null, into, threshold)
+                DotCrawl.Standard.PAL -> restoration.dotCrawl(cur, prev, next, before(0) ?: prev, into, threshold)
+                DotCrawl.Standard.PAL_FIELDS -> restoration.dotCrawl(
+                    cur, before(0) ?: cur, before(4) ?: cur, before(2) ?: cur, into, threshold,
+                )
+            }
             into
         } ?: cur
         // Temporal denoising on the frame shown, against its neighbours as decoded, before any deinterlacing: each
@@ -1669,9 +1691,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     }
 
     /**
-     * A fresh decoded frame joins the last three (the one before them kept as the earliest), with when it was due;
-     * returns whether the history started afresh — after a seek, a stall or a new size the frames before are no
-     * neighbours.
+     * A fresh decoded frame joins the last three (the one before them kept as the first of the [older] ones, those
+     * before it moving back), with when it was due; returns whether the history started afresh — after a seek, a stall
+     * or a new size the frames before are no neighbours.
      * Leaves the newest frame's framebuffer bound.
      */
     private fun remember(width: Int, height: Int): Boolean {
@@ -1682,8 +1704,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         } else {
             frameIntervalNs = if (frameIntervalNs == 0L) step else (frameIntervalNs * 7 + step) / 8
         }
-        val oldest = earliest
-        earliest = history[0]
+        // The oldest of the three moves on to the older ones, which hold one more frame where it held one.
+        val moving = historyCount >= 3
+        olderCount = olderCount.coerceAtMost(olderUsed)
+        val oldest = older[olderUsed - 1]
+        for (k in olderUsed - 1 downTo 1) older[k] = older[k - 1]
+        older[0] = history[0]
         history[0] = history[1]
         history[1] = history[2]
         history[2] = oldest
@@ -1703,6 +1729,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         newest.ensure(width, height)
         copyInput(newest)
         newest.bind()
+        olderCount = if (afresh) 0 else if (moving) minOf(olderCount + 1, olderUsed) else olderCount
         historyCount = minOf(historyCount + 1, 4)
         return afresh
     }
@@ -2847,11 +2874,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         /** The frame shown with its dot crawl and rainbows combed out (see DotCrawl). */
         private const val DOT_CRAWL = TEMPORAL_DENOISED + 1
 
-        /** A fourth frame for the temporal history, taking turns with frames[8] to [10] (see earliest). */
+        /** The frames before the temporal history, taking turns with frames[8] to [10] (see older): OLDER of them. */
         private const val EARLIEST = DOT_CRAWL + 1
 
+        /** How many frames before the temporal history are kept: back to the sixth before the one shown. */
+        private const val OLDER = 5
+
         /** The picture in colour (see coloured). */
-        private const val COLOURED = EARLIEST + 1
+        private const val COLOURED = EARLIEST + OLDER
 
         /** 10-bit limited-range BT.2020 YUV to RGB, for the decoder's HDR frames read as YUV (copy-y2y-es3.frag). */
         private val BT2020_TEN_BIT = YuvMatrix.BT2020.toRgbTenBit()
