@@ -32,12 +32,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hawkynt.mediadroid.R
+import com.hawkynt.mediadroid.ui.resources.Res
+import com.hawkynt.mediadroid.ui.resources.ic_folder_open
+import com.hawkynt.mediadroid.ui.resources.logo_mark
+import org.jetbrains.compose.resources.painterResource
 
 /**
  * First start, and whenever the media folder is missing or being changed: grant file access, then
@@ -70,7 +72,7 @@ fun OnboardingScreen(
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Image(painterResource(R.drawable.logo_mark), contentDescription = null, modifier = Modifier.size(112.dp))
+            Image(painterResource(Res.drawable.logo_mark), contentDescription = null, modifier = Modifier.size(112.dp))
             Spacer(Modifier.height(16.dp))
             Text("MediaDroid", fontSize = 40.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
@@ -107,7 +109,7 @@ fun OnboardingScreen(
                     Spacer(Modifier.width(12.dp))
                     Text("Reading your library…", fontSize = 20.sp)
                 } else {
-                    Icon(painterResource(R.drawable.ic_folder_open), contentDescription = null)
+                    Icon(painterResource(Res.drawable.ic_folder_open), contentDescription = null)
                     Spacer(Modifier.width(12.dp))
                     Text("Choose media folder", fontSize = 20.sp)
                 }
@@ -172,7 +174,7 @@ fun LoadingScreen() {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Image(painterResource(R.drawable.logo_mark), contentDescription = null, modifier = Modifier.size(96.dp))
+        Image(painterResource(Res.drawable.logo_mark), contentDescription = null, modifier = Modifier.size(96.dp))
         Spacer(Modifier.height(24.dp))
         CircularProgressIndicator()
         Spacer(Modifier.height(16.dp))

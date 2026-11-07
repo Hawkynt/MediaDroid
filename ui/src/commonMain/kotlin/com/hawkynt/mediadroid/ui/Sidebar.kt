@@ -46,12 +46,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hawkynt.mediadroid.R
+import com.hawkynt.mediadroid.ui.resources.Res
+import com.hawkynt.mediadroid.ui.resources.ic_filter_list
+import com.hawkynt.mediadroid.ui.resources.ic_folder_open
+import com.hawkynt.mediadroid.ui.resources.ic_menu
+import com.hawkynt.mediadroid.ui.resources.ic_menu_open
+import com.hawkynt.mediadroid.ui.resources.ic_movie
+import com.hawkynt.mediadroid.ui.resources.ic_tv
+import com.hawkynt.mediadroid.ui.resources.logo_mark
+import org.jetbrains.compose.resources.painterResource
 import com.hawkynt.mediadroid.library.LibrarySection
 import com.hawkynt.mediadroid.ui.theme.focusClickable
 
@@ -73,6 +80,8 @@ fun Sidebar(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
     resume: ResumeSpot? = null,
+    /** Whether the Files browser is offered; a platform without it yet leaves it out. */
+    files: Boolean = true,
 ) {
     val width by animateDpAsState(if (expanded) ExpandedWidth else CollapsedWidth, label = "sidebar-width")
     Column(modifier = modifier.width(width).background(MaterialTheme.colorScheme.surface)) {
@@ -88,7 +97,7 @@ fun Sidebar(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(56.dp)) {
                     SidebarButton(
-                        painter = painterResource(if (expanded) R.drawable.ic_menu_open else R.drawable.ic_menu),
+                        painter = painterResource(if (expanded) Res.drawable.ic_menu_open else Res.drawable.ic_menu),
                         label = null,
                         description = if (expanded) "Collapse menu" else "Expand menu",
                         selected = false,
@@ -97,7 +106,7 @@ fun Sidebar(
                     AnimatedVisibility(expanded, enter = fadeIn(), exit = fadeOut()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Spacer(Modifier.width(8.dp))
-                            Image(painterResource(R.drawable.logo_mark), contentDescription = null, modifier = Modifier.size(32.dp))
+                            Image(painterResource(Res.drawable.logo_mark), contentDescription = null, modifier = Modifier.size(32.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("MediaDroid", fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                         }
@@ -106,14 +115,14 @@ fun Sidebar(
                 Spacer(Modifier.height(8.dp))
 
                 SidebarItem(
-                    painter = painterResource(R.drawable.ic_movie),
+                    painter = painterResource(Res.drawable.ic_movie),
                     label = "Movies",
                     expanded = expanded,
                     selected = (current as? Screen.Browse)?.section == LibrarySection.MOVIES,
                     onClick = { onNavigate(Screen.Browse(LibrarySection.MOVIES)) },
                 )
                 SidebarItem(
-                    painter = painterResource(R.drawable.ic_tv),
+                    painter = painterResource(Res.drawable.ic_tv),
                     label = "TV Shows",
                     expanded = expanded,
                     selected = (current as? Screen.Browse)?.section == LibrarySection.SHOWS,
@@ -134,13 +143,15 @@ fun Sidebar(
                     onClick = { onNavigate(Screen.Places(PlaceKind.YEARS)) },
                 )
 
-                SidebarItem(
-                    painter = painterResource(R.drawable.ic_folder_open),
-                    label = "Files",
-                    expanded = expanded,
-                    selected = current is Screen.Files,
-                    onClick = { onNavigate(Screen.Files()) },
-                )
+                if (files) {
+                    SidebarItem(
+                        painter = painterResource(Res.drawable.ic_folder_open),
+                        label = "Files",
+                        expanded = expanded,
+                        selected = current is Screen.Files,
+                        onClick = { onNavigate(Screen.Files()) },
+                    )
+                }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline)
 
@@ -152,7 +163,7 @@ fun Sidebar(
                     onClick = { onNavigate(Screen.Search) },
                 )
                 SidebarItem(
-                    painter = painterResource(R.drawable.ic_filter_list),
+                    painter = painterResource(Res.drawable.ic_filter_list),
                     label = "Filters",
                     expanded = expanded,
                     selected = current == Screen.Filters,

@@ -23,12 +23,11 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hawkynt.mediadroid.data.QualityStore
+import com.hawkynt.mediadroid.ui.platform.LocalMediaArt
 import com.hawkynt.mediadroid.library.Languages
 import com.hawkynt.mediadroid.library.Quality
 import com.hawkynt.mediadroid.nfo.StreamDetails
@@ -164,9 +163,9 @@ fun QualityChips(quality: Quality, modifier: Modifier = Modifier) {
 /** What [videoPath] really holds, probed once and cached; [fallback] (the NFO's) until then or when unreadable. */
 @Composable
 fun rememberQuality(videoPath: String, fallback: Quality): Quality {
-    val context = LocalContext.current
+    val art = LocalMediaArt.current
     val probed by produceState<StreamDetails?>(null, videoPath) {
-        value = QualityStore.of(context).detailsFor(videoPath)
+        value = art.streamDetails(videoPath)
     }
     return probed?.let { Quality.of(it) } ?: fallback
 }
