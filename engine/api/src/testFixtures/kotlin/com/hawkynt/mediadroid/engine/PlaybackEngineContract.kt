@@ -199,6 +199,10 @@ abstract class PlaybackEngineContract {
         val report = engine.report!!
         assertEquals(media.path, report.inputs.first().path)
         assertEquals(1 + media.subtitles.size + media.audio.size, report.inputs.size)
+        // A demuxer is named as the chain reads it: Media3's extractor by its class, FFmpeg's as `ffmpeg:<format>`.
+        report.inputs.mapNotNull { it.demuxer }.forEach {
+            assertTrue(it, it.startsWith("ffmpeg:") || it.endsWith("Extractor"))
+        }
         val video = report.video!!
         assertTrue(video.width > 0 && video.height > 0 && video.pixelAspect > 0f)
         val audio = report.audio!!
