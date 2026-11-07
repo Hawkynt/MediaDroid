@@ -7,14 +7,16 @@ import com.hawkynt.mediadroid.ui.platform.StorageRoot
 import java.io.File
 
 /**
- * The Files browser's files on the desktop: this computer's folders and the network sources' through [places]. How
- * long a video runs is not probed here yet; its row shows without it.
+ * The Files browser's files on the desktop: this computer's folders and the network sources' through [places], how
+ * long a video runs as FFmpeg reads it ([probe]).
  */
-class DesktopMediaFiles(private val places: DesktopLibrary) : MediaFiles {
+class DesktopMediaFiles(private val places: DesktopLibrary, private val probe: DesktopMediaProbe? = null) : MediaFiles {
 
     override fun resolve(location: String): FsFile? = runCatching {
         places.remoteFile(location) ?: File(location).takeIf { it.exists() }?.let(::LocalFile)
     }.getOrNull()
+
+    override suspend fun durationMs(video: String): Long? = probe?.durationMs(video)
 
     companion object {
         /**
