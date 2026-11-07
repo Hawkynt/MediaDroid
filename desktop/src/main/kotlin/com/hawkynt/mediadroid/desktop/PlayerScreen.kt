@@ -2,6 +2,7 @@ package com.hawkynt.mediadroid.desktop
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,6 +61,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
 import com.hawkynt.mediadroid.ui.PlayerCommand
 import com.hawkynt.mediadroid.ui.PlayerKeys
+import com.hawkynt.mediadroid.ui.GearPanel
+import com.hawkynt.mediadroid.ui.TrackDialog
 import com.hawkynt.mediadroid.ui.clock
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -180,17 +183,16 @@ fun PlayerScreen(
     // The mpv user shaders in the folder picked in Settings, else the app-data folder's shaders/ (ShaderFolder), read
     // as the player opens.
     remember { ShaderFolder.load(ShaderFolder.of(store.state.data.settings.shaderFolder, AppFolder.current())) }
-    // The picture this video starts with: its folder's, else the household's (FolderDefaults).
+    // The picture this video plays with: its own (its shape and colour system with it), else its folder's, else the
+    // household's (FolderDefaults), as on the phone.
     var picture by remember { mutableStateOf(store.pictureFor(playing.video)) }
     // The folder or share whose picture that is, if any has one.
     var pictureFolder by remember { mutableStateOf(store.pictureFolderOf(playing.video)) }
-    // This video's shape where its file's flag is wrong, and the setup of the screen the window is on (a lens).
-    var aspect by remember { mutableStateOf(store.aspectOf(playing.video)) }
     LaunchedEffect(index) {
-        aspect = store.aspectOf(playing.video)
         picture = store.pictureFor(playing.video)
         pictureFolder = store.pictureFolderOf(playing.video)
     }
+    // The setup of the screen the window is on (a lens, a projector).
     var screenSetup by remember { mutableStateOf(store.screenSetup(screen().key)) }
     // MEDIADROID_SHOW=panel: the picture panel open from the start (documentation and checks).
     var panel by remember { mutableStateOf(System.getenv("MEDIADROID_SHOW") == "panel") }
@@ -251,6 +253,7 @@ fun PlayerScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var tracks by remember { mutableStateOf(emptyList<Track>()) }
     // A sound file's track named as the picker shows a sidecar: `EN`, `DE · commentary`.
+    var trackPicker by remember { mutableStateOf<TrackPicker?>(null) }
     val soundNames = remember(index) {
         sidecarsOf(places, playing.video).filter { it.kind == Sidecars.Kind.AUDIO }
             .associate { it.name to it.describe() }
@@ -334,8 +337,6 @@ fun PlayerScreen(
         val planesHooked = picture.shader?.let { com.hawkynt.mediadroid.player.MpvShaders.library[it] }?.hooksPlanes
         engine.keepPlanes = picture.chroma != PictureAdjustment.Chroma.BILINEAR || planesHooked == true
     }
-    // Each show its own station logo, if one was hidden for its folder.
-    LaunchedEffect(playing.video) { picture = picture.copy(logo = store.logoFor(playing.video)) }
     // The networks the stage may run: those whose self-tests passed, as of the picture taken last.
     LaunchedEffect(picture) {
         stage.neural = com.hawkynt.mediadroid.engine.desktop.GlStage.Neural(
@@ -453,7 +454,7 @@ fun PlayerScreen(
                 val shownOn = screen()
                 screenSetup = store.screenSetup(shownOn.key)
                 val widening = PictureShape.widening(shownOn.aspect, screenSetup.shape)
-                val pixelAspect = PictureShape.pixelAspect(raw.width, raw.height, engine.pixelAspect, aspect)
+                val pixelAspect = PictureShape.pixelAspect(raw.width, raw.height, engine.pixelAspect, picture.aspect)
                 val look = listOf(picture, canvas, part, timing, pixelAspect, widening, fit)
                 if (raw !== lastShown || look != lastLook) {
                     lastShown = raw
@@ -774,85 +775,136 @@ fun PlayerScreen(
             )
         }
         if (panel) {
-            PicturePanel(
-                picture,
-                onChange = {
-                    picture = it
-                    // The logo is the show's, kept for its folder, the colour system the video's own; the rest goes
-                    // to the folder with a picture of its own, else to the household.
-                    store.saveLogo(playing.video, it.logo)
-                    store.saveColourSystem(playing.video, it.colourSystem)
-                    val place = pictureFolder
-                    val kept = it.copy(logo = null, colourSystem = PictureAdjustment.ColourSystem.AUTO)
-                    if (place != null) store.setFolderPicture(place, kept) else store.picture = kept
-                },
-                folderName = FolderDefaults.label(pictureFolder ?: store.folderOf(playing.video), store.allSources),
-                forFolder = pictureFolder != null,
-                onForFolder = { own ->
-                    if (own) {
-                        store.setFolderPicture(
-                            store.folderOf(playing.video),
-                            picture.copy(logo = null, colourSystem = PictureAdjustment.ColourSystem.AUTO),
-                        )
-                    } else {
-                        pictureFolder?.let { store.setFolderPicture(it, null) }
-                        picture = store.pictureFor(playing.video)
-                    }
-                    pictureFolder = store.pictureFolderOf(playing.video)
-                },
-                modifier = Modifier.align(Alignment.CenterEnd),
-                tracks = tracks.map { t ->
-                    val named = t.kind == Track.Kind.AUDIO && t.source > 0
-                    if (named) t.copy(label = soundNames[t.label] ?: t.label) else t
-                },
-                onPick = ::pick,
-                onPickSecond = { engine.secondSubtitle = it },
+            // Clicking beside the panel closes it, as on the phone.
+            Box(Modifier.fillMaxSize().clickable(interactionSource = null, indication = null) { panel = false })
+            val video = playing.video
+            GearPanel(
                 speed = speed,
                 onSpeed = ::changeSpeed,
+                fit = fit,
+                onFit = { fit = it },
+                fitHint = "",
+                subtitlesOn = tracks.any { it.kind == Track.Kind.TEXT && it.selected },
+                onSubtitles = { on ->
+                    val text = Tracks.of(engine.tracks, Track.Kind.TEXT)
+                    val chosen = if (on) Tracks.preferredText(text, store.subtitleLanguage) ?: text.firstOrNull() else null
+                    pick(Track.Kind.TEXT, chosen?.id)
+                },
+                // This video's picture, as on the phone: live while a slider moves, kept when it is let go. The
+                // household's lives in Settings.
+                picture = picture,
+                onPicture = { picture = it },
+                onPictureDone = { store.savePicture(video, picture) },
+                onResetPicture = {
+                    store.savePicture(video, null)
+                    picture = store.pictureFor(video)
+                },
                 check = { candidate, say ->
                     withContext(Dispatchers.Default) { PictureTrial.check(candidate, trial, say) }
                 },
-                sound = sound,
-                onSound = {
-                    sound = it
-                    store.sound = it
-                },
-                nightMode = nightMode,
-                onNightMode = { nightMode = it },
-                fit = fit,
-                onFit = { fit = it },
-                pattern = pattern,
-                onPattern = { pattern = it },
-                histogramShown = histogramShown,
-                onHistogram = {
-                    histogramShown = it
-                    if (!it) histogram = null
-                },
-                aspect = aspect,
-                onAspect = {
-                    aspect = it
-                    store.setAspect(playing.video, it)
-                },
-                screenName = screen().name,
-                screenSetup = screenSetup,
-                onScreenSetup = {
-                    screenSetup = it
-                    store.setScreenSetup(screen().key, it)
-                },
                 colorizers = colorizers,
-                softwareDecoding = softwareDecoding,
-                onSoftwareDecoding = {
-                    softwareDecoding = it
-                    store.softwareDecoding = it
-                    engine.softwareDecoding = it
+                neuralModels = DesktopNeuralModels,
+                folder = FolderDefaults.label(store.folderOf(video), store.allSources),
+                pictureFolder = pictureFolder?.let { FolderDefaults.label(it, store.allSources) },
+                onUseForFolder = {
+                    store.setFolderPicture(store.folderOf(video), picture)
+                    // The video follows its folder's picture now, its 3D eye and shape kept as its own.
+                    store.savePicture(video, picture)
+                    picture = store.pictureFor(video)
+                    pictureFolder = store.pictureFolderOf(video)
                 },
-                hardwareDecoder = engine.hardwareDecoder?.label,
-                subtitleDelayMs = subtitleDelayMs,
-                onSubtitleDelay = {
-                    subtitleDelayMs = it
-                    store.setSubtitleDelay(playing.video, it)
+                onForgetFolder = {
+                    pictureFolder?.let { store.setFolderPicture(it, null) }
+                    picture = store.pictureFor(video)
+                    pictureFolder = store.pictureFolderOf(video)
+                },
+                onAudioTrack = { trackPicker = TrackPicker.SOUND },
+                onSubtitleTrack = { trackPicker = TrackPicker.SUBTITLES },
+                onSecondSubtitleTrack = { trackPicker = TrackPicker.SECOND },
+                onClose = { panel = false },
+                modifier = Modifier.align(Alignment.CenterEnd),
+                sections = {
+                    DesktopSoundRows(
+                        sound,
+                        onSound = {
+                            sound = it
+                            store.sound = it
+                        },
+                        nightMode = nightMode,
+                        onNightMode = { nightMode = it },
+                    )
+                },
+                afterPictureSize = {
+                    DesktopHistogramRow(histogramShown) {
+                        histogramShown = it
+                        if (!it) histogram = null
+                    }
+                },
+                end = {
+                    DesktopSubtitleDelayRow(subtitleDelayMs) {
+                        subtitleDelayMs = it
+                        store.setSubtitleDelay(video, it)
+                    }
+                    DesktopDecodingRows(
+                        softwareDecoding,
+                        onSoftware = {
+                            softwareDecoding = it
+                            store.softwareDecoding = it
+                            engine.softwareDecoding = it
+                        },
+                        hardwareDecoder = engine.hardwareDecoder?.label,
+                    )
+                    DesktopScreenRows(
+                        screen().name,
+                        screenSetup,
+                        onSetup = {
+                            screenSetup = it
+                            store.setScreenSetup(screen().key, it)
+                        },
+                        pattern = pattern,
+                        onPattern = { pattern = it },
+                    )
                 },
             )
+        }
+        when (trackPicker) {
+            TrackPicker.SOUND -> TrackDialog(
+                tracks = tracks,
+                kind = Track.Kind.AUDIO,
+                // A sound file's track named as the picker shows a sidecar: `EN`, `DE · commentary`.
+                labelFor = { t -> if (t.source > 0) soundNames[t.label] ?: trackName(t) else trackName(t) },
+                marked = { it.selected },
+                onDismiss = { trackPicker = null },
+                onPick = { picked ->
+                    picked?.let { pick(Track.Kind.AUDIO, it.id) }
+                    trackPicker = null
+                },
+            )
+            TrackPicker.SUBTITLES -> TrackDialog(
+                tracks = tracks,
+                kind = Track.Kind.TEXT,
+                labelFor = ::trackName,
+                noneLabel = "Off",
+                marked = { it.selected },
+                onDismiss = { trackPicker = null },
+                onPick = { picked ->
+                    pick(Track.Kind.TEXT, picked?.id)
+                    trackPicker = null
+                },
+            )
+            TrackPicker.SECOND -> TrackDialog(
+                tracks = Tracks.secondText(tracks),
+                kind = Track.Kind.TEXT,
+                labelFor = ::trackName,
+                noneLabel = "None",
+                marked = { it.second },
+                onDismiss = { trackPicker = null },
+                onPick = { picked ->
+                    engine.secondSubtitle = picked?.id
+                    trackPicker = null
+                },
+            )
+            null -> Unit
         }
         snapshotNote?.takeIf { now < snapshotNoteUntil }?.let { note ->
             Text(
@@ -955,6 +1007,9 @@ fun PlayerScreen(
         }
     }
 }
+
+/** Which track picker is open over the player. */
+private enum class TrackPicker { SOUND, SUBTITLES, SECOND }
 
 /** The subtitle and sound files beside [video] (Sidecars), by name — on this computer or a network source. */
 private fun sidecarsOf(places: DesktopLibrary, video: String): List<Sidecars.Sidecar> {

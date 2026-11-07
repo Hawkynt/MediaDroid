@@ -63,6 +63,12 @@ fun GearPanel(
     pictureFolder: String? = null,
     onUseForFolder: () -> Unit = {},
     onForgetFolder: () -> Unit = {},
+    /** Below the picture sizes: how else the picture is sized here (the phone's pinch), empty for nothing more. */
+    fitHint: String = "Pinch with two fingers to zoom; choosing a size resets the zoom.",
+    /** Which upscalers offer their networks' models here (PictureSliders). */
+    neuralModels: (PictureAdjustment.Upscaler) -> Boolean = { it.isEnlarger },
+    /** After the subtitles and sound: what only this platform's player offers. */
+    end: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -95,13 +101,16 @@ fun GearPanel(
                 )
             }
         }
-        Text(
-            (if (fit == PictureFit.PANORAMIC) "A narrow picture fills a wide screen: the middle as it is, the sides " +
-                "stretched. " else "") + "Pinch with two fingers to zoom; choosing a size resets the zoom.",
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
-        )
+        val fitText = (if (fit == PictureFit.PANORAMIC) "A narrow picture fills a wide screen: the middle as it is, the " +
+            "sides stretched. " else "") + fitHint
+        if (fitText.isNotBlank()) {
+            Text(
+                fitText.trim(),
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
         // The frame's shape, for a file whose flag is wrong (PictureShape); remembered with this video's picture.
         Text("Shape", fontSize = 16.sp, modifier = Modifier.padding(top = 12.dp))
         @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -135,7 +144,7 @@ fun GearPanel(
         }
         PictureSliders(
             picture, onChange = onPicture, onDone = onPictureDone, stereo = true, logo = true, check = check,
-            colorizers = colorizers,
+            colorizers = colorizers, neuralModels = neuralModels,
         )
         // The picture for every video in the folder, as one: a folder of VHS rips starting deinterlaced.
         OutlinedButton(onClick = onUseForFolder, modifier = Modifier.padding(top = 8.dp)) {
@@ -166,6 +175,7 @@ fun GearPanel(
         OutlinedButton(onClick = onSecondSubtitleTrack, modifier = Modifier.padding(top = 8.dp)) {
             Text("Second subtitles…", fontSize = 16.sp)
         }
+        end()
     }
 }
 

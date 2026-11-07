@@ -12,7 +12,6 @@ import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.ScreenShape
 import com.hawkynt.mediadroid.state.LogoOverride
 import com.hawkynt.mediadroid.state.PRIMARY_SOURCE
-import com.hawkynt.mediadroid.state.PictureOverride
 import com.hawkynt.mediadroid.state.ResumeInfo
 import com.hawkynt.mediadroid.state.StateFile
 import com.hawkynt.mediadroid.state.StateStore
@@ -79,22 +78,16 @@ class DesktopStore internal constructor(
     fun saveLogo(video: String, logo: LogoMask?) = state.saveLogo(video, logo)
 
     /**
-     * The picture [video] starts with: its folder's — the nearest folder or share above it with a picture of its own
-     * (FolderDefaults) — else the household's — with its show's station logo hidden.
+     * The picture [video] plays with: its own, if it was changed in the player's gear, else its folder's — the nearest
+     * folder or share above it with a picture of its own (FolderDefaults) — else the household's; with its show's
+     * station logo hidden. As on Android (StateStore.pictureFor).
      */
-    fun pictureFor(video: String): PictureAdjustment =
-        FolderDefaults.resolve(null, state.folderPictureFor(video), picture)
-            .copy(logo = logoFor(video), colourSystem = colourSystemFor(video))
+    fun pictureFor(video: String): PictureAdjustment = state.pictureFor(video)
 
-    /** The colour system chosen for [video], a composite capture (the dot-crawl comb's), or AUTO. */
-    fun colourSystemFor(video: String): PictureAdjustment.ColourSystem =
-        data.picture[video]?.colourSystem
-            ?.let { runCatching { PictureAdjustment.ColourSystem.valueOf(it) }.getOrNull() }
-            ?: PictureAdjustment.ColourSystem.AUTO
-
-    /** Remembers [system] for [video]; AUTO forgets it. */
-    fun saveColourSystem(video: String, system: PictureAdjustment.ColourSystem) =
-        changeOwn(video) { copy(colourSystem = system.name) }
+    /**
+     * Keeps [picture] as [video]'s own (its logo for its show); what it would start with anyway, or null, forgets it.
+     */
+    fun savePicture(video: String, picture: PictureAdjustment?) = state.savePicture(video, picture)
 
     /** The folder [video] lies in, as FolderDefaults keeps it. */
     fun folderOf(video: String): FolderPlace = state.folderOf(video)
@@ -188,25 +181,6 @@ class DesktopStore internal constructor(
         get() = data.settings.neuralEnlargers.keys.mapNotNull { key ->
             NeuralEnlarging.choice(key)?.let { choice -> enlargerPassed(choice)?.let { choice to it } }
         }.toMap()
-
-    /** The shape [video]'s frame is shown at where its file's flag is wrong; [AspectOverride.AUTO] until set. */
-    fun aspectOf(video: String): AspectOverride =
-        AspectOverride.entries.firstOrNull { it.name == data.picture[video]?.aspect } ?: AspectOverride.AUTO
-
-    /** Keeps [aspect] for [video]; [AspectOverride.AUTO] drops its entry. */
-    fun setAspect(video: String, aspect: AspectOverride) = changeOwn(video) { copy(aspect = aspect.name) }
-
-    // A video's own shape and colour system live in its own picture, as on Android; the rest of it is what it starts
-    // with, and with neither left the entry goes.
-    private fun changeOwn(video: String, how: PictureOverride.() -> PictureOverride) {
-        val own = (data.picture[video] ?: StateStore.overrideOf(pictureFor(video).copy(logo = null))).how()
-        if (own.aspect == AspectOverride.AUTO.name && own.colourSystem == PictureAdjustment.ColourSystem.AUTO.name) {
-            data.picture.remove(video)
-        } else {
-            data.picture[video] = own
-        }
-        state.save()
-    }
 
     /** How the output screen [key] (a monitor, see Main) is set up; the default until it is set. */
     fun screenSetup(key: String): ScreenSetup = state.screenSetup(key)
@@ -343,11 +317,16 @@ internal fun takeOver(old: DesktopSettings): String {
             val now = if (place.source.isEmpty()) FolderDefaults.placeOf(allSources, place.folder, true) else place
             setFolderPicture(now, kept.toAdjustment())
         }
+        // A video's shape and colour system are its own picture's now, as on Android.
         old.aspects.forEach { (video, name) ->
-            AspectOverride.entries.firstOrNull { it.name == name }?.let { setAspect(video, it) }
+            AspectOverride.entries.firstOrNull { it.name == name }?.let {
+                savePicture(video, pictureFor(video).copy(aspect = it))
+            }
         }
         old.colourSystems.forEach { (video, name) ->
-            runCatching { PictureAdjustment.ColourSystem.valueOf(name) }.getOrNull()?.let { saveColourSystem(video, it) }
+            runCatching { PictureAdjustment.ColourSystem.valueOf(name) }.getOrNull()?.let {
+                savePicture(video, pictureFor(video).copy(colourSystem = it))
+            }
         }
         state.save()
     }
