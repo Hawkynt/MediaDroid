@@ -56,9 +56,10 @@ class Finishing(private val passes: Passes) {
     }
 
     /**
-     * RIFE's in-between of [earlier] and [later] at their own size into [into] (rife-warp-es3.frag): its [flow] and
-     * [mask] (float textures of [flowWidth] × [flowHeight], NeuralInterpolation.handsFlow) grown to the frames' size,
-     * each frame warped along its flow and the two blended by the mask. GLSL ES 3.00.
+     * A network's in-between of [earlier] and [later] at their own size into [into] (rife-warp-es3.frag): its [flow]
+     * and [mask] (float textures of [flowWidth] × [flowHeight], NeuralInterpolation.handsFlow; the mask's logit in red,
+     * the residual in the rest) grown to the frames' size, each frame warped along its flow, the two blended by the
+     * mask and the residual added. GLSL ES 3.00.
      */
     fun warp(
         earlier: DrawTarget,

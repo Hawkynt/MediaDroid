@@ -45,44 +45,52 @@ class NativeNeuralTest {
     }
 
     @Test
-    fun `RIFE's flow, warped by the stage at the frames' own size, is the network's in-between`() {
+    fun `RIFE's and IFRNet's flow, warped by the stage at the frames' own size, make the network's in-between`() {
         assumeTrue("no display", System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null)
         val neural = DesktopNeural(folder.root)
         assertTrue("the native library did not load", neural.loaded)
         val w = 256
         val h = 192
-        fun picture(shift: Int, pts: Long) = MediaReader.Picture(pts, w, h, bytes(NeuralChecks.testFrame(w, h, shift)))
-        val first = picture(0, 0)
-        val last = picture(2, 40)
+        // Fresh pictures for each in-between: the stage keeps the one it made for a pair it has seen.
+        var pts = 0L
+        fun picture(shift: Int) = MediaReader.Picture(pts++, w, h, bytes(NeuralChecks.testFrame(w, h, shift)))
         val truth = bytes(NeuralChecks.testFrame(w, h, 1))
-        val own = requireNotNull(neural.interpolator(PictureAdjustment.Interpolation.RIFE, false)).use { net ->
-            val rgb = requireNotNull(net.run(NeuralChecks.testFrame(w, h, 0), NeuralChecks.testFrame(w, h, 2), w, h))
-            ByteArray(w * h * 3).also(rgb::get)
+        val blend = picture(0).rgba.let { a ->
+            val b = picture(2).rgba
+            ByteArray(w * h * 4) { i -> (((a[i].toInt() and 0xFF) + (b[i].toInt() and 0xFF)) / 2).toByte() }
         }
         GlStage(Presentation.SYNC).use { stage ->
             assumeTrue(stage.ready)
-            val rife = PictureAdjustment(interpolation = PictureAdjustment.Interpolation.RIFE)
-            // Halfway the picture is the in-between itself (NeuralInterpolation.mix).
-            fun middle(msByHeight: Map<Int, Double>): ByteArray {
-                val passed = NeuralInterpolation.Passed("CPU", msByHeight)
-                stage.neural = GlStage.Neural(neural, motion = mapOf(PictureAdjustment.Interpolation.RIFE to passed))
-                return stage.process(Moment(first, next = last, phase = 0.5f), rife, w, h).rgba
+            for (network in listOf(PictureAdjustment.Interpolation.RIFE, PictureAdjustment.Interpolation.IFRNET)) {
+                assertTrue(NeuralInterpolation.handsFlow(network))
+                val own = requireNotNull(neural.interpolator(network, false)).use { net ->
+                    val a = NeuralChecks.testFrame(w, h, 0)
+                    val rgb = requireNotNull(net.run(a, NeuralChecks.testFrame(w, h, 2), w, h))
+                    ByteArray(w * h * 3).also(rgb::get)
+                }
+                val adjustment = PictureAdjustment(interpolation = network)
+                // Halfway the picture is the in-between itself (NeuralInterpolation.mix).
+                fun middle(msByHeight: Map<Int, Double>): ByteArray {
+                    stage.neural = GlStage.Neural(
+                        neural, motion = mapOf(network to NeuralInterpolation.Passed("CPU", msByHeight)),
+                    )
+                    val first = picture(0)
+                    val last = picture(2)
+                    return stage.process(Moment(first, next = last, phase = 0.5f), adjustment, w, h).rgba
+                }
+                // Fast enough at the frames' size: the flow worked out there, the in-between as near the truth as
+                // the network's own picture (the stage hands it the rows bottom first, so its padding falls elsewhere
+                // and the two are not the same to the pixel; tools/neural-check holds the warp itself to the
+                // network's, within one).
+                val wholeOff = meanOff(middle(mapOf(240 to 1.0, 360 to 2.0)), truth, w, h)
+                val ownRgba = ByteArray(w * h * 4) { i -> if (i % 4 == 3) -1 else own[i / 4 * 3 + i % 4] }
+                val ownOff = meanOff(ownRgba, truth, w, h)
+                assertTrue("$network: $wholeOff, the network's own $ownOff", wholeOff <= ownOff + 1)
+                // Only 240p keeps up: the flow from there, the picture still at its own size and near the truth.
+                val smallOff = meanOff(middle(mapOf(240 to 10.0, 360 to 30.0)), truth, w, h)
+                val blendOff = meanOff(blend, truth, w, h)
+                assertTrue("$network: $smallOff, a blend $blendOff", smallOff < blendOff / 2)
             }
-            // Fast enough at the frames' size: the flow worked out there, the in-between as near the truth as the
-            // network's own picture (the stage hands it the rows bottom first, so its padding falls elsewhere and the
-            // two are not the same to the pixel; tools/neural-check holds the warp itself to the network's, exactly).
-            val whole = middle(mapOf(240 to 1.0, 360 to 2.0))
-            val ownRgba = ByteArray(w * h * 4) { i -> if (i % 4 == 3) -1 else own[i / 4 * 3 + i % 4] }
-            val wholeOff = meanOff(whole, truth, w, h)
-            val ownOff = meanOff(ownRgba, truth, w, h)
-            assertTrue("$wholeOff, the network's own $ownOff", wholeOff <= ownOff + 1)
-            // Only 240p keeps up: the flow from there, the picture still at its own size and near the truth.
-            val small = middle(mapOf(240 to 10.0, 360 to 30.0))
-            val blend = ByteArray(w * h * 4) { i ->
-                (((first.rgba[i].toInt() and 0xFF) + (last.rgba[i].toInt() and 0xFF)) / 2).toByte()
-            }
-            val smallOff = meanOff(small, truth, w, h)
-            assertTrue("$smallOff, a blend ${meanOff(blend, truth, w, h)}", smallOff < meanOff(blend, truth, w, h) / 2)
         }
     }
 

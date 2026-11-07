@@ -91,6 +91,42 @@ struct Ifrnet : Interpolator {
         bytes(result, half, w, h, rgb);
         return 0;
     }
+
+    // The graph read up to its last flows ("193" towards the earlier frame, "195" the later, at the padded size),
+    // its mask logits ("189") and the residual it adds to the blend ("190"), before the warp and blend that make
+    // "out0" — the frames go in less a half, which the blend of two leaves off and the residual does not carry.
+    int flow(const unsigned char* first, const unsigned char* second, int w, int h, float time, float* out) override {
+        const float half[3] = {0.5f, 0.5f, 0.5f};
+        ncnn::Mat timestep(roundUp32(w) / 16, roundUp32(h) / 16, 1);
+        timestep.fill(time);
+        ncnn::Extractor ex = net.create_extractor();
+        ex.input("in0", planes(first, w, h, half, ncnn::BORDER_CONSTANT));
+        ex.input("in1", planes(second, w, h, half, ncnn::BORDER_CONSTANT));
+        ex.input("in2", timestep);
+        ncnn::Mat earlier, later, mask, residual;
+        if (ex.extract("193", earlier) != 0 || ex.extract("195", later) != 0 || ex.extract("189", mask) != 0 ||
+            ex.extract("190", residual) != 0) {
+            return -2;
+        }
+        for (const ncnn::Mat* m : {&earlier, &later, &mask, &residual}) {
+            if (m->w < w || m->h < h) return -2;
+        }
+        if (earlier.c < 2 || later.c < 2 || mask.c < 1 || residual.c < 3) return -2;
+        float* rest = out + static_cast<size_t>(w) * h * 4;
+        for (int y = 0; y < h; y++) {
+            float* flows = out + static_cast<size_t>(y) * w * 4;
+            float* more = rest + static_cast<size_t>(y) * w * 4;
+            for (int x = 0; x < w; x++) {
+                flows[x * 4] = earlier.channel(0).row(y)[x];
+                flows[x * 4 + 1] = earlier.channel(1).row(y)[x];
+                flows[x * 4 + 2] = later.channel(0).row(y)[x];
+                flows[x * 4 + 3] = later.channel(1).row(y)[x];
+                more[x * 4] = mask.channel(0).row(y)[x];
+                for (int c = 0; c < 3; c++) more[x * 4 + 1 + c] = residual.channel(c).row(y)[x];
+            }
+        }
+        return 0;
+    }
 };
 
 }  // namespace
@@ -104,7 +140,7 @@ std::unique_ptr<Interpolator> openCain(const Loader& load, bool gpu) {
 
 std::unique_ptr<Interpolator> openIfrnet(const Loader& load, bool gpu) {
     auto ifrnet = std::make_unique<Ifrnet>();
-    configure(ifrnet->net, gpu && gpuReady());
+    configure(ifrnet->net, gpu && gpuReady(), true);
     // On the CPU every blob one channel a plane: ncnn's own Concat overruns its output when it joins the warp's
     // unpacked blobs with packed ones (AddressSanitizer: heap-buffer-overflow in Concat_x86_avx), as IFRNet does.
     if (!ifrnet->net.opt.use_vulkan_compute) ifrnet->net.opt.use_packing_layout = false;

@@ -45,7 +45,7 @@ original by 2.42 per value and Real-CUGAN by 8.85 (it sharpens hard edges with h
 
 `NEURAL_CHECK_FRAMES=<folder>` runs the interpolators on real footage instead: every `<name>-a.ppm`, `-b.ppm` and
 `-c.ppm` there (three frames in a row, binary PPM), the in-between of a and c against b, as the mean difference per
-value and PSNR beside a plain blend's (`NEURAL_CHECK_EACH=1` prints every triplet). For RIFE it also runs the stage's
+value and PSNR beside a plain blend's (`NEURAL_CHECK_EACH=1` prints every triplet). For RIFE and IFRNet it also runs the stage's
 own path — the frames drawn smaller, the flow and mask handed back (`Interpolator::flow`) and both frames warped at
 their own size as `glsl/video/rife-warp-es3.frag` warps them — at half and a quarter of the size, and, for comparison,
 the whole picture made at that size and enlarged, as a slow device had it before. At the self-test's sizes it checks
@@ -67,6 +67,16 @@ other):
 
 At 1280 × 720 the flow at half the size scores 26.12 dB on the moving triplets where the frames' own size scores
 26.33, in 256 ms against 832.
+
+IFRNet-S hands back its flow too (with the residual it adds to the blend), the same way:
+
+| IFRNet-S | Spread | Most motion | Time |
+|----------|--------|-------------|------|
+| at the frames' size | 44.63 dB | 25.53 dB | 519 ms |
+| flow at 1/2, warped whole | 43.66 dB | 26.21 dB | 154 ms |
+| flow at 1/4, warped whole | 41.84 dB | 26.17 dB | 56 ms |
+| picture at 1/2, enlarged | 38.53 dB | 25.96 dB | 125 ms |
+| picture at 1/4, enlarged | 35.38 dB | 25.14 dB | 28 ms |
 
 It found what the phone could not show: DAIN's correlation reading packed features as unpacked, its result
 downloaded from the GPU as raw half floats, and ncnn's Winograd and im2col convolutions taking gigabytes on the CPU.

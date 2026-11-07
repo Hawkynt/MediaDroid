@@ -1,9 +1,11 @@
+#include <algorithm>
 #include "networks.h"
 
 #include <mutex>
 #include <type_traits>
 #include <string>
 
+#include <cpu.h>
 #include <gpu.h>
 
 #include "dain_layers.h"
@@ -80,6 +82,7 @@ struct Rife : Interpolator {
         if (ex.extract("714", flows) != 0 || ex.extract("713", mask) != 0) return -2;
         if (flows.c < 4 || mask.c < 1 || flows.w != pw || flows.h != ph || mask.w != pw || mask.h != ph) return -2;
         float* masks = out + static_cast<size_t>(w) * h * 4;
+        std::fill(masks, masks + static_cast<size_t>(w) * h * 4, 0.f);
         for (int y = 0; y < h; y++) {
             const float* fx0 = flows.channel(0).row(y);
             const float* fy0 = flows.channel(1).row(y);
@@ -92,7 +95,7 @@ struct Rife : Interpolator {
                 row[x * 4 + 1] = fy0[x];
                 row[x * 4 + 2] = fx1[x];
                 row[x * 4 + 3] = fy1[x];
-                masks[static_cast<size_t>(y) * w + x] = m[x];
+                masks[(static_cast<size_t>(y) * w + x) * 4] = m[x];
             }
         }
         return 0;
@@ -243,12 +246,15 @@ struct Dain : Interpolator {
 }  // namespace
 
 // In half floats the sampling positions of a large frame lose too much: on the GPU they only store.
-void configure(ncnn::Net& net, bool vulkan) {
+void configure(ncnn::Net& net, bool vulkan, bool halfOnCpu) {
     ncnn::Option& opt = net.opt;
+    // Half floats on a processor with ARMv8.2's half-float arithmetic, where asked: about twice the work per cycle;
+    // the self-test holds the result to the truth as on any unit.
+    const bool half = vulkan || (halfOnCpu && ncnn::cpu_support_arm_asimdhp());
     opt.use_vulkan_compute = vulkan;
-    opt.use_fp16_packed = vulkan;
-    opt.use_fp16_storage = vulkan;
-    opt.use_fp16_arithmetic = false;
+    opt.use_fp16_packed = half;
+    opt.use_fp16_storage = half;
+    opt.use_fp16_arithmetic = half && !vulkan;
     opt.use_bf16_storage = false;
     opt.num_threads = vulkan ? 1 : 4;
     if (vulkan) net.set_vulkan_device(ncnn::get_gpu_device());
@@ -268,7 +274,7 @@ bool gpuReady() {
 
 std::unique_ptr<Interpolator> openRife(const Loader& load, bool gpu) {
     auto rife = std::make_unique<Rife>();
-    configure(rife->net, gpu && gpuReady());
+    configure(rife->net, gpu && gpuReady(), true);
     rife->net.register_custom_layer("rife.Warp", createWarpLayer);
     if (load(rife->net, "flownet") != 0) return nullptr;
     return rife;

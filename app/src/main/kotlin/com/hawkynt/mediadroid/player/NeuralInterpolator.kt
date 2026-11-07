@@ -59,7 +59,7 @@ class NeuralInterpolator private constructor(
      * call; null where the network failed or hands back only pictures.
      */
     fun flow(earlier: ByteBuffer, later: ByteBuffer, width: Int, height: Int): ByteBuffer? {
-        val bytes = width * height * 5 * Float.SIZE_BYTES
+        val bytes = width * height * 8 * Float.SIZE_BYTES
         if (flows.capacity() < bytes) flows = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
         val ran = NativeInterpolation.flow(handle, earlier, later, width, height, 0.5f, flows)
         return if (ran == 0) flows.also { it.rewind() } else null

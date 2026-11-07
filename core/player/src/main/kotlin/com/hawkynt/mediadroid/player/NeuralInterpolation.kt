@@ -11,7 +11,7 @@ import kotlin.math.sqrt
  *
  * The time an in-between takes grows with its pixels, so the self-test times [TEST_SIZES] and the player makes the
  * in-betweens of the material at its own size where the device keeps up, and otherwise at the most pixels it keeps
- * up with, the material's shape kept (see [workingSize]). RIFE hands back its flow instead of a picture ([handsFlow]):
+ * up with, the material's shape kept (see [workingSize]). RIFE and IFRNet hand back their flow instead of a picture ([handsFlow]):
  * the flow is worked out at that size and the frames are warped by it at their own, so a smaller size costs only
  * motion detail, never sharpness — its self-test starts lower ([testSizes]).
  */
@@ -32,10 +32,12 @@ object NeuralInterpolation {
     private val FLOW_SIZES = listOf(Size(426, 240), Size(640, 360))
 
     /**
-     * Whether [network] hands back its flow and blend mask rather than a picture: RIFE, whose last step — the two
-     * frames warped by the flow and blended by the mask — the stage takes over at the frames' own size.
+     * Whether [network] hands back its flow and blend mask rather than a picture: RIFE and IFRNet, whose last step —
+     * the two frames warped by the flows and blended by the mask (IFRNet adding its residual) — the stage takes over
+     * at the frames' own size.
      */
-    fun handsFlow(network: PictureAdjustment.Interpolation): Boolean = network == PictureAdjustment.Interpolation.RIFE
+    fun handsFlow(network: PictureAdjustment.Interpolation): Boolean =
+        network == PictureAdjustment.Interpolation.RIFE || network == PictureAdjustment.Interpolation.IFRNET
 
     /** What [network]'s self-test times, smallest first: from 240p for one that [handsFlow], else [TEST_SIZES]. */
     fun testSizes(network: PictureAdjustment.Interpolation): List<Size> =
