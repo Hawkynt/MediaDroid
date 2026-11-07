@@ -17,11 +17,11 @@ class Upscaling(private val passes: Passes) {
     private var ewaTable = 0
     private var xbrzTable = 0
 
-    /** Lanczos (glsl/video/lanczos.frag), straight to [into]'s size, any ratio. */
-    fun lanczos(from: DrawTarget, into: DrawTarget): DrawTarget =
+    /** Lanczos (glsl/video/lanczos.frag), straight to [into]'s size, any ratio, pulled [antiring] in (see ANTIRING). */
+    fun lanczos(from: DrawTarget, into: DrawTarget, antiring: Float = ANTIRING): DrawTarget =
         passes.draw(Shaders.VIDEO_LANCZOS, into, from.texture) {
             inSize(from)
-            set("uAntiring", ANTIRING)
+            set("uAntiring", antiring)
         }
 
     /** Snapdragon GSR (glsl/video/sgsr.frag): one pass straight to [into]'s size, any ratio. */
@@ -70,12 +70,12 @@ class Upscaling(private val passes: Passes) {
     }
 
     /** EWA (glsl/video/ewa.frag) to [into]'s size, at most twice [from]'s (see [twice]): its 8 × 8 taps affordable. */
-    fun ewa(from: DrawTarget, into: DrawTarget): DrawTarget {
+    fun ewa(from: DrawTarget, into: DrawTarget, antiring: Float = ANTIRING): DrawTarget {
         if (ewaTable == 0) ewaTable = passes.table(StageTables.EWA_SIZE, 1, StageTables.ewa())
         return passes.draw(Shaders.VIDEO_EWA, into, from.texture, listOf(ewaTable to "uTable")) {
             inSize(from)
             set("uRadius", Ewa.RADIUS.toFloat())
-            set("uAntiring", ANTIRING)
+            set("uAntiring", antiring)
         }
     }
 
