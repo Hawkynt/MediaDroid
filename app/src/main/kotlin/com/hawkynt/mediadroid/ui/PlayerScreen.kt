@@ -1426,28 +1426,35 @@ fun PlayerScreen(
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.TopCenter).then(safeArea),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent)))
-                    .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 24.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { leavePlayer(); onExit() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        buildString {
-                            append(current.title)
-                            current.subtitle?.let { append("  ·  $it") }
-                        },
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        maxLines = 1,
-                        modifier = Modifier.weight(1f),
-                    )
-                    sleepNote(session)?.let { Text(it, color = Color.White, fontSize = 15.sp, maxLines = 1) }
+            PlayerTopBar(
+                title = buildString {
+                    append(current.title)
+                    current.subtitle?.let { append("  ·  $it") }
+                },
+                note = sleepNote(session),
+                paused = !playingNow,
+                abLoop = abLoop,
+                hasChapters = chapters.isNotEmpty(),
+                onBack = { leavePlayer(); onExit() },
+                onStepFrame = { forward -> stepFrame(forward); keepControls() },
+                onRepeat = { markRepeat(); keepControls() },
+                onChapters = {
+                    chapterPicker = true
+                    playerView?.hideControls()
+                },
+                onSnapshot = {
+                    snapshot()
+                    keepControls()
+                },
+                onInfo = {
+                    infoOpen = true
+                    playerView?.hideControls()
+                },
+                onGear = {
+                    panelOpen = true
+                    playerView?.hideControls()
+                },
+                screens = {
                     if (externalDisplay != null) {
                         IconButton(
                             onClick = {
@@ -1482,74 +1489,8 @@ fun PlayerScreen(
                             )
                         }
                     }
-                    if (!playingNow) {
-                        IconButton(onClick = { stepFrame(false); keepControls() }) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = "One frame back",
-                                tint = Color.White,
-                            )
-                        }
-                        IconButton(onClick = { stepFrame(true); keepControls() }) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = "One frame forward",
-                                tint = Color.White,
-                            )
-                        }
-                    }
-                    TextButton(onClick = { markRepeat(); keepControls() }) {
-                        Text(
-                            when {
-                                abLoop.repeating -> "Stop repeating"
-                                abLoop.a != null -> "Mark the end"
-                                else -> "Repeat a part"
-                            },
-                            color = if (abLoop.a != null) MaterialTheme.colorScheme.primary else Color.White,
-                            fontSize = 15.sp,
-                            maxLines = 1,
-                        )
-                    }
-                    if (chapters.isNotEmpty()) {
-                        IconButton(
-                            onClick = {
-                                chapterPicker = true
-                                playerView?.hideControls()
-                            },
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Chapters", tint = Color.White)
-                        }
-                    }
-                    IconButton(
-                        onClick = {
-                            snapshot()
-                            keepControls()
-                        },
-                    ) {
-                        Icon(
-                            painterResource(Res.drawable.ic_photo_camera),
-                            contentDescription = "Take a picture",
-                            tint = Color.White,
-                        )
-                    }
-                    IconButton(
-                        onClick = {
-                            infoOpen = true
-                            playerView?.hideControls()
-                        },
-                    ) {
-                        Icon(Icons.Filled.Info, contentDescription = "What is playing", tint = Color.White)
-                    }
-                    IconButton(
-                        onClick = {
-                            panelOpen = true
-                            playerView?.hideControls()
-                        },
-                    ) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Playback and picture", tint = Color.White)
-                    }
-                }
-            }
+                },
+            )
         }
         // A camera's flash as the picture is taken, then the picture small with a button to share it.
         AnimatedVisibility(visible = snapshotFlash, enter = fadeIn(), exit = fadeOut()) {
