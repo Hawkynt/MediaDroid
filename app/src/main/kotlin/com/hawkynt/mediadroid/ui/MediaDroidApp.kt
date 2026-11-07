@@ -316,15 +316,7 @@ private fun AppShell(store: StateStore, demo: Boolean) {
         screen = Screen.Details(item)
     }
 
-    /**
-     * Where a queue picks up: the file asked for, else one with a resume point, else the first not
-     * yet watched — so Play on a show continues it instead of starting at the pilot again.
-     */
-    fun startOf(queue: List<Playable>, path: String?): Int =
-        path?.let { p -> queue.indexOfFirst { it.videoPath == p } }?.takeIf { it >= 0 }
-            ?: queue.indexOfFirst { store.resumeFor(it.videoPath) != null }.takeIf { it >= 0 }
-            ?: queue.indexOfFirst { !store.isWatched(it.videoPath, it.nfoWatched) }.takeIf { it >= 0 }
-            ?: 0
+    fun startOf(queue: List<Playable>, path: String?): Int = startOf(queue, path, store)
 
     fun playMovie(movie: Movie, path: String? = null) {
         // Of several files of one film: the one asked for, else the one with a resume point, else the best.

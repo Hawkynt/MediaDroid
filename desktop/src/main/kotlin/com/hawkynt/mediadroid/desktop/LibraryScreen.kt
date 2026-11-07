@@ -1,7 +1,6 @@
 package com.hawkynt.mediadroid.desktop
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,21 +8,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -38,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -51,6 +42,7 @@ import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
 import com.hawkynt.mediadroid.player.BingeQueue
 import com.hawkynt.mediadroid.ui.BrowseScreen
+import com.hawkynt.mediadroid.ui.DetailsScreen
 import com.hawkynt.mediadroid.ui.FiltersScreen
 import com.hawkynt.mediadroid.ui.PlacesScreen
 import com.hawkynt.mediadroid.ui.SearchScreen
@@ -58,6 +50,7 @@ import com.hawkynt.mediadroid.ui.Sidebar
 import com.hawkynt.mediadroid.ui.platform.LocalMediaArt
 import com.hawkynt.mediadroid.ui.platform.MediaArt
 import com.hawkynt.mediadroid.ui.playQueue
+import com.hawkynt.mediadroid.ui.startOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.swing.JFileChooser
@@ -65,8 +58,8 @@ import com.hawkynt.mediadroid.ui.Screen as Shown
 
 /**
  * The library: pick a folder once, then the walls both apps share (:ui) — Movies and TV Shows with their home rows,
- * Genres and Years, Search and Filters, beside the sidebar. A movie plays at once, a show opens its episodes; the
- * media folder and the network sources are under Settings.
+ * Genres and Years, Search and Filters, beside the sidebar; a title opens its details. The media folder and the
+ * network sources are under Settings.
  */
 @Composable
 fun LibraryScreen(
@@ -158,7 +151,8 @@ private fun Walls(
 ) {
     val state = store.state
     var screen by remember { mutableStateOf<Shown>(Shown.Browse(LibrarySection.MOVIES)) }
-    var openShow by remember { mutableStateOf<Show?>(null) }
+    // A title's details over the walls, as on Android; Back returns to where it was opened.
+    var details by remember { mutableStateOf<MediaItem?>(null) }
     var filter by remember { mutableStateOf(BrowseFilter()) }
     // Each wall keeps its own order, remembered across launches.
     var sorts by remember { mutableStateOf(LibrarySection.entries.associateWith { state.sortFor(it) }) }
@@ -171,35 +165,43 @@ private fun Walls(
     val searchGrid = rememberLazyGridState()
     val rowGrid = rememberLazyGridState()
 
-    openShow?.let { show ->
-        ShowScreen(store, show, onBack = { openShow = null }, onPlay = onPlay)
-        return
-    }
-
     fun navigate(target: Shown) {
         screen = target
         if (target is Shown.Browse) placeSection = target.section
     }
 
-    // A movie plays from the file asked for (else its first), a show from its episode asked for (else it opens).
+    // Where a queue picks up is the Android app's rule (startOf): the file asked for, else one with a resume point,
+    // else the first not yet watched.
     fun play(item: MediaItem, path: String?) {
         when (item) {
             is Movie -> {
                 val queue = item.playQueue()
-                onPlay(queue.map { Playing(item.title, it.videoPath) }, queue.indexOfFirst { it.videoPath == path }
-                    .coerceAtLeast(0))
+                onPlay(queue.map { Playing(item.title, it.videoPath) }, startOf(queue, path, state))
             }
             is Show -> {
                 val queue = showQueue(item)
-                val start = queue.indexOfFirst { it.video == path }
-                if (start >= 0) onPlay(queue, start) else openShow = item
+                val from = item.playQueue().let { it.getOrNull(startOf(it, path, state)) }?.videoPath
+                onPlay(queue, queue.indexOfFirst { it.video == from }.coerceAtLeast(0))
             }
         }
     }
 
-    fun open(item: MediaItem) = when (item) {
-        is Movie -> play(item, null)
-        is Show -> openShow = item
+    fun open(item: MediaItem) {
+        details = item
+    }
+
+    details?.let { item ->
+        DetailsScreen(
+            item = item,
+            store = state,
+            onBack = { details = null },
+            onPlayMovie = { play(it, null) },
+            onPlayShow = { show, episode -> play(show, episode?.videoPath) },
+            onPlayTrailer = { movie ->
+                movie.trailerPath?.let { onPlay(listOf(Playing("${movie.title} · Trailer", it)), 0) }
+            },
+        )
+        return
     }
 
     Row(Modifier.fillMaxSize()) {
@@ -297,36 +299,6 @@ private fun MediaPlaces(store: DesktopStore, places: DesktopLibrary, onSources: 
  */
 internal fun showQueue(show: Show): List<Playing> = BingeQueue.queue(show.seasons, skipWatched = false).map {
     Playing("${show.title} · S%02dE%02d".format(it.season, it.episode.number), it.episode.videoPath)
-}
-
-@Composable
-private fun ShowScreen(store: DesktopStore, show: Show, onBack: () -> Unit, onPlay: (List<Playing>, Int) -> Unit) {
-    val episodes = BingeQueue.queue(show.seasons, skipWatched = false).map { it.season to it.episode }
-    val queue = showQueue(show)
-    Column(Modifier.fillMaxSize().padding(24.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
-            Text(show.title, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color.White)
-        }
-        show.plot?.let { Text(it, color = Color.LightGray, modifier = Modifier.padding(vertical = 12.dp)) }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(episodes.indices.toList()) { i ->
-                val (season, episode) = episodes[i]
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF22223A))
-                    .clickable { onPlay(queue, i) }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("S%02d E%02d".format(season, episode.number), color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.width(96.dp))
-                    Text(
-                        episode.title ?: "Episode ${episode.number}",
-                        color = Color.White,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (store.watched(episode.videoPath)) Icon(Icons.Default.CheckCircle, "Watched",
-                        tint = MaterialTheme.colorScheme.primary)
-                }
-            }
-        }
-    }
 }
 
 private fun chooseFolder(): String? {
