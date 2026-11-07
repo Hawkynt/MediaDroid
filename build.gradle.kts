@@ -19,3 +19,13 @@ subprojects {
         }
     }
 }
+
+// A plain JVM module's jar is named after its whole path (core-player.jar, engine-desktop.jar): :desktop and
+// :engine:desktop would otherwise both make desktop.jar, and a folder of jars (the portable Windows zip) keeps one.
+subprojects {
+    plugins.withId("org.jetbrains.kotlin.jvm") {
+        tasks.withType<Jar>().configureEach {
+            archiveBaseName.set(project.path.removePrefix(":").replace(':', '-'))
+        }
+    }
+}
