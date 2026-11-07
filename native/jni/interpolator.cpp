@@ -73,7 +73,7 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_flow(
     const auto* second = static_cast<const unsigned char*>(env->GetDirectBufferAddress(later));
     auto* floats = static_cast<float*>(env->GetDirectBufferAddress(out));
     if (it == nullptr || first == nullptr || second == nullptr || floats == nullptr) return -1;
-    if (env->GetDirectBufferCapacity(out) < static_cast<jlong>(w) * h * 5 * 4) return -1;
+    if (env->GetDirectBufferCapacity(out) < static_cast<jlong>(w) * h * 8 * 4) return -1;
     it->earlierId = it->laterId = 0;
     it->before = it->after = nullptr;
     return it->flow(first, second, w, h, time, floats);

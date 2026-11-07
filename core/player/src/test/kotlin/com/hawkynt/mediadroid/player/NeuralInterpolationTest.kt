@@ -36,8 +36,9 @@ class NeuralInterpolationTest {
     }
 
     @Test
-    fun `RIFE hands back its flow, so its self-test starts at 240p, the other networks at 480p`() {
+    fun `RIFE and IFRNet hand back their flow, so their self-test starts at 240p, the other networks at 480p`() {
         assertTrue(NeuralInterpolation.handsFlow(PictureAdjustment.Interpolation.RIFE))
+        assertTrue(NeuralInterpolation.handsFlow(PictureAdjustment.Interpolation.IFRNET))
         assertFalse(NeuralInterpolation.handsFlow(PictureAdjustment.Interpolation.DAIN))
         assertEquals(
             listOf(NeuralInterpolation.Size(426, 240), NeuralInterpolation.Size(640, 360)) +

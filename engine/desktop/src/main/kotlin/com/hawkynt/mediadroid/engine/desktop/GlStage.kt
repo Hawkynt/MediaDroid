@@ -10,6 +10,7 @@ import com.hawkynt.mediadroid.player.MpvShader
 import com.hawkynt.mediadroid.player.MpvShaders
 import com.hawkynt.mediadroid.player.NeuralEnlarging
 import com.hawkynt.mediadroid.player.NeuralInterpolation
+import com.hawkynt.mediadroid.player.NeuralPace
 import com.hawkynt.mediadroid.player.OldGame
 import com.hawkynt.mediadroid.player.PeakDetect
 import com.hawkynt.mediadroid.player.PictureAdjustment
@@ -918,7 +919,12 @@ class GlStage(
     ): Target? {
         val net = interpolator(network) ?: return null
         val times = neural?.motion?.get(network)?.msByHeight ?: return null
-        val size = NeuralInterpolation.workingSize(earlier.width, earlier.height, times) ?: return null
+        val start = NeuralInterpolation.workingSize(earlier.width, earlier.height, times) ?: return null
+        // The size paced as it plays (NeuralPace), from where the self-test left it.
+        val own = NeuralInterpolation.Size(earlier.width, earlier.height)
+        val pace = neuralPace?.takeIf { it.first == Triple(network, own, start) }?.second
+            ?: NeuralPace(own, start).also { neuralPace = Triple(network, own, start) to it }
+        val size = pace.size
         // A network handing back its flow: worked out at that size, the frames warped by it at their own.
         val flows = NeuralInterpolation.handsFlow(network)
         val into = if (flows) {
@@ -927,13 +933,14 @@ class GlStage(
             target("inBetween", size.width, size.height)
         }
         if (betweenFor?.first === shown && betweenFor?.second === next) return into
+        val began = System.nanoTime()
         val a = read(scaled(earlier, "netEarlier", size))
         val b = read(scaled(later, "netLater", size))
         val made = if (flows) {
             net.flow(a, b, size.width, size.height)?.let { flow ->
                 flowTexture = passes.floats(flowTexture, size.width, size.height, 4, flow.duplicate())
                 val mask = flow.duplicate().apply { position(size.width * size.height * 4 * Float.SIZE_BYTES) }.slice()
-                maskTexture = passes.floats(maskTexture, size.width, size.height, 1, mask)
+                maskTexture = passes.floats(maskTexture, size.width, size.height, 4, mask)
                 finishing.warp(earlier, later, flowTexture, maskTexture, into, size.width, size.height)
             }
         } else {
@@ -942,9 +949,14 @@ class GlStage(
         MemoryUtil.memFree(a)
         MemoryUtil.memFree(b)
         made ?: return null
+        pace.report(System.nanoTime() - began, (next.ptsMs - shown.ptsMs).coerceAtLeast(1) * 1_000_000L)
         betweenFor = shown to next
         return into
     }
+
+    // The interpolation network's paced size, for the network, material size and start it was made for.
+    private var neuralPace: Pair<Triple<PictureAdjustment.Interpolation, NeuralInterpolation.Size,
+        NeuralInterpolation.Size>, NeuralPace>? = null
 
     // RIFE's flow and mask as the warp reads them (Passes.floats), refilled pair by pair.
     private var flowTexture = 0

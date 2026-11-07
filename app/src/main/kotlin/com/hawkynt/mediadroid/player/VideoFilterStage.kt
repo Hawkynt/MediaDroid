@@ -169,6 +169,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val rifeFor = LongArray(2)
     private var rifeSize = NeuralInterpolation.Size(0, 0)
 
+    // The network's paced size, for the network, material size and start it was made for (see NeuralPace).
+    private var rifePace: Pair<Triple<PictureAdjustment.Interpolation, NeuralInterpolation.Size,
+        NeuralInterpolation.Size>, NeuralPace>? = null
+
     // A network handing back its flow (NeuralInterpolation.handsFlow, on GLSL ES 3 chips): its flow and mask as
     // float textures, and the last two in-betweens warped at the frames' own size — which slot holds such a one.
     private var rifeFlow = 0
@@ -2535,7 +2539,14 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     ) {
         val net = rifeNet(network) ?: return
         val times = neuralMotion[net.network]?.msByHeight ?: return
-        val size = NeuralInterpolation.workingSize(frameWidth, frameHeight, times) ?: return
+        val start = NeuralInterpolation.workingSize(frameWidth, frameHeight, times) ?: return
+        // The size paced as it plays (NeuralPace), from where the self-test left it; the whole pass is timed.
+        val own = NeuralInterpolation.Size(frameWidth, frameHeight)
+        val pace = rifePace?.takeIf { it.first == Triple(network, own, start) }?.second
+            ?: NeuralPace(own, start).also { rifePace = Triple(network, own, start) to it }
+        val size = pace.size
+        val began = System.nanoTime()
+        val interval = (keptAt[2] - keptAt[1]).coerceAtLeast(1L)
         val w = size.width
         val h = size.height
         val target = frames[RIFE_INPUT].ensure(w, h)
@@ -2565,12 +2576,13 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             val flow = net.flow(rifeRead[0], rifeRead[1], w, h) ?: return
             rifeFlow = passes.floats(rifeFlow, w, h, 4, flow.duplicate())
             val mask = flow.duplicate().apply { position(w * h * 4 * Float.SIZE_BYTES) }.slice()
-            rifeMask = passes.floats(rifeMask, w, h, 1, mask)
+            rifeMask = passes.floats(rifeMask, w, h, 4, mask)
             val slot = if (rifeFor[0] <= rifeFor[1]) 0 else 1
             val into = rifeWarped[slot].ensure(frameWidth, frameHeight)
             finishing.warp(earlier, later, rifeFlow, rifeMask, into, w, h)
             rifeWarpedSlot[slot] = true
             rifeFor[slot] = keptAt[2]
+            pace.report(System.nanoTime() - began, interval)
             return
         }
         // The frames' arrivals are their ids: the later frame of this pair is the earlier of the next.
@@ -2601,6 +2613,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, rgb)
         GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 4)
         rifeFor[slot] = keptAt[2]
+        pace.report(System.nanoTime() - began, interval)
     }
 
     /**

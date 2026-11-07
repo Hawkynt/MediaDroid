@@ -33,10 +33,11 @@ struct Interpolator {
     const unsigned char* after = nullptr;
     virtual int between(const unsigned char* first, const unsigned char* second, int w, int h, float time,
                         unsigned char* rgb) = 0;
-    // The network's motion instead of its picture, where it has one to hand back (RIFE): into [out] (w x h, rows as
-    // stored) the flows towards the earlier and the later frame interleaved as four floats a pixel (earlier x, y,
-    // later x, y, in pixels of this size), then the blend mask's w x h logits (the earlier frame's share is their
-    // sigmoid). -1 where the network hands back only pictures.
+    // The network's motion instead of its picture, where it has one to hand back (RIFE, IFRNet): into [out] (w x h,
+    // rows as stored) two planes of four floats a pixel — the flows towards the earlier and the later frame (earlier
+    // x, y, later x, y, in pixels of this size), then the blend mask's logit (the earlier frame's share is its
+    // sigmoid) with what the network adds to the blend in red, green and blue (0..1; RIFE adds nothing). -1 where
+    // the network hands back only pictures.
     virtual int flow(const unsigned char* first, const unsigned char* second, int w, int h, float time, float* out) {
         return -1;
     }
@@ -111,7 +112,9 @@ std::unique_ptr<Interpolator> openIfrnet(const Loader& load, bool gpu);
 // GPU or the CPU; null where it does not load.
 std::unique_ptr<Interpolator> openFlavr(const Loader& load, bool gpu);
 
-// [net]'s options for the GPU or the CPU: on the GPU half floats to store, full floats to compute with.
-void configure(ncnn::Net& net, bool vulkan);
+// [net]'s options for the GPU or the CPU: on the GPU half floats to store, full floats to compute with; on the CPU
+// full floats — half floats to store and compute with where [halfOnCpu] and the processor has ARMv8.2's half-float
+// arithmetic.
+void configure(ncnn::Net& net, bool vulkan, bool halfOnCpu = false);
 
 }  // namespace mediadroid

@@ -152,8 +152,8 @@ std::vector<unsigned char> resized(const std::vector<unsigned char>& rgba, int w
 
 // The stage's warp (glsl/video/rife-warp-es3.frag) in C++: the flow and mask of [fw] x [fh] (Interpolator::flow's
 // layout) read bilinearly at each pixel's centre of the [w] x [h] frames, the flow grown by the sizes' ratios, each
-// frame sampled along its flow as RIFE's warp layer samples (warp_layer.cpp), and the two blended by the mask's
-// sigmoid. Into [rgb].
+// frame sampled along its flow as the warp layer samples (warp_layer.cpp), the two blended by the mask's sigmoid and
+// the residual added. Into [rgb].
 void warped(const std::vector<unsigned char>& a, const std::vector<unsigned char>& c, int w, int h,
             const std::vector<float>& flow, int fw, int fh, unsigned char* rgb) {
     const float* masks = flow.data() + static_cast<size_t>(fw) * fh * 4;
@@ -168,7 +168,7 @@ void warped(const std::vector<unsigned char>& a, const std::vector<unsigned char
         const float ax = x - x0, ay = y - y0;
         auto at = [&](int xx, int yy) {
             const size_t i = static_cast<size_t>(yy) * fw + xx;
-            return channel < 4 ? flow[i * 4 + channel] : masks[i];
+            return channel < 4 ? flow[i * 4 + channel] : masks[i * 4 + channel - 4];
         };
         return (at(x0, y0) * (1 - ax) + at(x1, y0) * ax) * (1 - ay) + (at(x0, y1) * (1 - ax) + at(x1, y1) * ax) * ay;
     };
@@ -189,7 +189,8 @@ void warped(const std::vector<unsigned char>& a, const std::vector<unsigned char
             const float lx = lerp(2, u, v) * sx, ly = lerp(3, u, v) * sy;
             const float share = 1.f / (1.f + std::exp(-lerp(4, u, v)));
             for (int k = 0; k < 3; k++) {
-                const float value = sample(a, x + ex, y + ey, k) * share + sample(c, x + lx, y + ly, k) * (1 - share);
+                const float value = sample(a, x + ex, y + ey, k) * share +
+                    sample(c, x + lx, y + ly, k) * (1 - share) + lerp(5 + k, u, v);
                 rgb[(static_cast<size_t>(y) * w + x) * 3 + k] =
                     static_cast<unsigned char>(std::clamp(value * 255.f + 0.5f, 0.f, 255.f));
             }
@@ -224,7 +225,7 @@ void footage(const char* name, mediadroid::Interpolator& net, const std::string&
             const int fw = (w / divisor + 1) / 2 * 2, fh = (h / divisor + 1) / 2 * 2;
             const auto sa = resized(a, w, h, fw, fh);
             const auto sc = resized(c, w, h, fw, fh);
-            std::vector<float> flow(static_cast<size_t>(fw) * fh * 5);
+            std::vector<float> flow(static_cast<size_t>(fw) * fh * 8);
             ran = net.flow(sa.data(), sc.data(), fw, fh, 0.5f, flow.data());
             if (ran == 0) warped(a, c, w, h, flow, fw, fh, rgb.data());
         } else if (divisor < 0) {
@@ -289,7 +290,7 @@ void flowAgrees(const char* name, mediadroid::Interpolator& net, int w, int h) {
     const auto first = frame(w, h, 0);
     const auto last = frame(w, h, 2);
     std::vector<unsigned char> own(static_cast<size_t>(w) * h * 3), stage(own.size());
-    std::vector<float> flow(static_cast<size_t>(w) * h * 5);
+    std::vector<float> flow(static_cast<size_t>(w) * h * 8);
     if (net.between(first.data(), last.data(), w, h, 0.5f, own.data()) != 0 ||
         net.flow(first.data(), last.data(), w, h, 0.5f, flow.data()) != 0) {
         std::printf("%s %dx%d: the flow FAILED\n", name, w, h);
@@ -457,7 +458,7 @@ int main(int argc, char** argv) {
                 std::printf("%s on the %s: does not load\n", network.c_str(), unit);
                 continue;
             }
-            const bool flows = network == "RIFE";
+            const bool flows = network == "RIFE" || network == "IFRNet";
             if (const char* frames = std::getenv("NEURAL_CHECK_FRAMES")) {
                 footage((network + " " + unit).c_str(), *net, frames);
                 if (flows) {
