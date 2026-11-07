@@ -24,10 +24,11 @@
 //                     plane_upscaler) or by an mpv user shader hooking CHROMA (KrigBilateral); out the YCbCr itself
 //                     at the luma's size, 16 bits a value (Y, Cb, Cr in place of R, G, B) — or with [rgb] the
 //                     picture in 8-bit RGB, as the stage's pass draws it
-//   placebo_oracle hook <in.ppm> <shader.glsl> <out.ppm> <width> <height> [yuv]
+//   placebo_oracle hook <in.ppm> <shader.glsl> <out.ppm> <width> <height> [yuv] [compute]
 //                     an mpv user shader run by libplacebo's renderer (pl_mpv_user_shader_parse) on the picture,
 //                     shown at <width> x <height> (bilinear where the shader leaves scaling to do); with [yuv] the
-//                     picture is handed over as full-range BT.709 YCbCr planes, so the shader's LUMA hooks run
+//                     picture is handed over as full-range BT.709 YCbCr planes, so the shader's LUMA hooks run; with
+//                     [compute] libplacebo may use compute shaders, which a shader's //!COMPUTE passes need
 //
 // The picture as one RGBA texture (8 or 16 bits), top row first, as libplacebo's own frames are.
 #include <EGL/egl.h>
@@ -482,7 +483,17 @@ int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
     if (mode == "curve" && argc > 2) return curve(argc - 2, argv + 2);
     if (mode == "bluenoise" && argc == 2) return blueNoise();
-    startPlacebo(mode == "peak");
+    // Optional words after the hook's arguments: yuv, compute.
+    bool yuv = false;
+    bool compute = mode == "peak";
+    bool words = true;
+    for (int i = 7; mode == "hook" && i < argc; i++) {
+        const std::string word = argv[i];
+        if (word == "yuv") yuv = true;
+        else if (word == "compute") compute = true;
+        else words = false;
+    }
+    startPlacebo(compute);
     int result = 0;
     if (mode == "deband" && argc == 9) result = deband(argv + 2);
     else if (mode == "tonemap" && argc == 6) result = tonemap(argv + 2);
@@ -490,8 +501,8 @@ int main(int argc, char** argv) {
     else if (mode == "peak" && argc > 3) result = peak(argv[2], argc - 3, argv + 3);
     else if (mode == "chroma" && (argc == 7 || (argc == 8 && std::string(argv[7]) == "rgb")))
         result = chroma(argv + 2);
-    else if (mode == "hook" && (argc == 7 || (argc == 8 && std::string(argv[7]) == "yuv")))
-        result = hook(argv + 2, argc == 8);
+    else if (mode == "hook" && argc >= 7 && argc <= 9 && words)
+        result = hook(argv + 2, yuv);
     else fail("usage: see the head of tools/shader-check/placebo.cpp");
     pl_opengl_destroy(&gl);
     pl_log_destroy(&logger);

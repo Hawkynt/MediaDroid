@@ -296,8 +296,12 @@ fun PlayerScreen(
     }
     // Film is undone in the engine, before the pictures queue up (see Film).
     LaunchedEffect(picture.deinterlace) { engine.film = picture.deinterlace == PictureAdjustment.Deinterlace.FILM }
-    // A chroma upscaler works on the decoded planes, which the engine then keeps beside each picture.
-    LaunchedEffect(picture.chroma) { engine.keepPlanes = picture.chroma != PictureAdjustment.Chroma.BILINEAR }
+    // A chroma upscaler, and an mpv shader hooking the chroma, work on the decoded planes, which the engine then keeps
+    // beside each picture.
+    LaunchedEffect(picture.chroma, picture.shader) {
+        val chromaHooked = picture.shader?.let { com.hawkynt.mediadroid.player.MpvShaders.library[it] }?.hooksChroma
+        engine.keepPlanes = picture.chroma != PictureAdjustment.Chroma.BILINEAR || chromaHooked == true
+    }
     // Each show its own station logo, if one was hidden for its folder.
     LaunchedEffect(playing.video) { picture = picture.copy(logo = store.logoFor(playing.video)) }
     // The networks the stage may run: those whose self-tests passed, as of the picture taken last.

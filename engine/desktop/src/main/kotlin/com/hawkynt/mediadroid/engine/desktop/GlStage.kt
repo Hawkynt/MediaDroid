@@ -182,6 +182,8 @@ class GlStage(
         xbrzTable = xbrzTable()
         obmcTable = obmcTable()
         noiseTable = noiseTable()
+        // OpenGL 4.3 has compute shaders, which mpv user shaders' compute passes need.
+        MpvShaders.compute = true
         ready = true
     }
 
@@ -274,6 +276,12 @@ class GlStage(
     private var chroma = PictureAdjustment.Chroma.BILINEAR
     private val planeTextures = IntArray(3)
 
+    // The mpv user shader whose CHROMA hooks the pictures are uploaded with (from their planes), and the size shown,
+    // which its passes' sizes may read.
+    private var chromaShader: MpvShader? = null
+    private var hookOutW = 0
+    private var hookOutH = 0
+
     private fun run(
         m: Moment,
         a: PictureAdjustment,
@@ -283,6 +291,11 @@ class GlStage(
         warp: ScreenWarp,
     ): Target {
         this.crop = crop
+        hookOutW = outW
+        hookOutH = outH
+        // The mpv user shader chosen, where the stage can run it (MpvShader).
+        val user = a.shader?.let { MpvShaders.library[it] }?.takeIf { MpvShaders.runnable(it) }
+        val chromaHooked = user?.takeIf { it.hooksChroma }
         // Where the picture holds more than the 8 bits it is read back in — HDR's tone-mapped floats, the colour
         // correction's or debanding's results — every pass draws into half floats and the last one dithers (Dither);
         // a plain 8-bit picture keeps its 8-bit frames, untouched.
@@ -291,11 +304,13 @@ class GlStage(
         val look = listOf(
             a.deinterlace, a.stereo, a.deband, a.noise, a.sharpness, a.clarity, crop, deep, a.chroma, a.colorize,
             a.logo, a.deblock, a.dering,
-            a.temporalDenoise, a.dotCrawl,
+            a.temporalDenoise, a.dotCrawl, chromaHooked,
         )
-        // Another chroma upscaler makes every picture uploaded from its planes stale.
-        if (a.chroma != chroma) {
+        // Another chroma upscaler, or another shader hooking the chroma, makes every picture uploaded from its planes
+        // stale.
+        if (a.chroma != chroma || chromaHooked !== chromaShader) {
             chroma = a.chroma
+            chromaShader = chromaHooked
             uploaded.forEach { it.picture = null }
         }
         if (look != keptLook) {
@@ -323,8 +338,7 @@ class GlStage(
             val later = filtered(next, m.shown, m.after, a, false, earlier = m.previous)
             source = mixed(m, next, source, later, a)
         }
-        // The mpv user shader chosen, its hooks before the picture is enlarged (MpvShader).
-        val user = a.shader?.let { MpvShaders.library[it] }?.takeIf { it.supported }
+        // The mpv user shader's hooks before the picture is enlarged (its CHROMA ones ran as it was uploaded).
         if (user != null) {
             source = userHooks(user, source, MpvShader.BEFORE_SCALING, outW, outH, m.shown.width, m.shown.height)
         }
@@ -798,48 +812,11 @@ class GlStage(
         fun picture(t: Target) = pictureNames.forEach { textures[it] = t }
         picture(turned(from, "mpvIn"))
         hookFrame++
-        fun sizes() = textures.mapValues { MpvShader.Size(it.value.width, it.value.height) } +
-            ("OUTPUT" to MpvShader.Size(outW, outH))
-        fun runPass(stage: String, planned: MpvShader.Planned): Boolean {
-            val hooked = textures.getValue(stage)
-            val sizes = sizes() + ("HOOKED" to MpvShader.Size(hooked.width, hooked.height))
-            if (!planned.runs(sizes)) return true
-            val names = planned.textures(stage)
-            if (names.any { it !in textures }) return true
-            val size = planned.size(sizes)
-            val program = runCatching { userProgram(planned.source(stage)) }.getOrNull() ?: return false
-            val save = planned.pass.save?.takeIf { it != "HOOKED" } ?: stage
-            val count = writes.merge(save, 1, Int::plus)!!
-            val into = target("mpv:$save:${count % 2}", size.width, size.height, half = true)
-            glBindFramebuffer(GL_FRAMEBUFFER, into.framebuffer)
-            glViewport(0, 0, into.width, into.height)
-            glUseProgram(program)
-            names.forEachIndexed { unit, name ->
-                val t = textures.getValue(name)
-                glActiveTexture(GL_TEXTURE0 + unit)
-                glBindTexture(GL_TEXTURE_2D, t.texture)
-                // Read as libplacebo reads a hook's textures: linearly, clamped at the edges.
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-                glUniform1i(glGetUniformLocation(program, "${name}_raw"), unit)
-                glUniform2f(glGetUniformLocation(program, "${name}_size"), t.width.toFloat(), t.height.toFloat())
+        val sizes = HookSizes(outW, outH, inputW, inputH)
+        fun runPass(stage: String, planned: MpvShader.Planned): Boolean =
+            hookPass(stage, planned, textures, writes, sizes) { save, into ->
+                if (save == stage && stage in pictureNames) picture(into) else textures[save] = into
             }
-            for (unit in names.size until 8) {
-                glActiveTexture(GL_TEXTURE0 + unit)
-                glBindTexture(GL_TEXTURE_2D, 0)
-            }
-            glActiveTexture(GL_TEXTURE0)
-            glUniform2f(glGetUniformLocation(program, "mpvTarget"), into.width.toFloat(), into.height.toFloat())
-            glUniform1i(glGetUniformLocation(program, "frame"), hookFrame)
-            glUniform1f(glGetUniformLocation(program, "random"), hookRandom.nextFloat())
-            glUniform2f(glGetUniformLocation(program, "input_size"), inputW.toFloat(), inputH.toFloat())
-            glUniform2f(glGetUniformLocation(program, "target_size"), outW.toFloat(), outH.toFloat())
-            glUniform2f(glGetUniformLocation(program, "tex_offset"), 0f, 0f)
-            glBindVertexArray(vao)
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
-            if (save == stage && stage in pictureNames) picture(into) else textures[save] = into
-            return true
-        }
         run stages@{
             for (stage in stages) {
                 val passes = shader.planned(stage)
@@ -860,23 +837,167 @@ class GlStage(
         return turned(textures.getValue("MAIN"), "mpvOut")
     }
 
+    /** The sizes an mpv user shader's passes are given: the size shown and the video's. */
+    private class HookSizes(val outW: Int, val outH: Int, val inputW: Int, val inputH: Int)
+
+    /**
+     * One pass of an mpv user shader, [planned] on [stage], over [textures] by name (mpv's: the hooked one and those
+     * saved), into a half-float frame of its own handed to [saved] with the name it saves under: a fragment pass drawn,
+     * a compute pass dispatched in its blocks (as libplacebo's hook_hook dispatches it) with the frame as its
+     * `out_image`. The shader's embedded textures are bound beside them under their own names. A pass whose `WHEN`
+     * does not hold, or that reads a texture there is not, is left out (true); one that will not compile ends the
+     * shader (false).
+     */
+    private fun hookPass(
+        stage: String,
+        planned: MpvShader.Planned,
+        textures: Map<String, Target>,
+        writes: MutableMap<String, Int>,
+        sizes: HookSizes,
+        saved: (String, Target) -> Unit,
+    ): Boolean {
+        val hooked = textures.getValue(stage)
+        val known = textures.mapValues { MpvShader.Size(it.value.width, it.value.height) } +
+            ("OUTPUT" to MpvShader.Size(sizes.outW, sizes.outH)) +
+            ("HOOKED" to MpvShader.Size(hooked.width, hooked.height))
+        if (!planned.runs(known)) return true
+        val names = planned.textures(stage)
+        if (names.any { it !in textures }) return true
+        val size = planned.size(known)
+        val compute = planned.pass.compute
+        val program = runCatching {
+            val source = planned.source(stage)
+            if (compute != null) computeProgram(source) else userProgram(source)
+        }.getOrNull() ?: return false
+        val save = planned.pass.save?.takeIf { it != "HOOKED" } ?: stage
+        val count = writes.merge(save, 1, Int::plus)!!
+        val into = target("mpv:$save:${count % 2}", size.width, size.height, half = true)
+        glUseProgram(program)
+        names.forEachIndexed { unit, name ->
+            val t = textures.getValue(name)
+            glActiveTexture(GL_TEXTURE0 + unit)
+            glBindTexture(GL_TEXTURE_2D, t.texture)
+            // Read as libplacebo reads a hook's textures: linearly, clamped at the edges.
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glUniform1i(glGetUniformLocation(program, "${name}_raw"), unit)
+            glUniform2f(glGetUniformLocation(program, "${name}_size"), t.width.toFloat(), t.height.toFloat())
+        }
+        val embedded = planned.userTextures()
+        embedded.forEachIndexed { k, texture ->
+            val unit = names.size + k
+            glActiveTexture(GL_TEXTURE0 + unit)
+            glBindTexture(if (texture.depth > 0) GL_TEXTURE_3D else GL_TEXTURE_2D, userTexture(planned.shader, texture))
+            glUniform1i(glGetUniformLocation(program, texture.name), unit)
+        }
+        for (unit in names.size + embedded.size until 8) {
+            glActiveTexture(GL_TEXTURE0 + unit)
+            glBindTexture(GL_TEXTURE_2D, 0)
+        }
+        glActiveTexture(GL_TEXTURE0)
+        glUniform2f(glGetUniformLocation(program, "mpvTarget"), into.width.toFloat(), into.height.toFloat())
+        glUniform1i(glGetUniformLocation(program, "frame"), hookFrame)
+        glUniform1f(glGetUniformLocation(program, "random"), hookRandom.nextFloat())
+        glUniform2f(glGetUniformLocation(program, "input_size"), sizes.inputW.toFloat(), sizes.inputH.toFloat())
+        glUniform2f(glGetUniformLocation(program, "target_size"), sizes.outW.toFloat(), sizes.outH.toFloat())
+        glUniform2f(glGetUniformLocation(program, "tex_offset"), 0f, 0f)
+        if (compute == null) {
+            glBindFramebuffer(GL_FRAMEBUFFER, into.framebuffer)
+            glViewport(0, 0, into.width, into.height)
+            glBindVertexArray(vao)
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
+        } else {
+            // As many blocks as cover the output, rounded up; what they store is read by the passes after.
+            glBindImageTexture(0, into.texture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA16F)
+            glDispatchCompute(
+                (into.width + compute.blockWidth - 1) / compute.blockWidth,
+                (into.height + compute.blockHeight - 1) / compute.blockHeight,
+                1,
+            )
+            glMemoryBarrier(
+                GL_TEXTURE_FETCH_BARRIER_BIT or GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GL_FRAMEBUFFER_BARRIER_BIT,
+            )
+        }
+        saved(save, into)
+        return true
+    }
+
+    // The embedded textures of the shader last run, uploaded once (see userTexture).
+    private val userTextures = HashMap<MpvShader.Texture, Int>()
+    private var userTexturesOf: MpvShader? = null
+
+    /**
+     * [texture] of [shader] on the graphics card, uploaded the first time it is read: its texels as declared (8-bit
+     * normalised, half or full floats; two or three dimensions), filtered and bordered as it says. Another shader's
+     * make the last one's go.
+     */
+    private fun userTexture(shader: MpvShader, texture: MpvShader.Texture): Int {
+        if (shader !== userTexturesOf) {
+            userTextures.values.forEach { glDeleteTextures(it) }
+            userTextures.clear()
+            userTexturesOf = shader
+        }
+        return userTextures.getOrPut(texture) {
+            val kind = if (texture.depth > 0) GL_TEXTURE_3D else GL_TEXTURE_2D
+            val f = texture.format
+            val layout = intArrayOf(GL_RED, GL_RG, GL_RGB, GL_RGBA)[f.components - 1]
+            val internal = when {
+                !f.float -> intArrayOf(GL_R8, GL_RG8, GL_RGB8, GL_RGBA8)
+                f.heldBits == 16 -> intArrayOf(GL_R16F, GL_RG16F, GL_RGB16F, GL_RGBA16F)
+                else -> intArrayOf(GL_R32F, GL_RG32F, GL_RGB32F, GL_RGBA32F)
+            }[f.components - 1]
+            val type = if (!f.float) GL_UNSIGNED_BYTE else if (f.bits == 16) GL_HALF_FLOAT else GL_FLOAT
+            val id = glGenTextures()
+            glBindTexture(kind, id)
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+            val bytes = MemoryUtil.memAlloc(texture.data.size).put(texture.data).flip()
+            if (texture.depth > 0) {
+                glTexImage3D(kind, 0, internal, texture.width, texture.height, texture.depth, 0, layout, type, bytes)
+            } else {
+                glTexImage2D(kind, 0, internal, texture.width, texture.height, 0, layout, type, bytes)
+            }
+            MemoryUtil.memFree(bytes)
+            val filter = if (texture.linear) GL_LINEAR else GL_NEAREST
+            glTexParameteri(kind, GL_TEXTURE_MIN_FILTER, filter)
+            glTexParameteri(kind, GL_TEXTURE_MAG_FILTER, filter)
+            val wrap = when (texture.border) {
+                MpvShader.Border.CLAMP -> GL_CLAMP_TO_EDGE
+                MpvShader.Border.REPEAT -> GL_REPEAT
+                MpvShader.Border.MIRROR -> GL_MIRRORED_REPEAT
+            }
+            listOf(GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R).forEach { glTexParameteri(kind, it, wrap) }
+            glBindTexture(kind, 0)
+            id
+        }
+    }
+
     /** A user shader's pass as a program, built once: its fragment shader with the stage's vertex shader beside it. */
     private fun userProgram(fragment: String): Int = userPrograms.getOrPut(fragment) {
         val version = fragment.substringBefore('\n')
         val vertex = version + "\n" + Shaders.VIDEO_VERTEX_ES3.substringAfter('\n')
-        fun compile(type: Int, source: String): Int = glCreateShader(type).also {
-            glShaderSource(it, source)
-            glCompileShader(it)
-            check(glGetShaderi(it, GL_COMPILE_STATUS) != 0) { "mpv shader: " + glGetShaderInfoLog(it) }
-        }
         glCreateProgram().also {
-            glAttachShader(it, compile(GL_VERTEX_SHADER, vertex))
-            glAttachShader(it, compile(GL_FRAGMENT_SHADER, fragment))
+            glAttachShader(it, compiled(GL_VERTEX_SHADER, vertex))
+            glAttachShader(it, compiled(GL_FRAGMENT_SHADER, fragment))
             glBindAttribLocation(it, 0, "aPosition")
             glBindAttribLocation(it, 1, "aTexCoord")
             glLinkProgram(it)
             check(glGetProgrami(it, GL_LINK_STATUS) != 0) { "mpv shader: " + glGetProgramInfoLog(it) }
         }
+    }
+
+    /** A user shader's compute pass as a program, built once. */
+    private fun computeProgram(source: String): Int = userPrograms.getOrPut(source) {
+        glCreateProgram().also {
+            glAttachShader(it, compiled(GL_COMPUTE_SHADER, source))
+            glLinkProgram(it)
+            check(glGetProgrami(it, GL_LINK_STATUS) != 0) { "mpv shader: " + glGetProgramInfoLog(it) }
+        }
+    }
+
+    private fun compiled(type: Int, source: String): Int = glCreateShader(type).also {
+        glShaderSource(it, source)
+        glCompileShader(it)
+        check(glGetShaderi(it, GL_COMPILE_STATUS) != 0) { "mpv shader: " + glGetShaderInfoLog(it) }
     }
 
     /**
@@ -1323,7 +1444,8 @@ class GlStage(
         val top = region.top
         val transfer = picture.hdr
         val planes = picture.planes
-        if (transfer == null && planes != null && chroma != PictureAdjustment.Chroma.BILINEAR) {
+        val fromPlanes = chroma != PictureAdjustment.Chroma.BILINEAR || chromaShader != null
+        if (transfer == null && planes != null && fromPlanes) {
             // The whole picture from its planes, then the region out of it (its top row where v is 1).
             val whole = chromaUpscaled(picture, planes)
             val pw = picture.width.toFloat()
@@ -1412,6 +1534,7 @@ class GlStage(
             glUniform1f(glGetUniformLocation(p, "uFoot"), if (planes.fullRange) 0f else 16f / 255f)
         }
         val whole = target("chroma-whole", w, h)
+        chromaShader?.let { return chromaHooked(it, planes, whole, flip, colour) }
         if (chroma == PictureAdjustment.Chroma.SPLINE36) {
             return pass("yuv-spline.frag", whole, planeTextures[0], chromaPlanes) { p ->
                 common(p)
@@ -1434,6 +1557,44 @@ class GlStage(
             glUniform1f(glGetUniformLocation(p, "uLumaStride"), w.toFloat())
             glUniform2f(glGetUniformLocation(p, "uLumaSize"), w.toFloat(), h.toFloat())
             glUniform2f(glGetUniformLocation(p, "uChromaSize"), cw.toFloat(), ch.toFloat())
+        }
+    }
+
+    /**
+     * The planes just uploaded through [shader]'s CHROMA hooks, as mpv runs them: `CHROMA` the Cb and Cr planes as
+     * one texture at their own size, `LUMA` the Y plane, both rows from the top as mpv holds them; then the Y plane
+     * and the hooked chroma — read bilinearly where the passes left it smaller than the picture — to RGB by [colour]
+     * into [whole], its top row where v is 1 ([flip]) as uploaded pictures are held.
+     */
+    private fun chromaHooked(
+        shader: MpvShader,
+        planes: MediaReader.Planes,
+        whole: Target,
+        flip: FloatArray,
+        colour: FloatArray,
+    ): Target {
+        val w = whole.width
+        val h = whole.height
+        val textures = HashMap<String, Target>()
+        textures["LUMA"] = Target(planeTextures[0], 0, w, h, GL_R8)
+        textures[MpvShader.CHROMA] = pass(
+            "mpv-chroma.frag", target("mpvChroma", (w + 1) / 2, (h + 1) / 2, half = true), planeTextures[1],
+            listOf(planeTextures[2] to "uV"),
+        )
+        hookFrame++
+        val writes = HashMap<String, Int>()
+        val sizes = HookSizes(hookOutW, hookOutH, w, h)
+        for (planned in shader.planned(MpvShader.CHROMA)) {
+            val ran = hookPass(MpvShader.CHROMA, planned, textures, writes, sizes) { save, into ->
+                textures[save] = into
+            }
+            if (!ran) break
+        }
+        val chroma = textures.getValue(MpvShader.CHROMA)
+        return pass("mpv-chroma-rgb.frag", whole, planeTextures[0], listOf(chroma.texture to "uChroma")) { p ->
+            glUniformMatrix4fv(glGetUniformLocation(p, "uTexMatrix"), false, flip)
+            glUniformMatrix3fv(glGetUniformLocation(p, "uColor"), false, colour)
+            glUniform1f(glGetUniformLocation(p, "uFoot"), if (planes.fullRange) 0f else 16f / 255f)
         }
     }
 
@@ -1677,6 +1838,8 @@ class GlStage(
             "cdef-es3.frag" to Shaders.VIDEO_CDEF_ES3,
             "mpv-luma.frag" to Shaders.VIDEO_MPV_LUMA,
             "mpv-recombine.frag" to Shaders.VIDEO_MPV_RECOMBINE,
+            "mpv-chroma.frag" to Shaders.VIDEO_MPV_CHROMA,
+            "mpv-chroma-rgb.frag" to Shaders.VIDEO_MPV_CHROMA_RGB,
             "temporal-denoise.frag" to Shaders.VIDEO_TEMPORAL_DENOISE,
             "dot-crawl.frag" to Shaders.VIDEO_DOT_CRAWL,
             "dot-crawl-pal.frag" to Shaders.VIDEO_DOT_CRAWL_PAL,
