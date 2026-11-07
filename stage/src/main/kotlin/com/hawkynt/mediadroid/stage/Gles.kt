@@ -45,6 +45,26 @@ interface Gles {
     /** A 2D texture's storage, [pixels] its texels from the bottom row (null: left undefined). */
     fun texImage2D(internalFormat: Int, width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer?)
 
+    /** A 3D texture's storage (an mpv user shader's own textures), [pixels] its texels layer by layer. */
+    fun texImage3D(
+        internalFormat: Int,
+        width: Int,
+        height: Int,
+        depth: Int,
+        format: Int,
+        type: Int,
+        pixels: ByteBuffer,
+    )
+
+    /** Runs the compute program in use over [x] × [y] × [z] work groups (OpenGL ES 3.1). */
+    fun dispatchCompute(x: Int, y: Int, z: Int)
+
+    /** [texture]'s level 0 as image unit [unit], written only, held as [format] (OpenGL ES 3.1). */
+    fun bindImageTexture(unit: Int, texture: Int, format: Int)
+
+    /** Waits until what the passes before wrote is seen by the reads [bits] name (OpenGL ES 3.1). */
+    fun memoryBarrier(bits: Int)
+
     /** The bound 2D texture's texels from (0, 0) to [width] × [height] replaced by [pixels], from the bottom row. */
     fun texSubImage2D(width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer)
     fun pixelStorei(name: Int, value: Int)
@@ -86,5 +106,27 @@ interface Gles {
         const val FLOAT = 0x1406
         const val UNPACK_ALIGNMENT = 0x0CF5
         const val PACK_ALIGNMENT = 0x0D05
+        const val COMPUTE_SHADER = 0x91B9
+        const val TEXTURE_3D = 0x806F
+        const val TEXTURE_WRAP_R = 0x8072
+        const val REPEAT = 0x2901
+        const val MIRRORED_REPEAT = 0x8370
+        const val RED = 0x1903
+        const val RG = 0x8227
+        const val RGB = 0x1907
+        const val R8 = 0x8229
+        const val RG8 = 0x822B
+        const val RGB8 = 0x8051
+        const val RGBA8 = 0x8058
+        const val R16F = 0x822D
+        const val RG16F = 0x822F
+        const val RGB16F = 0x881B
+        const val R32F = 0x822E
+        const val RG32F = 0x8230
+        const val RGB32F = 0x8815
+        const val RGBA32F = 0x8814
+        const val TEXTURE_FETCH_BARRIER_BIT = 0x00000008
+        const val SHADER_IMAGE_ACCESS_BARRIER_BIT = 0x00000020
+        const val FRAMEBUFFER_BARRIER_BIT = 0x00000400
     }
 }

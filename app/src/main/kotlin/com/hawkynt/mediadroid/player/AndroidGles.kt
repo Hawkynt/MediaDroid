@@ -59,6 +59,22 @@ internal class AndroidGles : Gles {
     override fun texSubImage2D(width: Int, height: Int, format: Int, type: Int, pixels: ByteBuffer) =
         GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, pixels)
     override fun pixelStorei(name: Int, value: Int) = GLES20.glPixelStorei(name, value)
+    override fun texImage3D(
+        internalFormat: Int,
+        width: Int,
+        height: Int,
+        depth: Int,
+        format: Int,
+        type: Int,
+        pixels: ByteBuffer,
+    ) = android.opengl.GLES30.glTexImage3D(
+        android.opengl.GLES30.GL_TEXTURE_3D, 0, internalFormat, width, height, depth, 0, format, type, pixels,
+    )
+    override fun dispatchCompute(x: Int, y: Int, z: Int) = android.opengl.GLES31.glDispatchCompute(x, y, z)
+    override fun bindImageTexture(unit: Int, texture: Int, format: Int) = android.opengl.GLES31.glBindImageTexture(
+        unit, texture, 0, false, 0, android.opengl.GLES31.GL_WRITE_ONLY, format,
+    )
+    override fun memoryBarrier(bits: Int) = android.opengl.GLES31.glMemoryBarrier(bits)
     override fun genFramebuffer(): Int {
         GLES20.glGenFramebuffers(1, one, 0)
         return one[0]
