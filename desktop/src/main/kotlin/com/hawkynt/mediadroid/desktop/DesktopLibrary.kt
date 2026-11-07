@@ -32,6 +32,9 @@ class DesktopLibrary(private val store: DesktopStore, private val secrets: Deskt
         files.forget(source.id)
     }
 
+    /** Lets go of the connection open to the source [sourceId]: it changed or is gone. */
+    fun forget(sourceId: String) = files.forget(sourceId)
+
     /** Removes [source] and forgets its password. */
     fun remove(source: Source) {
         store.sources = store.sources.filter { it.id != source.id }

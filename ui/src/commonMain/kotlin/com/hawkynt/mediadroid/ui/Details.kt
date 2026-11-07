@@ -42,7 +42,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -52,6 +53,7 @@ import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.library.Episode
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
+import com.hawkynt.mediadroid.ui.platform.LocalMediaArt
 import com.hawkynt.mediadroid.ui.theme.focusClickable
 import java.io.File
 
@@ -78,7 +80,7 @@ fun DetailsScreen(
                 }
                 // 16:9 across the width, but never more than [BACKDROP_SHARE] of the screen height: in
                 // landscape a full-width backdrop is taller than the screen and hides that the page goes on.
-                val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+                val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                     Box(
                         modifier = Modifier
@@ -287,7 +289,7 @@ private fun VersionRow(version: Movie, onClick: () -> Unit) {
 }
 
 /** A size as people read it: `4.7 GB`, `700 MB`. */
-internal fun fileSize(bytes: Long): String = when {
+fun fileSize(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%d MB".format(bytes shr 20)
     else -> "%d KB".format(bytes shr 10)
@@ -329,11 +331,11 @@ private fun EpisodeRow(season: Int, episode: Episode, store: StateStore, onClick
                 VideoFrameImage(episode.videoPath)
             }
             // What the file itself holds, probed once and cached; the NFO only when the file cannot be read.
-            val context = androidx.compose.ui.platform.LocalContext.current
+            val art = LocalMediaArt.current
             val probed by androidx.compose.runtime.produceState<com.hawkynt.mediadroid.nfo.StreamDetails?>(
                 null,
                 episode.videoPath,
-            ) { value = com.hawkynt.mediadroid.data.QualityStore.of(context).detailsFor(episode.videoPath) }
+            ) { value = art.streamDetails(episode.videoPath) }
             val details = probed
             ThumbBadges(
                 audio = details?.audio?.mapNotNull { it.language }?.distinct()?.ifEmpty { null }
@@ -454,7 +456,7 @@ private fun releaseDate(premiered: String): String = runCatching {
  */
 @Composable
 private fun FileSection(location: String) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val art = LocalMediaArt.current
     var open by remember(location) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Spacer(Modifier.height(16.dp))
@@ -471,15 +473,10 @@ private fun FileSection(location: String) {
     }
     if (!open) return
     val size by androidx.compose.runtime.produceState<Long?>(null, location) {
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            com.hawkynt.mediadroid.data.SourceAccess.resolve(context, location)?.length()
-        }
+        value = art.fileSize(location)
     }
-    val tracks by androidx.compose.runtime.produceState<List<com.hawkynt.mediadroid.data.TrackReport>?>(
-        null,
-        location,
-    ) {
-        value = com.hawkynt.mediadroid.data.FileReport.tracks(context, location) ?: emptyList()
+    val tracks by androidx.compose.runtime.produceState<List<String>?>(null, location) {
+        value = art.tracks(location) ?: emptyList()
     }
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     Text(location, fontSize = 14.sp, color = dim)
@@ -496,13 +493,7 @@ private fun FileSection(location: String) {
     }
     if (list.isEmpty()) Text("The tracks cannot be read.", fontSize = 14.sp, color = dim)
     list.forEach { track ->
-        val kind = when (track.type) {
-            androidx.media3.common.C.TRACK_TYPE_VIDEO -> "Video"
-            androidx.media3.common.C.TRACK_TYPE_AUDIO -> "Audio"
-            androidx.media3.common.C.TRACK_TYPE_TEXT -> "Subtitles"
-            else -> "Other"
-        }
-        Text("$kind: ${describe(track.format)}", fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+        Text(track, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
     }
 }
 

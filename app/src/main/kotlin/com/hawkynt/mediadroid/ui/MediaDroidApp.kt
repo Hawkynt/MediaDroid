@@ -74,10 +74,14 @@ private val LocalStorageAuthorities = setOf(
  */
 @Composable
 fun MediaDroidApp(store: StateStore, demo: Boolean = false) {
-    // The shared screens' pictures and facts, read the Android way.
+    // The shared screens' pictures and facts, and the sources' keeping, the Android way.
     val context = LocalContext.current
     val art = remember { com.hawkynt.mediadroid.data.AndroidMediaArt(context) }
-    CompositionLocalProvider(com.hawkynt.mediadroid.ui.platform.LocalMediaArt provides art) {
+    val keeper = remember { com.hawkynt.mediadroid.data.AndroidSourceKeeper(context) }
+    CompositionLocalProvider(
+        com.hawkynt.mediadroid.ui.platform.LocalMediaArt provides art,
+        com.hawkynt.mediadroid.ui.platform.LocalSourceKeeper provides keeper,
+    ) {
         AppShell(store, demo)
     }
 }
@@ -316,15 +320,7 @@ private fun AppShell(store: StateStore, demo: Boolean) {
         screen = Screen.Details(item)
     }
 
-    /**
-     * Where a queue picks up: the file asked for, else one with a resume point, else the first not
-     * yet watched — so Play on a show continues it instead of starting at the pilot again.
-     */
-    fun startOf(queue: List<Playable>, path: String?): Int =
-        path?.let { p -> queue.indexOfFirst { it.videoPath == p } }?.takeIf { it >= 0 }
-            ?: queue.indexOfFirst { store.resumeFor(it.videoPath) != null }.takeIf { it >= 0 }
-            ?: queue.indexOfFirst { !store.isWatched(it.videoPath, it.nfoWatched) }.takeIf { it >= 0 }
-            ?: 0
+    fun startOf(queue: List<Playable>, path: String?): Int = startOf(queue, path, store)
 
     fun playMovie(movie: Movie, path: String? = null) {
         // Of several files of one film: the one asked for, else the one with a resume point, else the best.

@@ -9,7 +9,8 @@ import java.security.MessageDigest
 /**
  * The shared screens' pictures on the desktop: a picture on this computer as it is, one on a network source copied
  * once into [cache] (the app-data folder's `art/`), named by its location and kept while the source's file stays
- * the same size. Stills from the videos and probing the files are not offered here yet.
+ * the same size; a file's size from wherever it lies. Stills from the videos and probing the files are not offered
+ * here yet.
  */
 class DesktopMediaArt(private val places: DesktopLibrary, private val cache: File) : MediaArt {
 
@@ -28,6 +29,9 @@ class DesktopMediaArt(private val places: DesktopLibrary, private val cache: Fil
             target
         }.getOrNull()
     }
+
+    override suspend fun fileSize(location: String): Long? =
+        withContext(Dispatchers.IO) { runCatching { places.file(location).length() }.getOrNull() }
 
     private fun keyOf(location: String): String =
         MessageDigest.getInstance("SHA-1").digest(location.toByteArray()).joinToString("") { "%02x".format(it) }
