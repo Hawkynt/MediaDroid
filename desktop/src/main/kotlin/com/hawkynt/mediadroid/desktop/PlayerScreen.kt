@@ -270,7 +270,11 @@ fun PlayerScreen(
         val d = engine.durationMs
         val p = engine.positionMs
         if (d <= 0 || p <= 0 || engine.openedPath != playing.video) return
-        if (PlaybackMath.isWatched(p, d, null)) store.markWatched(playing.video) else store.setResume(playing.video, p)
+        if (PlaybackMath.isWatched(p, d, null)) {
+            store.markWatched(playing.video)
+        } else {
+            store.setResume(playing.video, p, d)
+        }
     }
 
     fun next() {

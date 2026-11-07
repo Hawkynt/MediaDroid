@@ -216,11 +216,16 @@ class DesktopStore internal constructor(
 
     fun resumeMs(video: String): Long = data.resume[video]?.positionMs ?: 0
 
-    fun setResume(video: String, positionMs: Long) {
+    /**
+     * Keeps where [video] was left, [positionMs] in, and how long it runs ([durationMs], the one known before where it
+     * is not given) — the walls' progress bars need both; at 0 the point goes.
+     */
+    fun setResume(video: String, positionMs: Long, durationMs: Long = 0) {
         if (positionMs <= 0) {
             data.resume.remove(video)
         } else {
-            data.resume[video] = ResumeInfo(positionMs, data.resume[video]?.durationMs ?: 0)
+            val known = durationMs.takeIf { it > 0 } ?: data.resume[video]?.durationMs ?: 0
+            data.resume[video] = ResumeInfo(positionMs, known)
         }
         state.save()
     }
