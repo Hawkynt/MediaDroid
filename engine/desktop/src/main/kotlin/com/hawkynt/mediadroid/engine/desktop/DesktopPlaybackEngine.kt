@@ -51,6 +51,8 @@ class DesktopPlaybackEngine(
     @Volatile private var playing = false
     @Volatile private var ended = false
     @Volatile private var pendingSeekMs: Long? = null
+    // A seek the reader has taken in: the position until the first picture or sound from there (or the end) arrives.
+    @Volatile private var settlingMs: Long? = null
     @Volatile private var pendingAudio: String? = null
     @Volatile private var soundFiles: List<String> = emptyList()
     @Volatile private var selectedSound: String? = null
@@ -120,6 +122,7 @@ class DesktopPlaybackEngine(
         sink = sinkFactory().also { if (hasSound || soundFiles.isNotEmpty()) it.open(MediaReader.SAMPLE_RATE, 2) }
         sink?.volume = volume
         baseMs = 0
+        settlingMs = null
         ended = false
         shown = null
         shownBefore = null
@@ -172,15 +175,17 @@ class DesktopPlaybackEngine(
                     tempo.speed = value
                     if (pendingSeekMs == null) pendingSeekMs = at
                 }
-                pendingSeekMs?.let { target ->
-                    pendingSeekMs = null
+                takeSeek()?.let { target ->
+                    // The pictures from before go first, so none of them is taken by the clock at its new time.
+                    pictures.clear()
+                    shown = null
+                    shownBefore = null
                     tempo.reset()
                     clockSpeed = tempo.speed
                     source.seek(target)
                     soundSource?.seek(target)
                     pictureMs = Long.MIN_VALUE
                     soundMs = Long.MIN_VALUE
-                    pictures.clear()
                     held.clear()
                     pulldown.reset()
                     if (selectedText?.startsWith("sidecar:") == false) cues.clear()
@@ -189,8 +194,6 @@ class DesktopPlaybackEngine(
                     baseMs = target
                     wallStartNs = System.nanoTime()
                     wallPausedMs = 0
-                    shown = null
-                    shownBefore = null
                     ended = false
                 }
                 pendingText?.let { id ->
@@ -244,6 +247,7 @@ class DesktopPlaybackEngine(
                 }
                 when (item) {
                     null -> {
+                        settle()
                         if (!ended) {
                             ended = true
                             // With the sound set sooner than the picture, the last pictures are due after the
@@ -262,6 +266,7 @@ class DesktopPlaybackEngine(
                             while (running && pendingSeekMs == null) {
                                 if (pictures.size < picturesAhead(picture.rgba.size)) {
                                     pictures.offerLast(picture)
+                                    settle()
                                     break
                                 }
                                 held.feed(sink)
@@ -287,6 +292,7 @@ class DesktopPlaybackEngine(
                             // The sound set later is due that much after the pictures read with it: held here as far as
                             // that, so the reader goes on to them though the output is full.
                             held.add(pcm)
+                            settle()
                             val limit = soundDelayMs().coerceAtLeast(0).toLong() * MediaReader.SAMPLE_RATE / 1000 * 4
                             while (running && pendingSeekMs == null) {
                                 held.feed(sink)
@@ -305,6 +311,22 @@ class DesktopPlaybackEngine(
             soundSource?.close()
             tempo.close()
         }
+    }
+
+    /** The seek asked for, if any, taken in: from now until [settle] the position is its target. */
+    private fun takeSeek(): Long? = synchronized(lock) {
+        pendingSeekMs?.also {
+            settlingMs = it
+            pendingSeekMs = null
+        }
+    }
+
+    /** The first picture or sound from a seek's target has arrived (or the end): the clock runs from there. */
+    private fun settle() {
+        if (settlingMs == null) return
+        wallStartNs = System.nanoTime()
+        wallPausedMs = 0
+        settlingMs = null
     }
 
     /** Which file and sound track play, and its ReplayGain, for even loudness. */
@@ -464,12 +486,17 @@ class DesktopPlaybackEngine(
 
     override fun seekTo(positionMs: Long) {
         if (reader == null) return
-        pendingSeekMs = positionMs.coerceIn(0, durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE)
+        val target = positionMs.coerceIn(0, durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE)
+        synchronized(lock) { pendingSeekMs = target }
     }
 
+    /**
+     * Where it plays: from the moment [seekTo] returns, its target until the first picture or sound from there arrives;
+     * else the sound's clock (the wall's where the file has no sound) from where the reader started.
+     */
     override val positionMs: Long
         get() {
-            pendingSeekMs?.let { return it }
+            (pendingSeekMs ?: settlingMs)?.let { return it }
             val played = if (hasSound) {
                 sink?.playedMs() ?: 0
             } else if (playing) {

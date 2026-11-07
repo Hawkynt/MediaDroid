@@ -85,6 +85,12 @@ class DesktopPlaybackEngineTest {
         return sink.peak
     }
 
+    /** As [waitFor], without a pause between the tries: for what shows only for a moment. */
+    private fun readAll(condition: () -> Boolean) {
+        val until = System.currentTimeMillis() + 5_000
+        while (!condition()) check(System.currentTimeMillis() < until) { "timed out" }
+    }
+
     private fun waitFor(condition: () -> Boolean) {
         val until = System.currentTimeMillis() + 5_000
         while (!condition()) {
@@ -147,6 +153,43 @@ class DesktopPlaybackEngineTest {
             assertEquals(1000L, engine.positionMs)
             sink.playedMs = 90
             waitFor { engine.picture()?.ptsMs == 1080L }
+        }
+    }
+
+    @Test
+    fun `from the moment a seek returns the position is its target until the sound from there plays`() {
+        val sink = ManualSink()
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { sink }.use { engine ->
+            engine.open(MediaRequest(clip))
+            waitFor { engine.isPlaying && engine.picture() != null }
+            sink.playedMs = 500
+            waitFor { engine.picture()?.ptsMs == 480L }
+            engine.seekTo(1520)
+            // Read as the seek bar, the subtitles and libass read it, while the reader takes the seek in.
+            val seen = mutableSetOf<Long>()
+            readAll {
+                seen += engine.positionMs
+                engine.picture()?.ptsMs == 1520L
+            }
+            assertEquals(setOf(1520L), seen)
+        }
+    }
+
+    @Test
+    fun `without sound the clock starts at a seek's target, never from the time before it`() {
+        // letterboxed.mp4: pictures only, 10 a second, a second long; its clock is the wall's.
+        DesktopPlaybackEngine(PlaybackTuning.Mutable()) { ManualSink() }.use { engine ->
+            engine.open(MediaRequest(fixture("letterboxed.mp4")))
+            waitFor { engine.isPlaying && engine.picture() != null }
+            engine.seekTo(500)
+            val seen = mutableListOf<Long>()
+            readAll {
+                seen += engine.positionMs
+                (engine.picture()?.ptsMs ?: 0L) >= 500L
+            }
+            assertEquals(500L, seen.first())
+            // Held at the target until the first picture from there, then running on from it.
+            assertTrue("$seen", seen.all { it in 500L..600L })
         }
     }
 
@@ -326,7 +369,8 @@ class DesktopPlaybackEngineTest {
             engine.open(MediaRequest(clip))
             waitFor { engine.isPlaying }
             engine.speed = 2f
-            waitFor { sink.flushed > 0 }
+            // Started again from where it was, the clock runs once the first picture from there has arrived.
+            waitFor { sink.flushed > 0 && engine.picture() != null }
             val from = engine.positionMs
             sink.playedMs = 300
             assertEquals(from + 600, engine.positionMs)

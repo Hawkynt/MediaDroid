@@ -5,6 +5,7 @@ import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
 import com.hawkynt.mediadroid.player.AssPicture
 import com.hawkynt.mediadroid.player.LibAss
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -105,8 +106,8 @@ class LibAssEngineTest {
             }
             engine.pause()
             engine.seekTo(1500)
-            // The seek taken by the reader, not only asked for: a picture from there is shown.
-            waitFor { engine.positionMs == 1500L && (engine.picture()?.ptsMs ?: 0L) >= 1_480L }
+            // Drawn at the seek's target from the moment it returns, whether or not the reader has taken it in yet.
+            assertEquals(1500L, engine.positionMs)
             // The lines run from 0 to 3 s: 2 s later, at 1.5 s they have not begun.
             tuning.subtitleDelayMs = 2_000
             drawn = engine.subtitlePicture(WIDTH, HEIGHT) ?: drawn
