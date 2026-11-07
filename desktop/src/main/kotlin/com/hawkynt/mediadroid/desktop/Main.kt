@@ -72,6 +72,11 @@ fun main(args: Array<String>) = application {
     val files = remember { DesktopMediaFiles(places, probe) }
     // The walls' pictures: this computer's as they are, the network sources' copied once into the app-data folder.
     val art = remember { DesktopMediaArt(places, File(folder, "art"), probe) }
+    // What Settings shows here, and the mpv shaders its default picture offers, read once now.
+    val settings = remember {
+        ShaderFolder.load(ShaderFolder.of(store.state.data.settings.shaderFolder, folder))
+        DesktopSettingsPlatform(store, folder)
+    }
     // The media keys and the system's now-playing panel, for the app's whole life (MPRIS, SMTC).
     val mediaKeys = remember { MediaKeys() }
     val state = remember { windowState(store.window) }
@@ -107,6 +112,7 @@ fun main(args: Array<String>) = application {
                     art = art,
                     keeper = keeper,
                     files = files,
+                    settings = settings,
                     library = library,
                     onLibrary = { library = it },
                     onPlay = { queue, index -> screen = Screen.Player(queue, index) },
