@@ -42,6 +42,7 @@ media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", versi
 media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
 media3-inspector = { group = "androidx.media3", name = "media3-inspector", version.ref = "media3" }
+media3-test-utils-robolectric = { group = "androidx.media3", name = "media3-test-utils-robolectric", version.ref = "media3" }
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -70,6 +71,7 @@ roborazzi-compose = { group = "io.github.takahirom.roborazzi", name = "roborazzi
 [plugins]
 compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

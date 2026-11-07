@@ -182,6 +182,9 @@ class MediaReader(
     /** How the video is coded where it is HDR (SMPTE ST 2084's PQ, or HLG), else null. */
     val hdr: ToneMap.Transfer?
 
+    /** The bits of each of the picture's samples as coded (8, 10, 12), 8 where the file does not say. */
+    val bitDepth: Int
+
     /** The picture's frames a second (the stream's average), 0 where the file does not say or has no picture. */
     val frameRate: Float
 
@@ -200,6 +203,12 @@ class MediaReader(
      */
     @Volatile var hardware: HardwareDecoding.Device? = null
         private set
+
+    /** The picture's decoder by FFmpeg's name for it (h264, hevc …), as opened; null without a picture. */
+    val videoDecoder: String?
+
+    /** The sound's decoder by FFmpeg's name for it (aac, ac3 …), as opened; null without sound. */
+    val audioDecoder: String?
 
     /**
      * The fonts the file carries for its subtitles (Matroska attachments), by file name: those said to be fonts by
@@ -248,8 +257,17 @@ class MediaReader(
         }.flatten()
         if (videoIndex >= 0) video = openVideoDecoder(decoders)
         if (audioIndex >= 0) audio = openDecoder(audioIndex)
+        // Read now: the decoders' contexts go with the reader, from another thread.
+        videoDecoder = video?.codec()?.name()?.string
+        audioDecoder = audio?.codec()?.name()?.string
         width = video?.width() ?: 0
         height = video?.height() ?: 0
+        bitDepth = if (videoIndex < 0) {
+            8
+        } else {
+            avutil.av_pix_fmt_desc_get(format.streams(videoIndex).codecpar().format())?.comp(0)?.depth()
+                ?.takeIf { it > 0 } ?: 8
+        }
         hdr = if (videoIndex < 0) null else when (format.streams(videoIndex).codecpar().color_trc()) {
             avutil.AVCOL_TRC_SMPTE2084 -> ToneMap.Transfer.PQ
             avutil.AVCOL_TRC_ARIB_STD_B67 -> ToneMap.Transfer.HLG

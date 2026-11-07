@@ -8,32 +8,63 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.DefaultAudioSink
-import com.hawkynt.mediadroid.data.Settings
 import com.hawkynt.mediadroid.engine.MediaRequest
 import com.hawkynt.mediadroid.engine.PlaybackEngine
+import com.hawkynt.mediadroid.engine.PlaybackState
 import com.hawkynt.mediadroid.engine.PlaybackTuning
 import com.hawkynt.mediadroid.engine.Track
+import com.hawkynt.mediadroid.engine.VideoFormat
+import com.hawkynt.mediadroid.engine.VideoOutput
+import com.hawkynt.mediadroid.library.FsFile
 
 /**
  * The Android playback engine: Media3's ExoPlayer, built as the player has always built it — the bundled FFmpeg
  * preferred for audio and the fallback for video (first with software decoding), FFmpeg's video renderer keeping as
- * many pictures ahead as Settings asks, loudness, night mode and even loudness on the decoded sound, the sound waiting
+ * many pictures ahead as [options] ask, loudness, night mode and even loudness on the decoded sound, the sound waiting
  * for a filtered picture, sidecar audio merged in, network sources streamed, ASS/SSA subtitles drawn by libass where
- * the native library carries it ([assSubtitles]) — behind [PlaybackEngine].
+ * the native library carries it ([assSubtitles]) — behind [PlaybackEngine]. Its picture outputs are a [SurfaceOutput]
+ * and a [SurfaceViewOutput]. What it needs of the app comes in: the household's [options], the [files] behind a
+ * network source's location and how late the picture stage shows a picture ([pictureLatencyMs]).
  *
- * [exo] stays reachable while the player screen moves over to the engine's own commands (#283).
+ * Beyond the shared API it offers what only Android has: the FFmpeg decoder's pictures handed to the picture stage as
+ * planes ([planesTo]), each picture's release to the screen ([onFrameReleased]), spatial audio ([spatialAudio]), a
+ * reload after an error ([reload]) and, for the info sheet and the controls ([PlayerPanel], [PlaybackQueue]), Media3
+ * itself ([exo]) — the screens reach Media3 through these, never directly.
  */
 class AndroidPlaybackEngine(
     context: Context,
-    private val settings: Settings,
+    private val options: Options,
     override val tuning: PlaybackTuning,
+    /** The file behind a location: a device path's or a network source's (SourceAccess), null where none is. */
+    private val files: (String) -> FsFile?,
+    /**
+     * How long the picture stage holds a picture back at the video's [frame rate][Float] (-1 while unknown), in
+     * milliseconds: the sound waits as long. Asked on the audio thread, as often as it plays.
+     */
+    private val pictureLatencyMs: (Float) -> Int = { 0 },
+    /**
+     * The demo library's placeholder videos (README screenshots): what is opened is set and its start shown on the
+     * controls, never loaded — a placeholder is no video to play.
+     */
+    private val placeholders: Boolean = false,
 ) : PlaybackEngine {
+
+    /**
+     * The household's choices the engine is built with (Settings): FFmpeg's video decoder before the device's
+     * ([softwareVideoDecoding]), compressed surround to an AV receiver ([audioPassthrough]), and how many decoded
+     * pictures are kept ahead ([bufferUnit], a DecodedBuffer.Unit name, and [bufferValue]).
+     */
+    data class Options(
+        val softwareVideoDecoding: Boolean = false,
+        val audioPassthrough: Boolean = false,
+        val bufferUnit: String = DecodedBuffer.Unit.SECONDS.name,
+        val bufferValue: Float = 5f,
+    )
 
     /** The video's frame rate, for the sound's wait behind a filtered picture; kept current by the player screen. */
     val videoFrameRate = floatArrayOf(-1f)
-
-    private val appContext = context.applicationContext
 
     /** ASS/SSA subtitles as libass draws them: the renderer feeds them, an [AssOverlayView] puts them up. */
     val assSubtitles = AssSubtitles({ attachedFonts(openedPath) }, { location -> wholeFile(location) })
@@ -61,7 +92,7 @@ class AndroidPlaybackEngine(
                 }
             }
         } else {
-            val file = com.hawkynt.mediadroid.data.SourceAccess.resolve(appContext, path) ?: return emptyList()
+            val file = files(path) ?: return emptyList()
             MatroskaFonts.read(file.length()) { at, count -> file.open(at).use { readUpTo(it, count) } }
         }
         fontsRead = path to fonts
@@ -72,7 +103,7 @@ class AndroidPlaybackEngine(
     private fun wholeFile(location: String): ByteArray? = if (location.startsWith("/")) {
         java.io.File(location).readBytes()
     } else {
-        com.hawkynt.mediadroid.data.SourceAccess.resolve(appContext, location)?.let { file ->
+        files(location)?.let { file ->
             file.open(0).use { readUpTo(it, file.length().coerceAtMost(MAX_SUBTITLE_FILE).toInt()) }
         }
     }
@@ -130,7 +161,7 @@ class AndroidPlaybackEngine(
                     ) {
                         super.buildVideoRenderers(
                             context,
-                            if (settings.softwareVideoDecoding) {
+                            if (options.softwareVideoDecoding) {
                                 EXTENSION_RENDERER_MODE_PREFER
                             } else {
                                 EXTENSION_RENDERER_MODE_ON
@@ -150,9 +181,9 @@ class AndroidPlaybackEngine(
                             context.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memory)
                             val buffer = DecodedBuffer(
                                 runCatching {
-                                    DecodedBuffer.Unit.valueOf(settings.bufferUnit)
+                                    DecodedBuffer.Unit.valueOf(options.bufferUnit)
                                 }.getOrDefault(DecodedBuffer.Unit.SECONDS),
-                                settings.bufferValue,
+                                options.bufferValue,
                             )
                             val frames = buffer.decoderFrames(
                                 DecodedBuffer.decoderCeilingBytes(
@@ -189,7 +220,7 @@ class AndroidPlaybackEngine(
                         out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
                     ) = super.buildAudioRenderers(
                         context,
-                        if (settings.audioPassthrough) EXTENSION_RENDERER_MODE_ON else extensionRendererMode,
+                        if (options.audioPassthrough) EXTENSION_RENDERER_MODE_ON else extensionRendererMode,
                         mediaCodecSelector,
                         enableDecoderFallback,
                         audioSink,
@@ -218,14 +249,8 @@ class AndroidPlaybackEngine(
                             )
                             .build(),
                         // A filtered picture can run a few frames behind; the sound waits as long, counted by the
-                        // video's own frame rate (see VideoFilterStage.latencyFrames).
-                        {
-                            tuning.audioDelayMs + PlaybackMath.pictureLatencyMs(
-                                VideoFilterStage.latencyFrames,
-                                videoFrameRate[0],
-                                VideoFilterStage.latencyMs,
-                            )
-                        },
+                        // video's own frame rate ([pictureLatencyMs]).
+                        { tuning.audioDelayMs + pictureLatencyMs(videoFrameRate[0]) },
                     )
                 }
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
@@ -234,7 +259,7 @@ class AndroidPlaybackEngine(
                 // Videos on a network source stream through it; local ones as before. Audio files beside
                 // the video are merged in (see SidecarAudio).
                 SourceDataSource.Factory(context) {
-                    com.hawkynt.mediadroid.data.SourceAccess.resolve(context, it)
+                    files(it)
                 }.let { files ->
                     SidecarAudioSourceFactory(
                         // SSA left unparsed where libass draws it (AssSubtitles.parsers), in the file and beside it.
@@ -248,15 +273,29 @@ class AndroidPlaybackEngine(
             )
             .build()
 
-    private val listeners = mutableMapOf<PlaybackEngine.Listener, Player.Listener>()
+    private val listeners = mutableMapOf<PlaybackEngine.Listener, Pair<Player.Listener, AnalyticsListener>>()
 
     /** The file and audio track playing and its ReplayGain, for the even-loudness correction on the audio thread. */
     @Volatile private var fileLoudness: FileLoudness? = null
+
+    /** The sound output as the audio track was set up (for the info sheet); null before. */
+    var audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig? = null
+        private set
 
     /** The ReplayGain of the file and audio track playing, if its tags carry one. */
     val replayGainDb: Float? get() = fileLoudness?.tagGainDb
 
     init {
+        exo.addAnalyticsListener(
+            object : AnalyticsListener {
+                override fun onAudioTrackInitialized(
+                    eventTime: AnalyticsListener.EventTime,
+                    audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig,
+                ) {
+                    this@AndroidPlaybackEngine.audioTrackConfig = audioTrackConfig
+                }
+            },
+        )
         // The audio track playing and its ReplayGain tags, as Media3 read them from the file.
         exo.addListener(
             object : Player.Listener {
@@ -278,6 +317,25 @@ class AndroidPlaybackEngine(
 
     override var openedPath: String? = null
         private set
+
+    /** A surface the pictures are drawn into: the picture stage's input, say. */
+    class SurfaceOutput(val surface: android.view.Surface) : VideoOutput
+
+    /** A view whose surface the pictures are drawn into, the player making its own over the view's as it needs. */
+    class SurfaceViewOutput(val view: android.view.SurfaceView) : VideoOutput
+
+    override var videoOutput: VideoOutput? = null
+        set(value) {
+            when (value) {
+                null -> exo.clearVideoSurface()
+                is SurfaceOutput -> exo.setVideoSurface(value.surface)
+                is SurfaceViewOutput -> exo.setVideoSurfaceView(value.view)
+                else -> throw IllegalArgumentException("Media3 draws into a SurfaceOutput or a SurfaceViewOutput")
+            }
+            field = value
+        }
+
+    override val state: PlaybackState get() = stateOf(exo.playbackState)
 
     override fun open(request: MediaRequest, autoPlay: Boolean) {
         openedPath = request.path
@@ -305,6 +363,8 @@ class AndroidPlaybackEngine(
                 .build(),
         )
         if (request.startMs > 0) exo.seekTo(request.startMs)
+        // Prepared at once, playing or not: a paused video stands ready at its first picture.
+        if (!placeholders) exo.prepare()
         if (autoPlay) play()
     }
 
@@ -325,6 +385,84 @@ class AndroidPlaybackEngine(
     override val isPlaying: Boolean get() = exo.isPlaying
 
     override val frameRate: Float get() = exo.videoFormat?.frameRate?.takeIf { it > 0f } ?: 0f
+
+    override val videoFormat: VideoFormat?
+        get() {
+            val size = exo.videoSize
+            if (size.width <= 0 || size.height <= 0) return null
+            val format = exo.videoFormat
+            return VideoFormat(
+                size.width,
+                size.height,
+                size.pixelWidthHeightRatio,
+                format?.frameRate?.takeIf { it > 0f } ?: 0f,
+                when (format?.colorInfo?.colorTransfer) {
+                    C.COLOR_TRANSFER_ST2084 -> VideoFormat.Transfer.PQ
+                    C.COLOR_TRANSFER_HLG -> VideoFormat.Transfer.HLG
+                    else -> VideoFormat.Transfer.SDR
+                },
+                format?.colorInfo?.lumaBitdepth?.takeIf { it > 0 } ?: 8,
+            )
+        }
+
+    /**
+     * A film's sound: other players pause for it, it pauses for a call — spatialized by the device's spatializer only
+     * when this is on.
+     */
+    var spatialAudio: Boolean = false
+        set(value) {
+            field = value
+            exo.setAudioAttributes(
+                androidx.media3.common.AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .setSpatializationBehavior(
+                        if (value) C.SPATIALIZATION_BEHAVIOR_AUTO else C.SPATIALIZATION_BEHAVIOR_NEVER,
+                    )
+                    .build(),
+                true,
+            )
+        }
+
+    /**
+     * The bundled FFmpeg's pictures handed as YUV planes to [output] (the picture stage), sparing its decoder a
+     * window's buffer queue; idle while a device decoder plays. Asked again on every routing: any new surface given
+     * to the player points FFmpeg's renderer back at it.
+     */
+    fun planesTo(output: androidx.media3.exoplayer.video.VideoDecoderOutputBufferRenderer) {
+        val renderer = ffmpegVideoRenderer[0] ?: return
+        exo.createMessage(renderer)
+            .setType(androidx.media3.exoplayer.Renderer.MSG_SET_VIDEO_OUTPUT)
+            .setPayload(output)
+            .send()
+    }
+
+    /** Told each picture's release to the screen, in System.nanoTime's time, while set; null for none. */
+    var onFrameReleased: ((releaseTimeNs: Long) -> Unit)? = null
+        set(value) {
+            field?.let { exo.clearVideoFrameMetadataListener(frameListener) }
+            field = value
+            if (value != null) exo.setVideoFrameMetadataListener(frameListener)
+        }
+
+    private val frameListener = androidx.media3.exoplayer.video.VideoFrameMetadataListener { _, releaseTimeNs, _, _ ->
+        onFrameReleased?.invoke(releaseTimeNs)
+    }
+
+    /** Whether what is open plays with sound files beside it merged in. */
+    val sidecarAudio: Boolean
+        get() = (exo.currentMediaItem?.localConfiguration?.tag as? SidecarAudio)?.locations?.isNotEmpty() == true
+
+    /**
+     * What is open loaded afresh and played on from where it was — after an error, with a fresh picture surface in
+     * place, say; [withoutSidecarAudio] leaves the sound files beside it out (one that cannot go along with the video).
+     */
+    fun reload(withoutSidecarAudio: Boolean = false) {
+        val item = exo.currentMediaItem ?: return
+        val position = exo.currentPosition
+        exo.setMediaItem(if (withoutSidecarAudio) item.buildUpon().setTag(null).build() else item, position)
+        exo.prepare()
+    }
 
     override var speed: Float
         get() = exo.playbackParameters.speed
@@ -382,7 +520,16 @@ class AndroidPlaybackEngine(
             override fun onIsPlayingChanged(isPlaying: Boolean) = listener.onPlayingChanged(isPlaying)
 
             override fun onPlaybackStateChanged(state: Int) {
+                listener.onStateChanged(stateOf(state))
                 if (state == Player.STATE_ENDED) listener.onEnded()
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) listener.onSeeked(newPosition.positionMs)
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) =
@@ -394,12 +541,39 @@ class AndroidPlaybackEngine(
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) =
                 listener.onError(error.errorCodeName)
         }
-        listeners[listener] = bridge
+        // The first picture and the decoders, whatever output they reach: the stage's included, which Player.Listener
+        // does not hear of.
+        val analytics = object : AnalyticsListener {
+            override fun onRenderedFirstFrame(
+                eventTime: AnalyticsListener.EventTime,
+                output: Any,
+                renderTimeMs: Long,
+            ) = listener.onFirstFrame()
+
+            override fun onVideoDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) = listener.onDecoder(Track.Kind.VIDEO, decoderName)
+
+            override fun onAudioDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) = listener.onDecoder(Track.Kind.AUDIO, decoderName)
+        }
+        listeners[listener] = bridge to analytics
         exo.addListener(bridge)
+        exo.addAnalyticsListener(analytics)
     }
 
     override fun removeListener(listener: PlaybackEngine.Listener) {
-        listeners.remove(listener)?.let { exo.removeListener(it) }
+        listeners.remove(listener)?.let { (bridge, analytics) ->
+            exo.removeListener(bridge)
+            exo.removeAnalyticsListener(analytics)
+        }
     }
 
     override fun close() = exo.release()
@@ -433,6 +607,13 @@ class AndroidPlaybackEngine(
         /** Playback starts with 2.5 s buffered, and again after a stall with 5 s. */
         private const val BUFFER_START_MS = 2_500
         private const val BUFFER_RESTART_MS = 5_000
+
+        private fun stateOf(state: Int) = when (state) {
+            Player.STATE_BUFFERING -> PlaybackState.BUFFERING
+            Player.STATE_READY -> PlaybackState.READY
+            Player.STATE_ENDED -> PlaybackState.ENDED
+            else -> PlaybackState.IDLE
+        }
 
         private fun typeOf(kind: Track.Kind) = when (kind) {
             Track.Kind.AUDIO -> C.TRACK_TYPE_AUDIO

@@ -80,11 +80,9 @@ tasks.configureEach {
 // The README screenshots are rendered by the real screens on the JVM (Robolectric + Roborazzi) from a
 // generated demo library. They are the slow tier: `./gradlew test` leaves them out, and
 // `./gradlew :app:recordRoborazziDebug -Pscreenshots` (the screenshots workflow) writes screenshots/*.png.
-// The app's other Robolectric tests (AssRoutingTest, TeletextRoutingTest, SecondSubtitlesTest: seconds to start the
-// sandbox) run with them.
 tasks.withType<Test>().configureEach {
     if (!project.hasProperty("screenshots")) {
-        exclude("**/screenshots/**", "**/AssRoutingTest*", "**/TeletextRoutingTest*", "**/SecondSubtitlesTest*")
+        exclude("**/screenshots/**")
         // Without them a filtered run may find none of the app's few fast-tier tests; that is expected.
         failOnNoDiscoveredTests = false
     }
@@ -104,6 +102,7 @@ dependencies {
     implementation(project(":core:player"))
     implementation(project(":core:sources"))
     implementation(project(":engine:api"))
+    implementation(project(":engine:android"))
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

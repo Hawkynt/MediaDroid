@@ -1,4 +1,4 @@
-package com.hawkynt.mediadroid.ui
+package com.hawkynt.mediadroid.player
 
 import androidx.annotation.OptIn
 import androidx.media3.common.ForwardingPlayer

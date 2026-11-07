@@ -125,6 +125,11 @@ class SecondSubtitles(private val media3: DefaultTrackSelector) {
 
         override fun onSelectionActivated(info: Any?) = media3.onSelectionActivated(info)
 
+        // The parameters a selection was made with, now playing: Media3's selector selects by these, not by those
+        // set last, so without them no track picked, language preferred or subtitles switched off would take.
+        override fun onParametersActivated(parameters: TrackSelectionParameters?) =
+            media3.onParametersActivated(parameters)
+
         override fun getParameters(): TrackSelectionParameters = media3.parameters
 
         override fun setParameters(parameters: TrackSelectionParameters) = media3.setParameters(parameters)

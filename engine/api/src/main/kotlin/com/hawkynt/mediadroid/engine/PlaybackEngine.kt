@@ -3,7 +3,9 @@ package com.hawkynt.mediadroid.engine
 /**
  * The player the screens talk to, the same on every platform: Media3 behind it on Android, FFmpeg on the desktop
  * (README "Platform support"). Its commands and properties are answered on the thread it was built on; [Listener]s
- * hear from it there too.
+ * hear from it there too, or — an engine that decodes on threads of its own — on those (the screens hand what they
+ * hear back to their own thread). What every engine does alike is written down as the contract tests in this
+ * module's test fixtures (PlaybackEngineContract), which the fake engine there and each platform's engine pass.
  */
 interface PlaybackEngine : AutoCloseable {
 
@@ -30,8 +32,20 @@ interface PlaybackEngine : AutoCloseable {
 
     val isPlaying: Boolean
 
+    /** Where it is with what is open (see [PlaybackState]). */
+    val state: PlaybackState
+
+    /**
+     * Where the pictures go: one of the platform's outputs this engine takes (see [VideoOutput]), or null for none.
+     * Setting one it does not take throws IllegalArgumentException.
+     */
+    var videoOutput: VideoOutput?
+
     /** The picture's frames a second, 0 while unknown or without a picture (for stepping frame by frame). */
     val frameRate: Float get() = 0f
+
+    /** The picture of what is open, once known; null before, or without a picture. */
+    val videoFormat: VideoFormat? get() = null
 
     /** Playback speed, 1 for normal. */
     var speed: Float
@@ -65,13 +79,35 @@ interface PlaybackEngine : AutoCloseable {
     interface Listener {
         fun onPlayingChanged(playing: Boolean) {}
 
+        /** Played to the end; [onStateChanged] hears [PlaybackState.ENDED] as well. */
         fun onEnded() {}
+
+        fun onStateChanged(state: PlaybackState) {}
+
+        /** A [seekTo] taken: playback goes on from [positionMs] (the target, kept within what is open). */
+        fun onSeeked(positionMs: Long) {}
+
+        /** The first picture of what was opened, or of a new [videoOutput], has reached the output. */
+        fun onFirstFrame() {}
+
+        /** The decoder at work for [kind] (Track.Kind.VIDEO or AUDIO), by its own [name]: for the info sheet. */
+        fun onDecoder(kind: Track.Kind, name: String) {}
 
         fun onTracksChanged(tracks: List<Track>) {}
 
         /** The picture's size and the shape of its pixels (width over height, 1 for square). */
         fun onVideoSize(width: Int, height: Int, pixelAspect: Float) {}
 
+        /** Playback stopped on an error: its [code], one of [Errors]' where it is one of those. */
         fun onError(code: String) {}
+    }
+
+    /** The error codes every engine tells alike (Media3's names for them). */
+    object Errors {
+        /** No decoder for the picture or sound could be started. */
+        const val DECODER_INIT_FAILED = "ERROR_CODE_DECODER_INIT_FAILED"
+
+        /** The file could not be opened or read. */
+        const val IO = "ERROR_CODE_IO_UNSPECIFIED"
     }
 }
