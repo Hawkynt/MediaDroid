@@ -20,6 +20,8 @@ import com.hawkynt.mediadroid.stage.Colouring
 import com.hawkynt.mediadroid.stage.Conversion
 import com.hawkynt.mediadroid.stage.Deinterlacing
 import com.hawkynt.mediadroid.stage.DrawTarget
+import com.hawkynt.mediadroid.stage.Finishing
+import com.hawkynt.mediadroid.stage.SampledTexture
 import com.hawkynt.mediadroid.stage.Passes
 import com.hawkynt.mediadroid.stage.Restoration
 import com.hawkynt.mediadroid.stage.Upscaling
@@ -99,6 +101,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     // HDR's peak and tone mapping, and the chroma enlarged from the FFmpeg decoder's planes (Conversion).
     private val conversion = Conversion(passes)
+
+    // Blending, Motion, the colour correction and the dither (Finishing).
+    private val finishing = Finishing(passes)
     private var debandEs3 = false
     private var deblockReady = false
 
@@ -355,7 +360,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val identity = FloatArray(16).also { android.opengl.Matrix.setIdentityM(it, 0) }
 
     private var copyProgram = 0
-    private var adjustProgram = 0
 
     // Deblocking's pass and deringing's two (GLSL ES 3.00; without, neither runs).
     private var mpvLumaProgram = 0
@@ -367,8 +371,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     // Dithering to the screen's 8 bits (see Dither): the last pass, and libplacebo's blue-noise matrix as a texture
     // (made on first use); whether the picture being drawn is dithered, its frames then held in half floats.
-    private var ditherProgram = 0
-    private var noiseTexture = 0
+    // Whether the chip dithers, and with GLSL ES 3.00's pass (see setUp).
+    private var ditherReady = false
+    private var ditherEs3 = false
     private var ditherNow = false
     private var sharpenProgram = 0
     private var downscaleProgram = 0
@@ -471,7 +476,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     private val gridScale = IntArray(2) { 2 }
     // The search's scale, chosen as it plays from how long searches take (see SearchScale).
     private var searchScale: SearchScale? = null
-    private var motionProgram = 0
     private var obmcTexture = 0
 
     // Temporal denoising's own search, on the decoded frames as they join the history: the last frame's luma, the
@@ -1022,7 +1026,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteTextures(3, yuvTextures, 0)
             releaseWindow()
             GLES20.glDeleteProgram(copyProgram)
-            GLES20.glDeleteProgram(adjustProgram)
             rife?.close()
             rife = null
             if (rifeTextures[0] != 0) GLES20.glDeleteTextures(2, rifeTextures, 0)
@@ -1042,14 +1045,11 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             if (uploaded.isNotEmpty()) GLES20.glDeleteTextures(uploaded.size, uploaded, 0)
             mpvPrograms.values.forEach { GLES20.glDeleteProgram(it) }
             mpvFrames.values.forEach { it.release() }
-            if (ditherProgram != 0) GLES20.glDeleteProgram(ditherProgram)
-            if (noiseTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(noiseTexture), 0)
             if (y2yProgram != 0) GLES20.glDeleteProgram(y2yProgram)
             if (peakBuffers[0] != 0) GLES20.glDeleteBuffers(2, peakBuffers, 0)
             GLES20.glDeleteProgram(sharpenProgram)
             GLES20.glDeleteProgram(downscaleProgram)
             GLES20.glDeleteProgram(blendProgram)
-            GLES20.glDeleteProgram(motionProgram)
             GLES20.glDeleteProgram(packProgram)
             motionLuma.release()
             denoiseLuma.release()
@@ -1178,7 +1178,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         inputSurface = Surface(surfaceTexture)
 
         copyProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_COPY)
-        adjustProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_ADJUST)
+        finishing.build()
         deinterlacing.build()
         sharpenProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_SHARPEN)
         upscalers.build(PictureAdjustment.Upscaler.LANCZOS)
@@ -1206,13 +1206,10 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         // Dithering reads its texels exactly with GLSL ES 3.00's texelFetch; the GLSL ES 1.00 pass reads their centres.
         // Only chips that draw into half floats dither (the frames have to hold more than 8 bits), and those run ES 3.
         if (halfTargets) {
-            val ditherEs3 = runCatching {
-                ditherProgram = linked(program(Shaders.VIDEO_VERTEX_ES3, Shaders.VIDEO_DITHER_ES3))
-            }.isSuccess
-            if (!ditherEs3) ditherProgram = runCatching { program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_DITHER) }
-                .getOrDefault(0)
+            ditherEs3 = runCatching { passes.program(Shaders.VIDEO_DITHER_ES3) }.isSuccess
+            ditherReady = ditherEs3 || runCatching { passes.program(Shaders.VIDEO_DITHER) }.isSuccess
             // The matrix takes some tens of milliseconds to make: on a thread of its own, ready before it is needed.
-            if (ditherProgram != 0) Thread { Dither.blueNoise }.apply { isDaemon = true }.start()
+            if (ditherReady) Thread { Dither.blueNoise }.apply { isDaemon = true }.start()
         }
         // The decoder's 10-bit YUV read as it is, where the chip offers it; else samplerExternalOES's RGB.
         y2yProgram = if (es3 && "GL_EXT_YUV_target" in extensions) {
@@ -1221,7 +1218,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             0
         }
         blendProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_BLEND)
-        motionProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_MOTION)
         packProgram = program(Shaders.VIDEO_VERTEX, Shaders.VIDEO_PACK_LUMA)
         for (k in 0 until 2) vectorTextures[k] = byteTexture(1, 1, ByteArray(4))
         denoiseVectorTexture = byteTexture(1, 1, ByteArray(4))
@@ -2187,33 +2183,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             weight = mix.weight
         }
         val mixed = frames[7].ensure(width, height)
-        mixed.bind()
-        val program = if (alongMotion) motionProgram else blendProgram
-        GLES20.glUseProgram(program)
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, previousTexture)
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uPrevious"), 1)
+        val previousPicture = SampledTexture(previousTexture, width, height)
+        val currentPicture = SampledTexture(currentTexture, width, height)
         if (alongMotion) {
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, vectorTextures[slot])
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uVectors"), 2)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, obmcTexture)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uObmc"), 3)
-        }
-        run(program, GLES20.GL_TEXTURE_2D, currentTexture, identity) { p ->
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWeight"), weight)
-            GLES20.glUniform1f(
-                GLES20.glGetUniformLocation(p, "uAlpha"),
-                (weight * MotionInterpolation.ALPHA_MAX).toInt().toFloat(),
+            finishing.motion(
+                previousPicture, currentPicture, vectorTextures[slot], obmcTexture, mixed, weight, gridWidth[slot],
+                gridHeight[slot], gridScale[slot],
             )
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-            val k = maxOf(slot, 0)
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uGrid"), gridWidth[k].toFloat(), gridHeight[k].toFloat())
-            val searchWidth = (width / gridScale[k]).toFloat()
-            val searchHeight = (height / gridScale[k]).toFloat()
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSearch"), searchWidth, searchHeight)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uScale"), gridScale[k].toFloat())
+        } else {
+            finishing.blend(previousPicture, currentPicture, mixed, weight)
         }
         output(mixed, width, height, picture.copy(sharpness = 0f, clarity = 0f))
         swap()
@@ -2253,28 +2231,25 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val bend = warp
         val adjusting = !picture.isColorNeutral || ditherNow || !bend.isIdentity || afterHooks
         val upscaling = picture.upscales && outWidth > width
-        val sharpen: (Int) -> Unit = { p ->
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), picture.sharpness)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), picture.clarity)
-        }
         if (!upscaling) {
             // 4: sharpness and clarity, drawn onto the screen at its size by its own bilinear scaling.
-            toScreen(outWidth, outHeight, adjusting)
-            run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, sharpen)
+            restoration.sharpen(source, toScreen(outWidth, outHeight, adjusting), picture.sharpness, picture.clarity)
         } else {
             // 4: sharpness and clarity at the picture's own size, then 5: enlarged onto the screen.
             if (picture.sharpness > 0f || picture.clarity > 0f) {
                 val sharpened = frames[3].ensure(width, height, deepInput(picture))
-                sharpened.bind()
-                run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity, sharpen)
+                restoration.sharpen(source, sharpened, picture.sharpness, picture.clarity)
                 source = sharpened
             }
+            // Where the enlarged picture is drawn: the screen, or the frame the last passes read.
+            var screen: DrawTarget
             if (picture.upscaler == PictureAdjustment.Upscaler.LANCZOS) {
-                upscalers.lanczos(source, toScreen(outWidth, outHeight, adjusting))
+                screen = toScreen(outWidth, outHeight, adjusting)
+                upscalers.lanczos(source, screen)
             } else if (picture.upscaler == PictureAdjustment.Upscaler.GSR) {
                 // Snapdragon GSR: one pass straight to the screen's size, any ratio.
-                upscalers.gsr(source, toScreen(outWidth, outHeight, adjusting))
+                screen = toScreen(outWidth, outHeight, adjusting)
+                upscalers.gsr(source, screen)
             } else if (picture.upscaler == PictureAdjustment.Upscaler.NIS ||
                 picture.upscaler == PictureAdjustment.Upscaler.EWA
             ) {
@@ -2288,23 +2263,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 } else {
                     upscalers.ewa(source, enlarged)
                 }
-                toScreen(outWidth, outHeight, adjusting)
-                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / midWidth, 1f / midHeight)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
-                }
+                screen = toScreen(outWidth, outHeight, adjusting)
+                restoration.sharpen(enlarged, screen, 0f, 0f, 1f / midWidth, 1f / midHeight)
             } else if (picture.upscaler == PictureAdjustment.Upscaler.ANIME4K && halfTargets) {
                 // Anime4K: four convolutions at the picture's size, then twice the size, and the screen's own scaling
                 // for whatever is left.
                 val enlarged = frames[4].ensure(width * 2, height * 2, ditherNow)
                 upscalers.anime4k(source, net(ANIME4K_A, width, height), net(ANIME4K_B, width, height), enlarged)
-                toScreen(outWidth, outHeight, adjusting)
-                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 0.5f / width, 0.5f / height)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
-                }
+                screen = toScreen(outWidth, outHeight, adjusting)
+                restoration.sharpen(enlarged, screen, 0f, 0f, 0.5f / width, 0.5f / height)
             } else if (picture.upscaler == PictureAdjustment.Upscaler.ACNET && acnetReady()) {
                 // ACNet: eleven convolutions at the picture's size over two pairs of half-float frames (Anime4K's two
                 // and two more), then twice the size, and the screen's own scaling for whatever is left.
@@ -2313,12 +2280,8 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                     source, net(ANIME4K_A, width, height), net(ANIME4K_B, width, height),
                     net(ACNET_C, width, height), net(ACNET_D, width, height), enlarged,
                 )
-                toScreen(outWidth, outHeight, adjusting)
-                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 0.5f / width, 0.5f / height)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
-                }
+                screen = toScreen(outWidth, outHeight, adjusting)
+                restoration.sharpen(enlarged, screen, 0f, 0f, 0.5f / width, 0.5f / height)
             } else if (picture.upscaler == PictureAdjustment.Upscaler.XBRZ && xbrzReady) {
                 // xBRZ by the whole factor that reaches the screen's size, 2 to 6, the screen's own scaling then
                 // bringing it the rest of the way.
@@ -2327,45 +2290,36 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 val decisions = frames[XBRZ_DECISIONS].ensure(width, height)
                 val enlarged = frames[4].ensure(width * factor, height * factor, ditherNow)
                 upscalers.xbrz(source, corners, decisions, enlarged, factor)
-                toScreen(outWidth, outHeight, adjusting)
-                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged.texture, identity) { p ->
-                    val texelX = 1f / (width * factor)
-                    val texelY = 1f / (height * factor)
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), texelX, texelY)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
-                }
+                val texelX = 1f / (width * factor)
+                val texelY = 1f / (height * factor)
+                screen = toScreen(outWidth, outHeight, adjusting)
+                restoration.sharpen(enlarged, screen, 0f, 0f, texelX, texelY)
             } else if (picture.upscaler.isEnlarger && enlargerNet(picture) != null) {
                 // waifu2x, Real-CUGAN or RealSR: two, three or four times the picture's size (see enlargerPass), the
                 // screen's own scaling for whatever is left.
                 val enlarged = enlargerPass(source, width, height)
-                toScreen(outWidth, outHeight, adjusting)
-                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged, identity) { p ->
-                    val scale = enlarger!!.choice.scale
-                    GLES20.glUniform2f(
-                        GLES20.glGetUniformLocation(p, "uTexel"), 1f / (width * scale), 1f / (height * scale),
-                    )
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
-                }
+                val scale = enlarger!!.choice.scale
+                screen = toScreen(outWidth, outHeight, adjusting)
+                restoration.sharpen(
+                    SampledTexture(enlarged, width * scale, height * scale), screen, 0f, 0f,
+                    1f / (width * scale), 1f / (height * scale),
+                )
             } else if (picture.upscaler == PictureAdjustment.Upscaler.NEURAL && es3 && neuralNet() != null) {
                 // Real-ESRGAN: four times the picture's size, tile by tile (see neuralPass), and the screen's own
                 // scaling for whatever is left.
                 val enlarged = neuralPass(source, width, height)
-                toScreen(outWidth, outHeight, adjusting)
-                run(sharpenProgram, GLES20.GL_TEXTURE_2D, enlarged, identity) { p ->
-                    val scale = NeuralUpscaling.SCALE
-                    GLES20.glUniform2f(
-                        GLES20.glGetUniformLocation(p, "uTexel"), 1f / (width * scale), 1f / (height * scale),
-                    )
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
-                }
+                val scale = NeuralUpscaling.SCALE
+                screen = toScreen(outWidth, outHeight, adjusting)
+                restoration.sharpen(
+                    SampledTexture(enlarged, width * scale, height * scale), screen, 0f, 0f,
+                    1f / (width * scale), 1f / (height * scale),
+                )
             } else {
                 // FSR 1: edge-adaptive upscaling to the screen's size, then contrast-adaptive sharpening on it.
                 val enlarged = frames[4].ensure(outWidth, outHeight, ditherNow)
                 upscalers.easu(source, enlarged, fsrEs3)
-                upscalers.rcas(enlarged, toScreen(outWidth, outHeight, adjusting), fsrEs3)
+                screen = toScreen(outWidth, outHeight, adjusting)
+                upscalers.rcas(enlarged, screen, fsrEs3)
             }
             // Below full strength the plain picture, as the screen's own scaling gives it, is laid over the
             // upscaled one with that share: the graphics chip mixes the two as it draws.
@@ -2374,29 +2328,16 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 GLES20.glEnable(GLES20.GL_BLEND)
                 GLES20.glBlendColor(0f, 0f, 0f, plain)
                 GLES20.glBlendFunc(GLES20.GL_CONSTANT_ALPHA, GLES20.GL_ONE_MINUS_CONSTANT_ALPHA)
-                run(sharpenProgram, GLES20.GL_TEXTURE_2D, source.texture, identity) { p ->
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uTexel"), 1f / width, 1f / height)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSharpness"), 0f)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uClarity"), 0f)
-                }
+                restoration.sharpen(source, screen, 0f, 0f)
                 GLES20.glDisable(GLES20.GL_BLEND)
             }
         }
         if (!adjusting) return
         if (afterHooks && user != null) {
             val hooked = userHooks(user, frames[ADJUSTED], MpvShader.AFTER_SCALING, outWidth, outHeight)
-            frames[ADJUSTED].bind()
-            run(blendProgram, GLES20.GL_TEXTURE_2D, hooked.texture, identity) { p ->
-                GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrevious"), 0)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWeight"), 1f)
-            }
+            finishing.copy(hooked, frames[ADJUSTED])
             if (picture.isColorNeutral && !ditherNow && bend.isIdentity) {
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-                GLES20.glViewport(0, 0, outWidth, outHeight)
-                run(blendProgram, GLES20.GL_TEXTURE_2D, frames[ADJUSTED].texture, identity) { p ->
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uPrevious"), 0)
-                    GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWeight"), 1f)
-                }
+                finishing.copy(frames[ADJUSTED], WindowTarget(outWidth, outHeight))
                 return
             }
         }
@@ -2404,25 +2345,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         if (!picture.isColorNeutral || !bend.isIdentity) {
             // The colour correction and the geometry: onto the screen, or into a half-float frame of its own for the
             // dithering.
-            if (ditherNow) {
-                last = frames[DITHER_INPUT].ensure(outWidth, outHeight, half = true)
-                last.bind()
+            val into: DrawTarget = if (ditherNow) {
+                frames[DITHER_INPUT].ensure(outWidth, outHeight, half = true).also { last = it }
             } else {
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-                GLES20.glViewport(0, 0, outWidth, outHeight)
+                WindowTarget(outWidth, outHeight)
             }
-            val u = picture.shaderUniforms()
-            run(adjustProgram, GLES20.GL_TEXTURE_2D, frames[ADJUSTED].texture, identity) { p ->
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uBrightness"), u.brightness)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uContrast"), u.contrast)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uSaturation"), u.saturation)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uInverseGamma"), u.inverseGamma)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uPanorama"), bend.panorama)
-                GLES20.glUniformMatrix3fv(GLES20.glGetUniformLocation(p, "uWarp"), 1, false, bend.matrix, 0)
-                GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uWarped"), 1f)
-            }
+            finishing.adjust(frames[ADJUSTED], into, picture, bend)
         }
-        if (ditherNow) dither(last, outWidth, outHeight)
+        // The window's top row is where gl_FragCoord.y is the height.
+        if (ditherNow) finishing.dither(last, WindowTarget(outWidth, outHeight), ditherEs3)
     }
 
     // The mpv user shaders' frames by the name the passes save them under, and their programs by source; the frame
@@ -2719,7 +2650,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
      * correction's or debanding's float results.
      */
     private fun dithers(picture: PictureAdjustment): Boolean {
-        if (ditherProgram == 0) return false
+        if (!ditherReady) return false
         val bits = if (hdr != null) HDR_BITS else if (yuvInput) 8 else sourceBits
         return Dither.applies(bits, SCREEN_BITS, picture)
     }
@@ -2732,25 +2663,6 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         val readsBack = picture.upscales &&
             (picture.upscaler == PictureAdjustment.Upscaler.NEURAL || picture.upscaler.isEnlarger)
         return dithers(picture) && !readsBack
-    }
-
-    /**
-     * The last pass: [from] (the picture at the screen's size, in half floats) dithered onto the screen with
-     * libplacebo's blue noise (glsl/video/dither.glsl).
-     */
-    private fun dither(from: Frame, width: Int, height: Int) {
-        if (noiseTexture == 0) noiseTexture = byteTexture(Dither.SIZE, Dither.SIZE, Dither.noiseRgba())
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-        GLES20.glViewport(0, 0, width, height)
-        run(ditherProgram, GLES20.GL_TEXTURE_2D, from.texture, identity) { p ->
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, noiseTexture)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uNoise"), 1)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uSize"), width.toFloat(), height.toFloat())
-            // The window's top row is where gl_FragCoord.y is the height; libplacebo counts rows from the top.
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uRows"), height.toFloat(), -1f)
-        }
     }
 
     /**

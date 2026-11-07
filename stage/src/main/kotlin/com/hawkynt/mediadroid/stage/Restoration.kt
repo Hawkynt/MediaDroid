@@ -111,7 +111,10 @@ class Restoration(private val gl: Gles, private val passes: Passes) {
         setInt("uStrong", if (d.filter == Deblock.Filter.STRONG) 1 else 0)
         setInt(
             "uThresholds",
-            Deblock.threshold(d.alpha), Deblock.threshold(d.beta), Deblock.threshold(d.gamma), Deblock.threshold(d.delta),
+            Deblock.threshold(d.alpha),
+            Deblock.threshold(d.beta),
+            Deblock.threshold(d.gamma),
+            Deblock.threshold(d.delta),
         )
     }
 
@@ -141,7 +144,7 @@ class Restoration(private val gl: Gles, private val passes: Passes) {
         }
     }
 
-    /** [logo]'s rectangle [rect] of [from] filled in from around it into [into] (LogoMask), every texel read as it is. */
+    /** [logo]'s rectangle [rect] of [from] filled in from around it into [into] (LogoMask), each texel as it is. */
     fun logo(from: DrawTarget, into: DrawTarget, logo: LogoMask, rect: PictureCrop): DrawTarget =
         passes.draw(Shaders.VIDEO_LOGO_MASK, into, from.texture, nearest = true) {
             set("uSize", from.width.toFloat(), from.height.toFloat())

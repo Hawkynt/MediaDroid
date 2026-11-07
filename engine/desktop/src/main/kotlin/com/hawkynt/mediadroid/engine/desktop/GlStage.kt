@@ -22,6 +22,7 @@ import com.hawkynt.mediadroid.stage.Colouring
 import com.hawkynt.mediadroid.stage.Conversion
 import com.hawkynt.mediadroid.stage.Deinterlacing
 import com.hawkynt.mediadroid.stage.DrawTarget
+import com.hawkynt.mediadroid.stage.Finishing
 import com.hawkynt.mediadroid.stage.Passes
 import com.hawkynt.mediadroid.stage.Restoration
 import com.hawkynt.mediadroid.stage.StageTables
@@ -67,8 +68,8 @@ class GlStage(
     private val restoration = Restoration(gl, passes)
     private val deinterlacing = Deinterlacing(passes)
     private val conversion = Conversion(passes)
+    private val finishing = Finishing(passes)
     private var obmcTable = 0
-    private var noiseTable = 0
 
     // Whether this moment's passes draw into half floats for the last pass to dither (see run).
     private var deep = false
@@ -195,7 +196,6 @@ class GlStage(
         glEnableVertexAttribArray(1)
         glVertexAttribPointer(1, 2, GL_FLOAT, false, 16, 8)
         obmcTable = passes.table(StageTables.OBMC_SIZE, StageTables.OBMC_SIZE, StageTables.obmc())
-        noiseTable = passes.table(Dither.SIZE, Dither.SIZE, StageTables.noise())
         // OpenGL 4.3 has compute shaders, which mpv user shaders' compute passes need.
         MpvShaders.compute = true
         ready = true
@@ -444,44 +444,26 @@ class GlStage(
             source = upscale(a, source, outW, outH)
             if (a.plainShare > 0f) {
                 val upscaled = source
-                source = pass("blend.frag", target("strength", outW, outH, half = deep), plain.texture,
-                    listOf(upscaled.texture to "uPrevious")) { p ->
-                    glUniform1f(glGetUniformLocation(p, "uWeight"), a.plainShare)
-                }
+                source = finishing.blend(upscaled, plain, target("strength", outW, outH, half = deep), a.plainShare)
+                    as Target
             }
         }
         // The user shader's hooks on the enlarged picture, at the shown size.
         if (user != null && user.passes.any { p -> p.hooks.any { it in MpvShader.AFTER_SCALING } }) {
             if (source.width != outW || source.height != outH) {
                 val scaled = target("mpvScaled", outW, outH, half = true)
-                source = pass("blend.frag", scaled, source.texture, listOf(source.texture to "uPrevious")) { p ->
-                    glUniform1f(glGetUniformLocation(p, "uWeight"), 1f)
-                }
+                source = finishing.copy(source, scaled) as Target
             }
             source = userHooks(user, source, MpvShader.AFTER_SCALING, outW, outH, m.shown.width, m.shown.height)
         }
         // To the shown size, colour-corrected, its geometry bent (ScreenWarp).
         val shown = target("shown", outW, outH, half = deep)
-        val u = a.shaderUniforms()
-        pass("adjust.frag", shown, source.texture) { p ->
-            glUniform1f(glGetUniformLocation(p, "uBrightness"), u.brightness)
-            glUniform1f(glGetUniformLocation(p, "uContrast"), u.contrast)
-            glUniform1f(glGetUniformLocation(p, "uSaturation"), u.saturation)
-            glUniform1f(glGetUniformLocation(p, "uInverseGamma"), u.inverseGamma)
-            glUniform1f(glGetUniformLocation(p, "uPanorama"), warp.panorama)
-            glUniformMatrix3fv(glGetUniformLocation(p, "uWarp"), false, warp.matrix)
-            glUniform1f(glGetUniformLocation(p, "uWarped"), 1f)
-        }
+        finishing.adjust(source, shown, a, warp)
         if (!deep) return shown
         // Dithered to 8 bits, the last pass before the picture is read back: libplacebo's blue noise
         // (glsl/video/dither.glsl).
-        val dithered = pass(
-            "dither-es3.frag", target("dithered", outW, outH), shown.texture, listOf(noiseTable to "uNoise"),
-        ) { p ->
-            // The frame's top row is where v is 1 (see upload); libplacebo counts rows from the top.
-            glUniform2f(glGetUniformLocation(p, "uRows"), outH.toFloat(), -1f)
-        }
-        return dithered
+        // The frame's top row is where v is 1 (see upload).
+        return finishing.dither(shown, target("dithered", outW, outH)) as Target
     }
 
     /**
@@ -706,10 +688,8 @@ class GlStage(
             if (middle != null) {
                 val mix = NeuralInterpolation.mix(phase)
                 val (from, to) = if (mix.towardsMiddle) earlier to middle else middle to later
-                return pass("blend.frag", target("mixed", earlier.width, earlier.height, half = deep), to.texture,
-                    listOf(from.texture to "uPrevious")) {
-                    glUniform1f(glGetUniformLocation(it, "uWeight"), mix.weight)
-                }
+                return finishing.blend(from, to, target("mixed", earlier.width, earlier.height, half = deep),
+                    mix.weight) as Target
             }
         }
         var vectors: MotionSearch.Vectors? = null
@@ -729,22 +709,14 @@ class GlStage(
         val w = earlier.width
         val h = earlier.height
         val into = target("mixed", w, h, half = deep)
-        val along = vectors ?: return pass("blend.frag", into, later.texture, listOf(earlier.texture to "uPrevious")) {
-            glUniform1f(glGetUniformLocation(it, "uWeight"), weight)
-        }
+        val along = vectors ?: return finishing.blend(earlier, later, into, weight) as Target
         if (along !== vectorsShown) {
             if (vectorTexture != 0) glDeleteTextures(vectorTexture)
             vectorTexture = passes.table(along.gridWidth, along.gridHeight, along.bytes)
             vectorsShown = along
         }
-        val textures = listOf(earlier.texture to "uPrevious", vectorTexture to "uVectors", obmcTable to "uObmc")
-        return pass("motion.frag", into, later.texture, textures) { p ->
-            glUniform1f(glGetUniformLocation(p, "uAlpha"), (weight * MotionInterpolation.ALPHA_MAX).toInt().toFloat())
-            glUniform2f(glGetUniformLocation(p, "uSize"), w.toFloat(), h.toFloat())
-            glUniform2f(glGetUniformLocation(p, "uGrid"), along.gridWidth.toFloat(), along.gridHeight.toFloat())
-            glUniform2f(glGetUniformLocation(p, "uSearch"), (w / along.scale).toFloat(), (h / along.scale).toFloat())
-            glUniform1f(glGetUniformLocation(p, "uScale"), along.scale.toFloat())
-        }
+        return finishing.motion(earlier, later, vectorTexture, obmcTable, into, weight, along.gridWidth,
+            along.gridHeight, along.scale) as Target
     }
 
     // The mpv user shaders' programs, by their source; and the frame counter and random number their passes are given.
@@ -771,12 +743,8 @@ class GlStage(
         if (stages.none { shader.planned(it).isNotEmpty() }) return from
         val turn = floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 1f)
         // A copy is a blend wholly of the one picture, the program's other input pointed at it too (see copy).
-        fun turned(t: Target, name: String) = pass(
-            "blend.frag", target(name, t.width, t.height, half = true), t.texture, listOf(t.texture to "uPrevious"),
-        ) {
-            glUniform1f(glGetUniformLocation(it, "uWeight"), 1f)
-            glUniformMatrix4fv(glGetUniformLocation(it, "uTexMatrix"), false, turn)
-        }
+        fun turned(t: Target, name: String) =
+            finishing.copy(t, target(name, t.width, t.height, half = true), turn) as Target
         val textures = HashMap<String, Target>()
         val writes = HashMap<String, Int>()
         // Every hook point but LUMA stands for the picture itself.
@@ -1007,9 +975,7 @@ class GlStage(
 
     /** [from] into [into] as it is (a blend wholly of the one picture). */
     private fun copy(from: Target, into: Target) {
-        pass("blend.frag", into, from.texture, listOf(from.texture to "uPrevious")) { p ->
-            glUniform1f(glGetUniformLocation(p, "uWeight"), 1f)
-        }
+        finishing.copy(from, into)
     }
 
     private fun upscale(picture: PictureAdjustment, from: Target, outW: Int, outH: Int): Target {
@@ -1231,10 +1197,7 @@ class GlStage(
                 left / pw, 1f - (top + h) / ph, 0f, 1f,
             )
             // A copy: the blend's other input is the same picture (see copy).
-            pass("blend.frag", into, whole.texture, listOf(whole.texture to "uPrevious")) { p ->
-                glUniform1f(glGetUniformLocation(p, "uWeight"), 1f)
-                glUniformMatrix4fv(glGetUniformLocation(p, "uTexMatrix"), false, within)
-            }
+            finishing.copy(whole, into, within)
             return
         }
         val bytes = if (transfer == null) 4 else 8
@@ -1500,10 +1463,7 @@ class GlStage(
             "mpv-recombine.frag" to Shaders.VIDEO_MPV_RECOMBINE,
             "mpv-chroma.frag" to Shaders.VIDEO_MPV_CHROMA,
             "mpv-chroma-rgb.frag" to Shaders.VIDEO_MPV_CHROMA_RGB,
-            "dither-es3.frag" to Shaders.VIDEO_DITHER_ES3,
-            "adjust.frag" to Shaders.VIDEO_ADJUST,
             "blend.frag" to Shaders.VIDEO_BLEND,
-            "motion.frag" to Shaders.VIDEO_MOTION,
         )
     }
 }
