@@ -33,7 +33,7 @@ import com.hawkynt.mediadroid.library.SortOrder
 @Composable
 fun SearchScreen(
     library: Library,
-    store: com.hawkynt.mediadroid.data.StateStore,
+    store: com.hawkynt.mediadroid.state.StateStore,
     query: String,
     onQueryChange: (String) -> Unit,
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,

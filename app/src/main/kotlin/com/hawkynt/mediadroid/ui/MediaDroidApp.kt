@@ -35,7 +35,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hawkynt.mediadroid.data.LibraryStore
 import com.hawkynt.mediadroid.data.SourceAccess
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.data.StorageRoot
 import com.hawkynt.mediadroid.data.StorageRoots
 import com.hawkynt.mediadroid.library.BrowseFilter

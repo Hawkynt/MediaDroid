@@ -30,8 +30,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hawkynt.mediadroid.data.BUILT_IN_SCREEN
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.BUILT_IN_SCREEN
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.data.screenKey
 import kotlin.math.roundToInt
 import com.hawkynt.mediadroid.player.Keystone

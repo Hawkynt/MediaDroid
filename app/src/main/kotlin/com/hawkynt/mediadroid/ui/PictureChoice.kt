@@ -2,7 +2,7 @@ package com.hawkynt.mediadroid.ui
 
 import android.content.Context
 import com.hawkynt.mediadroid.data.ModelStore
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.player.Colorizing
 import com.hawkynt.mediadroid.player.ModelFolder
 import com.hawkynt.mediadroid.player.NeuralEnlarging

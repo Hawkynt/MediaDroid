@@ -32,7 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.library.BrowseFilter
 import com.hawkynt.mediadroid.library.Library
 import com.hawkynt.mediadroid.library.LibraryQuery

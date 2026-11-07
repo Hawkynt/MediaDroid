@@ -782,7 +782,7 @@ fun PlayerScreen(
                     val kept = it.copy(logo = null, colourSystem = PictureAdjustment.ColourSystem.AUTO)
                     if (place != null) store.setFolderPicture(place, kept) else store.picture = kept
                 },
-                folderName = FolderDefaults.label(pictureFolder ?: store.folderOf(playing.video), store.sources),
+                folderName = FolderDefaults.label(pictureFolder ?: store.folderOf(playing.video), store.allSources),
                 forFolder = pictureFolder != null,
                 onForFolder = { own ->
                     if (own) {

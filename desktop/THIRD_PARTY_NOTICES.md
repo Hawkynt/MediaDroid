@@ -4,7 +4,7 @@ The desktop app's platform services use these libraries, taken as published on M
 
 | Library | Version | Licence | Used for |
 |---|---|---|---|
-| [kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization) | 1.12.0 | Apache-2.0 | `settings.json` (DesktopStore) |
+| [kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization) | 1.12.0 | Apache-2.0 | `state.json` (StateStore), and the `settings.json` of earlier versions taken over (DesktopStore) |
 | [JmDNS](https://github.com/jmdns/jmdns) | 3.6.4 | Apache-2.0 | SMB servers announced on the local network (SmbDiscovery) |
 | [dbus-java](https://github.com/hypfvieh/dbus-java) (core, transport-native-unixsocket) | 5.2.2 | MIT | the session bus on Linux: MPRIS media keys, the screensaver's inhibit |
 | [JNA](https://github.com/java-native-access/jna) | 5.19.1 | Apache-2.0 (or LGPL-2.1) | Windows' System Media Transport Controls, WinRT called through it |

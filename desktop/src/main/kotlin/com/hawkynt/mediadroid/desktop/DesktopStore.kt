@@ -10,6 +10,14 @@ import com.hawkynt.mediadroid.player.NeuralInterpolation
 import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.ScreenShape
+import com.hawkynt.mediadroid.state.LogoOverride
+import com.hawkynt.mediadroid.state.PRIMARY_SOURCE
+import com.hawkynt.mediadroid.state.PictureOverride
+import com.hawkynt.mediadroid.state.ResumeInfo
+import com.hawkynt.mediadroid.state.StateFile
+import com.hawkynt.mediadroid.state.StateStore
+import com.hawkynt.mediadroid.state.SubtitleOverride
+import com.hawkynt.mediadroid.ui.platform.observedStateStore
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -18,209 +26,253 @@ import java.nio.file.StandardCopyOption
 import java.util.Properties
 
 /**
- * The desktop app's own state, `settings.json` in [folder] (the app-data folder, AppFolder): the library folder, the
- * household's picture, sound, subtitle language and speed, the window, the network sources, and per video its resume
- * point, its subtitle delay and whether it was watched. Saved on every change, written aside and moved over the old
- * file, so a crash midway never leaves half a file. The `state.properties` of earlier versions is taken over once and
- * moved aside.
+ * The desktop app's memory: the household's [state] — the model the Android app keeps too (StateStore) — in
+ * `state.json` in [folder] (the app-data folder, AppFolder), saved on every change, written aside and moved over the
+ * old file, so a crash midway never leaves half a file. The `settings.json` of earlier versions, and the
+ * `state.properties` before it, are taken over once and moved aside.
+ *
+ * What the desktop's screens ask for reads from that model: the library folder is its media folder, the network
+ * sources the sources beside it, the household's picture, sound, subtitle language and speed its settings, a video's
+ * subtitle delay its subtitle look, a video's shape and colour system its own picture.
  */
-class DesktopStore(private val folder: File) {
+class DesktopStore internal constructor(
+    /** The household's memory, as every platform keeps it. */
+    val state: StateStore,
+) {
 
-    private val file = File(folder, FILE)
-    private var settings: DesktopSettings = load()
+    constructor(folder: File) : this(observedStateStore(DesktopStateFile(folder)))
+
+    private val data get() = state.data
 
     var libraryFolder: String?
-        get() = settings.library
-        set(value) = change { copy(library = value) }
+        get() = data.rootPath.ifEmpty { null }
+        set(value) {
+            data.rootPath = value.orEmpty()
+            keepSources(sources)
+        }
+
+    /** Every place the library is read from: the media folder, then the network sources. */
+    val allSources: List<Source> get() = state.sources
+
+    /** The network sources (and further local folders) added, in the order they were added. */
+    var sources: List<Source>
+        get() = state.sources.filter { it.id != PRIMARY_SOURCE }
+        set(value) = keepSources(value)
+
+    // The media folder heads the list once anything is added beside it, as on Android (StateStore.sources).
+    private fun keepSources(added: List<Source>) {
+        val primary = libraryFolder?.let { Source.local(PRIMARY_SOURCE, MEDIA_FOLDER, it) }
+        data.sources.clear()
+        if (added.isNotEmpty()) data.sources.addAll(listOfNotNull(primary) + added)
+        state.save()
+    }
 
     /** The household's picture: every video starts with it. */
     var picture: PictureAdjustment
-        get() = settings.picture.toAdjustment()
-        set(value) = change { copy(picture = PictureSettings.of(value)) }
+        get() = state.defaultPicture()
+        set(value) = state.saveDefaultPicture(value)
 
     /** The station logo hidden for [video]'s show (its folder), or null. */
-    fun logoFor(video: String): LogoMask? = settings.logos[showOf(video)]?.toMask()
+    fun logoFor(video: String): LogoMask? = state.logoFor(video)
 
     /** Remembers [logo] (none: null) for [video]'s show. */
-    fun saveLogo(video: String, logo: LogoMask?) = change {
-        val show = showOf(video)
-        copy(logos = if (logo == null) logos - show else logos + (show to LogoSettings.of(logo)))
-    }
-
-    private fun showOf(video: String): String = video.replace('\\', '/').substringBeforeLast('/', "")
+    fun saveLogo(video: String, logo: LogoMask?) = state.saveLogo(video, logo)
 
     /**
      * The picture [video] starts with: its folder's — the nearest folder or share above it with a picture of its own
      * (FolderDefaults) — else the household's — with its show's station logo hidden.
      */
     fun pictureFor(video: String): PictureAdjustment =
-        FolderDefaults.resolve(null, folderPicture(video)?.second, picture)
+        FolderDefaults.resolve(null, state.folderPictureFor(video), picture)
             .copy(logo = logoFor(video), colourSystem = colourSystemFor(video))
 
     /** The colour system chosen for [video], a composite capture (the dot-crawl comb's), or AUTO. */
     fun colourSystemFor(video: String): PictureAdjustment.ColourSystem =
-        settings.colourSystems[video]?.let { runCatching { PictureAdjustment.ColourSystem.valueOf(it) }.getOrNull() }
+        data.picture[video]?.colourSystem
+            ?.let { runCatching { PictureAdjustment.ColourSystem.valueOf(it) }.getOrNull() }
             ?: PictureAdjustment.ColourSystem.AUTO
 
     /** Remembers [system] for [video]; AUTO forgets it. */
-    fun saveColourSystem(video: String, system: PictureAdjustment.ColourSystem) = change {
-        copy(
-            colourSystems = if (system == PictureAdjustment.ColourSystem.AUTO) {
-                colourSystems - video
-            } else {
-                colourSystems + (video to system.name)
-            },
-        )
-    }
+    fun saveColourSystem(video: String, system: PictureAdjustment.ColourSystem) =
+        changeOwn(video) { copy(colourSystem = system.name) }
 
     /** The folder [video] lies in, as FolderDefaults keeps it. */
-    fun folderOf(video: String): FolderPlace = FolderDefaults.placeOf(sources, video)
+    fun folderOf(video: String): FolderPlace = state.folderOf(video)
 
     /** The folder or share whose picture [video] takes, if any has one. */
-    fun pictureFolderOf(video: String): FolderPlace? = folderPicture(video)?.first
-
-    private fun folderPicture(video: String): Pair<FolderPlace, PictureAdjustment>? {
-        val kept = settings.folderPictures.mapNotNull { (key, p) -> FolderPlace.of(key)?.let { it to p } }.toMap()
-        return FolderDefaults.nearest(kept, folderOf(video))?.let { (place, p) -> place to p.toAdjustment() }
-    }
+    fun pictureFolderOf(video: String): FolderPlace? = state.pictureFolderOf(video)
 
     /** Every folder or share with a picture of its own. */
-    val folderPictures: Set<FolderPlace>
-        get() = settings.folderPictures.keys.mapNotNull(FolderPlace::of).toSet()
+    val folderPictures: Set<FolderPlace> get() = state.folderPictures().keys
 
     /** Keeps [picture] as the one every video in [place] starts with; null forgets it. */
-    fun setFolderPicture(place: FolderPlace, picture: PictureAdjustment?) = change {
-        copy(
-            folderPictures = if (picture == null) {
-                folderPictures - place.key
-            } else {
-                folderPictures + (place.key to PictureSettings.of(picture))
-            },
-        )
-    }
+    fun setFolderPicture(place: FolderPlace, picture: PictureAdjustment?) = state.saveFolderPicture(place, picture)
 
     /** The household's subtitle language (ISO 639-1), or empty for subtitles off: the last one picked. */
     var subtitleLanguage: String
-        get() = settings.subtitleLanguage
-        set(value) = change { copy(subtitleLanguage = value) }
+        get() = data.settings.let { if (it.subtitlesOn) it.subtitleLanguage else "" }
+        set(value) {
+            data.settings.subtitlesOn = value.isNotEmpty()
+            if (value.isNotEmpty()) data.settings.subtitleLanguage = value
+            state.save()
+        }
 
     /** The household's playback speed, 1 for as filmed: every video starts at it. */
     var speed: Float
-        get() = settings.speed
-        set(value) = change { copy(speed = value) }
+        get() = data.settings.defaultSpeed
+        set(value) {
+            data.settings.defaultSpeed = value
+            state.save()
+        }
 
     /** Software decoding first, as Android's setting: no graphics chip's decoder is tried (HardwareDecoding). */
     var softwareDecoding: Boolean
-        get() = settings.softwareDecoding
-        set(value) = change { copy(softwareDecoding = value) }
+        get() = data.settings.softwareVideoDecoding
+        set(value) {
+            data.settings.softwareVideoDecoding = value
+            state.save()
+        }
 
     /** The household's sound: the loudness gain, even loudness and the lip-sync delay of this machine's output. */
     var sound: SoundSettings
-        get() = settings.sound
-        set(value) = change { copy(sound = value) }
+        get() = SoundSettings(data.settings.loudness, data.settings.evenLoudness, state.audioDelayFor(AUDIO_OUTPUT))
+        set(value) {
+            data.settings.loudness = value.loudnessDb
+            data.settings.evenLoudness = value.evenLoudness
+            state.saveAudioDelay(AUDIO_OUTPUT, value.audioDelayMs)
+        }
 
     /** Where the window was and how large, as `x,y,width,height` in dp, and whether it was maximized. */
     var window: String?
-        get() = settings.window
-        set(value) = change { copy(window = value) }
-
-    /** The network sources added, in the order they were added. */
-    var sources: List<Source>
-        get() = settings.sources
-        set(value) = change { copy(sources = value) }
+        get() = data.window
+        set(value) {
+            data.window = value
+            state.save()
+        }
 
     /** What [network]'s self-test found on this computer once it passed; null before. */
     fun motionPassed(network: PictureAdjustment.Interpolation): NeuralInterpolation.Passed? =
-        settings.neuralMotion[network.name]?.let(NeuralInterpolation.Passed::decode)
+        data.settings.neuralMotionPassed(network)
 
     /** What [choice]'s self-test found on this computer once it passed; null before. */
     fun enlargerPassed(choice: NeuralEnlarging.Choice): NeuralInterpolation.Passed? =
-        settings.neuralEnlargers[choice.key]?.let(NeuralInterpolation.Passed::decode)
+        data.settings.neuralEnlargerPassed(choice)
 
     /** Keeps [network]'s passed self-test. */
-    fun keepMotion(network: PictureAdjustment.Interpolation, passed: NeuralInterpolation.Passed) =
-        change { copy(neuralMotion = neuralMotion + (network.name to passed.encode())) }
+    fun keepMotion(network: PictureAdjustment.Interpolation, passed: NeuralInterpolation.Passed) {
+        data.settings.neuralMotion += network.name to passed.encode()
+        state.save()
+    }
 
     /** Keeps [choice]'s passed self-test. */
-    fun keepEnlarger(choice: NeuralEnlarging.Choice, passed: NeuralInterpolation.Passed) =
-        change { copy(neuralEnlargers = neuralEnlargers + (choice.key to passed.encode())) }
+    fun keepEnlarger(choice: NeuralEnlarging.Choice, passed: NeuralInterpolation.Passed) {
+        data.settings.neuralEnlargers += choice.key to passed.encode()
+        state.save()
+    }
 
     /** Every neural smooth-motion network whose self-test passed, with what it found. */
     val neuralMotion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed>
         get() = PictureAdjustment.Interpolation.entries.mapNotNull { n -> motionPassed(n)?.let { n to it } }.toMap()
 
     /** What the colouriser's self-test found on this computer once it passed; null before. */
-    val colorizerPassed: NeuralInterpolation.Passed?
-        get() = settings.neuralColorizer?.let(NeuralInterpolation.Passed::decode)
+    val colorizerPassed: NeuralInterpolation.Passed? get() = data.settings.colorizerPassed
 
     /** Keeps the colouriser's passed self-test. */
-    fun keepColorizer(passed: NeuralInterpolation.Passed) = change { copy(neuralColorizer = passed.encode()) }
+    fun keepColorizer(passed: NeuralInterpolation.Passed) {
+        data.settings.neuralColorizer = passed.encode()
+        state.save()
+    }
 
     /** Every neural upscaler's model whose self-test passed, with what it found. */
     val neuralEnlargers: Map<NeuralEnlarging.Choice, NeuralInterpolation.Passed>
-        get() = settings.neuralEnlargers.entries.mapNotNull { (key, value) ->
-            val passed = NeuralInterpolation.Passed.decode(value)
-            NeuralEnlarging.choice(key)?.let { choice -> passed?.let { choice to it } }
+        get() = data.settings.neuralEnlargers.keys.mapNotNull { key ->
+            NeuralEnlarging.choice(key)?.let { choice -> enlargerPassed(choice)?.let { choice to it } }
         }.toMap()
 
     /** The shape [video]'s frame is shown at where its file's flag is wrong; [AspectOverride.AUTO] until set. */
     fun aspectOf(video: String): AspectOverride =
-        AspectOverride.entries.firstOrNull { it.name == settings.aspects[video] } ?: AspectOverride.AUTO
+        AspectOverride.entries.firstOrNull { it.name == data.picture[video]?.aspect } ?: AspectOverride.AUTO
 
     /** Keeps [aspect] for [video]; [AspectOverride.AUTO] drops its entry. */
-    fun setAspect(video: String, aspect: AspectOverride) = change {
-        copy(aspects = if (aspect == AspectOverride.AUTO) aspects - video else aspects + (video to aspect.name))
+    fun setAspect(video: String, aspect: AspectOverride) = changeOwn(video) { copy(aspect = aspect.name) }
+
+    // A video's own shape and colour system live in its own picture, as on Android; the rest of it is what it starts
+    // with, and with neither left the entry goes.
+    private fun changeOwn(video: String, how: PictureOverride.() -> PictureOverride) {
+        val own = (data.picture[video] ?: StateStore.overrideOf(pictureFor(video).copy(logo = null))).how()
+        if (own.aspect == AspectOverride.AUTO.name && own.colourSystem == PictureAdjustment.ColourSystem.AUTO.name) {
+            data.picture.remove(video)
+        } else {
+            data.picture[video] = own
+        }
+        state.save()
     }
 
     /** How the output screen [key] (a monitor, see Main) is set up; the default until it is set. */
-    fun screenSetup(key: String): ScreenSetup = settings.screens[key]?.toSetup() ?: ScreenSetup.Default
+    fun screenSetup(key: String): ScreenSetup = state.screenSetup(key)
 
     /** Keeps [setup] for the output screen [key]; the default drops its entry. */
-    fun setScreenSetup(key: String, setup: ScreenSetup) = change {
-        copy(screens = if (setup == ScreenSetup.Default) screens - key else screens + (key to ScreenKept.of(setup)))
-    }
+    fun setScreenSetup(key: String, setup: ScreenSetup) = state.saveScreenSetup(key, setup)
 
-    fun resumeMs(video: String): Long = settings.resume[video] ?: 0
+    fun resumeMs(video: String): Long = data.resume[video]?.positionMs ?: 0
 
-    fun setResume(video: String, positionMs: Long) = change {
-        copy(resume = if (positionMs <= 0) resume - video else resume + (video to positionMs))
+    fun setResume(video: String, positionMs: Long) {
+        if (positionMs <= 0) {
+            data.resume.remove(video)
+        } else {
+            data.resume[video] = ResumeInfo(positionMs, data.resume[video]?.durationMs ?: 0)
+        }
+        state.save()
     }
 
     /** The subtitle delay a video keeps (positive: the lines later), as Android keeps it per video; 0 in sync. */
-    fun subtitleDelayMs(video: String): Int = settings.subtitleDelays[video] ?: 0
+    fun subtitleDelayMs(video: String): Int = data.subtitles[video]?.delayMs ?: 0
 
-    fun setSubtitleDelay(video: String, delayMs: Int) = change {
-        copy(subtitleDelays = if (delayMs == 0) subtitleDelays - video else subtitleDelays + (video to delayMs))
+    fun setSubtitleDelay(video: String, delayMs: Int) {
+        val look = (data.subtitles[video] ?: SubtitleOverride()).copy(delayMs = delayMs)
+        if (look == SubtitleOverride()) data.subtitles.remove(video) else data.subtitles[video] = look
+        state.save()
     }
 
-    fun watched(video: String): Boolean = video in settings.watched
+    fun watched(video: String): Boolean = state.isWatched(video)
 
-    fun markWatched(video: String) = change { copy(watched = watched + video, resume = resume - video) }
+    fun markWatched(video: String) = state.markWatched(video)
 
-    private fun change(how: DesktopSettings.() -> DesktopSettings) {
-        settings = settings.how()
-        save()
+    companion object {
+        /** The name the media folder goes by among the sources, as on Android. */
+        const val MEDIA_FOLDER = "Media folder"
+
+        /** The one audio output whose lip-sync delay is kept (StateStore keeps one per output). */
+        const val AUDIO_OUTPUT = "desktop"
     }
+}
 
-    private fun load(): DesktopSettings {
+/**
+ * `state.json` in [folder], written aside and moved over; before there is one, the `settings.json` of earlier versions
+ * (or the `state.properties` before that) is taken over once and moved aside. A file that cannot be read is kept aside
+ * for whoever wants to look, and the app starts afresh.
+ */
+internal class DesktopStateFile(private val folder: File) : StateFile {
+
+    private val file = File(folder, FILE)
+
+    override fun read(): String? {
         if (file.exists()) {
-            return DesktopSettings.decode(file.readText()) ?: DesktopSettings().also {
-                // Unreadable: kept aside for whoever wants to look, the app starts afresh.
-                file.copyTo(File(folder, "$FILE.damaged"), overwrite = true)
-            }
+            val text = file.readText()
+            if (StateStore.decode(text) != null) return text
+            file.copyTo(File(folder, "$FILE.damaged"), overwrite = true)
+            return null
         }
-        val old = File(folder, OLD_FILE)
-        if (!old.exists()) return DesktopSettings()
-        val taken = DesktopSettings.fromProperties(Properties().apply { old.inputStream().use { load(it) } })
-        save(taken)
-        old.renameTo(File(folder, "$OLD_FILE.old"))
-        return taken
+        val earlier = earlierSettings() ?: return null
+        val text = takeOver(earlier)
+        write(text)
+        return text
     }
 
-    private fun save(what: DesktopSettings = settings) {
+    override fun write(text: String) {
         folder.mkdirs()
         val aside = File(folder, "$FILE.new")
-        aside.writeText(DesktopSettings.encode(what))
+        aside.writeText(text)
         runCatching {
             Files.move(
                 aside.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE,
@@ -230,13 +282,77 @@ class DesktopStore(private val folder: File) {
         }
     }
 
+    // The settings of an earlier version, its file moved aside; null when there is none.
+    private fun earlierSettings(): DesktopSettings? {
+        val json = File(folder, OLD_JSON)
+        if (json.exists()) {
+            val settings = DesktopSettings.decode(json.readText())
+            if (settings == null) json.copyTo(File(folder, "$OLD_JSON.damaged"), overwrite = true)
+            json.renameTo(File(folder, "$OLD_JSON.old"))
+            return settings
+        }
+        val properties = File(folder, OLD_PROPERTIES)
+        if (!properties.exists()) return null
+        val settings = DesktopSettings.fromProperties(Properties().apply { properties.inputStream().use { load(it) } })
+        properties.renameTo(File(folder, "$OLD_PROPERTIES.old"))
+        return settings
+    }
+
     private companion object {
-        const val FILE = "settings.json"
-        const val OLD_FILE = "state.properties"
+        const val FILE = "state.json"
+        const val OLD_JSON = "settings.json"
+        const val OLD_PROPERTIES = "state.properties"
     }
 }
 
-/** What `settings.json` holds; every field has a default, so a file from an older version reads. */
+/** [old] as the household's memory (StateStore): each setting where the model keeps it, as the text kept. */
+internal fun takeOver(old: DesktopSettings): String {
+    var written = ""
+    val memory = object : StateFile {
+        override fun read(): String? = null
+
+        override fun write(text: String) {
+            written = text
+        }
+    }
+    DesktopStore(StateStore(memory)).apply {
+        libraryFolder = old.library
+        sources = old.sources
+        picture = old.picture.toAdjustment()
+        subtitleLanguage = old.subtitleLanguage
+        speed = old.speed
+        softwareDecoding = old.softwareDecoding
+        sound = old.sound
+        window = old.window
+        state.data.settings.neuralMotion = old.neuralMotion
+        state.data.settings.neuralEnlargers = old.neuralEnlargers
+        state.data.settings.neuralColorizer = old.neuralColorizer
+        old.logos.forEach { (show, logo) -> state.data.logos[show] = LogoOverride(logo.corner, logo.size, logo.mode) }
+        old.screens.forEach { (key, kept) -> setScreenSetup(key, kept.toSetup()) }
+        old.resume.forEach { (video, ms) -> setResume(video, ms) }
+        state.setWatched(old.watched, true)
+        old.subtitleDelays.forEach { (video, ms) -> setSubtitleDelay(video, ms) }
+        // A folder of this computer was kept by its whole path; now it lies under the media folder, as on Android.
+        old.folderPictures.forEach { (key, kept) ->
+            val place = FolderPlace.of(key) ?: return@forEach
+            val now = if (place.source.isEmpty()) FolderDefaults.placeOf(allSources, place.folder, true) else place
+            setFolderPicture(now, kept.toAdjustment())
+        }
+        old.aspects.forEach { (video, name) ->
+            AspectOverride.entries.firstOrNull { it.name == name }?.let { setAspect(video, it) }
+        }
+        old.colourSystems.forEach { (video, name) ->
+            runCatching { PictureAdjustment.ColourSystem.valueOf(name) }.getOrNull()?.let { saveColourSystem(video, it) }
+        }
+        state.save()
+    }
+    return written
+}
+
+/**
+ * What the `settings.json` of earlier versions holds, read once to be taken over (DesktopStateFile); every field has a
+ * default, so a file from any earlier version reads.
+ */
 @Serializable
 internal data class DesktopSettings(
     val library: String? = null,

@@ -48,7 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.library.Episode
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show

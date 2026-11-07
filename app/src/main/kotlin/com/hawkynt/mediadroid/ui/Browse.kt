@@ -76,7 +76,7 @@ import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.hawkynt.mediadroid.data.ArtCache
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.data.ThumbnailStore
 import com.hawkynt.mediadroid.library.BrowseFilter
 import com.hawkynt.mediadroid.library.HomeRow
@@ -88,6 +88,7 @@ import com.hawkynt.mediadroid.library.MediaItem
 import com.hawkynt.mediadroid.library.Movie
 import com.hawkynt.mediadroid.library.Show
 import com.hawkynt.mediadroid.library.SortOrder
+import com.hawkynt.mediadroid.library.WallMode
 import com.hawkynt.mediadroid.ui.theme.focusClickable
 import java.io.File
 import kotlinx.coroutines.launch
@@ -852,9 +853,6 @@ private fun LetterBox(fallbackLetter: String?) {
         }
     }
 }
-
-/** How the wall lays out its titles. */
-enum class WallMode(val label: String) { POSTERS("Posters"), LIST("List"), DETAILS("Details") }
 
 /** Whether a title's files all lie on a source that cannot be reached right now; the app provides it. */
 val LocalAway = staticCompositionLocalOf<(MediaItem) -> Boolean> { { false } }

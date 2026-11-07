@@ -50,7 +50,7 @@ import androidx.compose.ui.unit.sp
 import com.hawkynt.mediadroid.R
 import com.hawkynt.mediadroid.data.QualityStore
 import com.hawkynt.mediadroid.data.SourceAccess
-import com.hawkynt.mediadroid.data.StateStore
+import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.data.StorageRoot
 import com.hawkynt.mediadroid.library.FileEntry
 import com.hawkynt.mediadroid.library.FileSort
