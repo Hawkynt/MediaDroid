@@ -55,6 +55,8 @@ object NeuralChecks {
      * what one in-between takes at each of [sizes] (NeuralInterpolation.testSizes of the network), smallest first and
      * only on while the last kept up; null where it runs wrong. Past the budget on the small check already, the
      * smallest size is estimated from it by its pixels and nothing larger is given. [log] hears what the check found.
+     * [timed] is what playback runs, timed in place of [net]: for a network handing back its flow, the flow alone (the
+     * graphics chip warps the frames by it).
      */
     fun interpolator(
         net: Between,
@@ -62,6 +64,7 @@ object NeuralChecks {
         progress: Progress,
         log: (String) -> Unit = {},
         sizes: List<NeuralInterpolation.Size> = NeuralInterpolation.TEST_SIZES,
+        timed: Between = net,
     ): NeuralSelfTest.Timing? {
         val smallest = sizes.first()
         progress.running(smallest.height)
@@ -74,7 +77,7 @@ object NeuralChecks {
         val times = LinkedHashMap<Int, Double>()
         for (size in sizes) {
             progress.running(size.height)
-            val ms = time(net, size) ?: break
+            val ms = time(timed, size) ?: break
             times[size.height] = ms
             progress.timed(size.height, ms)
             if (!NeuralInterpolation.fastEnough(ms)) break

@@ -28,8 +28,12 @@ object NeuralInterpolation {
     /** What the self-test times, smallest first: 16:9 pictures at 480p, 576p, 720p and 1080p. */
     val TEST_SIZES = listOf(Size(854, 480), Size(1024, 576), Size(1280, 720), Size(1920, 1080))
 
-    /** The smaller sizes a network handing back its flow is also timed at: 240p and 360p. */
-    private val FLOW_SIZES = listOf(Size(426, 240), Size(640, 360))
+    /**
+     * The smaller sizes a network handing back its flow is also timed at: from 120p (NeuralPace.MIN_LINES, where a flow
+     * still beats a blend) through 180p, 240p and 360p — so a device that keeps up only with a small flow is offered
+     * the network, at that size.
+     */
+    private val FLOW_SIZES = listOf(Size(214, 120), Size(320, 180), Size(426, 240), Size(640, 360))
 
     /**
      * Whether [network] hands back its flow and blend mask rather than a picture: RIFE and IFRNet, whose last step —
@@ -39,7 +43,7 @@ object NeuralInterpolation {
     fun handsFlow(network: PictureAdjustment.Interpolation): Boolean =
         network == PictureAdjustment.Interpolation.RIFE || network == PictureAdjustment.Interpolation.IFRNET
 
-    /** What [network]'s self-test times, smallest first: from 240p for one that [handsFlow], else [TEST_SIZES]. */
+    /** What [network]'s self-test times, smallest first: from 120p for one that [handsFlow], else [TEST_SIZES]. */
     fun testSizes(network: PictureAdjustment.Interpolation): List<Size> =
         if (handsFlow(network)) FLOW_SIZES + TEST_SIZES else TEST_SIZES
 

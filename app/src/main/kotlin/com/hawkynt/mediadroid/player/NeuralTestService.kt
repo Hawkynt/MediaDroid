@@ -20,8 +20,9 @@ import kotlin.concurrent.thread
  * Runs a neural network's self-test (NeuralChecks, through NeuralInterpolator's, NeuralEnlarger's or NeuralColorizer's
  * selfTest) on one unit in a process
  * of its own (`:neuraltest`): a network that takes more memory than the device gives, or so long a GPU job that the GPU is lost
- * for the process, ends only that process — and a test that takes longer than [NeuralInterpolation.MAX_WAIT_MS] all
- * told is cut short by ending it, as a run on the device cannot be stopped otherwise.
+ * for the process, ends only that process — and a test past its deadline (NeuralSelfTest.Deadline: its loading, then
+ * its share of [NeuralInterpolation.MAX_WAIT_MS]) is cut short by ending it, as a run on the device cannot be stopped
+ * otherwise.
  * The app ends the process after each test, so the next starts afresh.
  */
 class NeuralTestService : Service() {
@@ -91,37 +92,37 @@ class NeuralTestService : Service() {
         private const val GONE_WAIT_MS = 3000L
 
         /**
-         * [network]'s self-test on the GPU, then the CPU unless the GPU kept up, each in a fresh test process, all
-         * of it within [NeuralInterpolation.MAX_WAIT_MS] (NeuralSelfTest.across); blocks until both answered, ended
-         * or were cut short — not on the main thread.
+         * [network]'s self-test on the GPU, then the CPU unless the GPU kept up, each in a fresh test process with
+         * its time to load and its share of [NeuralInterpolation.MAX_WAIT_MS] (NeuralSelfTest.across); blocks until
+         * both answered, ended or were cut short — not on the main thread.
          */
         fun selfTest(context: Context, network: PictureAdjustment.Interpolation): NeuralSelfTest.Outcome =
-            NeuralSelfTest.across(NeuralInterpolation::fastEnough) { unit, until ->
-                selfTest(context, network.name, MOTION, NeuralUpscaler.Unit.valueOf(unit), until)
+            NeuralSelfTest.across(NeuralInterpolation::fastEnough) { unit, deadline ->
+                selfTest(context, network.name, MOTION, NeuralUpscaler.Unit.valueOf(unit), deadline)
             }
 
         /** [choice]'s self-test (a model of waifu2x, Real-CUGAN or RealSR; NeuralEnlarger.selfTest), the same way. */
         fun selfTest(context: Context, choice: NeuralEnlarging.Choice): NeuralSelfTest.Outcome =
-            NeuralSelfTest.across(NeuralEnlarging::fastEnough) { unit, until ->
-                selfTest(context, choice.key, UPSCALER, NeuralUpscaler.Unit.valueOf(unit), until)
+            NeuralSelfTest.across(NeuralEnlarging::fastEnough) { unit, deadline ->
+                selfTest(context, choice.key, UPSCALER, NeuralUpscaler.Unit.valueOf(unit), deadline)
             }
 
         /** DDColor's self-test (NeuralColorizer.selfTest), the same way. */
         fun selfTestColorizer(context: Context): NeuralSelfTest.Outcome =
-            NeuralSelfTest.across(Colorizing::fastEnough) { unit, until ->
-                selfTest(context, "DDCOLOR", COLORIZER, NeuralUpscaler.Unit.valueOf(unit), until)
+            NeuralSelfTest.across(Colorizing::fastEnough) { unit, deadline ->
+                selfTest(context, "DDCOLOR", COLORIZER, NeuralUpscaler.Unit.valueOf(unit), deadline)
             }
 
         /**
-         * The test on [unit] in a fresh test process, cut short at [until] (System.nanoTime) — its starting and
-         * loading included; null where the process ended without answering.
+         * The test on [unit] in a fresh test process, cut short at its [deadline] — told the network is loaded by
+         * the test's first report that it runs; null where the process ended without answering.
          */
         private fun selfTest(
             context: Context,
             networkName: String,
             kind: String,
             unit: NeuralUpscaler.Unit,
-            until: Long,
+            deadline: NeuralSelfTest.Deadline,
         ): NeuralSelfTest.Answer? {
             val lock = Any()
             val done = CountDownLatch(1)
@@ -137,6 +138,7 @@ class NeuralTestService : Service() {
                         pid = message.arg2
                         when (message.what) {
                             RUNNING -> {
+                                deadline.loaded()
                                 runningHeight = message.arg1
                                 runningSince = System.nanoTime()
                             }
@@ -185,7 +187,7 @@ class NeuralTestService : Service() {
                 return null
             }
             while (!done.await(POLL_MS, TimeUnit.MILLISECONDS)) {
-                if (System.nanoTime() < until) continue
+                if (!synchronized(lock) { deadline.passed() }) continue
                 synchronized(lock) {
                     if (answer == null) {
                         // Out of time, far beyond the budget already: cut short, the size being made (the smallest

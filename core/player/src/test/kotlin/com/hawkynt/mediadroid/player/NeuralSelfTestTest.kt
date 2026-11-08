@@ -18,13 +18,16 @@ class NeuralSelfTestTest {
     }
 
     @Test
-    fun `a slow GPU is followed by the CPU, fastest first, each with its share of the time`() {
+    fun `a slow GPU is followed by the CPU, fastest first, each starting afresh`() {
         val until = ArrayList<Long>()
-        val outcome = NeuralSelfTest.across(NeuralInterpolation::fastEnough, { 1_000L }) { unit, at ->
-            until += at
+        var now = 1_000L
+        val outcome = NeuralSelfTest.across(NeuralInterpolation::fastEnough, { now }) { unit, deadline ->
+            until += deadline.until
+            now += 500L
             NeuralSelfTest.Answer(timing(unit, if (unit == "GPU") 90.0 else 60.0))
         }
-        assertEquals(listOf(1_000L + 1_000_000_000L, 1_000L + 2_000_000_000L), until)
+        val loading = (NeuralSelfTest.LOAD_WAIT_MS * 1_000_000).toLong()
+        assertEquals(listOf(1_000L + loading, 1_500L + loading), until)
         assertEquals(NeuralSelfTest.Outcome.Ran(listOf(timing("CPU", 60.0), timing("GPU", 90.0))), outcome)
     }
 
@@ -62,5 +65,17 @@ class NeuralSelfTestTest {
             NeuralSelfTest.Timing("CPU", mapOf(480 to NeuralInterpolation.MAX_WAIT_MS)),
             NeuralSelfTest.cutShort("CPU", emptyMap(), runningHeight = 0, smallestHeight = 480),
         )
+    }
+
+    @Test
+    fun `a unit has long to load its network, then its share of the test's time to run it`() {
+        val deadline = NeuralSelfTest.Deadline(startNanos = 100L, runNanos = 1_000_000_000L, nowNanos = { 100L })
+        assertEquals(100L + (NeuralSelfTest.LOAD_WAIT_MS * 1_000_000).toLong(), deadline.until)
+        deadline.loaded(3_400_000_000L)
+        assertEquals(4_400_000_000L, deadline.until)
+        deadline.loaded(3_900_000_000L)
+        assertEquals(4_400_000_000L, deadline.until)
+        assertEquals(false, deadline.passed(4_399_999_999L))
+        assertEquals(true, deadline.passed(4_400_000_000L))
     }
 }
