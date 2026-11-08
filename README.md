@@ -332,6 +332,9 @@ and denoised. How the networks are checked on a desktop:
 
 - A child lock in the player; parent settings behind a four-digit PIN shown as words; an age limit read from the NFOs
   (FSK, MPAA, TV ratings).
+- Back up and restore in Settings: watched marks, resume points, folders, sources and settings in one file of your
+  choosing, for a new device or a fresh install — network passwords stay out of it; a restore asks before it replaces
+  what is there.
 
 <details>
 <summary>The household in detail</summary>

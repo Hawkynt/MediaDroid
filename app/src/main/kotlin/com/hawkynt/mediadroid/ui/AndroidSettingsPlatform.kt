@@ -8,6 +8,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.hawkynt.mediadroid.data.MpvShaderFolder
 import com.hawkynt.mediadroid.data.screenKey
@@ -50,6 +52,43 @@ class AndroidSettingsPlatform(private val context: Context, private val store: S
             then()
         }
         return { pick.launch(null) }
+    }
+
+    @Composable
+    override fun rememberBackupSaver(done: (Boolean?) -> Unit): (name: String, text: String) -> Unit {
+        var pending by remember { mutableStateOf("") }
+        val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) {
+            uri: Uri? ->
+            if (uri == null) {
+                done(null)
+            } else {
+                done(
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(pending.toByteArray()) }
+                    }.isSuccess,
+                )
+            }
+        }
+        return { name, text ->
+            pending = text
+            save.launch(name)
+        }
+    }
+
+    @Composable
+    override fun rememberBackupOpener(read: (String?) -> Unit): () -> Unit {
+        val open = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            read(
+                uri?.let {
+                    runCatching {
+                        context.contentResolver.openInputStream(it)!!.use { input ->
+                            input.readBytes().decodeToString()
+                        }
+                    }.getOrNull()
+                },
+            )
+        }
+        return { open.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
     }
 
     @Composable

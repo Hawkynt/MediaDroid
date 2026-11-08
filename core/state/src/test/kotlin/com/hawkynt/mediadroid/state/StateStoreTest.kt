@@ -199,4 +199,30 @@ class StateStoreTest {
         assertNull(store.resumeFor("/e1.mkv"))
         assertTrue(store.isWatched("/e1.mkv"))
     }
+
+    @Test
+    fun `a backup restored into another store brings everything along and is kept there`() {
+        val old = StateStore(Memory()).apply {
+            data.rootPath = "/media"
+            saveResume("/media/a.mkv", 60_000, 6_000_000)
+            markWatched("/media/b.mkv")
+            saveWallMode(WallMode.LIST)
+        }
+        val file = Memory()
+        val fresh = StateStore(file)
+        assertTrue(fresh.restore(old.backup()))
+        assertEquals("/media", fresh.data.rootPath)
+        assertTrue(fresh.isWatched("/media/b.mkv"))
+        assertEquals(60_000L, fresh.resumeFor("/media/a.mkv")?.positionMs)
+        assertEquals(WallMode.LIST, StateStore(file).wallMode)
+    }
+
+    @Test
+    fun `what is no backup restores nothing and leaves the memory as it was`() {
+        val store = StateStore(Memory()).apply { markWatched("/media/b.mkv") }
+        assertFalse(store.restore("not json"))
+        assertFalse(store.restore("""{"name":"something else"}"""))
+        assertFalse(store.restore("{}"))
+        assertTrue(store.isWatched("/media/b.mkv"))
+    }
 }

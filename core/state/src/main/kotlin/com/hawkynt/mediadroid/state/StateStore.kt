@@ -15,6 +15,7 @@ import com.hawkynt.mediadroid.player.PictureAdjustment
 import com.hawkynt.mediadroid.player.ScreenSetup
 import com.hawkynt.mediadroid.player.SubtitleLook
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 
 /** Where the household's memory lives: one small text file, read once and written whole on every change. */
 interface StateFile {
@@ -52,7 +53,7 @@ interface StateWatcher {
  */
 class StateStore(private val file: StateFile, private val watcher: StateWatcher = StateWatcher.None) {
 
-    private val current: AppData = load()
+    private var current: AppData = load()
 
     /** The memory itself; changes made to it are kept by [save]. */
     val data: AppData
@@ -62,6 +63,26 @@ class StateStore(private val file: StateFile, private val watcher: StateWatcher 
         }
 
     private fun load(): AppData = runCatching { file.read() }.getOrNull()?.let(::decode) ?: AppData()
+
+    /**
+     * Everything remembered, as a backup file holds it — the state file's own text: the watched marks, resume points,
+     * library, sources and settings (a source's password stays with the platform's secret store, not in here).
+     */
+    fun backup(): String = encode(current)
+
+    /**
+     * Replaces everything remembered with the [backup] in [text], kept at once; false where it is not one — not this
+     * memory's JSON, or none of its fields in it — leaving the memory as it was.
+     */
+    fun restore(text: String): Boolean {
+        val fields = runCatching { Json.parseToJsonElement(text).jsonObject.keys }.getOrNull() ?: return false
+        val known = (0 until AppData.serializer().descriptor.elementsCount)
+            .map { AppData.serializer().descriptor.getElementName(it) }
+        if (fields.none { it in known }) return false
+        current = decode(text) ?: return false
+        save()
+        return true
+    }
 
     /** Writes the memory out and tells the watcher. */
     fun save() {
