@@ -1,6 +1,8 @@
 package com.hawkynt.mediadroid.player
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -79,5 +81,18 @@ class DarkPhoneTest {
         phone.controlsHidden()
         phone.secondScreen(false)
         assertFalse(phone.dark)
+    }
+
+    @Test
+    fun `dark it is at the lowest brightness, lifted to read a gesture's note, lit it leaves it to the system`() {
+        val phone = DarkPhone()
+        assertNull(phone.brightness(noteShown = false))
+        phone.secondScreen(true)
+        phone.controlsHidden()
+        assertEquals(0f, phone.brightness(noteShown = false))
+        assertEquals(DarkPhone.NOTE_BRIGHTNESS, phone.brightness(noteShown = true))
+        assertTrue(DarkPhone.NOTE_BRIGHTNESS in 0.05f..0.5f)
+        phone.touch()
+        assertNull(phone.brightness(noteShown = true))
     }
 }
