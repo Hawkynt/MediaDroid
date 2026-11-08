@@ -11,7 +11,7 @@ kotlin {
     jvmToolchain(21)
 
     androidLibrary {
-        namespace = "com.hawkynt.mediadroid.ui"
+        namespace = "com.hawkynt.mediadroyd.ui"
         compileSdk = 37
         minSdk = 26
         // The drawables (composeResources) travel with the library.
@@ -52,7 +52,7 @@ kotlin {
 // The drawables both apps show (the sidebar's, the onboarding's, the Files browser's), as Res.drawable.*.
 compose.resources {
     publicResClass = true
-    packageOfResClass = "com.hawkynt.mediadroid.ui.resources"
+    packageOfResClass = "com.hawkynt.mediadroyd.ui.resources"
 }
 
 // The screens' own logic is tested on the desktop JVM; `./gradlew test`, the gate's fast tier, runs it like every

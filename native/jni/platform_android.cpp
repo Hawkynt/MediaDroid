@@ -17,7 +17,7 @@ __attribute__((constructor)) void noOpenMpAffinity() {
 
 }  // namespace
 
-namespace mediadroid::platform {
+namespace mediadroyd::platform {
 
 Loader loader(JNIEnv* env, jobject assets, const std::string& base) {
     AAssetManager* manager = assets ? AAssetManager_fromJava(env, assets) : nullptr;
@@ -29,4 +29,4 @@ Loader loader(JNIEnv* env, jobject assets, const std::string& base) {
     };
 }
 
-}  // namespace mediadroid::platform
+}  // namespace mediadroyd::platform

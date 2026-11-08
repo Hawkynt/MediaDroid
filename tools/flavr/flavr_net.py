@@ -1,5 +1,5 @@
 """FLAVR for 2x interpolation (Kalluri et al.: FLAVR, WACV 2023; github.com/tarun005/FLAVR, Apache-2.0), written out
-for MediaDroid from the published architecture — UNet_3D_3D with the unet_18 encoder, no batch norm, transposed
+for MediaDroyd from the published architecture — UNet_3D_3D with the unet_18 encoder, no batch norm, transposed
 convolutions, joined by concatenation; the parameter names are the checkpoint's (without its `module.`), so its
 weights load as tensors only. Four frames in — the two around the in-between and one either side — the in-between
 out.

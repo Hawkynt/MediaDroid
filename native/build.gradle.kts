@@ -215,7 +215,7 @@ fun cmake(): String {
     return bundled.path
 }
 
-// libmediadroid.so / mediadroid.dll for this desktop: ./gradlew :native:desktopLibrary → native/build/desktop/lib.
+// libmediadroyd.so / mediadroyd.dll for this desktop: ./gradlew :native:desktopLibrary → native/build/desktop/lib.
 tasks.register("desktopLibrary") {
     group = "build"
     description = "Builds the native library (native/) for this desktop"
@@ -252,7 +252,7 @@ tasks.register("desktopLibrary") {
             "-S", sources.asFile.path, "-B", build,
             "-DCMAKE_BUILD_TYPE=Release",
             if (wanted.fromSource) "-DNCNN_SOURCE=${ncnn.path}" else "-DNCNN_ROOT=${ncnn.path}",
-            "-DMEDIADROID_OUTPUT=${desktopLibraryDir.get().asFile.path}",
+            "-DMEDIADROYD_OUTPUT=${desktopLibraryDir.get().asFile.path}",
             "-DASS_SOURCES=${ass.get().asFile.path}",
         )
         run("--build", build, "--config", "Release", "--parallel", jobs)
@@ -307,7 +307,7 @@ tasks.register("desktopRuntime") {
                 .maxOrNull()?.let(::File)
         } else {
             // Where the system's loader finds it for the library: the GCC runtime it was linked against.
-            val linked = built.first { it.name == "libmediadroid.so" }
+            val linked = built.first { it.name == "libmediadroyd.so" }
             outputOf("ldd", linked.path).orEmpty().lines()
                 .firstNotNullOfOrNull { Regex("""^\s*libgomp\.so\.1 => (\S+)""").find(it)?.groupValues?.get(1) }
                 ?.let { File(it).canonicalFile }

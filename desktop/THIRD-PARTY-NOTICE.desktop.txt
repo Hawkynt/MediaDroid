@@ -1,9 +1,9 @@
 What the desktop packages carry
 
-The Windows MSI and zip and the Linux AppImage hold MediaDroid's own code (LGPL-3.0-or-later, LICENSE) and the
+The Windows MSI and zip and the Linux AppImage hold MediaDroyd's own code (LGPL-3.0-or-later, LICENSE) and the
 libraries below, each taken unchanged from Maven Central as a jar of its own in the package's lib folder (natives
 inside them). Each jar keeps its own licence and notice files under META-INF. The other THIRD-PARTY-NOTICE files
-beside this one name the code converted into MediaDroid itself: FFmpeg (the decoder), the picture stage's shaders
+beside this one name the code converted into MediaDroyd itself: FFmpeg (the decoder), the picture stage's shaders
 and the cores'.
 
 Library                                                    Licence                      Used for

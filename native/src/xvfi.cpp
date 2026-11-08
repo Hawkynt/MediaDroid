@@ -9,7 +9,7 @@
 
 #include "networks.h"
 
-namespace mediadroid {
+namespace mediadroyd {
 
 namespace {
 
@@ -322,4 +322,4 @@ std::unique_ptr<Interpolator> openXvfi(const Loader& load, bool gpu) {
     return xvfi;
 }
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

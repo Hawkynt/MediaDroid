@@ -5,7 +5,7 @@
 
 #include "shaders.h"
 
-namespace mediadroid {
+namespace mediadroyd {
 
 WarpLayer::WarpLayer(bool flowFirst) : flowFirst(flowFirst) {
     one_blob_only = false;
@@ -15,7 +15,7 @@ WarpLayer::WarpLayer(bool flowFirst) : flowFirst(flowFirst) {
 
 int WarpLayer::create_pipeline(const ncnn::Option& opt) {
     if (!vkdev) return 0;
-    pipeline = mediadroid::pipeline(vkdev, "warp", opt);
+    pipeline = mediadroyd::pipeline(vkdev, "warp", opt);
     return pipeline ? 0 : -1;
 }
 
@@ -89,4 +89,4 @@ ncnn::Layer* createFlowFirstWarpLayer(void*) {
     return new WarpLayer(true);
 }
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

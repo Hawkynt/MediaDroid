@@ -1,15 +1,15 @@
 libgomp — the GNU Offloading and Multi Processing Runtime Library, from GCC (https://gcc.gnu.org)
 
-The Linux packages (the AppImage) carry libgomp.so.1 beside MediaDroid's native library (libmediadroid.so), which
+The Linux packages (the AppImage) carry libgomp.so.1 beside MediaDroyd's native library (libmediadroyd.so), which
 needs it: ncnn, the neural networks' engine, is built with OpenMP. It is the build machine's own copy, unmodified —
 for the published AppImage the libgomp1 package of Ubuntu 22.04 LTS, built from GCC 12.
 
 Licence: GNU General Public License, version 3, with the GCC Runtime Library Exception, version 3.1 — both below. The
-exception is what lets MediaDroid's native library, compiled with GCC, link to it under MediaDroid's own licence.
+exception is what lets MediaDroyd's native library, compiled with GCC, link to it under MediaDroyd's own licence.
 
 Source: the GCC release it was built from, https://gcc.gnu.org/releases.html (https://ftp.gnu.org/gnu/gcc/), and
 Ubuntu's source package of it, https://launchpad.net/ubuntu/+source/gcc-12 (libgomp/ in the GCC tree).
-Should neither be reachable, ask at https://github.com/Hawkynt/MediaDroid/issues for a copy of the source.
+Should neither be reachable, ask at https://github.com/Hawkynt/MediaDroyd/issues for a copy of the source.
 
 ================================================================================
 GCC RUNTIME LIBRARY EXCEPTION — COPYING.RUNTIME

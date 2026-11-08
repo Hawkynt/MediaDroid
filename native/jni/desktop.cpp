@@ -12,7 +12,7 @@ extern "C" {
 // The network [name] in [dir] (blobs "in0" and "out0") run over [input], [c] planes of [w] x [h] floats; its output
 // the same way, plane after plane, or null where the network does not load or run.
 JNIEXPORT jfloatArray JNICALL
-Java_com_hawkynt_mediadroid_engine_desktop_NativeNetworks_run(
+Java_com_hawkynt_mediadroyd_engine_desktop_NativeNetworks_run(
     JNIEnv* env, jobject, jstring dir, jstring name, jfloatArray input, jint w, jint h, jint c) {
     const char* chars = env->GetStringUTFChars(dir, nullptr);
     const std::string base(chars);
@@ -23,8 +23,8 @@ Java_com_hawkynt_mediadroid_engine_desktop_NativeNetworks_run(
     if (env->GetArrayLength(input) != w * h * c) return nullptr;
 
     ncnn::Net net;
-    mediadroid::configure(net, false);
-    if (mediadroid::fileLoader(base)(net, network.c_str()) != 0) return nullptr;
+    mediadroyd::configure(net, false);
+    if (mediadroyd::fileLoader(base)(net, network.c_str()) != 0) return nullptr;
 
     ncnn::Mat in(w, h, c);
     std::vector<float> values(static_cast<size_t>(w) * h * c);

@@ -20,7 +20,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   # The GL stage tests run on Mesa's software OpenGL (llvmpipe) and must not skip themselves there.
-  MEDIADROID_GL: required
+  MEDIADROYD_GL: required
 
 jobs:
   package:
@@ -104,7 +104,7 @@ jobs:
       - name: Keep the native library
         uses: actions/upload-artifact@v4
         with:
-          name: libmediadroid-${{ matrix.system }}-x64
+          name: libmediadroyd-${{ matrix.system }}-x64
           path: native/build/desktop/lib/*
           if-no-files-found: error
       - name: Take Mesa away again (Windows)
@@ -119,15 +119,15 @@ jobs:
         run: |
           mkdir -p dist
           if [ "${{ matrix.system }}" = linux ]; then
-            cp desktop/build/dist/MediaDroid-linux-x64.AppImage dist/
+            cp desktop/build/dist/MediaDroyd-linux-x64.AppImage dist/
           else
-            cp desktop/build/compose/binaries/main/msi/*.msi dist/MediaDroid-windows-x64.msi
-            cp desktop/build/dist/MediaDroid-windows-x64.zip dist/
+            cp desktop/build/compose/binaries/main/msi/*.msi dist/MediaDroyd-windows-x64.msi
+            cp desktop/build/dist/MediaDroyd-windows-x64.zip dist/
           fi
           ls -la dist
 
       # Each package as a user gets it: unpacked, its licence and notices on top, and started once — the window drawn
-      # and its picture written (MEDIADROID_SNAPSHOT) within the minute.
+      # and its picture written (MEDIADROYD_SNAPSHOT) within the minute.
       - name: Check the AppImage
         if: matrix.system == 'linux'
         env:
@@ -135,7 +135,7 @@ jobs:
         run: |
           check="$RUNNER_TEMP/appimage"
           mkdir -p "$check/data" && cd "$check"
-          "$GITHUB_WORKSPACE/dist/MediaDroid-linux-x64.AppImage" --appimage-extract > /dev/null
+          "$GITHUB_WORKSPACE/dist/MediaDroyd-linux-x64.AppImage" --appimage-extract > /dev/null
           for f in LICENSE THIRD-PARTY-NOTICE.desktop.txt THIRD-PARTY-NOTICE.ffmpeg.txt THIRD-PARTY-NOTICE.libass.txt \
             THIRD-PARTY-NOTICE.libgomp.txt; do
             test -s "squashfs-root/usr/$f" || { echo "the AppImage lacks $f"; exit 1; }
@@ -143,41 +143,41 @@ jobs:
           # The native library beside the jars with the OpenMP runtime it needs, and the runtime's java launcher the
           # neural self-test starts its processes with.
           app=squashfs-root/usr/lib/app
-          for f in "$app/libmediadroid.so" "$app/libgomp.so.1" squashfs-root/usr/lib/runtime/bin/java; do
+          for f in "$app/libmediadroyd.so" "$app/libgomp.so.1" squashfs-root/usr/lib/runtime/bin/java; do
             test -s "$f" || { echo "the AppImage lacks $f"; exit 1; }
           done
           squashfs-root/usr/lib/runtime/bin/java -version
           # Everything the library needs is either the system's own (the C library, Fontconfig) or carried beside it.
-          for needed in $(readelf -d "$app/libmediadroid.so" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
+          for needed in $(readelf -d "$app/libmediadroyd.so" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
             case "$needed" in
               libc.so.6|libm.so.6|libmvec.so.1|libpthread.so.0|libdl.so.2|librt.so.1|ld-linux-x86-64.so.2|libfontconfig.so.1) ;;
-              *) test -s "$app/$needed" || { echo "the AppImage lacks $needed, which libmediadroid.so needs"; exit 1; } ;;
+              *) test -s "$app/$needed" || { echo "the AppImage lacks $needed, which libmediadroyd.so needs"; exit 1; } ;;
             esac
           done
           # The oldest glibc it runs on: Ubuntu 22.04's, 2.35, as ncnn's release.
-          newest=$(objdump -T "$app/libmediadroid.so" "$app/libgomp.so.1" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          newest=$(objdump -T "$app/libmediadroyd.so" "$app/libgomp.so.1" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
           echo "needs $newest"
           test "$(printf '%s\nGLIBC_2.35\n' "$newest" | sort -V | tail -1)" = GLIBC_2.35 \
             || { echo "the native library needs $newest, newer than glibc 2.35"; exit 1; }
           # Loaded by the packaged runtime as the app loads it, its OpenMP runtime the carried one.
           LD_DEBUG=libs squashfs-root/usr/lib/runtime/bin/java -cp "$app/*" \
-            com.hawkynt.mediadroid.engine.desktop.NativeNetworks 2> ld.txt
+            com.hawkynt.mediadroyd.engine.desktop.NativeNetworks 2> ld.txt
           grep -q "calling init: .*/lib/app/libgomp.so.1" ld.txt \
-            || { echo "libmediadroid.so ran on another libgomp than the carried one"; exit 1; }
-          XDG_DATA_HOME="$check/data" MEDIADROID_SNAPSHOT="$check/start.png" xvfb-run -a -s "-screen 0 1920x1080x24" \
-            timeout -k 5 60 "$GITHUB_WORKSPACE/dist/MediaDroid-linux-x64.AppImage" || true
-          pkill -f '/usr/bin/MediaDroid' || true
+            || { echo "libmediadroyd.so ran on another libgomp than the carried one"; exit 1; }
+          XDG_DATA_HOME="$check/data" MEDIADROYD_SNAPSHOT="$check/start.png" xvfb-run -a -s "-screen 0 1920x1080x24" \
+            timeout -k 5 60 "$GITHUB_WORKSPACE/dist/MediaDroyd-linux-x64.AppImage" || true
+          pkill -f '/usr/bin/MediaDroyd' || true
           test -s start.png || { echo "the AppImage did not draw its window"; exit 1; }
       - name: Check the MSI and the zip
         if: matrix.system == 'windows'
         shell: pwsh
         run: |
           $check = Join-Path $env:RUNNER_TEMP 'windows'
-          $msi = (Resolve-Path dist/MediaDroid-windows-x64.msi).Path
+          $msi = (Resolve-Path dist/MediaDroyd-windows-x64.msi).Path
           $installed = Join-Path $check 'msi'
           $p = Start-Process msiexec -ArgumentList "/a `"$msi`" /qn TARGETDIR=`"$installed`"" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /a failed: $($p.ExitCode)" }
-          Expand-Archive dist/MediaDroid-windows-x64.zip -DestinationPath (Join-Path $check 'zip')
+          Expand-Archive dist/MediaDroyd-windows-x64.zip -DestinationPath (Join-Path $check 'zip')
           $notices = @('LICENSE', 'THIRD-PARTY-NOTICE.desktop.txt', 'THIRD-PARTY-NOTICE.ffmpeg.txt',
             'THIRD-PARTY-NOTICE.libass.txt', 'THIRD-PARTY-NOTICE.vcomp140.txt')
           # Windows' own libraries, there on every Windows 10/11; whatever else the native library needs has to come
@@ -191,8 +191,8 @@ jobs:
             }
             # The native library beside the jars with Visual C++'s OpenMP runtime, and the runtime's java launcher
             # the neural self-test starts its processes with.
-            $dll = Get-ChildItem -Recurse -File -Path $root -Filter mediadroid.dll | Select-Object -First 1
-            if (-not $dll) { throw "$root lacks mediadroid.dll" }
+            $dll = Get-ChildItem -Recurse -File -Path $root -Filter mediadroyd.dll | Select-Object -First 1
+            if (-not $dll) { throw "$root lacks mediadroyd.dll" }
             if (-not (Test-Path (Join-Path $dll.DirectoryName 'vcomp140.dll'))) { throw "$root lacks vcomp140.dll" }
             $java = Get-ChildItem -Recurse -File -Path $root -Filter java.exe | Select-Object -First 1
             if (-not $java) { throw "$root lacks the runtime's java.exe" }
@@ -200,19 +200,19 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "$($java.FullName) does not start" }
             $needed = & $dumpbin /nologo /dependents $dll.FullName | ForEach-Object { $_.Trim() } |
               Where-Object { $_ -match '^[\w.-]+\.dll$' }
-            Write-Output "mediadroid.dll needs: $($needed -join ', ')"
+            Write-Output "mediadroyd.dll needs: $($needed -join ', ')"
             foreach ($n in $needed) {
               if ($n -match $system) { continue }
               $carried = (Test-Path (Join-Path $dll.DirectoryName $n)) -or (Test-Path (Join-Path $java.DirectoryName $n))
-              if (-not $carried) { throw "$root lacks $n, which mediadroid.dll needs" }
+              if (-not $carried) { throw "$root lacks $n, which mediadroyd.dll needs" }
             }
             # Loaded by the packaged runtime as the app loads it.
-            & $java.FullName -cp (Join-Path $dll.DirectoryName '*') com.hawkynt.mediadroid.engine.desktop.NativeNetworks
+            & $java.FullName -cp (Join-Path $dll.DirectoryName '*') com.hawkynt.mediadroyd.engine.desktop.NativeNetworks
             if ($LASTEXITCODE -ne 0) { throw "the native library does not load from $root" }
           }
           $png = Join-Path $check 'start.png'
-          $env:MEDIADROID_SNAPSHOT = $png
-          $app = Start-Process (Join-Path $check 'zip/MediaDroid/MediaDroid.exe') -PassThru
+          $env:MEDIADROYD_SNAPSHOT = $png
+          $app = Start-Process (Join-Path $check 'zip/MediaDroyd/MediaDroyd.exe') -PassThru
           for ($i = 0; $i -lt 60 -and -not (Test-Path $png); $i++) { Start-Sleep -Seconds 1 }
           Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
           if (-not (Test-Path $png)) { throw 'the portable app did not draw its window' }
@@ -254,6 +254,6 @@ jobs:
       - name: Keep the native library
         uses: actions/upload-artifact@v4
         with:
-          name: libmediadroid-linux-arm64
+          name: libmediadroyd-linux-arm64
           path: native/build/desktop/lib/*
           if-no-files-found: error

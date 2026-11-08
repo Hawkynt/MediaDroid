@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.hawkynt.mediadroid.engine.android"
+    namespace = "com.hawkynt.mediadroyd.engine.android"
     compileSdk = 37
 
     defaultConfig {

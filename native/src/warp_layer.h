@@ -6,7 +6,7 @@
 #include <layer.h>
 #include <pipeline.h>
 
-namespace mediadroid {
+namespace mediadroyd {
 
 // Samples the first blob, an image of any channels, where the second blob's flow (two planes, across and down, in
 // pixels) points from each pixel: bilinear, coordinates clamped to the picture (shader: glsl/ncnn/warp.comp).
@@ -29,4 +29,4 @@ private:
 ncnn::Layer* createWarpLayer(void* userdata);
 ncnn::Layer* createFlowFirstWarpLayer(void* userdata);
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

@@ -9,8 +9,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(MEDIADROID_JNI OFF CACHE BOOL "" FORCE)
+set(MEDIADROYD_JNI OFF CACHE BOOL "" FORCE)
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../native" native)
 
 add_executable(neural_check check.cpp)
-target_link_libraries(neural_check mediadroid_networks)
+target_link_libraries(neural_check mediadroyd_networks)

@@ -1,7 +1,7 @@
 vcomp140.dll — the OpenMP runtime of Microsoft Visual C++
 
-The Windows packages (the MSI and the portable zip) carry vcomp140.dll beside MediaDroid's native library
-(mediadroid.dll), which needs it: ncnn, the neural networks' engine, is built with Visual C++'s OpenMP. It is the file
+The Windows packages (the MSI and the portable zip) carry vcomp140.dll beside MediaDroyd's native library
+(mediadroyd.dll), which needs it: ncnn, the neural networks' engine, is built with Visual C++'s OpenMP. It is the file
 from the redistributable folder of the Visual Studio that built the package, VC\Redist\MSVC\<version>\x64\
 Microsoft.VC14x.OpenMP, unmodified (the published packages: Visual Studio 2026 on GitHub's Windows runners).
 
@@ -11,6 +11,6 @@ Microsoft lists the files in that folder as "Distributable Code" of Visual Studi
 (https://learn.microsoft.com/en-us/visualstudio/releases/2026/redistribution, and for Visual Studio 2022
 https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution): under the Microsoft Software License
 Terms for Visual Studio they may be copied and distributed, unmodified, with a program that adds significant primary
-functionality to them. vcomp140.dll is not covered by MediaDroid's licence (LGPL-3.0-or-later); it remains
+functionality to them. vcomp140.dll is not covered by MediaDroyd's licence (LGPL-3.0-or-later); it remains
 Microsoft's and is licensed under those terms, which bind whoever passes it on as well. The same runtime is installed
 by Microsoft's Visual C++ Redistributable (https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).

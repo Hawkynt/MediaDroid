@@ -2,13 +2,13 @@ libass 0.17.5 (https://github.com/libass/libass), with FreeType 2.15.0 (https://
 (https://github.com/fribidi/fribidi) and HarfBuzz 14.6.0 (https://harfbuzz.github.io)
 
 The native tree (native/ass) builds these four from their release sources — which native/build.gradle.kts fetches and
-checks against their digests — into MediaDroid's native library (libmediadroid_neural.so in the app, the mediadroid
+checks against their digests — into MediaDroyd's native library (libmediadroyd_neural.so in the app, the mediadroyd
 library on the desktop), unmodified, to draw ASS/SSA subtitles as they were authored.
 
   - libass: ISC License.
   - FreeType: used under the FreeType License (FTL), the first of its two licences (FTL or GPLv2).
     Portions of this software are copyright © 2026 The FreeType Project (www.freetype.org). All rights reserved.
-  - GNU FriBidi: GNU Lesser General Public License, version 2.1 or later. It is linked statically; MediaDroid's own
+  - GNU FriBidi: GNU Lesser General Public License, version 2.1 or later. It is linked statically; MediaDroyd's own
     source (LGPL-3.0-or-later) and the build that links it are published, so it can be rebuilt against a changed
     FriBidi.
   - HarfBuzz: the "Old MIT" licence; its Universal Shaping Engine data (src/ms-use) Microsoft's MIT licence.

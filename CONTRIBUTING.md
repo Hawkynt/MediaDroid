@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve **MediaDroid**. This guide covers building, testing, and the conventions
+Thanks for helping improve **MediaDroyd**. This guide covers building, testing, and the conventions
 every change is expected to follow. Coding agents must also read [`AGENTS.md`](AGENTS.md).
 
 ## Prerequisites
@@ -76,7 +76,7 @@ Two rules that make the difference real:
 
 ## GUI screenshots
 
-MediaDroid is a GUI repo, so the repo-README check runs with `gui: true`: the README must carry one hero
+MediaDroyd is a GUI repo, so the repo-README check runs with `gui: true`: the README must carry one hero
 image directly under the pitch, with no heading — the image that decides whether a reader keeps reading —
 and a tour under `## 🖼️ Screenshots`. Both are checked. The primary surfaces are the browse wall (the
 hero), the details screen, the player with its binge queue, and the filters/facets. Do not multiply
@@ -158,14 +158,14 @@ under the pitch and the `## 🖼️ Screenshots` tour. It reads one file and gen
 artifact to fetch and no line endings to argue with; reproduce it in full with one command:
 
 ```bash
-node ../RepositoryTemplate/scripts/repo-readme.mjs --check . --repo Hawkynt/MediaDroid
+node ../RepositoryTemplate/scripts/repo-readme.mjs --check . --repo Hawkynt/MediaDroyd
 ```
 
 Every finding names the rule that produced it and the line it sits on, and CI reports them as annotations
 on the diff. `--write` fixes the badge block for you:
 
 ```bash
-node ../RepositoryTemplate/scripts/repo-readme.mjs --write . --repo Hawkynt/MediaDroid
+node ../RepositoryTemplate/scripts/repo-readme.mjs --write . --repo Hawkynt/MediaDroyd
 ```
 
 The rest are prose decisions, which is why they are left to a person. The rules and the canonical order

@@ -8,10 +8,10 @@
 
 #include "networks.h"
 
-namespace mediadroid::platform {
+namespace mediadroyd::platform {
 
 // A loader for the models under [base]: from the app's bundled assets where [assets] (an Android AssetManager) is
 // given, else from the files there. The desktop has no assets; it reads files whatever [assets] is.
 Loader loader(JNIEnv* env, jobject assets, const std::string& base);
 
-}  // namespace mediadroid::platform
+}  // namespace mediadroyd::platform

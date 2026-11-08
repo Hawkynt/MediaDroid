@@ -1,0 +1,203 @@
+package com.hawkynt.mediadroyd.player
+
+import android.net.Uri
+import androidx.annotation.OptIn
+import androidx.media3.common.C
+import androidx.media3.common.DataReader
+import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.ParsableBitArray
+import androidx.media3.common.util.ParsableByteArray
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.extractor.Ac3Util
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.Extractor
+import androidx.media3.extractor.ExtractorInput
+import androidx.media3.extractor.ExtractorOutput
+import androidx.media3.extractor.ExtractorsFactory
+import androidx.media3.extractor.PositionHolder
+import androidx.media3.extractor.SeekMap
+import androidx.media3.extractor.TrackOutput
+import androidx.media3.extractor.avi.AviExtractor
+import androidx.media3.extractor.mp3.Mp3Extractor
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
+import androidx.media3.extractor.text.SubtitleParser
+import androidx.media3.extractor.ts.TsExtractor
+import com.hawkynt.mediadroyd.library.FsFile
+import java.io.EOFException
+
+/**
+ * Media3's extractors, with AVI's AC3 / E-AC3 audio handed on in whole frames. AVI keeps that audio as
+ * a byte stream cut into chunks that ignore frame boundaries; Media3's AVI reader passes the chunks on
+ * as they are, and the FFmpeg decoder — which gets no parser in front of it — rejects every frame
+ * that was cut. See [FrameSplitter].
+ */
+@OptIn(UnstableApi::class)
+object AviAudioFraming {
+
+    /**
+     * The extractors to play local files with; FFmpeg's demuxers come last, for the containers none of
+     * Media3's own recognises (see [FfmpegExtractor]).
+     */
+    val extractors: ExtractorsFactory = extractors(DefaultSubtitleParserFactory())
+
+    /**
+     * [extractors] with the subtitles Media3 parses as it reads decided by [parsers] (see AssSubtitles), and teletext
+     * read from transport streams and parsed besides (TeletextSubtitles).
+     */
+    fun extractors(parsers: SubtitleParser.Factory): ExtractorsFactory = object : ExtractorsFactory {
+        private val withTeletext = TeletextSubtitles.parsers(parsers)
+
+        private fun media3() = DefaultExtractorsFactory().setSubtitleParserFactory(withTeletext)
+
+        override fun createExtractors(): Array<Extractor> = wrap(media3().createExtractors(), null, withTeletext)
+
+        override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> =
+            wrap(media3().createExtractors(uri, responseHeaders), uri, withTeletext) + FfmpegExtractor(uri, remote)
+    }
+
+    /** The file behind a network location, for FFmpeg's demuxers; the app points this at its sources. */
+    @Volatile
+    var remote: (String) -> FsFile? = { null }
+
+    /** [extractors] noting in [DemuxerLog] which of them takes the file at [uri]. */
+    fun recording(extractors: Array<Extractor>, uri: Uri): Array<Extractor> =
+        extractors.map { RecordingExtractor(it, uri.toString()) }.toTypedArray()
+
+    private fun wrap(extractors: Array<Extractor>, uri: Uri?, parsers: SubtitleParser.Factory): Array<Extractor> =
+        extractors.map {
+            val framed = when (it) {
+                is AviExtractor -> FramingExtractor(it)
+                is Mp3Extractor -> NotProgramStream(it)
+                // Media3's own, with teletext read as well (TeletextSubtitles).
+                is TsExtractor -> TeletextSubtitles.tsExtractor(parsers)
+                else -> it
+            }
+            if (uri != null) RecordingExtractor(framed, uri.toString()) else framed
+        }.toTypedArray()
+
+    /** Notes in [DemuxerLog] which extractor took the file: the one Media3 initialises is the one it chose. */
+    private class RecordingExtractor(private val inner: Extractor, private val location: String) : Extractor {
+        override fun sniff(input: ExtractorInput): Boolean = inner.sniff(input)
+
+        override fun init(output: ExtractorOutput) {
+            DemuxerLog.record(location, inner.underlyingImplementation.javaClass.simpleName)
+            inner.init(output)
+        }
+
+        override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int = inner.read(input, seekPosition)
+
+        override fun seek(position: Long, timeUs: Long) = inner.seek(position, timeUs)
+
+        override fun release() = inner.release()
+
+        override fun getUnderlyingImplementation(): Extractor = inner.underlyingImplementation
+    }
+
+    /**
+     * Media3's MP3 reader, kept off MPEG program streams: an MPEG-1 system stream, which Media3's program
+     * stream reader does not take, would otherwise go to it for the frame syncs of its MPEG sound — one
+     * MP3 track, no picture — instead of on to FFmpeg's demuxer.
+     */
+    private class NotProgramStream(private val inner: Extractor) : Extractor by inner {
+        override fun sniff(input: ExtractorInput): Boolean {
+            val header = ByteArray(ProgramStream.HEADER_BYTES)
+            val read = input.peekFully(header, 0, header.size, true)
+            input.resetPeekPosition()
+            return !(read && ProgramStream.opensWithPack(header)) && inner.sniff(input)
+        }
+
+        override fun getUnderlyingImplementation(): Extractor = inner.underlyingImplementation
+    }
+
+    private class FramingExtractor(private val inner: Extractor) : Extractor {
+        private val tracks = ArrayList<FramingTrackOutput>()
+
+        override fun sniff(input: ExtractorInput): Boolean = inner.sniff(input)
+
+        override fun init(output: ExtractorOutput) {
+            inner.init(object : ExtractorOutput {
+                override fun track(id: Int, type: Int): TrackOutput {
+                    val track = output.track(id, type)
+                    return if (type == C.TRACK_TYPE_AUDIO) FramingTrackOutput(track).also { tracks += it } else track
+                }
+
+                override fun endTracks() = output.endTracks()
+
+                override fun seekMap(seekMap: SeekMap) = output.seekMap(seekMap)
+            })
+        }
+
+        override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int = inner.read(input, seekPosition)
+
+        override fun seek(position: Long, timeUs: Long) {
+            tracks.forEach { it.reset() }
+            inner.seek(position, timeUs)
+        }
+
+        override fun release() = inner.release()
+
+        override fun getUnderlyingImplementation(): Extractor = inner
+    }
+
+    /** Passes everything through until the format says AC3 or E-AC3; from then on re-cuts it into frames. */
+    private class FramingTrackOutput(private val out: TrackOutput) : TrackOutput {
+        private var splitter: FrameSplitter? = null
+        private val scratch = ByteArray(16 * 1024)
+
+        fun reset() {
+            splitter?.reset()
+        }
+
+        override fun format(format: Format) {
+            if (format.sampleMimeType == MimeTypes.AUDIO_AC3 || format.sampleMimeType == MimeTypes.AUDIO_E_AC3) {
+                splitter = FrameSplitter(::probeAc3)
+            }
+            out.format(format)
+        }
+
+        override fun durationUs(durationUs: Long) = out.durationUs(durationUs)
+
+        override fun sampleData(input: DataReader, length: Int, allowEndOfInput: Boolean, sampleDataPart: Int): Int {
+            val frames = splitter ?: return out.sampleData(input, length, allowEndOfInput, sampleDataPart)
+            val read = input.read(scratch, 0, minOf(length, scratch.size))
+            if (read == C.RESULT_END_OF_INPUT) {
+                if (allowEndOfInput) return C.RESULT_END_OF_INPUT
+                throw EOFException()
+            }
+            frames.append(scratch, 0, read)
+            return read
+        }
+
+        override fun sampleData(data: ParsableByteArray, length: Int, sampleDataPart: Int) {
+            val frames = splitter ?: return out.sampleData(data, length, sampleDataPart)
+            val bytes = ByteArray(length)
+            data.readBytes(bytes, 0, length)
+            frames.append(bytes, 0, length)
+        }
+
+        override fun sampleMetadata(timeUs: Long, flags: Int, size: Int, offset: Int, cryptoData: TrackOutput.CryptoData?) {
+            val frames = splitter ?: return out.sampleMetadata(timeUs, flags, size, offset, cryptoData)
+            frames.chunkEnded(timeUs, size) { bytes, at, frameSize, frameTimeUs ->
+                out.sampleData(ParsableByteArray(bytes.copyOfRange(at, at + frameSize)), frameSize)
+                out.sampleMetadata(frameTimeUs, C.BUFFER_FLAG_KEY_FRAME, frameSize, 0, null)
+            }
+        }
+
+        /** An AC3 / E-AC3 syncframe (syncword 0x0B77) and its size and duration, as Media3's [Ac3Util] reads them. */
+        private fun probeAc3(bytes: ByteArray, at: Int, available: Int): FrameSplitter.Probe {
+            if (bytes[at] != 0x0B.toByte()) return FrameSplitter.Probe.NotAFrame
+            if (available < 2) return FrameSplitter.Probe.NeedMore
+            if (bytes[at + 1] != 0x77.toByte()) return FrameSplitter.Probe.NotAFrame
+            if (available < AC3_HEADER_BYTES) return FrameSplitter.Probe.NeedMore
+            val info = runCatching {
+                Ac3Util.parseAc3SyncframeInfo(ParsableBitArray(bytes.copyOfRange(at, at + AC3_HEADER_BYTES)))
+            }.getOrNull() ?: return FrameSplitter.Probe.NotAFrame
+            if (info.frameSize <= 0 || info.sampleRate <= 0) return FrameSplitter.Probe.NotAFrame
+            return FrameSplitter.Probe.Frame(info.frameSize, info.sampleCount * 1_000_000L / info.sampleRate)
+        }
+    }
+
+    /** Enough of a syncframe for Ac3Util to read an E-AC3 header too. */
+    private const val AC3_HEADER_BYTES = 64
+}

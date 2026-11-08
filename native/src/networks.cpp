@@ -11,7 +11,7 @@
 #include "dain_layers.h"
 #include "warp_layer.h"
 
-namespace mediadroid {
+namespace mediadroyd {
 
 namespace {
 
@@ -307,4 +307,4 @@ std::unique_ptr<Interpolator> openDain(const Loader& load, bool gpu) {
     return dain;
 }
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

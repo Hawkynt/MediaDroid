@@ -1,5 +1,5 @@
 """XVFI-Net for inference (Sim, Oh, Kim: XVFI, ICCV 2021; github.com/JihyongOh/XVFI, used with the authors'
-permission under its terms: research and education, no commercial use). Written out for MediaDroid from the published
+permission under its terms: research and education, no commercial use). Written out for MediaDroyd from the published
 architecture: the parameter names are the checkpoint's, so its weights load as tensors only. The test path only
 (is_training=False): S_tst levels from the coarsest, then the full level.
 

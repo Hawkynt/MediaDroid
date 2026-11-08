@@ -22,12 +22,12 @@ android {
             pickFirsts += "META-INF/LICENSE.md"
         }
     }
-    namespace = "com.hawkynt.mediadroid"
+    namespace = "com.hawkynt.mediadroyd"
     compileSdk = 37
     ndkVersion = "30.0.16248370"
 
     defaultConfig {
-        applicationId = "com.hawkynt.mediadroid"
+        applicationId = "com.hawkynt.mediadroyd"
         minSdk = 26
         targetSdk = 36
 

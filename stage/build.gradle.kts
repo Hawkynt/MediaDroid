@@ -19,7 +19,7 @@ dependencies {
  * The shaders under src/main/glsl compiled in: one Kotlin string constant per `.vert`, `.frag`, `.agsl` or `.comp`
  * (an ncnn compute shader, handed to the native part) file, named
  * after its path (`video/fsr-easu.frag` → `Shaders.VIDEO_FSR_EASU`), in the generated object
- * `com.hawkynt.mediadroid.shaders.Shaders`. A line `#include "name.glsl"` is replaced by that file, beside the
+ * `com.hawkynt.mediadroyd.shaders.Shaders`. A line `#include "name.glsl"` is replaced by that file, beside the
  * shader; `.glsl` files are such shared parts only and get no constant of their own.
  */
 abstract class ShaderSources : DefaultTask() {
@@ -56,11 +56,11 @@ abstract class ShaderSources : DefaultTask() {
         val shaders = root.walkTopDown()
             .filter { it.isFile && it.extension in setOf("vert", "frag", "agsl", "comp") }
             .sortedBy { it.relativeTo(root).invariantSeparatorsPath }
-        val out = outputDir.get().asFile.resolve("com/hawkynt/mediadroid/shaders/Shaders.kt")
+        val out = outputDir.get().asFile.resolve("com/hawkynt/mediadroyd/shaders/Shaders.kt")
         out.parentFile.mkdirs()
         out.writeText(
             buildString {
-                appendLine("package com.hawkynt.mediadroid.shaders")
+                appendLine("package com.hawkynt.mediadroyd.shaders")
                 appendLine()
                 appendLine("/** The shaders of stage/src/main/glsl, compiled in (made by the shaderSources task). */")
                 appendLine("object Shaders {")

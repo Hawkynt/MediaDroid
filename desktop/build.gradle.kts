@@ -61,11 +61,11 @@ sourceSets["main"].resources.srcDir("icons")
 
 compose.desktop {
     application {
-        mainClass = "com.hawkynt.mediadroid.desktop.MainKt"
+        mainClass = "com.hawkynt.mediadroyd.desktop.MainKt"
         jvmArgs += listOf("-Xmx2g")
-        if (providers.gradleProperty("fullFfmpeg").isPresent) jvmArgs += "-Dmediadroid.fullFfmpeg=true"
+        if (providers.gradleProperty("fullFfmpeg").isPresent) jvmArgs += "-Dmediadroyd.fullFfmpeg=true"
         nativeDistributions {
-            packageName = "MediaDroid"
+            packageName = "MediaDroyd"
             // The build's date (MSI wants each part below 256: the year as its last two digits there).
             packageVersion = "%d.%d.%d".format(buildDay.year % 100, buildDay.monthValue, buildDay.dayOfMonth)
             description = "Plays the movies and shows already organised in your folders"
@@ -80,12 +80,12 @@ compose.desktop {
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb,
             )
-            linux { iconFile.set(rootProject.file("desktop/icons/mediadroid.png")) }
+            linux { iconFile.set(rootProject.file("desktop/icons/mediadroyd.png")) }
             windows {
                 menu = true
                 shortcut = true
                 upgradeUuid = "8f0c2b44-3d61-4a5e-9b2e-6d1c7f3a2e90"
-                iconFile.set(rootProject.file("desktop/icons/mediadroid.ico"))
+                iconFile.set(rootProject.file("desktop/icons/mediadroyd.ico"))
             }
         }
     }
@@ -96,7 +96,7 @@ tasks.register<JavaExec>("icons") {
     group = "build"
     description = "Draws the desktop icons from the Android launcher icon"
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass.set("com.hawkynt.mediadroid.desktop.IconsKt")
+    mainClass.set("com.hawkynt.mediadroyd.desktop.IconsKt")
     args(rootDir.path)
     dependsOn("testClasses")
 }
@@ -109,7 +109,7 @@ tasks.register<JavaExec>("presentationBench") {
     group = "verification"
     description = "Measures how the stage's picture reaches the window"
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass.set("com.hawkynt.mediadroid.desktop.PresentationBenchKt")
+    mainClass.set("com.hawkynt.mediadroyd.desktop.PresentationBenchKt")
     jvmArgs("-Xmx2g")
     args(
         providers.gradleProperty("frames").getOrElse("600"),
@@ -143,7 +143,7 @@ fun fetch(name: String, file: String, url: String, sha256: String) = tasks.regis
     }
 }
 
-// What every package owes: MediaDroid's licence and the notices of everything inside it — the desktop's libraries and
+// What every package owes: MediaDroyd's licence and the notices of everything inside it — the desktop's libraries and
 // runtimes, FFmpeg, the picture stage's shaders, the code converted into the cores — side by side at its top.
 val notices = tasks.register<Sync>("notices") {
     from(rootProject.file("LICENSE"))
@@ -176,7 +176,7 @@ val nativeRuntime = rootProject.layout.projectDirectory.dir("native/build/deskto
 // createDistributable's folder is what the MSI, the Windows-built zip and the AppImage are made from: the notices go
 // in there, the native library into its app folder — lib/app on Linux, app on Windows, beside the jars (the task comes
 // once the Compose plugin has read the configuration, hence matching rather than named).
-val distributable = layout.buildDirectory.dir("compose/binaries/main/app/MediaDroid")
+val distributable = layout.buildDirectory.dir("compose/binaries/main/app/MediaDroyd")
 tasks.matching { it.name == "createDistributable" }.configureEach {
     dependsOn(":native:desktopRuntime")
     inputs.files(notices)
@@ -234,17 +234,17 @@ val windowsJreUnpack = tasks.register<Sync>("windowsJreUnpack") {
     into(layout.buildDirectory.dir("windows-jre"))
 }
 
-// Built on Windows itself, the zip is createDistributable's folder — the native MediaDroid.exe launcher and its jlinked
-// runtime — with the marker; built anywhere else, it is the jars, Temurin's JRE and MediaDroid.bat.
+// Built on Windows itself, the zip is createDistributable's folder — the native MediaDroyd.exe launcher and its jlinked
+// runtime — with the marker; built anywhere else, it is the jars, Temurin's JRE and MediaDroyd.bat.
 val onWindows = System.getProperty("os.name").startsWith("Windows")
 
 tasks.register<Zip>("windowsZip") {
     group = "distribution"
     description = "The portable Windows zip: app, Java runtime, launcher"
-    archiveFileName.set("MediaDroid-windows-x64.zip")
+    archiveFileName.set("MediaDroyd-windows-x64.zip")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     destinationDirectory.set(layout.buildDirectory.dir("dist"))
-    into("MediaDroid") {
+    into("MediaDroyd") {
         if (onWindows) {
             dependsOn("createDistributable")
             from(distributable)
@@ -268,7 +268,7 @@ tasks.register<Zip>("windowsZip") {
 // (https://github.com/AppImage/appimagetool, MIT) behind the AppImage project's type-2 runtime (MIT) — both from
 // tagged releases, fetched once and checked against their digests, so a new upstream build cannot slip in. The
 // AppImage carries the build's date as its version (X-AppImage-Version), as the Android app's versionName.
-// ./gradlew :desktop:appImage → desktop/build/dist/MediaDroid-linux-x64.AppImage.
+// ./gradlew :desktop:appImage → desktop/build/dist/MediaDroyd-linux-x64.AppImage.
 val appImageTool = fetch(
     "appImageToolFetch",
     "appimagetool-1.9.1-x86_64.AppImage",
@@ -288,11 +288,11 @@ tasks.register("appImage") {
     dependsOn("createDistributable", appImageTool, appImageRuntime)
     val tool = appImageTool.map { it.outputs.files.singleFile }
     val runtime = appImageRuntime.map { it.outputs.files.singleFile }
-    inputs.files(tool, runtime, rootProject.file("desktop/linux"), rootProject.file("desktop/icons/mediadroid.png"))
+    inputs.files(tool, runtime, rootProject.file("desktop/linux"), rootProject.file("desktop/icons/mediadroyd.png"))
     inputs.dir(distributable)
     inputs.property("version", buildVersion)
     val work = layout.buildDirectory.dir("appimage")
-    val out = layout.buildDirectory.file("dist/MediaDroid-linux-x64.AppImage")
+    val out = layout.buildDirectory.file("dist/MediaDroyd-linux-x64.AppImage")
     outputs.file(out)
     val version = buildVersion
     doLast {
@@ -303,11 +303,11 @@ tasks.register("appImage") {
         }
         fileOps.copy {
             from(rootProject.file("desktop/linux"))
-            from(rootProject.file("desktop/icons/mediadroid.png"))
+            from(rootProject.file("desktop/icons/mediadroyd.png"))
             into(appDir)
         }
         File(appDir, "AppRun").setExecutable(true)
-        File(appDir, "usr/bin/MediaDroid").setExecutable(true)
+        File(appDir, "usr/bin/MediaDroyd").setExecutable(true)
         val image = out.get().asFile.apply { parentFile.mkdirs(); delete() }
         val toolFile = tool.get().apply { setExecutable(true) }
         // Unpacked and run in place (no FUSE needed, as on CI runners); no AppStream file to check; no update

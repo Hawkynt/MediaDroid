@@ -6,7 +6,7 @@
 
 #include "networks.h"
 
-namespace mediadroid {
+namespace mediadroyd {
 
 namespace {
 
@@ -34,4 +34,4 @@ std::unique_ptr<Colorizer> openDdcolor(const Loader& load, bool gpu) {
     return it;
 }
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

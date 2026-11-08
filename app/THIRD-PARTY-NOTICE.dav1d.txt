@@ -1,6 +1,6 @@
 dav1d 1.5.0 (https://code.videolan.org/videolan/dav1d)
 
-core/player/src/main/kotlin/com/hawkynt/mediadroid/player/Cdef.kt converts its CDEF, the deringing filter
+core/player/src/main/kotlin/com/hawkynt/mediadroyd/player/Cdef.kt converts its CDEF, the deringing filter
 (src/cdef_tmpl.c, adjust_strength from src/cdef_apply_tmpl.c and the direction table from src/tables.c);
 stage/src/main/glsl/video/cdef-direction-es3.frag and cdef-es3.frag are the GL passes written from it.
 

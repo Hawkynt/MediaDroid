@@ -12,7 +12,7 @@
 
 #include "networks.h"
 
-namespace mediadroid {
+namespace mediadroyd {
 
 namespace {
 
@@ -211,4 +211,4 @@ std::unique_ptr<Enlarger> openRealEsrgan(const Loader& load, bool gpu, const cha
     return open(load, gpu, model, "data", "output", ncnn::BORDER_REFLECT, 4, 10, 1, tta, true);
 }
 
-}  // namespace mediadroid
+}  // namespace mediadroyd
