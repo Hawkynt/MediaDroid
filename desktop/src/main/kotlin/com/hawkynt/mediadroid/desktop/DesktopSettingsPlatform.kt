@@ -69,6 +69,31 @@ class DesktopSettingsPlatform(
     }
 
     @Composable
+    override fun rememberBackupSaver(done: (Boolean?) -> Unit): (name: String, text: String) -> Unit = { name, text ->
+        val chooser = JFileChooser().apply {
+            dialogTitle = "Keep the backup"
+            selectedFile = java.io.File(name)
+        }
+        if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+            done(runCatching { chooser.selectedFile.writeText(text) }.isSuccess)
+        } else {
+            done(null)
+        }
+    }
+
+    @Composable
+    override fun rememberBackupOpener(read: (String?) -> Unit): () -> Unit = {
+        val chooser = JFileChooser().apply { dialogTitle = "Choose a backup" }
+        read(
+            if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+                runCatching { chooser.selectedFile.readText() }.getOrNull()
+            } else {
+                null
+            },
+        )
+    }
+
+    @Composable
     override fun screens(): List<SetupScreen> = OutputScreen.all().map { SetupScreen(it.key, it.name) }
 
     companion object {

@@ -1,7 +1,5 @@
 package com.hawkynt.mediadroid.ui
 
-import com.hawkynt.mediadroid.player.DecodedBuffer
-import com.hawkynt.mediadroid.player.PictureSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -18,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +25,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hawkynt.mediadroid.player.DecodedBuffer
+import com.hawkynt.mediadroid.player.PictureSize
 import com.hawkynt.mediadroid.state.Settings
 import com.hawkynt.mediadroid.state.StateStore
 import com.hawkynt.mediadroid.ui.platform.LocalSettingsPlatform
@@ -477,9 +479,71 @@ fun SettingsScreen(
                 onChange = { c -> update { it.hideUnrated = c } },
             )
         }
+
+        Spacer(Modifier.height(16.dp))
+        BackupSection(store, onRestored = onSourcesChanged)
         Spacer(Modifier.height(32.dp))
     }
 }
+
+/**
+ * Back up and restore (#472): everything the app remembers — watched marks, resume points, folders, sources and
+ * settings — into a file of the household's choosing, and back from one (StateStore.backup / restore). A restore
+ * replaces what is here, so it asks first; [onRestored] runs after one, the library read again.
+ */
+@Composable
+private fun BackupSection(store: StateStore, onRestored: () -> Unit) {
+    val platform = LocalSettingsPlatform.current
+    var said by remember { mutableStateOf<String?>(null) }
+    var restoring by remember { mutableStateOf<String?>(null) }
+    val save = platform.rememberBackupSaver { written ->
+        said = when (written) {
+            true -> "Backed up."
+            false -> "The backup could not be written there."
+            null -> null
+        }
+    }
+    val open = platform.rememberBackupOpener { text ->
+        if (text != null) restoring = text
+    }
+    Text("Back up and restore", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Watched marks, where each video stopped, folders, sources and settings in one file — for a new device or a " +
+            "fresh install. Passwords of network sources are not in it.",
+        fontSize = 16.sp,
+    )
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        OutlinedButton(onClick = { save(BACKUP_NAME, store.backup()) }) { Text("Back up…", fontSize = 16.sp) }
+        OutlinedButton(onClick = open) { Text("Restore…", fontSize = 16.sp) }
+    }
+    said?.let { Text(it, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp)) }
+    restoring?.let { text ->
+        AlertDialog(
+            onDismissRequest = { restoring = null },
+            title = { Text("Restore this backup?") },
+            text = { Text("It replaces the watched marks, resume points, folders and settings here.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        restoring = null
+                        said = if (store.restore(text)) {
+                            onRestored()
+                            "Restored."
+                        } else {
+                            "That file is no backup of this app."
+                        }
+                    },
+                ) { Text("Restore") }
+            },
+            dismissButton = { TextButton(onClick = { restoring = null }) { Text("Cancel") } },
+        )
+    }
+}
+
+/** The name a backup is offered under. */
+private const val BACKUP_NAME = "MediaDroid backup.json"
 
 /**
  * Even frames: where the screen cannot switch to the film's rate, how far the film may run faster or slower so every

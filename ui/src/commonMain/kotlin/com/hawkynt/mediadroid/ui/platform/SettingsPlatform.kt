@@ -79,6 +79,17 @@ interface SettingsPlatform {
     @Composable
     fun rememberShaderFolder(then: () -> Unit): () -> Unit = {}
 
+    /**
+     * Asks where to keep a backup (suggested as [name]) and writes [text] there; [done] hears true once written, false
+     * where it failed, null where nothing was chosen. The button runs what this returns, with the name and the text.
+     */
+    @Composable
+    fun rememberBackupSaver(done: (Boolean?) -> Unit): (name: String, text: String) -> Unit = { _, _ -> done(null) }
+
+    /** Asks for a backup file and hands its text to [read]; null where nothing was chosen or it could not be read. */
+    @Composable
+    fun rememberBackupOpener(read: (String?) -> Unit): () -> Unit = { read(null) }
+
     /** The screens with a setup of their own: this device's own first, then those attached now. */
     @Composable
     fun screens(): List<SetupScreen> = listOf(SetupScreen(BUILT_IN_SCREEN, "This device's screen"))
