@@ -40,7 +40,7 @@ class NeuralChecksTest {
     }
 
     @Test
-    fun `a network handing back its flow is timed from 240p up`() {
+    fun `a network handing back its flow is timed from 120p up`() {
         val net = NeuralChecks.Between { _, _, w, h, earlierId, _, _, _ ->
             if (earlierId == 0L) {
                 rgb(NeuralChecks.testFrame(w, h, 1), w, h)
@@ -51,8 +51,25 @@ class NeuralChecksTest {
         }
         val sizes = NeuralInterpolation.testSizes(PictureAdjustment.Interpolation.RIFE)
         val timing = requireNotNull(NeuralChecks.interpolator(net, "GPU", progress, sizes = sizes))
-        assertEquals(listOf(240, 360), timing.msByHeight.keys.toList())
-        assertTrue(NeuralInterpolation.fastEnough(timing.msByHeight.getValue(240)))
+        assertEquals(listOf(120, 180, 240, 360), timing.msByHeight.keys.toList())
+        assertTrue(NeuralInterpolation.fastEnough(timing.msByHeight.getValue(120)))
+    }
+
+    @Test
+    fun `what playback runs is timed, the whole in-between only checked`() {
+        val net = NeuralChecks.Between { _, _, w, h, earlierId, _, _, _ ->
+            if (earlierId == 0L) {
+                rgb(NeuralChecks.testFrame(w, h, 1), w, h)
+            } else {
+                Thread.sleep(NeuralInterpolation.BUDGET_MS.toLong() + 5)
+                ByteBuffer.allocateDirect(w * h * 3)
+            }
+        }
+        val flowOnly = NeuralChecks.Between { _, _, w, h, _, _, _, _ -> ByteBuffer.allocateDirect(w * h * 32) }
+        val sizes = NeuralInterpolation.testSizes(PictureAdjustment.Interpolation.RIFE)
+        val timing = requireNotNull(NeuralChecks.interpolator(net, "CPU", progress, sizes = sizes, timed = flowOnly))
+        assertTrue(NeuralInterpolation.fastEnough(timing.msByHeight.getValue(120)))
+        assertEquals(sizes.map { it.height }, timing.msByHeight.keys.toList())
     }
 
     @Test

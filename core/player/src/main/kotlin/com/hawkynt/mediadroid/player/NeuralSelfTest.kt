@@ -3,8 +3,9 @@ package com.hawkynt.mediadroid.player
 /**
  * A neural network's self-test on the device, as every platform runs it: on the GPU first, then on the CPU unless the
  * GPU kept up, each unit in a process of its own that a network too large for the device can end without taking the
- * app along — all of it within [NeuralInterpolation.MAX_WAIT_MS] from the tap, the GPU until half of that, the CPU
- * until the end ([across]). How one unit is tested is the platform's: a [OneUnit] runs a test and answers.
+ * app along. Each unit may take up to [LOAD_WAIT_MS] to start and load the network — a graphics chip compiles its
+ * shaders then, seconds on a phone — and then its share of [NeuralInterpolation.MAX_WAIT_MS] to run it ([Deadline],
+ * [across]). How one unit is tested is the platform's: a [OneUnit] runs a test and answers.
  */
 object NeuralSelfTest {
     /** The units a network is tried on, in this order. */
@@ -22,13 +23,35 @@ object NeuralSelfTest {
         data object Ended : Outcome
     }
 
+    /** The longest a unit may take to start its test process and load the network, before it runs anything. */
+    const val LOAD_WAIT_MS = 10_000.0
+
     /**
-     * One unit's test, cut short by [untilNanos] (System.nanoTime) — its process started and the network loaded
-     * included: the unit's timing, a [Answer] with none where the unit cannot run the network or runs it wrong, or
-     * null where its process ended without answering.
+     * When one unit's test is cut short (System.nanoTime): [LOAD_WAIT_MS] from [startNanos] while the network loads,
+     * then [runNanos] from the moment it was [loaded] — the test's first report that it runs.
+     */
+    class Deadline(private val startNanos: Long, private val runNanos: Long, private val nowNanos: () -> Long) {
+        private var loadedAt: Long? = null
+
+        /** The network is loaded and its test runs, at [atNanos]; only the first call counts. */
+        fun loaded(atNanos: Long = nowNanos()) {
+            if (loadedAt == null) loadedAt = atNanos
+        }
+
+        /** The moment the test is cut short, as far as it is known now. */
+        val until: Long get() = loadedAt?.let { it + runNanos } ?: (startNanos + (LOAD_WAIT_MS * 1e6).toLong())
+
+        /** Whether [atNanos] is past [until]. */
+        fun passed(atNanos: Long = nowNanos()): Boolean = atNanos >= until
+    }
+
+    /**
+     * One unit's test, cut short at its [Deadline], which it tells when the network is loaded: the unit's timing, a
+     * [Answer] with none where the unit cannot run the network or runs it wrong, or null where its process ended
+     * without answering.
      */
     fun interface OneUnit {
-        fun test(unit: String, untilNanos: Long): Answer?
+        fun test(unit: String, deadline: Deadline): Answer?
     }
 
     /** One unit's answer: its timing, or null where it cannot run the network or runs it wrong. */
@@ -36,7 +59,7 @@ object NeuralSelfTest {
 
     /**
      * The test on every unit in [UNITS] by [unit], stopping once one keeps up ([fast], on the first size's time),
-     * within [NeuralInterpolation.MAX_WAIT_MS] split between them; [nowNanos] tells the time.
+     * each with its load and its share of [NeuralInterpolation.MAX_WAIT_MS] ([Deadline]); [nowNanos] tells the time.
      */
     fun across(
         fast: (Double) -> Boolean,
@@ -45,11 +68,10 @@ object NeuralSelfTest {
     ): Outcome {
         val timings = ArrayList<Timing>()
         var ended = 0
-        val start = nowNanos()
-        for ((i, name) in UNITS.withIndex()) {
+        val share = (NeuralInterpolation.MAX_WAIT_MS * 1e6 / UNITS.size).toLong()
+        for (name in UNITS) {
             if (timings.any { fast(it.msByHeight.values.first()) }) break
-            val until = start + (NeuralInterpolation.MAX_WAIT_MS * 1e6 * (i + 1) / UNITS.size).toLong()
-            when (val one = unit.test(name, until)) {
+            when (val one = unit.test(name, Deadline(nowNanos(), share, nowNanos))) {
                 null -> ended++
                 else -> one.timing?.let { timings += it }
             }
