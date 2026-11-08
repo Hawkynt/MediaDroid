@@ -65,7 +65,8 @@ class NeuralChecksTest {
                 ByteBuffer.allocateDirect(w * h * 3)
             }
         }
-        val flowOnly = NeuralChecks.Between { _, _, w, h, _, _, _, _ -> ByteBuffer.allocateDirect(w * h * 32) }
+        val flows = ByteBuffer.allocateDirect(32)
+        val flowOnly = NeuralChecks.Between { _, _, _, _, _, _, _, _ -> flows }
         val sizes = NeuralInterpolation.testSizes(PictureAdjustment.Interpolation.RIFE)
         val timing = requireNotNull(NeuralChecks.interpolator(net, "CPU", progress, sizes = sizes, timed = flowOnly))
         assertTrue(NeuralInterpolation.fastEnough(timing.msByHeight.getValue(120)))
