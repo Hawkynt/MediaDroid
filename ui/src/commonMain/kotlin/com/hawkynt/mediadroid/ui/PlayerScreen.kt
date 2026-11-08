@@ -353,6 +353,7 @@ fun PlayerScreen(state: PlayerScreenState, platform: PlayerPlatform, modifier: M
         state.feedback?.takeIf { !platform.pictureOnly }?.let {
             FeedbackNote(it, Modifier.align(Alignment.Center), accent = state.feedbackBoosted)
         }
+        state.level?.takeIf { !platform.pictureOnly }?.let { SwipeLevel(it, state.levelSide) }
         // The top bar comes and goes with the platform's own controls.
         AnimatedVisibility(
             visible = platform.controlsVisible && !platform.pictureOnly,
@@ -590,3 +591,12 @@ private const val SLEEP_TICK_MS = 250L
 
 /** How long a confirmation stays over the picture. */
 private const val FEEDBACK_MS = 800L
+
+/** A swipe's level bar (LevelBar) where it belongs: on the side swiped, in the middle of the height. */
+@Composable
+fun BoxScope.SwipeLevel(level: Float, side: Side) {
+    LevelBar(
+        level,
+        Modifier.align(if (side == Side.LEFT) Alignment.CenterStart else Alignment.CenterEnd).padding(horizontal = 32.dp),
+    )
+}

@@ -305,4 +305,14 @@ class PlaybackMathTest {
     fun `without a known frame rate the measured wait stands`() {
         assertEquals(140, PlaybackMath.pictureLatencyMs(frames = 2f, frameRate = -1f, measuredMs = 140))
     }
+
+    @Test
+    fun `the level bar has 100 percent in its middle, the boost filling its upper half`() {
+        assertEquals(PlaybackMath.LevelFill(0f, 0f), PlaybackMath.levelFill(0f))
+        assertEquals(PlaybackMath.LevelFill(0.25f, 0f), PlaybackMath.levelFill(0.5f))
+        assertEquals(PlaybackMath.LevelFill(0.5f, 0f), PlaybackMath.levelFill(1f))
+        assertEquals(PlaybackMath.LevelFill(0.5f, 0.25f), PlaybackMath.levelFill(1.5f))
+        assertEquals(PlaybackMath.LevelFill(0.5f, 0.5f), PlaybackMath.levelFill(2f))
+        assertEquals(PlaybackMath.LevelFill(0.5f, 0.5f), PlaybackMath.levelFill(3f))
+    }
 }

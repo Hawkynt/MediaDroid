@@ -95,15 +95,30 @@ class PlayerScreenState(
     var feedbackStamp by mutableIntStateOf(0)
         private set
 
+    /** The level a volume or brightness swipe set (0 to 2, 1 the device's maximum) and its side; null otherwise. */
+    var level by mutableStateOf<Float?>(null)
+        private set
+    var levelSide by mutableStateOf(Side.RIGHT)
+        private set
+
     fun show(text: String, boosted: Boolean = false) {
         feedback = text
         feedbackBoosted = boosted
+        level = null
         feedbackStamp++
+    }
+
+    /** A swipe on [side] set [value] (PlaybackMath.boostedLevel): [text] in the middle, its level bar on that side. */
+    fun showLevel(text: String, value: Float, side: Side) {
+        show(text, PlaybackMath.isBoosted(value))
+        level = value
+        levelSide = side
     }
 
     /** The confirmation's time is over. */
     fun hideFeedback() {
         feedback = null
+        level = null
     }
 
     /** Another video in the queue: its own picture and subtitles' look; remembered as the one played last. */

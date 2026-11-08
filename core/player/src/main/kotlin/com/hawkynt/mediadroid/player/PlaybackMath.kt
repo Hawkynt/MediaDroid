@@ -56,6 +56,18 @@ object PlaybackMath {
     /** Whether [level] is past the device's own maximum (see [boostedLevel]). */
     fun isBoosted(level: Float): Boolean = level > 1f
 
+    /** How far the level bar is filled, each from its bottom: [device] up to its middle, [boost] the half above. */
+    data class LevelFill(val device: Float, val boost: Float)
+
+    /**
+     * The level bar for a swipe [level] (0 to 2): 100 % in its middle, so the boost's stretch above shows there is
+     * more to swipe for — the device's range filling the lower half, the boost the upper.
+     */
+    fun levelFill(level: Float): LevelFill {
+        val at = level.coerceIn(0f, 2f) / 2f
+        return LevelFill(at.coerceAtMost(0.5f), (at - 0.5f).coerceAtLeast(0f))
+    }
+
     /**
      * Whether a swipe from ([x], [y]) sets a level: not from within [sideBand] of the left and right edge, where
      * Android's back gesture starts, nor within [endBand] of the top and bottom, where its status bar and
