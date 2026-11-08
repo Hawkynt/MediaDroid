@@ -36,13 +36,17 @@ class NeuralInterpolationTest {
     }
 
     @Test
-    fun `RIFE and IFRNet hand back their flow, so their self-test starts at 240p, the other networks at 480p`() {
+    fun `RIFE and IFRNet hand back their flow, so their self-test starts at 120p, the other networks at 480p`() {
         assertTrue(NeuralInterpolation.handsFlow(PictureAdjustment.Interpolation.RIFE))
         assertTrue(NeuralInterpolation.handsFlow(PictureAdjustment.Interpolation.IFRNET))
         assertFalse(NeuralInterpolation.handsFlow(PictureAdjustment.Interpolation.DAIN))
         assertEquals(
-            listOf(NeuralInterpolation.Size(426, 240), NeuralInterpolation.Size(640, 360)) +
-                NeuralInterpolation.TEST_SIZES,
+            listOf(
+                NeuralInterpolation.Size(214, 120),
+                NeuralInterpolation.Size(320, 180),
+                NeuralInterpolation.Size(426, 240),
+                NeuralInterpolation.Size(640, 360),
+            ) + NeuralInterpolation.TEST_SIZES,
             NeuralInterpolation.testSizes(PictureAdjustment.Interpolation.RIFE),
         )
         val cain = NeuralInterpolation.testSizes(PictureAdjustment.Interpolation.CAIN)
@@ -144,5 +148,11 @@ class NeuralInterpolationTest {
         assertEquals(NeuralInterpolation.Mix(towardsMiddle = false, weight = 0.5f), NeuralInterpolation.mix(0.75f))
         assertEquals(NeuralInterpolation.Mix(towardsMiddle = false, weight = 0f), NeuralInterpolation.mix(0.5f))
         assertEquals(NeuralInterpolation.Mix(towardsMiddle = false, weight = 1f), NeuralInterpolation.mix(1f))
+    }
+
+    @Test
+    fun `a flow that keeps up only at 120p still serves 1080p material at 120p`() {
+        val phone = mapOf(120 to 18.0, 180 to 41.0)
+        assertEquals(NeuralInterpolation.Size(214, 120), NeuralInterpolation.workingSize(1920, 1080, phone))
     }
 }

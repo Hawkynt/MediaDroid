@@ -24,26 +24,29 @@ object NeuralTestProcess {
     private const val UPSCALER = "upscaler"
     private const val COLORIZER = "colorizer"
 
+    // How often a test's deadline is looked at while it runs.
+    private const val POLL_MS = 50L
+
     /** Test processes started so far. */
     @Volatile var processes = 0
         private set
 
     /** [network]'s self-test with the models in [models]; blocks. */
     fun selfTest(models: File, network: PictureAdjustment.Interpolation): NeuralSelfTest.Outcome =
-        NeuralSelfTest.across(NeuralInterpolation::fastEnough) { unit, until ->
-            one(models, MOTION, network.name, unit, until, NeuralInterpolation.testSizes(network).first().height)
+        NeuralSelfTest.across(NeuralInterpolation::fastEnough) { unit, deadline ->
+            one(models, MOTION, network.name, unit, deadline, NeuralInterpolation.testSizes(network).first().height)
         }
 
     /** [choice]'s self-test with the models in [models]; blocks. */
     fun selfTest(models: File, choice: NeuralEnlarging.Choice): NeuralSelfTest.Outcome =
-        NeuralSelfTest.across(NeuralEnlarging::fastEnough) { unit, until ->
-            one(models, UPSCALER, choice.key, unit, until, PictureCheck.HEIGHT)
+        NeuralSelfTest.across(NeuralEnlarging::fastEnough) { unit, deadline ->
+            one(models, UPSCALER, choice.key, unit, deadline, PictureCheck.HEIGHT)
         }
 
     /** The colouriser's self-test with the models in [models]; blocks. */
     fun selfTestColorizer(models: File): NeuralSelfTest.Outcome =
-        NeuralSelfTest.across(Colorizing::fastEnough) { unit, until ->
-            one(models, COLORIZER, "DDCOLOR", unit, until, Colorizing.SIZE)
+        NeuralSelfTest.across(Colorizing::fastEnough) { unit, deadline ->
+            one(models, COLORIZER, "DDCOLOR", unit, deadline, Colorizing.SIZE)
         }
 
     /** The JVM a test runs in: this one's own `java`; null where the runtime carries none. */
@@ -56,10 +59,10 @@ object NeuralTestProcess {
         kind: String,
         name: String,
         unit: String,
-        until: Long,
+        deadline: NeuralSelfTest.Deadline,
         smallestHeight: Int,
     ): NeuralSelfTest.Answer? {
-        val jvm = java() ?: return inProcess(models, kind, name, unit, until, smallestHeight)
+        val jvm = java() ?: return inProcess(models, kind, name, unit, deadline, smallestHeight)
         val command = buildList {
             add(jvm.path)
             System.getProperty(NativeNetworks.FOLDER_PROPERTY)?.let { add("-D${NativeNetworks.FOLDER_PROPERTY}=$it") }
@@ -70,7 +73,7 @@ object NeuralTestProcess {
             addAll(listOf(models.path, kind, name, unit))
         }
         val process = runCatching { ProcessBuilder(command).redirectErrorStream(false).start() }.getOrNull()
-            ?: return inProcess(models, kind, name, unit, until, smallestHeight)
+            ?: return inProcess(models, kind, name, unit, deadline, smallestHeight)
         processes++
         val err = process.errorStream
         thread(isDaemon = true) { err.copyTo(OutputStream.nullOutputStream()) }
@@ -84,7 +87,10 @@ object NeuralTestProcess {
                 val parts = line.removePrefix(PREFIX).split(' ')
                 synchronized(lock) {
                     when (parts[0]) {
-                        "RUNNING" -> running = parts[1].toInt()
+                        "RUNNING" -> {
+                            deadline.loaded()
+                            running = parts[1].toInt()
+                        }
                         "TIMED" -> times[parts[1].toInt()] = parts[2].toDouble()
                         "RESULT" -> answer = NeuralSelfTest.Answer(
                             parts.getOrNull(1)?.let { NeuralInterpolation.Passed.decode(it) }
@@ -94,8 +100,10 @@ object NeuralTestProcess {
                 }
             }
         }
-        val waitMs = ((until - System.nanoTime()) / 1_000_000L).coerceAtLeast(0)
-        val ended = process.waitFor(waitMs, TimeUnit.MILLISECONDS)
+        var ended = false
+        while (!ended && !synchronized(lock) { deadline.passed() }) {
+            ended = process.waitFor(POLL_MS, TimeUnit.MILLISECONDS)
+        }
         if (!ended) process.destroyForcibly().waitFor(3, TimeUnit.SECONDS)
         reader.join(1_000)
         return synchronized(lock) {
@@ -108,13 +116,13 @@ object NeuralTestProcess {
     }
 
     // Without a JVM of its own to start (a runtime cut down to the app's), the test runs on a thread here: cut short
-    // at [until] as well, though a network that takes the process down takes the app along.
+    // at its [deadline] as well, though a network that takes the process down takes the app along.
     private fun inProcess(
         models: File,
         kind: String,
         name: String,
         unit: String,
-        until: Long,
+        deadline: NeuralSelfTest.Deadline,
         smallestHeight: Int,
     ): NeuralSelfTest.Answer? {
         val lock = Any()
@@ -122,14 +130,17 @@ object NeuralTestProcess {
         var running = 0
         var answer: NeuralSelfTest.Answer? = null
         val progress = object : NeuralChecks.Progress {
-            override fun running(height: Int) = synchronized(lock) { running = height }
+            override fun running(height: Int) = synchronized(lock) {
+                deadline.loaded()
+                running = height
+            }
             override fun timed(height: Int, ms: Double) = synchronized(lock) { times[height] = ms }
         }
         val worker = thread(isDaemon = true, name = "neural-test") {
             val timing = runCatching { test(models, kind, name, unit, progress) }.getOrNull()
             synchronized(lock) { answer = NeuralSelfTest.Answer(timing) }
         }
-        worker.join(((until - System.nanoTime()) / 1_000_000L).coerceAtLeast(1))
+        while (worker.isAlive && !synchronized(lock) { deadline.passed() }) worker.join(POLL_MS)
         return synchronized(lock) {
             answer ?: NeuralSelfTest.Answer(NeuralSelfTest.cutShort(unit, times, running, smallestHeight))
         }
@@ -156,11 +167,17 @@ object NeuralTestProcess {
         } else {
             val network = PictureAdjustment.Interpolation.valueOf(name)
             neural.interpolator(network, gpu)?.use { net ->
+                val whole = NeuralChecks.Between { a, b, w, h, ia, ib, before, after ->
+                    net.run(a, b, w, h, ia, ib, before, after)
+                }
+                // What playback runs is timed: for RIFE and IFRNet their flow, the stage warping the frames by it.
+                val flow = NeuralChecks.Between { a, b, w, h, _, _, _, _ -> net.flow(a, b, w, h) }
                 NeuralChecks.interpolator(
-                    { a, b, w, h, ia, ib, before, after -> net.run(a, b, w, h, ia, ib, before, after) },
+                    whole,
                     unit,
                     progress,
                     sizes = NeuralInterpolation.testSizes(network),
+                    timed = if (NeuralInterpolation.handsFlow(network)) flow else whole,
                 )
             }
         }

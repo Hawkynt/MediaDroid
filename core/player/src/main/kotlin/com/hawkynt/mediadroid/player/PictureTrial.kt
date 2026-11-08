@@ -158,6 +158,7 @@ object PictureTrial {
         }
         val best = timings.firstOrNull()
         val smallest = best?.msByHeight?.values?.firstOrNull()
+        val height = best?.msByHeight?.keys?.firstOrNull()
         if (best == null || smallest == null) {
             return PictureVerdict(
                 false,
@@ -167,9 +168,9 @@ object PictureTrial {
         if (!NeuralInterpolation.fastEnough(smallest)) {
             return PictureVerdict(
                 false,
-                "This device is too slow for ${network.label}: a 480p in-between takes ${duration(smallest)} on its " +
-                    "fastest unit (${best.unit}), and playback allows ${NeuralInterpolation.BUDGET_MS.toInt()} ms. " +
-                    "Smooth motion stays as it was.",
+                "This device is too slow for ${network.label}: a ${height}p in-between takes ${duration(smallest)} " +
+                    "on its fastest unit (${best.unit}), and playback allows " +
+                    "${NeuralInterpolation.BUDGET_MS.toInt()} ms. Smooth motion stays as it was.",
             )
         }
         device.keepMotion(network, NeuralInterpolation.Passed(best.unit, best.msByHeight))

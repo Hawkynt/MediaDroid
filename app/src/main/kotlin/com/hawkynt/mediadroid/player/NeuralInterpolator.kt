@@ -121,14 +121,18 @@ class NeuralInterpolator private constructor(
             unit: NeuralUpscaler.Unit,
             progress: NeuralChecks.Progress,
         ): NeuralSelfTest.Timing? = open(context, network, unit)?.use { net ->
+            val whole = NeuralChecks.Between { earlier, later, w, h, earlierId, laterId, before, after ->
+                net.run(earlier, later, w, h, earlierId, laterId, before, after)
+            }
+            // What playback runs is timed: for RIFE and IFRNet their flow, the stage warping the frames by it.
+            val flow = NeuralChecks.Between { earlier, later, w, h, _, _, _, _ -> net.flow(earlier, later, w, h) }
             NeuralChecks.interpolator(
-                { earlier, later, w, h, earlierId, laterId, before, after ->
-                    net.run(earlier, later, w, h, earlierId, laterId, before, after)
-                },
+                whole,
                 unit.name,
                 progress,
                 log = { android.util.Log.i("NeuralInterpolator", "$network $it") },
                 sizes = NeuralInterpolation.testSizes(network),
+                timed = if (NeuralInterpolation.handsFlow(network)) flow else whole,
             )
         }
     }
