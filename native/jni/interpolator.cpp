@@ -18,7 +18,7 @@ std::string text(JNIEnv* env, jstring value) {
     return result;
 }
 
-jlong handle(std::unique_ptr<mediadroid::Interpolator> it) {
+jlong handle(std::unique_ptr<mediadroyd::Interpolator> it) {
     return reinterpret_cast<jlong>(it.release());
 }
 
@@ -27,48 +27,48 @@ jlong handle(std::unique_ptr<mediadroid::Interpolator> it) {
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_hasGpu(JNIEnv*, jobject) {
-    return mediadroid::gpuReady();
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_hasGpu(JNIEnv*, jobject) {
+    return mediadroyd::gpuReady();
 }
 
 JNIEXPORT void JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_shaders(
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_shaders(
     JNIEnv* env, jobject, jobjectArray names, jobjectArray sources) {
     const jsize count = env->GetArrayLength(names);
     for (jsize i = 0; i < count; i++) {
         auto name = static_cast<jstring>(env->GetObjectArrayElement(names, i));
         auto source = static_cast<jstring>(env->GetObjectArrayElement(sources, i));
-        mediadroid::shaders[text(env, name)] = text(env, source);
+        mediadroyd::shaders[text(env, name)] = text(env, source);
         env->DeleteLocalRef(name);
         env->DeleteLocalRef(source);
     }
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_openRife(
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_openRife(
     JNIEnv* env, jobject, jobject assets, jstring dir, jboolean gpu) {
-    return handle(mediadroid::openRife(mediadroid::platform::loader(env, assets, text(env, dir)), gpu));
+    return handle(mediadroyd::openRife(mediadroyd::platform::loader(env, assets, text(env, dir)), gpu));
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_openDain(JNIEnv* env, jobject, jstring dir, jboolean gpu) {
-    return handle(mediadroid::openDain(mediadroid::fileLoader(text(env, dir)), gpu));
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_openDain(JNIEnv* env, jobject, jstring dir, jboolean gpu) {
+    return handle(mediadroyd::openDain(mediadroyd::fileLoader(text(env, dir)), gpu));
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_openXvfi(JNIEnv* env, jobject, jstring dir, jboolean gpu) {
-    return handle(mediadroid::openXvfi(mediadroid::fileLoader(text(env, dir)), gpu));
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_openXvfi(JNIEnv* env, jobject, jstring dir, jboolean gpu) {
+    return handle(mediadroyd::openXvfi(mediadroyd::fileLoader(text(env, dir)), gpu));
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_openFlavr(JNIEnv* env, jobject, jstring dir, jboolean gpu) {
-    return handle(mediadroid::openFlavr(mediadroid::fileLoader(text(env, dir)), gpu));
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_openFlavr(JNIEnv* env, jobject, jstring dir, jboolean gpu) {
+    return handle(mediadroyd::openFlavr(mediadroyd::fileLoader(text(env, dir)), gpu));
 }
 
 JNIEXPORT jint JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_flow(
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_flow(
     JNIEnv* env, jobject, jlong handle, jobject earlier, jobject later, jint w, jint h, jfloat time, jobject out) {
-    auto* it = reinterpret_cast<mediadroid::Interpolator*>(handle);
+    auto* it = reinterpret_cast<mediadroyd::Interpolator*>(handle);
     const auto* first = static_cast<const unsigned char*>(env->GetDirectBufferAddress(earlier));
     const auto* second = static_cast<const unsigned char*>(env->GetDirectBufferAddress(later));
     auto* floats = static_cast<float*>(env->GetDirectBufferAddress(out));
@@ -80,10 +80,10 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_flow(
 }
 
 JNIEXPORT jint JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_between(
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_between(
     JNIEnv* env, jobject, jlong handle, jobject earlier, jobject later, jint w, jint h, jfloat time, jobject out,
     jlong earlierId, jlong laterId, jobject before, jobject after) {
-    auto* it = reinterpret_cast<mediadroid::Interpolator*>(handle);
+    auto* it = reinterpret_cast<mediadroyd::Interpolator*>(handle);
     const auto* first = static_cast<const unsigned char*>(env->GetDirectBufferAddress(earlier));
     const auto* second = static_cast<const unsigned char*>(env->GetDirectBufferAddress(later));
     auto* rgb = static_cast<unsigned char*>(env->GetDirectBufferAddress(out));
@@ -98,53 +98,53 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_between(
 }
 
 JNIEXPORT void JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_close(JNIEnv*, jobject, jlong handle) {
-    delete reinterpret_cast<mediadroid::Interpolator*>(handle);
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_close(JNIEnv*, jobject, jlong handle) {
+    delete reinterpret_cast<mediadroyd::Interpolator*>(handle);
 }
 
 // [kind]: 0 waifu2x, 1 Real-CUGAN, 2 RealSR, 3 Real-ESRGAN (the desktop's; Android runs it on TFLite); [model] the
 // structure and weights' name in [dir], [scale] how much larger it makes a picture, [tta] whether it runs eight ways.
 JNIEXPORT jlong JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_openEnlarger(
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_openEnlarger(
     JNIEnv* env, jobject, jobject assets, jstring dir, jint kind, jstring model, jint scale, jboolean tta,
     jboolean gpu) {
-    auto load = mediadroid::platform::loader(env, assets, text(env, dir));
+    auto load = mediadroyd::platform::loader(env, assets, text(env, dir));
     const std::string name = text(env, model);
-    auto it = kind == 3   ? mediadroid::openRealEsrgan(load, gpu, name.c_str(), tta)
-              : kind == 2 ? mediadroid::openRealSr(load, gpu, tta)
-              : kind == 1 ? mediadroid::openRealCugan(load, gpu, name.c_str(), scale, tta)
-                          : mediadroid::openWaifu2x(load, gpu, name.c_str(), tta);
+    auto it = kind == 3   ? mediadroyd::openRealEsrgan(load, gpu, name.c_str(), tta)
+              : kind == 2 ? mediadroyd::openRealSr(load, gpu, tta)
+              : kind == 1 ? mediadroyd::openRealCugan(load, gpu, name.c_str(), scale, tta)
+                          : mediadroyd::openWaifu2x(load, gpu, name.c_str(), tta);
     return reinterpret_cast<jlong>(it.release());
 }
 
 JNIEXPORT jint JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_gpuHeapBudget(JNIEnv*, jobject) {
-    return mediadroid::gpuHeapBudget();
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_gpuHeapBudget(JNIEnv*, jobject) {
+    return mediadroyd::gpuHeapBudget();
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_openCain(JNIEnv* env, jobject, jstring dir, jboolean gpu) {
-    return handle(mediadroid::openCain(mediadroid::fileLoader(text(env, dir)), gpu));
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_openCain(JNIEnv* env, jobject, jstring dir, jboolean gpu) {
+    return handle(mediadroyd::openCain(mediadroyd::fileLoader(text(env, dir)), gpu));
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_openIfrnet(
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_openIfrnet(
     JNIEnv* env, jobject, jobject assets, jstring dir, jboolean gpu) {
-    return handle(mediadroid::openIfrnet(mediadroid::platform::loader(env, assets, text(env, dir)), gpu));
+    return handle(mediadroyd::openIfrnet(mediadroyd::platform::loader(env, assets, text(env, dir)), gpu));
 }
 
 // DDColor from the folder [dir] (in [assets] where given), on the GPU or the CPU; 0 where it does not load.
 JNIEXPORT jlong JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_openColorizer(
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_openColorizer(
     JNIEnv* env, jobject, jobject assets, jstring dir, jboolean gpu) {
     return reinterpret_cast<jlong>(
-        mediadroid::openDdcolor(mediadroid::platform::loader(env, assets, text(env, dir)), gpu).release());
+        mediadroyd::openDdcolor(mediadroyd::platform::loader(env, assets, text(env, dir)), gpu).release());
 }
 
 JNIEXPORT jint JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_colorize(
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_colorize(
     JNIEnv* env, jobject, jlong handle, jobject grey, jobject ab) {
-    auto* it = reinterpret_cast<mediadroid::Colorizer*>(handle);
+    auto* it = reinterpret_cast<mediadroyd::Colorizer*>(handle);
     const auto* in = static_cast<const float*>(env->GetDirectBufferAddress(grey));
     auto* out = static_cast<float*>(env->GetDirectBufferAddress(ab));
     if (it == nullptr || in == nullptr || out == nullptr) return -1;
@@ -152,14 +152,14 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_colorize(
 }
 
 JNIEXPORT void JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_closeColorizer(JNIEnv*, jobject, jlong handle) {
-    delete reinterpret_cast<mediadroid::Colorizer*>(handle);
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_closeColorizer(JNIEnv*, jobject, jlong handle) {
+    delete reinterpret_cast<mediadroyd::Colorizer*>(handle);
 }
 
 JNIEXPORT jint JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_enlarge(
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_enlarge(
     JNIEnv* env, jobject, jlong handle, jobject picture, jint w, jint h, jobject out, jint tile) {
-    auto* it = reinterpret_cast<mediadroid::Enlarger*>(handle);
+    auto* it = reinterpret_cast<mediadroyd::Enlarger*>(handle);
     const auto* rgba = static_cast<const unsigned char*>(env->GetDirectBufferAddress(picture));
     auto* rgb = static_cast<unsigned char*>(env->GetDirectBufferAddress(out));
     if (it == nullptr || rgba == nullptr || rgb == nullptr) return -1;
@@ -167,8 +167,8 @@ Java_com_hawkynt_mediadroid_player_NativeInterpolation_enlarge(
 }
 
 JNIEXPORT void JNICALL
-Java_com_hawkynt_mediadroid_player_NativeInterpolation_closeEnlarger(JNIEnv*, jobject, jlong handle) {
-    delete reinterpret_cast<mediadroid::Enlarger*>(handle);
+Java_com_hawkynt_mediadroyd_player_NativeInterpolation_closeEnlarger(JNIEnv*, jobject, jlong handle) {
+    delete reinterpret_cast<mediadroyd::Enlarger*>(handle);
 }
 
 }  // extern "C"

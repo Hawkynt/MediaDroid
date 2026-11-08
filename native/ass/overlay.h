@@ -12,7 +12,7 @@ struct ass_library;
 struct ass_renderer;
 struct ass_track;
 
-namespace mediadroid::subtitles {
+namespace mediadroyd::subtitles {
 
 // The drawn track: the box (x, y, width, height) in the frame that holds anything, and its pixels in that box as
 // 0xAARRGGBB, not premultiplied, rows from the top. Empty (width 0) where nothing shows.
@@ -89,4 +89,4 @@ private:
     double linePosition_ = 0.0;
 };
 
-}  // namespace mediadroid::subtitles
+}  // namespace mediadroyd::subtitles

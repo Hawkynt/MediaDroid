@@ -7,7 +7,7 @@
 
 #include "shaders.h"
 
-namespace mediadroid {
+namespace mediadroyd {
 
 namespace {
 
@@ -49,7 +49,7 @@ int CorrelationLayer::create_pipeline(const ncnn::Option& opt) {
     pd.set(5, 0.f);
     border->load_param(pd);
     border->create_pipeline(opt);
-    pipeline = mediadroid::pipeline(vkdev, "dain-correlation", opt);
+    pipeline = mediadroyd::pipeline(vkdev, "dain-correlation", opt);
     return pipeline ? 0 : -1;
 }
 
@@ -152,7 +152,7 @@ FlowWarpLayer::FlowWarpLayer() {
 
 int FlowWarpLayer::create_pipeline(const ncnn::Option& opt) {
     if (!vkdev) return 0;
-    pipeline = mediadroid::pipeline(vkdev, "dain-flow-warp", opt);
+    pipeline = mediadroyd::pipeline(vkdev, "dain-flow-warp", opt);
     return pipeline ? 0 : -1;
 }
 
@@ -213,10 +213,10 @@ ProjectionLayer::ProjectionLayer() {
 
 int ProjectionLayer::create_pipeline(const ncnn::Option& opt) {
     if (!vkdev) return 0;
-    zero = mediadroid::pipeline(vkdev, "dain-projection-zero", opt);
-    project = mediadroid::pipeline(vkdev, "dain-projection-project", opt);
-    average = mediadroid::pipeline(vkdev, "dain-projection-average", opt);
-    fillHole = mediadroid::pipeline(vkdev, "dain-projection-fill-hole", opt);
+    zero = mediadroyd::pipeline(vkdev, "dain-projection-zero", opt);
+    project = mediadroyd::pipeline(vkdev, "dain-projection-project", opt);
+    average = mediadroyd::pipeline(vkdev, "dain-projection-average", opt);
+    fillHole = mediadroyd::pipeline(vkdev, "dain-projection-fill-hole", opt);
     return zero && project && average && fillHole ? 0 : -1;
 }
 
@@ -365,8 +365,8 @@ FilterInterpolationLayer::FilterInterpolationLayer() {
 
 int FilterInterpolationLayer::create_pipeline(const ncnn::Option& opt) {
     if (!vkdev) return 0;
-    pipeline = mediadroid::pipeline(vkdev, "dain-filter-interpolation", opt);
-    pipelinePack4 = mediadroid::pipeline(vkdev, "dain-filter-interpolation-pack4", opt);
+    pipeline = mediadroyd::pipeline(vkdev, "dain-filter-interpolation", opt);
+    pipelinePack4 = mediadroyd::pipeline(vkdev, "dain-filter-interpolation-pack4", opt);
     return pipeline && pipelinePack4 ? 0 : -1;
 }
 
@@ -458,4 +458,4 @@ ncnn::Layer* createFlowWarpLayer(void*) { return new FlowWarpLayer(); }
 ncnn::Layer* createProjectionLayer(void*) { return new ProjectionLayer(); }
 ncnn::Layer* createFilterInterpolationLayer(void*) { return new FilterInterpolationLayer(); }
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

@@ -7,7 +7,7 @@
 
 #include "networks.h"
 
-namespace mediadroid {
+namespace mediadroyd {
 
 namespace {
 
@@ -93,4 +93,4 @@ std::unique_ptr<Interpolator> openFlavr(const Loader& load, bool gpu) {
     return flavr;
 }
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

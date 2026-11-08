@@ -8,7 +8,7 @@
 #include <option.h>
 #include <pipeline.h>
 
-namespace mediadroid {
+namespace mediadroyd {
 
 // The shaders by their file name without the extension ("warp", "dain-correlation").
 extern std::map<std::string, std::string> shaders;
@@ -16,4 +16,4 @@ extern std::map<std::string, std::string> shaders;
 // A pipeline for the shader [name] on [vkdev], compiled for [opt]; null where it does not compile.
 ncnn::Pipeline* pipeline(const ncnn::VulkanDevice* vkdev, const std::string& name, const ncnn::Option& opt);
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

@@ -2,7 +2,7 @@
 
 #include <gpu.h>
 
-namespace mediadroid {
+namespace mediadroyd {
 
 std::map<std::string, std::string> shaders;
 
@@ -20,4 +20,4 @@ ncnn::Pipeline* pipeline(const ncnn::VulkanDevice* vkdev, const std::string& nam
     return made;
 }
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

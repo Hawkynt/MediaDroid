@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MediaDroid"
+rootProject.name = "MediaDroyd"
 
 include(":app")
 include(":native")

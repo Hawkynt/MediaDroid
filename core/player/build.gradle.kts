@@ -18,7 +18,7 @@ tasks.register<JavaExec>("benchmark") {
     group = "verification"
     description = "Times the per-frame processor work on standard-definition pictures"
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass.set("com.hawkynt.mediadroid.player.BenchmarkKt")
+    mainClass.set("com.hawkynt.mediadroyd.player.BenchmarkKt")
     dependsOn("testClasses")
 }
 
@@ -28,7 +28,7 @@ tasks.register<JavaExec>("loudnessSignals") {
     group = "verification"
     description = "Writes the loudness test signals for the libebur128 and FFmpeg oracles"
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass.set("com.hawkynt.mediadroid.player.LoudnessSignals")
+    mainClass.set("com.hawkynt.mediadroyd.player.LoudnessSignals")
     args(providers.gradleProperty("folder").getOrElse("loudness-signals"))
     dependsOn("testClasses")
 }

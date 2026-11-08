@@ -7,7 +7,7 @@
 #include <layer.h>
 #include <pipeline.h>
 
-namespace mediadroid {
+namespace mediadroyd {
 
 // dain.Correlation (PWC-Net's cost volume): for each of the 9 x 9 displacements up to 4 pixels, the first feature
 // blob times the second there, averaged over the channels — 81 planes.
@@ -82,4 +82,4 @@ ncnn::Layer* createFlowWarpLayer(void* userdata);
 ncnn::Layer* createProjectionLayer(void* userdata);
 ncnn::Layer* createFilterInterpolationLayer(void* userdata);
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

@@ -46,7 +46,7 @@ stage() {  # stage <shader_check command…>: shader_check draws it, then the re
   case "$1" in temporal|temporal-denoise) at=4 ;; chroma) at=5 ;; esac
   local out=${args[$at]} ours=${args[$at]%.ppm}-stage.ppm
   args[$at]=$ours
-  java -cp "$CP" com.hawkynt.mediadroid.engine.desktop.StageRenderKt "${args[@]}" ||
+  java -cp "$CP" com.hawkynt.mediadroyd.engine.desktop.StageRenderKt "${args[@]}" ||
     { echo "the real stage could not run: $*"; failed=1; return; }
   echo -n "  the real stage beside it ($1): "
   if [ "${STAGE_LIMITS:-}" = report ]; then "$C" compare "$ours" "$out" 255 255 || true
@@ -121,7 +121,7 @@ differs "NIS against bilinear" "$W/nis.ppm" "$W/plain-2x.ppm"
 
 # xBRZ: against the original's own output (core/imaging's references, which Xbrz is held to too), every factor; the
 # patterns read from the app's Xbrz.kt.
-python3 -I "$HERE/xbrz-table.py" "$HERE/../../core/imaging/src/main/kotlin/com/hawkynt/mediadroid/imaging/Xbrz.kt" \
+python3 -I "$HERE/xbrz-table.py" "$HERE/../../core/imaging/src/main/kotlin/com/hawkynt/mediadroyd/imaging/Xbrz.kt" \
   "$W/xbrz-table.bin"
 command -v ffmpeg >/dev/null || { echo "the rest needs FFmpeg with libplacebo"; exit 2; }
 for name in shapes noise gradient; do
@@ -357,7 +357,7 @@ for matrix in 601 709; do
   done
 done
 
-# Full range (MJPEG cameras' JPEG range): the FFmpeg decoder squeezes it into limited range (mediadroid_range.h)
+# Full range (MJPEG cameras' JPEG range): the FFmpeg decoder squeezes it into limited range (mediadroyd_range.h)
 # before the stage reads it as limited; against FFmpeg's own conversion of the full-range frame, within the step the
 # squeeze rounds to (256 levels onto 220 and 225). Read as limited without the squeeze, as before, it has to fail.
 for matrix in 601 709; do

@@ -8,7 +8,7 @@
 #include "networks.h"
 #include "warp_layer.h"
 
-namespace mediadroid {
+namespace mediadroyd {
 
 namespace {
 
@@ -149,4 +149,4 @@ std::unique_ptr<Interpolator> openIfrnet(const Loader& load, bool gpu) {
     return ifrnet;
 }
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

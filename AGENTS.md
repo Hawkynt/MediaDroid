@@ -1,4 +1,4 @@
-# Agent guide — MediaDroid
+# Agent guide — MediaDroyd
 
 Working agreement for **all** coding agents (Claude Code, Codex, Copilot, …) and human contributors
 in this repository. These rules are not optional. This file is the per-repo distillation of the
@@ -27,7 +27,7 @@ cores carry no Android dependency on purpose: the parsing, search and binge logi
 device, and the screens sit on top of them. The bar is a household where nobody has to be taught the app — usable by a
 six-year-old and a grandparent, instant even on cheap hardware.
 
-The same app runs on **Windows and Linux** ([#291](https://github.com/Hawkynt/MediaDroid/issues/291); README
+The same app runs on **Windows and Linux** ([#291](https://github.com/Hawkynt/MediaDroyd/issues/291); README
 "Platform support"). The split: `:engine:api` (plain JVM — the playback engine the screens talk to),
 `:engine:android` (Media3 behind it), `:stage` (plain JVM — the picture stage's passes against an OpenGL ES interface,
 the shaders with it), `native/` (one CMake tree for the ncnn networks on Android, Windows and Linux), `:ui` (every
@@ -179,9 +179,9 @@ commit the captured expected output with a note saying what produced it.
   implementation": one stale copy is how a guide spends years asking for a convention the repo never
   used.
 - **GUI repositories document the whole primary UI, not merely the startup screen.** Every main screen
-  that represents a distinct user workflow needs a committed screenshot — for MediaDroid the browse
+  that represents a distinct user workflow needs a committed screenshot — for MediaDroyd the browse
   wall (the hero), the details screen, the player with its binge queue, and the filters/facets. Tiny
-  confirmations and duplicate variants do not need their own image. MediaDroid sets `gui: true` on the
+  confirmations and duplicate variants do not need their own image. MediaDroyd sets `gui: true` on the
   repo-readme check in `ci.yml`, which makes both the single hero image under the pitch and the
   `## 🖼️ Screenshots` tour required rather than merely expected.
 - GUI screenshots are **generated documentation**, never hand-maintained glamour shots. The app must

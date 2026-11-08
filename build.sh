@@ -1,10 +1,10 @@
 #!/bin/bash
-# Builds the release APK and signs it: dist/MediaDroid.apk.
+# Builds the release APK and signs it: dist/MediaDroyd.apk.
 #
 #   ./build.sh [--desktop]
 #
 # --desktop also packs the desktop app for the system it runs on, into dist/ as the nightlies name it: on Linux
-# MediaDroid-linux-x64.AppImage, on Windows (Git Bash) MediaDroid-windows-x64.msi and MediaDroid-windows-x64.zip.
+# MediaDroyd-linux-x64.AppImage, on Windows (Git Bash) MediaDroyd-windows-x64.msi and MediaDroyd-windows-x64.zip.
 #
 # The release key is held in the repository's GitHub secrets, never in the repository. To sign with it,
 # hand it over through the same variables those secrets use, from the environment or from a signing.env
@@ -43,7 +43,7 @@ if [ -f signing.env ]; then
   set +a
 fi
 
-APK_NAME="${APK_NAME:-MediaDroid.apk}"
+APK_NAME="${APK_NAME:-MediaDroyd.apk}"
 
 if [ -z "${ANDROID_HOME:-}" ] && [ -f local.properties ]; then
   ANDROID_HOME="$(sed -n 's/^sdk\.dir=//p' local.properties)"
@@ -117,14 +117,14 @@ if [ "$DESKTOP" = 1 ]; then
   case "$(uname -s)" in
     Linux)
       ./gradlew :desktop:appImage "${desktop_args[@]}"
-      cp desktop/build/dist/MediaDroid-linux-x64.AppImage "dist/MediaDroid$suffix-linux-x64.AppImage"
-      echo "packed: $ROOT/dist/MediaDroid$suffix-linux-x64.AppImage"
+      cp desktop/build/dist/MediaDroyd-linux-x64.AppImage "dist/MediaDroyd$suffix-linux-x64.AppImage"
+      echo "packed: $ROOT/dist/MediaDroyd$suffix-linux-x64.AppImage"
       ;;
     MINGW* | MSYS* | CYGWIN*)
       ./gradlew :desktop:packageMsi :desktop:windowsZip "${desktop_args[@]}"
-      cp desktop/build/compose/binaries/main/msi/*.msi "dist/MediaDroid$suffix-windows-x64.msi"
-      cp desktop/build/dist/MediaDroid-windows-x64.zip "dist/MediaDroid$suffix-windows-x64.zip"
-      echo "packed: $ROOT/dist/MediaDroid$suffix-windows-x64.msi, $ROOT/dist/MediaDroid$suffix-windows-x64.zip"
+      cp desktop/build/compose/binaries/main/msi/*.msi "dist/MediaDroyd$suffix-windows-x64.msi"
+      cp desktop/build/dist/MediaDroyd-windows-x64.zip "dist/MediaDroyd$suffix-windows-x64.zip"
+      echo "packed: $ROOT/dist/MediaDroyd$suffix-windows-x64.msi, $ROOT/dist/MediaDroyd$suffix-windows-x64.zip"
       ;;
     *) die "no desktop package for $(uname -s)" ;;
   esac

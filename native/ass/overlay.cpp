@@ -13,7 +13,7 @@ extern "C" {
 #include FT_SFNT_NAMES_H
 #include FT_TRUETYPE_IDS_H
 
-namespace mediadroid::subtitles {
+namespace mediadroyd::subtitles {
 
 namespace {
 
@@ -247,4 +247,4 @@ bool Track::render(int64_t timeMs, int width, int height, int storageWidth, int 
     return changed;
 }
 
-}  // namespace mediadroid::subtitles
+}  // namespace mediadroyd::subtitles

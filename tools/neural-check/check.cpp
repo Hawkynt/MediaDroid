@@ -64,7 +64,7 @@ long peakMb() {
     return usage.ru_maxrss / 1024;
 }
 
-void check(const char* name, mediadroid::Interpolator& net, int w, int h) {
+void check(const char* name, mediadroyd::Interpolator& net, int w, int h) {
     const auto before = frame(w, h, -2);
     const auto first = frame(w, h, 0);
     const auto middle = frame(w, h, 1);
@@ -103,7 +103,7 @@ void check(const char* name, mediadroid::Interpolator& net, int w, int h) {
 
 // The next pair of a stream — its earlier frame the later one of the pair before — against the same pair worked out
 // afresh: they must agree to the byte, and the time saved is printed.
-void reuse(const char* name, mediadroid::Interpolator& net, int w, int h) {
+void reuse(const char* name, mediadroyd::Interpolator& net, int w, int h) {
     const auto f0 = frame(w, h, 0);
     const auto f2 = frame(w, h, 2);
     const auto f4 = frame(w, h, 4);
@@ -201,7 +201,7 @@ void warped(const std::vector<unsigned char>& a, const std::vector<unsigned char
 // Real footage instead of the self-test's frames: every <name>-a.ppm, -b.ppm, -c.ppm in [folder] (three frames in a
 // row, of one size), the in-between of a and c against b — mean difference per value and PSNR, the network's and a
 // blend's, averaged over the triplets, and the time each in-between took.
-void footage(const char* name, mediadroid::Interpolator& net, const std::string& folder, int divisor = 0) {
+void footage(const char* name, mediadroyd::Interpolator& net, const std::string& folder, int divisor = 0) {
     std::vector<std::filesystem::path> firsts;
     for (const auto& entry : std::filesystem::directory_iterator(folder)) {
         const std::string file = entry.path().filename().string();
@@ -286,7 +286,7 @@ void footage(const char* name, mediadroid::Interpolator& net, const std::string&
 // The flow handed back and warped as the stage warps it, at the network's own size, against the network's own
 // in-between: the largest difference per value away from the edges (where the network's padding is black and the
 // stage's edge the picture's own), which must be at most 1.
-void flowAgrees(const char* name, mediadroid::Interpolator& net, int w, int h) {
+void flowAgrees(const char* name, mediadroyd::Interpolator& net, int w, int h) {
     const auto first = frame(w, h, 0);
     const auto last = frame(w, h, 2);
     std::vector<unsigned char> own(static_cast<size_t>(w) * h * 3), stage(own.size());
@@ -333,7 +333,7 @@ std::vector<unsigned char> drawing(int w, int h, int cell = 24) {
 
 // An upscaler on a drawing: the picture box-filtered down by the upscaler's scale and enlarged again, against the
 // original — and, for scale, the small picture's pixels just repeated.
-void enlarge(const char* name, mediadroid::Enlarger& net, int w, int h) {
+void enlarge(const char* name, mediadroyd::Enlarger& net, int w, int h) {
     const int k = net.scale;
     // The grid grows with the scale, so the small picture always has 12-pixel cells.
     const auto full = drawing(w * k, h * k, 12 * k);
@@ -423,12 +423,12 @@ int main(int argc, char** argv) {
         return 2;
     }
     for (const auto& entry : std::filesystem::directory_iterator(argv[1])) {
-        if (entry.path().extension() == ".comp") mediadroid::shaders[entry.path().stem().string()] = read(entry.path());
+        if (entry.path().extension() == ".comp") mediadroyd::shaders[entry.path().stem().string()] = read(entry.path());
     }
     std::vector<int> sizes;
     for (int i = 5; i < argc; i++) sizes.push_back(std::atoi(argv[i]));
     if (sizes.empty()) sizes = {256};
-    const bool gpu = mediadroid::gpuReady();
+    const bool gpu = mediadroyd::gpuReady();
     std::printf("Vulkan GPU: %s\n", gpu ? "yes" : "no");
     for (bool onGpu : {false, true}) {
         if (onGpu && !gpu) continue;
@@ -436,12 +436,12 @@ int main(int argc, char** argv) {
         const char* only = std::getenv("NEURAL_CHECK_UNIT");
         if (only != nullptr && std::string(only) != unit) continue;
         for (const auto& [network, open] : {
-                 std::make_pair(std::string("RIFE"), &mediadroid::openRife),
-                 std::make_pair(std::string("DAIN"), &mediadroid::openDain),
-                 std::make_pair(std::string("XVFI"), &mediadroid::openXvfi),
-                 std::make_pair(std::string("FLAVR"), &mediadroid::openFlavr),
-                 std::make_pair(std::string("CAIN"), &mediadroid::openCain),
-                 std::make_pair(std::string("IFRNet"), &mediadroid::openIfrnet)}) {
+                 std::make_pair(std::string("RIFE"), &mediadroyd::openRife),
+                 std::make_pair(std::string("DAIN"), &mediadroyd::openDain),
+                 std::make_pair(std::string("XVFI"), &mediadroyd::openXvfi),
+                 std::make_pair(std::string("FLAVR"), &mediadroyd::openFlavr),
+                 std::make_pair(std::string("CAIN"), &mediadroyd::openCain),
+                 std::make_pair(std::string("IFRNet"), &mediadroyd::openIfrnet)}) {
             const char* only = std::getenv("NEURAL_CHECK_NETWORK");
             if (only != nullptr && network != only) continue;
             const char* extra = network == "FLAVR" ? std::getenv("FLAVR_DIR")
@@ -453,7 +453,7 @@ int main(int argc, char** argv) {
                 : network == "DAIN"                     ? argv[3]
                 : network == "XVFI"                     ? argv[4]
                                                         : extra;
-            auto net = open(mediadroid::fileLoader(dir), onGpu);
+            auto net = open(mediadroyd::fileLoader(dir), onGpu);
             if (!net) {
                 std::printf("%s on the %s: does not load\n", network.c_str(), unit);
                 continue;
@@ -478,10 +478,10 @@ int main(int argc, char** argv) {
         const char* unit = onGpu ? "GPU" : "CPU";
         const char* onlyUnit = std::getenv("NEURAL_CHECK_UNIT");
         if (onlyUnit != nullptr && std::string(onlyUnit) != unit) continue;
-        using Open = std::function<std::unique_ptr<mediadroid::Enlarger>(const mediadroid::Loader&, bool)>;
-        const Open waifu2x = [](const mediadroid::Loader& l, bool g) { return mediadroid::openWaifu2x(l, g); };
-        const Open cugan = [](const mediadroid::Loader& l, bool g) { return mediadroid::openRealCugan(l, g); };
-        const Open realsr = [](const mediadroid::Loader& l, bool g) { return mediadroid::openRealSr(l, g); };
+        using Open = std::function<std::unique_ptr<mediadroyd::Enlarger>(const mediadroyd::Loader&, bool)>;
+        const Open waifu2x = [](const mediadroyd::Loader& l, bool g) { return mediadroyd::openWaifu2x(l, g); };
+        const Open cugan = [](const mediadroyd::Loader& l, bool g) { return mediadroyd::openRealCugan(l, g); };
+        const Open realsr = [](const mediadroyd::Loader& l, bool g) { return mediadroyd::openRealSr(l, g); };
         for (const auto& [network, open, env] : {
                  std::make_tuple(std::string("waifu2x"), waifu2x, "WAIFU2X_DIR"),
                  std::make_tuple(std::string("Real-CUGAN"), cugan, "REALCUGAN_DIR"),
@@ -489,7 +489,7 @@ int main(int argc, char** argv) {
             const char* dir = std::getenv(env);
             const char* only = std::getenv("NEURAL_CHECK_NETWORK");
             if (dir == nullptr || (only != nullptr && network != only)) continue;
-            auto net = open(mediadroid::fileLoader(dir), onGpu);
+            auto net = open(mediadroyd::fileLoader(dir), onGpu);
             if (!net) {
                 std::printf("%s on the %s: does not load\n", network.c_str(), unit);
                 continue;

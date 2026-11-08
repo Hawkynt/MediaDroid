@@ -57,7 +57,7 @@ val carriedModels = tasks.register<Sync>("carriedModels") {
 sourceSets["main"].resources.srcDir(carriedModels.map { it.destinationDir.parentFile })
 
 tasks.test {
-    systemProperty("mediadroid.ffmpegLicence", if (fullFfmpeg) "GPL" else "LGPL")
+    systemProperty("mediadroyd.ffmpegLicence", if (fullFfmpeg) "GPL" else "LGPL")
     // The native library's tests (NativeNetworksTest, NativeNeuralTest, LibAssTest; LibAssEngineTest with FFmpeg) need
     // it built for this system first — CMake, a C++ compiler, ncnn's release and libass's sources: `-PnativeLibrary`
     // builds it and brings the tests in, `./gradlew test` leaves them out. _desktop.yml runs them on Linux and Windows
@@ -66,9 +66,9 @@ tasks.test {
         dependsOn(":native:desktopLibrary")
         val library = rootProject.file("native/build/desktop/lib")
         inputs.dir(library)
-        systemProperty("mediadroid.native", library.path)
+        systemProperty("mediadroyd.native", library.path)
         // The upscalers' fetched models, kept between runs (NativeNeuralTest).
-        systemProperty("mediadroid.testModels", layout.buildDirectory.dir("test-models").get().asFile.path)
+        systemProperty("mediadroyd.testModels", layout.buildDirectory.dir("test-models").get().asFile.path)
     } else {
         exclude("**/NativeNetworksTest*", "**/NativeNeuralTest*", "**/LibAssTest*", "**/LibAssEngineTest*")
     }
@@ -79,7 +79,7 @@ tasks.register<JavaExec>("probe") {
     group = "verification"
     description = "Opens and decodes the start of every video in a folder"
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass.set("com.hawkynt.mediadroid.engine.desktop.ProbeKt")
+    mainClass.set("com.hawkynt.mediadroyd.engine.desktop.ProbeKt")
     args(providers.gradleProperty("folder").getOrElse("."))
     dependsOn("testClasses")
 }
@@ -90,7 +90,7 @@ tasks.register<JavaExec>("stageDigests") {
     group = "verification"
     description = "Writes a digest of what the stage draws for every pass and its variants"
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass.set("com.hawkynt.mediadroid.engine.desktop.StageDigestsKt")
+    mainClass.set("com.hawkynt.mediadroyd.engine.desktop.StageDigestsKt")
     args(providers.gradleProperty("out").getOrElse(layout.buildDirectory.file("stage-digests.txt").get().asFile.path))
     dependsOn("testClasses")
 }

@@ -10,8 +10,8 @@ Built by tools/ffmpeg/build.sh from these sources, and nothing else:
   (https://github.com/androidx/media/pull/1591), contributed under the
   Apache License 2.0 — tools/ffmpeg/patches/0001-*.patch, applied unchanged.
 
-- MediaDroid's own demuxer binding and codec-parameter handover
-  (tools/ffmpeg/mediadroid/, tools/ffmpeg/patches/0002-*.patch),
+- MediaDroyd's own demuxer binding and codec-parameter handover
+  (tools/ffmpeg/mediadroyd/, tools/ffmpeg/patches/0002-*.patch),
   GNU LGPL version 3 or later.
 
 - libyuv (https://chromium.googlesource.com/libyuv/libyuv), BSD 3-Clause

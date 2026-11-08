@@ -1,6 +1,6 @@
 libebur128 v1.2.6 (https://github.com/jiixyj/libebur128)
 
-core/player/src/main/kotlin/com/hawkynt/mediadroid/player/LoudnessMeter.kt converts the integrated-loudness mode of
+core/player/src/main/kotlin/com/hawkynt/mediadroyd/player/LoudnessMeter.kt converts the integrated-loudness mode of
 ebur128/ebur128.c: the K-weighting filter design, the channel weights, the 400 ms gating blocks and the absolute and
 relative gates.
 

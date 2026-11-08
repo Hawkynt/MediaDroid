@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds and signs the release APK with the GPL + nonfree FFmpeg: dist/MediaDroid-nonlgpl.apk.
+# Builds and signs the release APK with the GPL + nonfree FFmpeg: dist/MediaDroyd-nonlgpl.apk.
 #
 #   ./buildnonlgpl.sh [--desktop] [workspace]
 #
@@ -12,7 +12,7 @@
 # stage/ffmpeg-full, ignored by git; needs NDK 28.2.13676358 and CMake 3.22.1) and reused afterwards; delete
 # <workspace>/lib-decoder-ffmpeg-full.aar to rebuild it. Signing is build.sh's: same variables, same
 # signing.env. --desktop also packs the desktop app for this system with Bytedeco's GPL FFmpeg build (-PfullFfmpeg),
-# as dist/MediaDroid-nonlgpl-<system>-x64.* — the same rule: never distribute it.
+# as dist/MediaDroyd-nonlgpl-<system>-x64.* — the same rule: never distribute it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -50,4 +50,4 @@ if [ ! -f "$AAR" ]; then
 fi
 
 echo "NOTE: GPL + nonfree build: for your own device only, never distribute it"
-FFMPEG_AAR="$AAR" APK_NAME="MediaDroid-nonlgpl.apk" FULL_FFMPEG=1 "$ROOT/build.sh" "${build_args[@]}"
+FFMPEG_AAR="$AAR" APK_NAME="MediaDroyd-nonlgpl.apk" FULL_FFMPEG=1 "$ROOT/build.sh" "${build_args[@]}"

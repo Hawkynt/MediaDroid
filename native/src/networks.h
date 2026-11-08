@@ -15,7 +15,7 @@
 
 #include <net.h>
 
-namespace mediadroid {
+namespace mediadroyd {
 
 // Whether the device has a GPU ncnn can use; the Vulkan instance is made on the first call.
 bool gpuReady();
@@ -117,4 +117,4 @@ std::unique_ptr<Interpolator> openFlavr(const Loader& load, bool gpu);
 // arithmetic.
 void configure(ncnn::Net& net, bool vulkan, bool halfOnCpu = false);
 
-}  // namespace mediadroid
+}  // namespace mediadroyd

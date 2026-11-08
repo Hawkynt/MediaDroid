@@ -55,14 +55,14 @@ jobs:
           apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
           "$apksigner" sign --ks "$RUNNER_TEMP/release.p12" --ks-type PKCS12 --ks-key-alias "$KEY_ALIAS" \
             --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --v4-signing-enabled false \
-            --out dist/MediaDroid.apk app/build/outputs/apk/release/app-release-unsigned.apk
-          "$apksigner" verify --verbose dist/MediaDroid.apk
+            --out dist/MediaDroyd.apk app/build/outputs/apk/release/app-release-unsigned.apk
+          "$apksigner" verify --verbose dist/MediaDroyd.apk
           jarsigner -keystore "$RUNNER_TEMP/release.p12" -storetype PKCS12 \
             -storepass:env KEYSTORE_PASSWORD -keypass:env KEYSTORE_PASSWORD \
-            -signedjar dist/MediaDroid.aab app/build/outputs/bundle/release/app-release.aab "$KEY_ALIAS"
+            -signedjar dist/MediaDroyd.aab app/build/outputs/bundle/release/app-release.aab "$KEY_ALIAS"
           rm "$RUNNER_TEMP/release.p12"
       - name: Stage debug APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk dist/MediaDroid-debug.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk dist/MediaDroyd-debug.apk
       - uses: actions/upload-artifact@v4
         with:
           name: app-artifacts

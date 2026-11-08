@@ -76,7 +76,7 @@
 #include <cmath>
 
 #include "NIS_Config.h"
-#include "mediadroid_range.h"
+#include "mediadroyd_range.h"
 #include "picture.h"
 
 using namespace shadercheck;
@@ -284,15 +284,15 @@ Picture temporal(const Picture& prev, const Picture& cur, const Picture& next, i
 
 // A yuv420p frame (raw planes, rows from the top) to RGB as VideoFilterStage.takeYuv/copyInput do it: the planes as
 // luminance textures, rows from the top flipped by the texture matrix, the matrix as YuvMatrix.toRgb computes it.
-// A [full] range frame is first squeezed into limited range by the FFmpeg decoder's own mediadroid_range.h.
+// A [full] range frame is first squeezed into limited range by the FFmpeg decoder's own mediadroyd_range.h.
 Picture yuv(const std::string& path, int w, int h, double kr, double kb, bool full) {
     std::string data = readFile(path);
     const int cw = (w + 1) / 2, ch = (h + 1) / 2;
     if (data.size() != size_t(w) * h + 2 * size_t(cw) * ch) fail("not a yuv420p frame of that size: " + path);
     if (full) {
         auto* bytes = reinterpret_cast<uint8_t*>(data.data());
-        mediadroid::fullToLimited(bytes, size_t(w) * h, false);
-        mediadroid::fullToLimited(bytes + size_t(w) * h, 2 * size_t(cw) * ch, true);
+        mediadroyd::fullToLimited(bytes, size_t(w) * h, false);
+        mediadroyd::fullToLimited(bytes + size_t(w) * h, 2 * size_t(cw) * ch, true);
     }
     const uint8_t* planes[3] = {reinterpret_cast<const uint8_t*>(data.data()),
                                 reinterpret_cast<const uint8_t*>(data.data()) + size_t(w) * h,
