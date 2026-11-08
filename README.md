@@ -375,7 +375,7 @@ and denoised. How the networks are checked on a desktop:
 
 ## 📦 Installation
 
-**Android** 8.0 (API 26) or newer, phone, tablet, or TV box. Not on the Play Store (yet): download the APK from [Releases](https://github.com/Hawkynt/MediaDroyd/releases) — a dated stable build or a `nightly-*` build. Take `MediaDroyd.apk`, the signed release build, and enable installation from unknown sources; `MediaDroyd-debug.apk` is for development and cannot update over it. Storage stays on your device; the app needs access only to the folders you point it at.
+**Android** 8.0 (API 26) or newer, phone, tablet, or TV box. Not on the Play Store (yet): download the APK from [Releases](https://github.com/Hawkynt/MediaDroyd/releases) — a dated stable build or a `nightly-*` build. Take `MediaDroyd.apk`, the signed release build, and enable installation from unknown sources; `MediaDroyd-debug.apk` is for development and cannot update over it. Storage stays on your device; the app needs access only to the folders you point it at. The Google Play build (`./gradlew :app:bundlePlay`, signed like the release) asks for no all-files access — Play allows that only to file managers, backup and antivirus apps — and reads the library through the folders you pick in Android's folder picker instead, as it reads a cloud folder: no typed paths, and its Files browser starts from those folders; everything else is the same app.
 
 **Windows** 10/11 (x64) and **Linux** (x64; arm64 to follow) — from the same Releases, stable and nightly: `MediaDroyd-windows-x64.msi` (installs, updates in place) or `MediaDroyd-windows-x64.zip`
 (portable: unpack anywhere and run `MediaDroyd.exe`, settings beside it), and `MediaDroyd-linux-x64.AppImage` (mark it

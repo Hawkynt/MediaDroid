@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Google Play build: Play allows all-files access only to file managers, backup and antivirus apps, so this
+     build reads the library through the folders the household picks (Android's document tree access). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:node="remove" />
+</manifest>
