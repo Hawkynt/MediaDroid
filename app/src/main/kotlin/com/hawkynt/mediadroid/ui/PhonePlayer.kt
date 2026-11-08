@@ -758,10 +758,6 @@ fun PhonePlayer(
     val filmElsewhere = presentation?.isShowing == true
     // On the other screen or in picture-in-picture the film plays on whatever other apps play (#458).
     LaunchedEffect(filmElsewhere, inPip) { engine.playsOnForOthers = filmElsewhere || inPip }
-    // What a gesture set shows on the other screen too, where the viewer looks (#459).
-    LaunchedEffect(state.feedback, state.feedbackBoosted, presentation) {
-        presentation?.takeIf { it.isShowing }?.note(state.feedback, state.feedbackBoosted)
-    }
     LaunchedEffect(controlsVisible, state.panelOpen, filmElsewhere, askingToLock) {
         if (filmElsewhere && !controlsVisible && !state.panelOpen && !askingToLock && !small) {
             darkPhone.controlsHidden()
@@ -778,12 +774,14 @@ fun PhonePlayer(
         darkPhone.darken()
         phoneDark = true
     }
-    DisposableEffect(phoneDark) {
+    // Dark at the lowest brightness, lifted just enough to read what a gesture set while its note shows (#463).
+    val darkNote = phoneDark && state.feedback != null
+    DisposableEffect(phoneDark, darkNote) {
         val window = pipActivity?.window
         if (phoneDark) playerView?.hideControls()
         window?.attributes = window?.attributes?.apply {
             screenBrightness = if (phoneDark) {
-                0f
+                darkPhone.brightness(darkNote) ?: 0f
             } else {
                 android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
             }
@@ -1522,7 +1520,8 @@ fun PhonePlayer(
                 }
             }
             // The darkened phone: black over everything; a tap lights it up and brings the controls back, the
-            // picture's other gestures — volume and brightness swipes, double-tap skips — work on it in the dark.
+            // picture's other gestures — volume and brightness swipes, double-tap skips — work on it in the dark,
+            // what they set shown here, the other screen showing only the film (#463).
             if (phoneDark && !small) {
                 Box(
                     modifier = Modifier
@@ -1543,7 +1542,11 @@ fun PhonePlayer(
                             onSwipeEnd = {},
                             onPinch = { _, _ -> },
                         ),
-                )
+                ) {
+                    state.feedback?.let {
+                        FeedbackNote(it, Modifier.align(Alignment.Center), accent = state.feedbackBoosted)
+                    }
+                }
             }
         }
     }
