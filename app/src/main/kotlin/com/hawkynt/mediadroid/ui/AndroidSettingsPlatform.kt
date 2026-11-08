@@ -81,7 +81,9 @@ class AndroidSettingsPlatform(private val context: Context, private val store: S
             read(
                 uri?.let {
                     runCatching {
-                        context.contentResolver.openInputStream(it)!!.use { input -> input.readBytes().decodeToString() }
+                        context.contentResolver.openInputStream(it)!!.use { input ->
+                            input.readBytes().decodeToString()
+                        }
                     }.getOrNull()
                 },
             )
