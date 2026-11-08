@@ -597,6 +597,8 @@ private const val FEEDBACK_MS = 800L
 fun BoxScope.SwipeLevel(level: Float, side: Side) {
     LevelBar(
         level,
-        Modifier.align(if (side == Side.LEFT) Alignment.CenterStart else Alignment.CenterEnd).padding(horizontal = 32.dp),
+        Modifier
+            .align(if (side == Side.LEFT) Alignment.CenterStart else Alignment.CenterEnd)
+            .padding(horizontal = 32.dp),
     )
 }
