@@ -16,8 +16,12 @@ import kotlin.math.sqrt
  * motion detail, never sharpness — its self-test starts lower ([testSizes]).
  */
 object NeuralInterpolation {
-    /** What one in-between may take: half a frame at 25 frames a second, so 25 can become 50. */
-    const val BUDGET_MS = 20.0
+    /**
+     * What one in-between may take: three quarters of a frame at 25 frames a second, so 25 can become 50 — the network
+     * runs on a thread of its own with a frame's time for each (the picture a frame later), the rest left for the
+     * decoder and the read-back.
+     */
+    const val BUDGET_MS = 30.0
 
     /** A picture's size in pixels. */
     data class Size(val width: Int, val height: Int) {

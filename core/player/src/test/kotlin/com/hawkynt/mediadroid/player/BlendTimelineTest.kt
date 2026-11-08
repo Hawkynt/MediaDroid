@@ -58,6 +58,19 @@ class BlendTimelineTest {
     }
 
     @Test
+    fun `with a frame more to wait for, for a neural in-between, it runs two frames and a quarter behind`() {
+        val timeline = BlendTimeline()
+        timeline.extraFrames = 1
+        var t = 0L
+        repeat(50) { timeline.arrived(t); t += frame }
+        assertEquals((frame * 9 / 4).toDouble(), timeline.delayNs.toDouble(), (frame / 50).toDouble())
+        val steady = LongArray(3) { t - frame * (3 - it) }
+        val (earlier, phase) = timeline.position(t, steady)
+        assertEquals(0, earlier)
+        assertEquals(0.75f, phase, 0.05f)
+    }
+
+    @Test
     fun `after a pause the timeline starts afresh`() {
         val timeline = BlendTimeline()
         var t = 0L

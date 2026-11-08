@@ -1,6 +1,7 @@
 package com.hawkynt.mediadroid.player
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NeuralPaceTest {
@@ -54,5 +55,15 @@ class NeuralPaceTest {
         assertEquals(sd, pace.size)
         pace.report(20_500_000L, frame)
         assertEquals(NeuralInterpolation.Size(428, 240), pace.size)
+    }
+
+    @Test
+    fun `on a thread of its own the network has three quarters of the frame's time`() {
+        val ownThread = NeuralPace(fullHd, sd, NeuralPace.OWN_THREAD_PERCENT)
+        ownThread.report(28_000_000L, frame)
+        assertEquals(sd, ownThread.size)
+        val drawing = NeuralPace(fullHd, sd)
+        drawing.report(28_000_000L, frame)
+        assertTrue(drawing.size.height < sd.height)
     }
 }
