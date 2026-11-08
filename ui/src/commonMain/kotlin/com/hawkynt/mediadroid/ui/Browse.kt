@@ -392,7 +392,10 @@ private fun SeeAllCard(onClick: () -> Unit, width: Dp) {
     }
 }
 
-/** Posters, a compact list, or a list with two lines of plot — the toggle at the head of the wall. */
+/**
+ * Posters, a compact list, or a list with two lines of plot — the toggle at the head of the wall, as icons (WallIcons)
+ * so it fits a phone's width; each layout's name is kept for screen readers.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WallModeSwitch(mode: WallMode, onChange: (WallMode) -> Unit, modifier: Modifier = Modifier) {
@@ -403,7 +406,7 @@ private fun WallModeSwitch(mode: WallMode, onChange: (WallMode) -> Unit, modifie
                 onClick = { onChange(entry) },
                 shape = SegmentedButtonDefaults.itemShape(i, WallMode.entries.size),
                 icon = {},
-                label = { Text(entry.label, fontSize = 14.sp, maxLines = 1) },
+                label = { Icon(WallIcons.of(entry), contentDescription = entry.label, modifier = Modifier.size(22.dp)) },
             )
         }
     }
