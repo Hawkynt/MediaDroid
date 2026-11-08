@@ -698,13 +698,13 @@ fun PhonePlayer(
                         screenBrightness = brightness.coerceIn(0.01f, 1f)
                     }
                 }
-                show("Brightness ${PlaybackMath.percent(brightness)} %", PlaybackMath.isBoosted(brightness))
+                state.showLevel("Brightness ${PlaybackMath.percent(brightness)} %", brightness, side)
             }
             Side.RIGHT -> {
                 volume = PlaybackMath.boostedLevel(volume, upFraction)
                 loudnessBoostDb = PlaybackMath.boostDb(volume)
                 audio.setStreamVolume(AudioManager.STREAM_MUSIC, (volume.coerceAtMost(1f) * maxVolume).roundToInt(), 0)
-                show("Volume ${PlaybackMath.percent(volume)} %", PlaybackMath.isBoosted(volume))
+                state.showLevel("Volume ${PlaybackMath.percent(volume)} %", volume, side)
             }
         }
     }
@@ -1546,6 +1546,7 @@ fun PhonePlayer(
                     state.feedback?.let {
                         FeedbackNote(it, Modifier.align(Alignment.Center), accent = state.feedbackBoosted)
                     }
+                    state.level?.let { SwipeLevel(it, state.levelSide) }
                 }
             }
         }

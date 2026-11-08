@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -122,6 +123,43 @@ fun FeedbackNote(text: String, modifier: Modifier = Modifier, accent: Boolean = 
             .padding(horizontal = 20.dp, vertical = 10.dp),
     )
 }
+
+/**
+ * The level a volume or brightness swipe set ([level], 0 to 2): a bar filling from the bottom, 100 % at the mark in its
+ * middle — the device's range white below it, the boost above it in the accent colour — so the stretch still empty
+ * above the mark shows there is more to swipe for.
+ */
+@Composable
+fun LevelBar(level: Float, modifier: Modifier = Modifier) {
+    val fill = com.hawkynt.mediadroid.player.PlaybackMath.levelFill(level)
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(LEVEL_BAR_WIDTH / 2)
+    Box(
+        modifier = modifier
+            .size(LEVEL_BAR_WIDTH, LEVEL_BAR_HEIGHT)
+            .background(Color.Black.copy(alpha = 0.6f), shape)
+            .padding(3.dp),
+    ) {
+        androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+            // Top to bottom: the boost still empty, the boost filled, the device's range empty, then filled.
+            val emptyBoost = 0.5f - fill.boost
+            val emptyDevice = 0.5f - fill.device
+            if (emptyBoost > 0f) androidx.compose.foundation.layout.Spacer(Modifier.weight(emptyBoost))
+            if (fill.boost > 0f) {
+                Box(
+                    Modifier.fillMaxWidth().weight(fill.boost)
+                        .background(com.hawkynt.mediadroid.ui.theme.MediaDroidColors.Amber),
+                )
+            }
+            // The device's maximum: a mark across the middle.
+            Box(Modifier.fillMaxWidth().height(2.dp).background(Color.White.copy(alpha = 0.8f)))
+            if (emptyDevice > 0f) androidx.compose.foundation.layout.Spacer(Modifier.weight(emptyDevice))
+            if (fill.device > 0f) Box(Modifier.fillMaxWidth().weight(fill.device).background(Color.White))
+        }
+    }
+}
+
+private val LEVEL_BAR_WIDTH = 14.dp
+private val LEVEL_BAR_HEIGHT = 220.dp
 
 /** `1:23:45` or `23:45` for a position in milliseconds. */
 fun clock(ms: Long): String {
