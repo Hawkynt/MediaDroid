@@ -59,6 +59,20 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    // ALL_FILES: whether the build reads the library through file paths with all-files access (the GitHub, F-Droid and
+    // desktop-side builds), or only through the folders the household picks — the Google Play build ("play", signed
+    // like release), as Play allows all-files access only to file managers, backup and antivirus apps.
+    buildTypes {
+        getByName("debug") { buildConfigField("boolean", "ALL_FILES", "true") }
+        getByName("release") { buildConfigField("boolean", "ALL_FILES", "true") }
+        create("play") {
+            initWith(getByName("release"))
+            matchingFallbacks += "release"
+            buildConfigField("boolean", "ALL_FILES", "false")
+        }
     }
 
     // The neural upscaler's model is mapped straight from the APK, which needs it stored uncompressed.

@@ -58,6 +58,8 @@ fun OnboardingScreen(
     onUsePath: (String) -> Unit,
     onCancel: () -> Unit,
     onNetworkSource: (() -> Unit)? = null,
+    /** Whether a folder's path may be typed instead of picked: not where the library is read through picked folders. */
+    canTypePath: Boolean = true,
 ) {
     var typing by remember { mutableStateOf(false) }
     var typed by remember { mutableStateOf(currentPath) }
@@ -135,7 +137,7 @@ fun OnboardingScreen(
                     enabled = hasAccess && !scanning && typed.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                 ) { Text("Use this folder", fontSize = 18.sp) }
-            } else {
+            } else if (canTypePath) {
                 TextButton(onClick = { typing = true }) { Text("Type a path instead", fontSize = 16.sp) }
             }
             onNetworkSource?.let {

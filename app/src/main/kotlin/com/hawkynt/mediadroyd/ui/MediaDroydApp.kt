@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.hawkynt.mediadroyd.BuildConfig
 import com.hawkynt.mediadroyd.data.LibraryStore
 import com.hawkynt.mediadroyd.data.SourceAccess
 import com.hawkynt.mediadroyd.state.StateStore
@@ -104,7 +105,8 @@ private fun AppShell(store: StateStore, demo: Boolean) {
         }
     }
 
-    fun storageAccess() = demo || Environment.isExternalStorageManager()
+    // All-files access, where the build asks for it (BuildConfig.ALL_FILES); the Play build reads picked folders only.
+    fun storageAccess() = demo || !BuildConfig.ALL_FILES || Environment.isExternalStorageManager()
     var hasAccess by remember { mutableStateOf(storageAccess()) }
     var rootPath by remember { mutableStateOf(store.data.rootPath) }
     var library by remember { mutableStateOf<Library?>(null) }
@@ -131,12 +133,13 @@ private fun AppShell(store: StateStore, demo: Boolean) {
         playing = player
         playingSmall = false
     }
-    // The demo has no real volumes: its library stands in for the internal storage.
+    // The demo has no real volumes: its library stands in for the internal storage. Without all-files access (the
+    // Play build) the device's storage is not readable by path: the picked folders, sources, stand in for it.
     val volumes = remember(demo) {
-        if (demo) {
-            listOf(StorageRoot("Internal storage", store.data.rootPath, removable = false))
-        } else {
-            StorageRoots.list(context)
+        when {
+            demo -> listOf(StorageRoot("Internal storage", store.data.rootPath, removable = false))
+            !BuildConfig.ALL_FILES -> emptyList()
+            else -> StorageRoots.list(context)
         }
     }
     // The Files browser starts from the device's volumes and every saved network or cloud source.
@@ -148,15 +151,24 @@ private fun AppShell(store: StateStore, demo: Boolean) {
         scanning = true
         scope.launch {
             // The chosen folder first, with every other source's last scan, so the walls show at once.
+            // A picked folder (the Play build's main folder) is read through its document tree, a path directly.
+            val picked = store.sources.firstOrNull { it.kind == SourceKind.DOCUMENTS && it.url == path }
             val local = withContext(Dispatchers.IO) {
                 runCatching {
-                    val root = File(path)
-                    require(root.isDirectory) { "the folder is not there — is the SD card or USB drive plugged in?" }
-                    LibraryScanner.scan(root)
+                    if (picked != null) {
+                        val root = requireNotNull(SourceAccess.of(context).root(picked)) { "the folder is not there" }
+                        LibraryScanner.scan(root)
+                    } else {
+                        val root = File(path)
+                        require(root.isDirectory) {
+                            "the folder is not there — is the SD card or USB drive plugged in?"
+                        }
+                        LibraryScanner.scan(root)
+                    }
                 }
             }
             if (generation != scanGeneration) return@launch
-            val others = store.sources.filter { it.kind != SourceKind.LOCAL || it.path != path }
+            val others = store.sources.filter { (it.kind != SourceKind.LOCAL || it.path != path) && it != picked }
             local.onFailure {
                 scanning = false
                 scanError = "Could not read $path: ${it.message}"
@@ -215,6 +227,27 @@ private fun AppShell(store: StateStore, demo: Boolean) {
             if (library != null) choosingFolder = false
             return@rememberLauncherForActivityResult
         }
+        if (!BuildConfig.ALL_FILES) {
+            // Read through the picked tree, its permission kept across restarts; kept as a source so its videos
+            // resolve like a cloud folder's.
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val url = uri.toString()
+            if (store.sources.none { it.url == url }) {
+                store.saveSources(
+                    store.sources + Source(
+                        java.util.UUID.randomUUID().toString(),
+                        cloudFolderName(context, uri),
+                        SourceKind.DOCUMENTS,
+                        host = uri.authority.orEmpty(),
+                        url = url,
+                    ),
+                )
+            }
+            scan(url, adopt = true)
+            return@rememberLauncherForActivityResult
+        }
         val path = if (uri.authority in LocalStorageAuthorities) {
             StorageVolumes.pathForTreeDocumentId(
                 DocumentsContract.getTreeDocumentId(uri),
@@ -231,10 +264,11 @@ private fun AppShell(store: StateStore, demo: Boolean) {
         }
     }
 
-    // A further folder on the device, kept as a source of its own beside the media folder.
+    // A further folder on the device, kept as a source of its own beside the media folder; without all-files access
+    // (the Play build) every one is read through its document tree, as a cloud folder is.
     val addFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
-        val path = if (uri.authority in LocalStorageAuthorities) {
+        val path = if (BuildConfig.ALL_FILES && uri.authority in LocalStorageAuthorities) {
             StorageVolumes.pathForTreeDocumentId(
                 DocumentsContract.getTreeDocumentId(uri),
                 Environment.getExternalStorageDirectory().absolutePath,
@@ -292,6 +326,7 @@ private fun AppShell(store: StateStore, demo: Boolean) {
             },
             onPickFolder = ::launchPicker,
             onUsePath = { scan(it.trim(), adopt = true) },
+            canTypePath = BuildConfig.ALL_FILES,
             onCancel = {
                 choosingFolder = false
                 scanError = null
