@@ -16,10 +16,10 @@ class NeuralInterpolationTest {
     }
 
     @Test
-    fun `an in-between keeps up when it takes at most half a 25 fps frame`() {
-        assertTrue(NeuralInterpolation.fastEnough(msPerInBetween = 19.0))
-        assertTrue(NeuralInterpolation.fastEnough(msPerInBetween = 20.0))
-        assertFalse(NeuralInterpolation.fastEnough(msPerInBetween = 21.0))
+    fun `an in-between keeps up when it takes at most three quarters of a 25 fps frame`() {
+        assertTrue(NeuralInterpolation.fastEnough(msPerInBetween = 21.0))
+        assertTrue(NeuralInterpolation.fastEnough(msPerInBetween = 30.0))
+        assertFalse(NeuralInterpolation.fastEnough(msPerInBetween = 31.0))
     }
 
     @Test
@@ -55,7 +55,7 @@ class NeuralInterpolationTest {
 
     @Test
     fun `a flow worked out at 240p serves 1080p material where the device keeps up with nothing larger`() {
-        val slow = mapOf(240 to 9.0, 360 to 25.0)
+        val slow = mapOf(240 to 13.5, 360 to 37.5)
         assertEquals(NeuralInterpolation.Size(426, 240), NeuralInterpolation.workingSize(1920, 1080, slow))
         assertEquals(NeuralInterpolation.Size(426, 240), NeuralInterpolation.workingSize(640, 360, slow))
     }
@@ -68,7 +68,7 @@ class NeuralInterpolationTest {
         )
     }
 
-    private val device = mapOf(480 to 5.0, 576 to 7.0, 720 to 11.0, 1080 to 24.0)
+    private val device = mapOf(480 to 7.5, 576 to 10.5, 720 to 16.5, 1080 to 36.0)
 
     @Test
     fun `material the device keeps up with is interpolated at its own size`() {
@@ -81,19 +81,19 @@ class NeuralInterpolationTest {
 
     @Test
     fun `larger material is brought down to the largest size the device keeps up with, keeping its shape`() {
-        // 1080p takes 24 ms here: the in-betweens are made at 720p and enlarged with the rest of the picture.
+        // 1080p takes 36 ms here: the in-betweens are made at 720p and enlarged with the rest of the picture.
         assertEquals(NeuralInterpolation.Size(1280, 720), NeuralInterpolation.workingSize(1920, 1080, device))
         // A wide film keeps its shape at the pixels of the 720p test picture; sizes stay even.
         assertEquals(
             NeuralInterpolation.Size(1488, 620),
-            NeuralInterpolation.workingSize(1920, 800, mapOf(480 to 5.0, 576 to 7.0, 720 to 15.0, 1080 to 30.0)),
+            NeuralInterpolation.workingSize(1920, 800, mapOf(480 to 7.5, 576 to 10.5, 720 to 22.5, 1080 to 45.0)),
         )
     }
 
     @Test
     fun `a device too slow for even the smallest size interpolates nothing`() {
-        assertNull(NeuralInterpolation.workingSize(1920, 1080, mapOf(480 to 30.0)))
-        assertNull(NeuralInterpolation.workingSize(640, 360, mapOf(480 to 60.0)))
+        assertNull(NeuralInterpolation.workingSize(1920, 1080, mapOf(480 to 45.0)))
+        assertNull(NeuralInterpolation.workingSize(640, 360, mapOf(480 to 90.0)))
         assertNull(NeuralInterpolation.workingSize(1920, 1080, emptyMap()))
     }
 
@@ -115,12 +115,12 @@ class NeuralInterpolationTest {
 
     @Test
     fun `a network slower than the budget on a small picture is too slow for any larger`() {
-        // The check's 128 x 128 picture: 25 ms there, and 480p has 25 times the pixels.
+        // The check's 128 x 128 picture: 35 ms there, and 480p has 25 times the pixels.
         assertEquals(25.0 * 854 * 480 / (128 * 128), NeuralInterpolation.estimate(25.0, 128 * 128), 1e-9)
         val small = NeuralInterpolation.Size(426, 240)
         assertEquals(25.0 * 426 * 240 / (128 * 128), NeuralInterpolation.estimate(25.0, 128 * 128, small), 1e-9)
-        assertTrue(NeuralInterpolation.tooSlowAlready(25.0))
-        assertFalse(NeuralInterpolation.tooSlowAlready(15.0))
+        assertTrue(NeuralInterpolation.tooSlowAlready(35.0))
+        assertFalse(NeuralInterpolation.tooSlowAlready(25.0))
     }
 
     @Test

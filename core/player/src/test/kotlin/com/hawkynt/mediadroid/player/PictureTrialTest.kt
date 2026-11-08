@@ -136,18 +136,18 @@ class PictureTrialTest {
         val flavr = PictureAdjustment(interpolation = PictureAdjustment.Interpolation.FLAVR)
         assertEquals(
             "This device is too slow for FLAVR: a 480p in-between takes more than 2 seconds on its fastest unit " +
-                "(CPU), and playback allows 20 ms. Smooth motion stays as it was.",
+                "(CPU), and playback allows 30 ms. Smooth motion stays as it was.",
             check(flavr, slow).message,
         )
         assertTrue(slow.dryRuns.isEmpty())
         assertTrue(slow.motion.isEmpty())
         val rife = PictureAdjustment(interpolation = PictureAdjustment.Interpolation.RIFE)
         val small = FakeDevice(
-            outcome = NeuralSelfTest.Outcome.Ran(listOf(NeuralSelfTest.Timing("CPU", mapOf(120 to 26.0)))),
+            outcome = NeuralSelfTest.Outcome.Ran(listOf(NeuralSelfTest.Timing("CPU", mapOf(120 to 34.0)))),
         )
         assertEquals(
-            "This device is too slow for RIFE: a 120p in-between takes 26 ms on its fastest unit (CPU), and " +
-                "playback allows 20 ms. Smooth motion stays as it was.",
+            "This device is too slow for RIFE: a 120p in-between takes 34 ms on its fastest unit (CPU), and " +
+                "playback allows 30 ms. Smooth motion stays as it was.",
             check(rife, small).message,
         )
         assertEquals(

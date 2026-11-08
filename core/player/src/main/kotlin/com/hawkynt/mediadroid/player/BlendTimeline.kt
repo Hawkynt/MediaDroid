@@ -17,8 +17,14 @@ class BlendTimeline {
     private var lastArrivalNs = 0L
     private var lastSteadyNs = 0L
 
-    /** How far behind its frames the picture runs: a frame and a quarter. */
-    val delayNs: Long get() = intervalNs + intervalNs / LAG_PARTS
+    /**
+     * Frames more the picture waits for: 1 while a neural network makes the in-betweens on a thread of its own, so
+     * the newest pair's in-between has a whole frame's time to come in before the pair shows.
+     */
+    var extraFrames = 0
+
+    /** How far behind its frames the picture runs: a frame and a quarter, and [extraFrames] more. */
+    val delayNs: Long get() = intervalNs * (1 + extraFrames) + intervalNs / LAG_PARTS
 
     /** A frame arrived at [atNs]; returns its steady time. */
     fun arrived(atNs: Long): Long {

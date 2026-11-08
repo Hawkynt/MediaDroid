@@ -160,10 +160,12 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
     @Volatile
     var neuralMotion: Map<PictureAdjustment.Interpolation, NeuralInterpolation.Passed> = emptyMap()
 
-    // RIFE (see NeuralInterpolator): opened on this thread, the two frames read back at the working size, and the
+    // RIFE and the other networks (see NeuralInterpolator) on a thread of their own (NeuralWorker), the pair handed
+    // to it and what it is needed for once made (RifeAsked), the two frames read back at the working size, and the
     // last two in-betweens (at rifeSize) with the later frame of the pair each belongs to (by its arrival, as keptAt
     // holds it).
-    private var rife: NeuralInterpolator? = null
+    private var rifeWorker: NeuralWorker? = null
+    private var rifeAsked: RifeAsked? = null
     private val rifeRead = Array(3) { ByteBuffer.allocateDirect(0) }
     private val rifeTextures = IntArray(2)
     private val rifeFor = LongArray(2)
@@ -1061,8 +1063,9 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glDeleteTextures(3, yuvTextures, 0)
             releaseWindow()
             GLES20.glDeleteProgram(copyProgram)
-            rife?.close()
-            rife = null
+            rifeWorker?.close()
+            rifeWorker = null
+            rifeAsked = null
             if (rifeTextures[0] != 0) GLES20.glDeleteTextures(2, rifeTextures, 0)
             rifeTextures.fill(0)
             rifeSize = NeuralInterpolation.Size(0, 0)
@@ -1991,6 +1994,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
 
     /** A new frame for blending: filtered and sharpened at its own size, kept with when it arrived. */
     private fun keep(picture: PictureAdjustment) {
+        // A neural network's in-between comes from its own thread: the pair it made is taken before the frames move
+        // on, and the picture waits a frame more for it (see NeuralWorker).
+        collectRife()
+        blendTimeline.extraFrames = if (picture.interpolation.isNeural) 1 else 0
+        if (!picture.interpolation.isNeural && rifeWorker != null) {
+            rifeWorker?.close()
+            rifeWorker = null
+            rifeAsked = null
+        }
         val (width, height) = eyeSize()
         val source = filtered(picture, width, height, fresh = true)
         val keptWidth = source.width
@@ -2026,7 +2038,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
                 val behindNs = blendTimeline.delayNs - blendTimeline.intervalNs / 2
                 (behindNs / 1_000_000L).toInt().coerceIn(0, MAX_LATENCY_MS)
             } + deinterlaceLatencyMs
-            latencyFrames = (if (motion) 2f else 0.75f) + deinterlaceFrames
+            latencyFrames = (if (motion) 2f else 0.75f + blendTimeline.extraFrames) + deinterlaceFrames
         }
     }
 
@@ -2230,6 +2242,7 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             weight = if (phase < due) 0f else 1f
         }
         EGL14.eglMakeCurrent(display, idle, idle, context)
+        if (picture.interpolation.isNeural) collectRife()
         // RIFE: through the in-between at the half (see NeuralInterpolation.mix), where it is in for this pair.
         var previousTexture = frames[previous].texture
         var currentTexture = frames[current].texture
@@ -2506,28 +2519,22 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         return dithers(picture) && !readsBack
     }
 
-    /**
-     * The picture's neural network on the unit its self-test chose, opened here on first use or when either changes;
-     * null while it is off.
-     */
-    private fun rifeNet(network: PictureAdjustment.Interpolation): NeuralInterpolator? {
-        val unit = neuralMotion[network]?.let { runCatching { NeuralUpscaler.Unit.valueOf(it.unit) }.getOrNull() }
-        if (unit == null) {
-            rife?.close()
-            rife = null
-            return null
-        }
-        if (rife?.unit != unit || rife?.network != network) {
-            rife?.close()
-            rife = appContext?.let { NeuralInterpolator.open(it, network, unit) }
-        }
-        return rife
-    }
+    // A pair handed to the network's thread: the frames it was read from (still in the kept ring until two more
+    // frames come), their size, the pace it was sized by and the frames' interval then.
+    private class RifeAsked(
+        val laterId: Long,
+        val earlier: Frame,
+        val later: Frame,
+        val frameWidth: Int,
+        val frameHeight: Int,
+        val pace: NeuralPace,
+        val intervalNanos: Long,
+    )
 
     /**
-     * [network]'s in-between of [earlier] and [later] ([frameWidth] × [frameHeight]): both brought to the working size
-     * and read back, the network run, and the result uploaded into the in-between texture not holding the pair
-     * before, marked with the later frame. Nothing where the device keeps up with no size for this material.
+     * [network]'s in-between of [earlier] and [later] ([frameWidth] × [frameHeight]) asked of its thread
+     * (NeuralWorker): both brought to the working size and read back, and handed over — where the thread is free,
+     * else this pair is blended. Nothing where the device keeps up with no size for this material.
      */
     private fun rifeBetween(
         network: PictureAdjustment.Interpolation,
@@ -2537,15 +2544,18 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
         frameHeight: Int,
         before: Frame? = null,
     ) {
-        val net = rifeNet(network) ?: return
-        val times = neuralMotion[net.network]?.msByHeight ?: return
-        val start = NeuralInterpolation.workingSize(frameWidth, frameHeight, times) ?: return
-        // The size paced as it plays (NeuralPace), from where the self-test left it; the whole pass is timed.
+        val passed = neuralMotion[network] ?: return
+        val unit = runCatching { NeuralUpscaler.Unit.valueOf(passed.unit) }.getOrNull() ?: return
+        val worker = rifeWorker ?: appContext?.let { NeuralWorker(it) }?.also { rifeWorker = it } ?: return
+        if (!worker.idle) return
+        val start = NeuralInterpolation.workingSize(frameWidth, frameHeight, passed.msByHeight) ?: return
+        // The size paced as it plays (NeuralPace), from where the self-test left it, by what the thread took.
         val own = NeuralInterpolation.Size(frameWidth, frameHeight)
         val pace = rifePace?.takeIf { it.first == Triple(network, own, start) }?.second
-            ?: NeuralPace(own, start).also { rifePace = Triple(network, own, start) to it }
+            ?: NeuralPace(own, start, NeuralPace.OWN_THREAD_PERCENT).also {
+                rifePace = Triple(network, own, start) to it
+            }
         val size = pace.size
-        val began = System.nanoTime()
         val interval = (keptAt[2] - keptAt[1]).coerceAtLeast(1L)
         val w = size.width
         val h = size.height
@@ -2571,24 +2581,43 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, rifeRead[i])
             rifeRead[i].rewind()
         }
-        if (es3 && NeuralInterpolation.handsFlow(network)) {
-            // Its flow worked out at the working size, both frames warped by it at their own (rife-warp-es3.frag).
-            val flow = net.flow(rifeRead[0], rifeRead[1], w, h) ?: return
+        // The frames' arrivals are their ids: the later frame of this pair is the earlier of the next.
+        val job = NeuralWorker.Job(
+            network, unit, es3 && NeuralInterpolation.handsFlow(network), w, h, keptAt[1], keptAt[2], rifeRead[0],
+            rifeRead[1], rifeRead[2].takeIf { looked.size > 2 },
+        )
+        if (worker.submit(job)) {
+            rifeAsked = RifeAsked(keptAt[2], earlier, later, frameWidth, frameHeight, pace, interval)
+        }
+    }
+
+    /**
+     * The in-between the network's thread made, taken in: its time told to the pace, and — while its pair's frames
+     * are still kept — its flow warping both frames at their own size (rife-warp-es3.frag) or its picture uploaded,
+     * into the slot of the older pair, marked with the later frame. One that came too late is dropped.
+     */
+    private fun collectRife() {
+        val done = rifeWorker?.take() ?: return
+        val asked = rifeAsked?.takeIf { it.laterId == done.job.laterId } ?: return
+        rifeAsked = null
+        asked.pace.report(done.tookNanos, asked.intervalNanos)
+        if (asked.laterId != keptAt[1] && asked.laterId != keptAt[2]) return
+        val w = done.job.width
+        val h = done.job.height
+        if (done.job.flow) {
+            // Into the slot of the older pair: the newer one may still be on screen.
+            val slot = if (rifeFor[0] <= rifeFor[1]) 0 else 1
+            val flow = done.result
             rifeFlow = passes.floats(rifeFlow, w, h, 4, flow.duplicate())
             val mask = flow.duplicate().apply { position(w * h * 4 * Float.SIZE_BYTES) }.slice()
             rifeMask = passes.floats(rifeMask, w, h, 4, mask)
-            val slot = if (rifeFor[0] <= rifeFor[1]) 0 else 1
-            val into = rifeWarped[slot].ensure(frameWidth, frameHeight)
-            finishing.warp(earlier, later, rifeFlow, rifeMask, into, w, h)
+            val into = rifeWarped[slot].ensure(asked.frameWidth, asked.frameHeight)
+            finishing.warp(asked.earlier, asked.later, rifeFlow, rifeMask, into, w, h)
             rifeWarpedSlot[slot] = true
-            rifeFor[slot] = keptAt[2]
-            pace.report(System.nanoTime() - began, interval)
+            rifeFor[slot] = asked.laterId
             return
         }
-        // The frames' arrivals are their ids: the later frame of this pair is the earlier of the next.
-        val rgb = net.run(
-            rifeRead[0], rifeRead[1], w, h, keptAt[1], keptAt[2], before = rifeRead[2].takeIf { looked.size > 2 },
-        ) ?: return
+        val size = NeuralInterpolation.Size(w, h)
         if (rifeTextures[0] == 0) GLES20.glGenTextures(2, rifeTextures, 0)
         if (size != rifeSize) {
             // A new size (other material, or the first): both in-betweens anew, neither holding a pair yet.
@@ -2605,15 +2634,15 @@ class VideoFilterStage : androidx.media3.exoplayer.video.VideoDecoderOutputBuffe
             rifeFor.fill(0L)
             rifeSize = size
         }
-        // Into the slot of the older pair: the newer one may still be on screen.
-        val slot = if (rifeFor[0] <= rifeFor[1]) 0 else 1
-        rifeWarpedSlot[slot] = false
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, rifeTextures[slot])
+        val into = if (rifeFor[0] <= rifeFor[1]) 0 else 1
+        rifeWarpedSlot[into] = false
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, rifeTextures[into])
         GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
-        GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, rgb)
+        GLES20.glTexSubImage2D(
+            GLES20.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, done.result,
+        )
         GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 4)
-        rifeFor[slot] = keptAt[2]
-        pace.report(System.nanoTime() - began, interval)
+        rifeFor[into] = asked.laterId
     }
 
     /**
