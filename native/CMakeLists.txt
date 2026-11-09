@@ -61,17 +61,26 @@ if(NOT ASS_SOURCES)
 endif()
 add_subdirectory(ass)
 
+set(CHROMAPRINT_SOURCES "" CACHE PATH "Chromaprint's source tree (native/build.gradle.kts, chromaprintSource)")
+if(NOT CHROMAPRINT_SOURCES)
+    message(FATAL_ERROR "CHROMAPRINT_SOURCES is not set: the source :native:chromaprintSource unpacks")
+endif()
+add_subdirectory(chromaprint)
+
 if(ANDROID)
     # The name the app loads (NeuralInterpolator.kt).
-    add_library(mediadroyd_neural SHARED jni/interpolator.cpp jni/platform_android.cpp jni/subtitles.cpp)
-    target_link_libraries(mediadroyd_neural mediadroyd_networks mediadroyd_subtitles android -fopenmp -static-openmp)
+    add_library(mediadroyd_neural SHARED
+        jni/interpolator.cpp jni/platform_android.cpp jni/subtitles.cpp jni/fingerprint.cpp)
+    target_link_libraries(mediadroyd_neural
+        mediadroyd_networks mediadroyd_subtitles mediadroyd_chromaprint android -fopenmp -static-openmp)
     # 16 KB pages, as Android 15 devices may use.
     target_link_options(mediadroyd_neural PRIVATE "-Wl,-z,max-page-size=16384")
 else()
     find_package(JNI REQUIRED)
-    add_library(mediadroyd SHARED jni/interpolator.cpp jni/platform_desktop.cpp jni/desktop.cpp jni/subtitles.cpp)
+    add_library(mediadroyd SHARED
+        jni/interpolator.cpp jni/platform_desktop.cpp jni/desktop.cpp jni/subtitles.cpp jni/fingerprint.cpp)
     target_include_directories(mediadroyd PRIVATE ${JNI_INCLUDE_DIRS})
-    target_link_libraries(mediadroyd PRIVATE mediadroyd_networks mediadroyd_subtitles)
+    target_link_libraries(mediadroyd PRIVATE mediadroyd_networks mediadroyd_subtitles mediadroyd_chromaprint)
     # Only the JNI entries (JNIEXPORT) are exported.
     set_target_properties(mediadroyd mediadroyd_networks PROPERTIES
         CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)

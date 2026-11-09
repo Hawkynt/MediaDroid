@@ -22,7 +22,8 @@ externalNativeBuild and for the desktop by `:native:desktopLibrary`, against ncn
 `native/build.gradle.kts` fetches and checks against their digests; the attribution is in
 `app/THIRD-PARTY-NOTICE.ncnn.txt`. Beside them, `native/ass`: libass with FreeType, FriBidi and HarfBuzz, built from
 their release sources (fetched and checked the same way) to draw ASS/SSA subtitles as authored; the attribution is in
-`app/THIRD-PARTY-NOTICE.libass.txt`. The
+`app/THIRD-PARTY-NOTICE.libass.txt`. And `native/chromaprint`: Chromaprint's audio fingerprints (intros and credits
+found by their sound), from its source fetched and checked the same way; `app/THIRD-PARTY-NOTICE.Chromaprint.txt`. The
 cores carry no Android dependency on purpose: the parsing, search and binge logic are pure and unit-tested without a
 device, and the screens sit on top of them. The bar is a household where nobody has to be taught the app — usable by a
 six-year-old and a grandparent, instant even on cheap hardware.

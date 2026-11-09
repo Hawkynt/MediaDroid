@@ -9,6 +9,7 @@ import com.hawkynt.mediadroyd.player.LogoMask
 import com.hawkynt.mediadroyd.player.PictureAdjustment
 import com.hawkynt.mediadroyd.player.ScreenSetup
 import com.hawkynt.mediadroyd.player.ScreenShape
+import com.hawkynt.mediadroyd.nfo.TimeRange
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -224,5 +225,23 @@ class StateStoreTest {
         assertFalse(store.restore("""{"name":"something else"}"""))
         assertFalse(store.restore("{}"))
         assertTrue(store.isWatched("/media/b.mkv"))
+    }
+
+    @Test
+    fun `intros and credits found by their sound are kept per video, an episode checked without a find too`() {
+        val file = Memory()
+        StateStore(file).apply {
+            saveFoundSkip(
+                "/s/e1.mkv",
+                FoundSkip(introStartMs = 30_000, introEndMs = 85_000, creditsStartMs = 2_500_000),
+            )
+            saveFoundSkip("/s/e2.mkv", FoundSkip())
+        }
+        val again = StateStore(file)
+        assertEquals(TimeRange(30_000, 85_000), again.foundSkipFor("/s/e1.mkv")?.intro)
+        assertEquals(2_500_000L, again.foundSkipFor("/s/e1.mkv")?.creditsStartMs)
+        assertNull(again.foundSkipFor("/s/e2.mkv")?.intro)
+        assertTrue(again.hasLookedForSkips("/s/e2.mkv"))
+        assertFalse(again.hasLookedForSkips("/s/e3.mkv"))
     }
 }

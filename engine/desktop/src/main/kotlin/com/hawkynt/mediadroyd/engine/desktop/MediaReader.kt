@@ -42,6 +42,8 @@ class MediaReader(
     path: String,
     from: FsFile? = null,
     private val decoders: List<HardwareDecoding.Device> = HardwareDecoding.candidates(softwareFirst = false),
+    /** Whether the pictures are decoded at all: not where only the sound is wanted (SoundPrints). */
+    pictures: Boolean = true,
 ) : AutoCloseable {
 
     /**
@@ -284,7 +286,7 @@ class MediaReader(
                 ),
             )
         }.flatten()
-        if (videoIndex >= 0) video = openVideoDecoder(decoders)
+        if (videoIndex >= 0 && pictures) video = openVideoDecoder(decoders)
         if (audioIndex >= 0) audio = openDecoder(audioIndex)
         // Read now: the decoders' contexts go with the reader, from another thread.
         videoDecoder = video?.codec()?.name()?.string

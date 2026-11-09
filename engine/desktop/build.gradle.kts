@@ -58,6 +58,8 @@ sourceSets["main"].resources.srcDir(carriedModels.map { it.destinationDir.parent
 
 tasks.test {
     systemProperty("mediadroyd.ffmpegLicence", if (fullFfmpeg) "GPL" else "LGPL")
+    // Chromaprint's source tree, its own test data the fingerprint is checked against (FingerprintTest).
+    systemProperty("mediadroyd.chromaprint", rootProject.file("native/build/chromaprint").path)
     // The native library's tests (NativeNetworksTest, NativeNeuralTest, LibAssTest; LibAssEngineTest with FFmpeg) need
     // it built for this system first — CMake, a C++ compiler, ncnn's release and libass's sources: `-PnativeLibrary`
     // builds it and brings the tests in, `./gradlew test` leaves them out. _desktop.yml runs them on Linux and Windows
@@ -70,7 +72,10 @@ tasks.test {
         // The upscalers' fetched models, kept between runs (NativeNeuralTest).
         systemProperty("mediadroyd.testModels", layout.buildDirectory.dir("test-models").get().asFile.path)
     } else {
-        exclude("**/NativeNetworksTest*", "**/NativeNeuralTest*", "**/LibAssTest*", "**/LibAssEngineTest*")
+        exclude(
+            "**/NativeNetworksTest*", "**/NativeNeuralTest*", "**/LibAssTest*", "**/LibAssEngineTest*",
+            "**/FingerprintTest*", "**/SoundPrintsTest*",
+        )
     }
 }
 

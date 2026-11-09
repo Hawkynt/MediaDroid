@@ -20,6 +20,27 @@ data class SubtitleOverride(
 )
 
 /** A station logo hidden for every video in a folder (one show): PictureAdjustment's LogoMask by names. */
+/**
+ * What looking at a video's sound found (IntroCredits, #480): where its intro runs and where its credits begin, each
+ * null where nothing was found — kept even then, so the video is not looked at again. The intro is looked for first
+ * (the entry's being there says so), the credits after ([creditsLooked]). Times in milliseconds.
+ */
+@Serializable
+data class FoundSkip(
+    val introStartMs: Long? = null,
+    val introEndMs: Long? = null,
+    val creditsStartMs: Long? = null,
+    val creditsLooked: Boolean = false,
+) {
+    /** The intro found, or null. */
+    val intro: com.hawkynt.mediadroyd.nfo.TimeRange?
+        get() = if (introStartMs != null && introEndMs != null) {
+            com.hawkynt.mediadroyd.nfo.TimeRange(introStartMs, introEndMs)
+        } else {
+            null
+        }
+}
+
 @Serializable
 data class LogoOverride(val corner: String, val size: Float, val mode: String)
 
@@ -205,6 +226,7 @@ data class AppData(
     var wallMode: String = "",                 // WallMode by name; "" is posters
     var filesSort: String = "",                // FileSort by name; "" is by name
     val subtitles: MutableMap<String, SubtitleOverride> = mutableMapOf(),
+    val foundSkips: MutableMap<String, FoundSkip> = mutableMapOf(), // intros and credits found by their sound, by video
     var settings: Settings = Settings(),
     var window: String? = null,                // a desktop window's place: WindowPlace, "x,y,width,height,maximized"
 )

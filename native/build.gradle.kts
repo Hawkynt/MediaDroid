@@ -1,6 +1,7 @@
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Properties
+import java.util.zip.GZIPInputStream
 import javax.inject.Inject
 
 // The native tree (CMakeLists.txt): ncnn's releases and libass's sources fetched and checked against their digests, and
@@ -81,8 +82,8 @@ tasks.register<NcnnArchive>("ncnnAndroid") {
 }
 
 /**
- * A source release (.tar.xz), downloaded once into the build directory and checked against its digest before it is
- * unpacked into [outputDir] without its top folder.
+ * A source release (.tar.xz, or .tar.gz where its URL says so), downloaded once into the build directory and checked
+ * against its digest before it is unpacked into [outputDir] without its top folder.
  */
 abstract class SourceRelease : DefaultTask() {
     @get:Input
@@ -108,9 +109,12 @@ abstract class SourceRelease : DefaultTask() {
             .joinToString("") { "%02x".format(it) }
         check(digest == sha256.get()) { "${url.get()} has the digest $digest, not ${sha256.get()}" }
         val tar = File(temporaryDir, "source.tar")
-        org.tukaani.xz.XZInputStream(packed.inputStream().buffered()).use { input ->
-            tar.outputStream().use { input.copyTo(it) }
+        val unpacked = if (url.get().endsWith(".gz")) {
+            GZIPInputStream(packed.inputStream().buffered())
+        } else {
+            org.tukaani.xz.XZInputStream(packed.inputStream().buffered())
         }
+        unpacked.use { input -> tar.outputStream().use { input.copyTo(it) } }
         val target = outputDir.get().asFile
         files.delete { delete(target) }
         files.copy {
@@ -159,6 +163,19 @@ tasks.register("assSources") {
     group = "build"
     description = "Fetches libass, FreeType, FriBidi and HarfBuzz for the native tree"
     dependsOn(assFetches)
+}
+
+// Chromaprint (MIT; its resampler, from FFmpeg, LGPL-2.1): the audio fingerprints intros and credits are found by
+// (#480), at the revision MediaUploadService's matcher and its fpcalc fixture were made with; the native tree's
+// CHROMAPRINT_SOURCES on every system.
+val chromaprintRoot = layout.buildDirectory.dir("chromaprint")
+extra["chromaprintRoot"] = chromaprintRoot
+tasks.register<SourceRelease>("chromaprintSource") {
+    group = "build"
+    description = "Fetches Chromaprint for the native tree"
+    url.set("https://github.com/acoustid/chromaprint/archive/3b38c100022bdfb49be7797c4828a476f1621d55.tar.gz")
+    sha256.set("c68c77e11c9afe905117e3af24eb1bd802342d19b6d4629bae3bebc912df1dc6")
+    outputDir.set(chromaprintRoot)
 }
 
 // The desktop this build runs on, as the library is named for it: linux-x64, linux-arm64 or windows-x64.
@@ -219,7 +236,7 @@ fun cmake(): String {
 tasks.register("desktopLibrary") {
     group = "build"
     description = "Builds the native library (native/) for this desktop"
-    dependsOn(ncnnDesktop, "assSources")
+    dependsOn(ncnnDesktop, "assSources", "chromaprintSource")
     val sources = layout.projectDirectory
     inputs.files(sources.file("CMakeLists.txt"), sources.dir("src"), sources.dir("jni"), sources.dir("ass"))
     inputs.property("host", host)
@@ -231,6 +248,7 @@ tasks.register("desktopLibrary") {
     val javaHome = jdk
     val wantedForHost = ncnnForHost
     val ass = assRoot
+    val chromaprint = chromaprintRoot
     doLast {
         val wanted = checkNotNull(wantedForHost) { "ncnn has no release for $host" }
         val ncnn = ncnnDir.get().asFile.let { if (wanted.root.isEmpty()) it else File(it, wanted.root) }
@@ -254,6 +272,7 @@ tasks.register("desktopLibrary") {
             if (wanted.fromSource) "-DNCNN_SOURCE=${ncnn.path}" else "-DNCNN_ROOT=${ncnn.path}",
             "-DMEDIADROYD_OUTPUT=${desktopLibraryDir.get().asFile.path}",
             "-DASS_SOURCES=${ass.get().asFile.path}",
+            "-DCHROMAPRINT_SOURCES=${chromaprint.get().asFile.path}",
         )
         run("--build", build, "--config", "Release", "--parallel", jobs)
     }

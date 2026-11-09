@@ -137,10 +137,20 @@ class PlayerSession(
         abLoop = AbLoop.OFF
         playedMs = 0L
         this.chapters = chapters
-        introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, current.intro) else null
-        creditsStartMs = SkipRules.creditsStartMs(chapters, current.credits)
+        applySkips()
         val resume = store.resumeFor(current.videoPath)?.positionMs ?: 0
         return SkipRules.skipTarget(resume, introSpanMs) ?: resume
+    }
+
+    /**
+     * The intro and credits of the video playing: from its chapters or the NFO's times (an edit decision list), else
+     * what looking at its sound found (IntroCredits, StateStore.foundSkipFor). Called again once that has been looked
+     * at while the video plays: an intro not reached yet is still skipped.
+     */
+    fun applySkips() {
+        val found = store.foundSkipFor(current.videoPath)
+        introSpanMs = if (skipping) SkipRules.introSpanMs(chapters, current.intro ?: found?.intro) else null
+        creditsStartMs = SkipRules.creditsStartMs(chapters, current.credits) ?: found?.creditsStartMs
     }
 
     /** [elapsedMs] of the clock went by at [speed]: counted as played while the engine plays. */

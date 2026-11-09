@@ -140,6 +140,21 @@ class StateStore(private val file: StateFile, private val watcher: StateWatcher 
         if (data.resume.remove(videoPath) != null) save()
     }
 
+    /** What looking at [videoPath]'s sound found (IntroCredits); null where it was not looked at yet. */
+    fun foundSkipFor(videoPath: String): FoundSkip? = data.foundSkips[videoPath]
+
+    /** Whether [videoPath]'s sound was looked at for its intro already, found or not. */
+    fun hasLookedForSkips(videoPath: String): Boolean = videoPath in data.foundSkips
+
+    /** Whether [videoPath]'s sound was looked at for its credits already, found or not. */
+    fun hasLookedForCredits(videoPath: String): Boolean = data.foundSkips[videoPath]?.creditsLooked == true
+
+    /** Keeps what looking at [videoPath]'s sound found. */
+    fun saveFoundSkip(videoPath: String, found: FoundSkip) {
+        data.foundSkips[videoPath] = found
+        save()
+    }
+
     /** The lip-sync delay remembered for the audio output [outputKey], in ms. */
     fun audioDelayFor(outputKey: String): Int = data.audioDelays[outputKey] ?: 0
 
