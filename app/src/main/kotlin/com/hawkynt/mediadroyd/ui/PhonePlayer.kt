@@ -1077,6 +1077,10 @@ fun PhonePlayer(
     val check = pictureCheck(context, store)
     val offeredColorizers = rememberColorizers(context, store)
     val platform = object : PlayerPlatform {
+        // Intros and credits found by their sound: the device's decoder and Chromaprint's fingerprint (SoundPrints).
+        override fun soundPrint(location: String, closing: Boolean) =
+            com.hawkynt.mediadroyd.data.SoundPrints.of(context, location, closing)
+
         // Media3's own controls take play, pause and seeking; a remote's keys reach them.
         override val commands = PHONE_COMMANDS
         override val subtitlesByTrack = false

@@ -636,6 +636,10 @@ fun DesktopPlayer(
         withContext(Dispatchers.Default) { PictureTrial.check(candidate, trial, say) }
     }
     val platform = object : PlayerPlatform {
+        // Intros and credits found by their sound: FFmpeg's decoding and Chromaprint's fingerprint (SoundPrints).
+        override fun soundPrint(location: String, closing: Boolean) =
+            com.hawkynt.mediadroyd.engine.desktop.SoundPrints.of(location, places.remoteFile(location), closing)
+
         override val commands = PlayerCommand.entries.toSet()
         override val subtitlesByTrack = true
         override val controlsVisible = controlsShown

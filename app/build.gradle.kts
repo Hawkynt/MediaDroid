@@ -14,6 +14,8 @@ evaluationDependsOn(":native")
 val ncnnRoot = project(":native").extra["ncnnAndroidRoot"] as Provider<Directory>
 @Suppress("UNCHECKED_CAST")
 val assRoot = project(":native").extra["assRoot"] as Provider<Directory>
+@Suppress("UNCHECKED_CAST")
+val chromaprintRoot = project(":native").extra["chromaprintRoot"] as Provider<Directory>
 
 android {
     // BouncyCastle's modules (for SMB and SFTP) each carry the same licence file; one copy is kept.
@@ -45,6 +47,7 @@ android {
             cmake {
                 arguments += "-DNCNN_ROOT=${ncnnRoot.get().asFile.absolutePath}"
                 arguments += "-DASS_SOURCES=${assRoot.get().asFile.absolutePath}"
+                arguments += "-DCHROMAPRINT_SOURCES=${chromaprintRoot.get().asFile.absolutePath}"
                 arguments += "-DANDROID_STL=c++_static"
             }
         }
@@ -73,7 +76,7 @@ android {
 
 tasks.configureEach {
     if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) {
-        dependsOn(":native:ncnnAndroid", ":native:assSources")
+        dependsOn(":native:ncnnAndroid", ":native:assSources", ":native:chromaprintSource")
     }
 }
 

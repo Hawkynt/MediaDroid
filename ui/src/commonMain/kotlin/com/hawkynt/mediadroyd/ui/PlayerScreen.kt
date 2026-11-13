@@ -37,10 +37,12 @@ import com.hawkynt.mediadroyd.library.Chapters
 import com.hawkynt.mediadroyd.library.FsFile
 import com.hawkynt.mediadroyd.library.Sidecars
 import com.hawkynt.mediadroyd.player.ChapterSteps
+import com.hawkynt.mediadroyd.player.IntroCredits
 import com.hawkynt.mediadroyd.player.PictureAdjustment
 import com.hawkynt.mediadroyd.player.PictureFit
 import com.hawkynt.mediadroyd.player.PlaybackChain
 import com.hawkynt.mediadroyd.player.PlaybackMath
+import com.hawkynt.mediadroyd.state.SkipFinder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -55,6 +57,13 @@ import kotlinx.coroutines.withContext
 interface PlayerPlatform {
     /** The keys (PlayerKeys) this player answers; the rest go to the platform's own controls. */
     val commands: Set<PlayerCommand>
+
+    /**
+     * A fingerprint of [location]'s sound for finding its intro and credits (IntroCredits, SkipFinder): its first
+     * IntroCredits.OPENING_MS, or where [closing] its last IntroCredits.CLOSING_MS; null where the platform cannot
+     * read or fingerprint it. Blocks: called off the main thread.
+     */
+    fun soundPrint(location: String, closing: Boolean): IntroCredits.SoundPrint? = null
 
     /**
      * Subtitles switched by picking a track — none being off, the one picked the household's language from then on —
@@ -201,6 +210,20 @@ fun PlayerScreen(state: PlayerScreenState, platform: PlayerPlatform, modifier: M
                 ),
             )
         }.onFailure { state.error = it.message ?: it.toString() }
+    }
+
+    // Intros and credits found by their sound (#480), in the background from the moment the episode is chosen: its
+    // intro first, from its opening and a neighbour's alone, applied at once — playback jumps to the intro's end if it
+    // is in the intro already, else skips it once it starts — then its credits, then the next episode's, so
+    // binge-watching meets its intro known. Cut files and chapters still come first.
+    LaunchedEffect(session.index) {
+        if (!session.skipping || state.demo) return@LaunchedEffect
+        val finder = SkipFinder(state.store, platform::soundPrint)
+        for (step in finder.steps(session.queue.map { it.videoPath }, session.index)) {
+            val found = withContext(Dispatchers.Default) { runCatching { finder.find(step) }.getOrNull() } ?: continue
+            finder.keep(step, found)
+            session.applySkips()
+        }
     }
 
     // What the engine tells, taken on this screen's thread: the end, a seek, the tracks, playing or not.
